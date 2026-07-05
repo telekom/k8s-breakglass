@@ -855,6 +855,44 @@ func TestConditionFromNil(t *testing.T) {
 	assert.Nil(t, result)
 }
 
+func TestDebugSessionTemplateStatusFrom(t *testing.T) {
+	lastUsed := metav1.Now()
+	status := &breakglassv1alpha1.DebugSessionTemplateStatus{
+		ObservedGeneration:  7,
+		ActiveSessionCount:  2,
+		PendingSessionCount: 1,
+		TotalSessionCount:   5,
+		LastUsedAt:          &lastUsed,
+		PodTemplateResolved: true,
+		BoundClusters:       []string{"cluster-a", "cluster-b"},
+		BindingCount:        3,
+		Conditions: []metav1.Condition{
+			{
+				Type:               "Ready",
+				Status:             metav1.ConditionTrue,
+				ObservedGeneration: 7,
+				LastTransitionTime: lastUsed,
+				Reason:             "Ready",
+				Message:            "Template is ready",
+			},
+		},
+	}
+
+	result := DebugSessionTemplateStatusFrom(status)
+
+	require.NotNil(t, result)
+	assert.Equal(t, int64(7), *result.ObservedGeneration)
+	assert.Equal(t, int32(2), *result.ActiveSessionCount)
+	assert.Equal(t, int32(1), *result.PendingSessionCount)
+	assert.Equal(t, int64(5), *result.TotalSessionCount)
+	assert.Equal(t, lastUsed, *result.LastUsedAt)
+	assert.True(t, *result.PodTemplateResolved)
+	assert.Equal(t, []string{"cluster-a", "cluster-b"}, result.BoundClusters)
+	assert.Equal(t, int32(3), *result.BindingCount)
+	require.Len(t, result.Conditions, 1)
+	assert.Equal(t, "Ready", *result.Conditions[0].Type)
+}
+
 // TestDebugSessionApprovalFrom tests conversion of DebugSessionApproval.
 func TestDebugSessionApprovalFrom(t *testing.T) {
 	t.Run("nil input returns nil", func(t *testing.T) {

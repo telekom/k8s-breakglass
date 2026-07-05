@@ -458,6 +458,84 @@ func TestGetBindingTemplateNames(t *testing.T) {
 	}
 }
 
+func TestGetBindingClusterNames(t *testing.T) {
+	clusters := []ClusterConfig{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "prod-a",
+				Labels: map[string]string{"env": "prod", "region": "eu"},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "prod-b",
+				Labels: map[string]string{"env": "prod", "region": "us"},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "stage-a",
+				Labels: map[string]string{"env": "stage", "region": "eu"},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		binding  *DebugSessionClusterBinding
+		expected []string
+	}{
+		{
+			name: "explicit clusters preserved",
+			binding: &DebugSessionClusterBinding{
+				Spec: DebugSessionClusterBindingSpec{
+					Clusters: []string{"prod-a", "prod-b"},
+				},
+			},
+			expected: []string{"prod-a", "prod-b"},
+		},
+		{
+			name: "selector resolves cluster labels",
+			binding: &DebugSessionClusterBinding{
+				Spec: DebugSessionClusterBindingSpec{
+					ClusterSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"env": "prod"},
+					},
+				},
+			},
+			expected: []string{"prod-a", "prod-b"},
+		},
+		{
+			name: "explicit and selector clusters are deduplicated",
+			binding: &DebugSessionClusterBinding{
+				Spec: DebugSessionClusterBindingSpec{
+					Clusters: []string{"prod-a"},
+					ClusterSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"env": "prod"},
+					},
+				},
+			},
+			expected: []string{"prod-a", "prod-b"},
+		},
+		{
+			name: "empty selector does not expand to all clusters",
+			binding: &DebugSessionClusterBinding{
+				Spec: DebugSessionClusterBindingSpec{
+					ClusterSelector: &metav1.LabelSelector{},
+				},
+			},
+			expected: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := getBindingClusterNames(tt.binding, clusters)
+			assert.ElementsMatch(t, tt.expected, result)
+		})
+	}
+}
+
 func TestNameCollision_Struct(t *testing.T) {
 	collision := NameCollision{
 		TemplateName:              "netops-debug",
@@ -930,6 +1008,122 @@ func TestCheckNameCollisions(t *testing.T) {
 		assert.NoError(t, err)
 		require.Len(t, collisions, 1)
 		assert.Equal(t, "shared-template", collisions[0].TemplateName)
+		assert.Equal(t, "cluster-1", collisions[0].ClusterName)
+		assert.Equal(t, "existing-binding", collisions[0].CollidingBinding)
+	})
+
+	t.Run("detects selector-only cluster overlap", func(t *testing.T) {
+		existingBinding := &DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "existing-binding",
+				Namespace: "default",
+			},
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef: &TemplateReference{Name: "shared-template"},
+				ClusterSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"env": "prod"},
+				},
+			},
+		}
+
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "shared-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				DisplayName: "Shared Template",
+			},
+		}
+
+		cluster := &ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "cluster-1",
+				Labels: map[string]string{"env": "prod", "tier": "critical"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(existingBinding, template, cluster).
+			Build()
+
+		originalClient := webhookClient
+		webhookClient = fakeClient
+		defer func() { webhookClient = originalClient }()
+
+		newBinding := &DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "new-binding",
+				Namespace: "default",
+			},
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef: &TemplateReference{Name: "shared-template"},
+				ClusterSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"tier": "critical"},
+				},
+			},
+		}
+		collisions, err := CheckNameCollisions(context.Background(), newBinding)
+		assert.NoError(t, err)
+		require.Len(t, collisions, 1)
+		assert.Equal(t, "shared-template", collisions[0].TemplateName)
+		assert.Equal(t, "cluster-1", collisions[0].ClusterName)
+		assert.Equal(t, "existing-binding", collisions[0].CollidingBinding)
+	})
+
+	t.Run("detects explicit and selector cluster overlap", func(t *testing.T) {
+		existingBinding := &DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "existing-binding",
+				Namespace: "default",
+			},
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef: &TemplateReference{Name: "shared-template"},
+				Clusters:    []string{"cluster-1"},
+			},
+		}
+
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "shared-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				DisplayName: "Shared Template",
+			},
+		}
+
+		cluster := &ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "cluster-1",
+				Labels: map[string]string{"env": "prod"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(existingBinding, template, cluster).
+			Build()
+
+		originalClient := webhookClient
+		webhookClient = fakeClient
+		defer func() { webhookClient = originalClient }()
+
+		newBinding := &DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "new-binding",
+				Namespace: "default",
+			},
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef: &TemplateReference{Name: "shared-template"},
+				ClusterSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"env": "prod"},
+				},
+			},
+		}
+
+		collisions, err := CheckNameCollisions(context.Background(), newBinding)
+		assert.NoError(t, err)
+		require.Len(t, collisions, 1)
 		assert.Equal(t, "cluster-1", collisions[0].ClusterName)
 		assert.Equal(t, "existing-binding", collisions[0].CollidingBinding)
 	})

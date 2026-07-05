@@ -3,7 +3,6 @@ package mail
 import (
 	"context"
 	"fmt"
-	"math"
 	"net"
 	"net/smtp"
 	"strings"
@@ -23,17 +22,15 @@ type Sender interface {
 }
 
 type sender struct {
-	dialer         *gomail.Dialer
-	senderAddress  string
-	senderName     string
-	retryCount     int
-	retryBackoffMs int
-	disableTLS     bool // when true, use plain SMTP without STARTTLS
-	host           string
-	port           int
-	username       string
-	password       string
-	log            *zap.SugaredLogger
+	dialer        *gomail.Dialer
+	senderAddress string
+	senderName    string
+	disableTLS    bool // when true, use plain SMTP without STARTTLS
+	host          string
+	port          int
+	username      string
+	password      string
+	log           *zap.SugaredLogger
 }
 
 // sanitizeHeaderValue removes all ASCII control characters from header values
@@ -102,32 +99,16 @@ func NewSenderFromMailProvider(mpConfig *config.MailProviderConfig, brandingName
 		senderName = "Breakglass"
 	}
 
-	retryCount := mpConfig.RetryCount
-	if retryCount <= 0 {
-		retryCount = 3
-	}
-
-	retryBackoffMs := mpConfig.RetryBackoffMs
-	if retryBackoffMs <= 0 {
-		retryBackoffMs = 100
-	}
-
-	log.Debugw("Retry configuration",
-		"retryCount", retryCount,
-		"initialBackoffMs", retryBackoffMs)
-
 	return &sender{
-		dialer:         d,
-		senderAddress:  senderAddr,
-		senderName:     senderName,
-		retryCount:     retryCount,
-		retryBackoffMs: retryBackoffMs,
-		disableTLS:     mpConfig.DisableTLS,
-		host:           mpConfig.Host,
-		port:           mpConfig.Port,
-		username:       mpConfig.Username,
-		password:       mpConfig.Password,
-		log:            log,
+		dialer:        d,
+		senderAddress: senderAddr,
+		senderName:    senderName,
+		disableTLS:    mpConfig.DisableTLS,
+		host:          mpConfig.Host,
+		port:          mpConfig.Port,
+		username:      mpConfig.Username,
+		password:      mpConfig.Password,
+		log:           log,
 	}
 }
 
@@ -151,50 +132,29 @@ func (s *sender) Send(receivers []string, subject, body string) error {
 		"recipientCount", len(receivers),
 		"subjectLength", len(safeSubject)) // Don't log raw subject/addresses for privacy
 
-	var lastErr error
-	backoffMs := s.retryBackoffMs
-
-	for attempt := 0; attempt <= s.retryCount; attempt++ {
-		var err error
-		if s.disableTLS {
-			// Use plain SMTP without STARTTLS (for MailHog and similar dev servers)
-			err = s.sendPlainSMTP(receivers, safeSubject, safeBody)
-		} else {
-			// Use gomail with TLS/STARTTLS support
-			msg := gomail.NewMessage()
-			msg.SetAddressHeader("From", s.senderAddress, s.senderName)
-			msg.SetHeader("Bcc", receivers...)
-			msg.SetHeader("Subject", safeSubject)
-			msg.SetBody("text/html", safeBody)
-			err = s.dialer.DialAndSend(msg)
-		}
-
-		if err == nil {
-			s.log.Infow("Mail sent successfully",
-				"recipientCount", len(receivers),
-				"attempt", attempt+1)
-			metrics.MailSendSuccess.WithLabelValues(s.GetHost()).Inc()
-			return nil
-		}
-
-		lastErr = err
-		if attempt < s.retryCount {
-			s.log.Warnw("Send attempt failed, retrying",
-				"attempt", attempt+1,
-				"error", err,
-				"retryInMs", backoffMs)
-			time.Sleep(time.Duration(backoffMs) * time.Millisecond)
-			// Exponential backoff: backoff = backoff * 2^attempt (capped at reasonable values)
-			backoffMs = int(math.Min(float64(backoffMs)*2, 32000)) // Cap at ~32 seconds
-		} else {
-			s.log.Errorw("Failed to send mail after all attempts",
-				"attempts", s.retryCount+1,
-				"error", err)
-		}
+	var err error
+	if s.disableTLS {
+		// Use plain SMTP without STARTTLS (for MailHog and similar dev servers)
+		err = s.sendPlainSMTP(receivers, safeSubject, safeBody)
+	} else {
+		// Use gomail with TLS/STARTTLS support
+		msg := gomail.NewMessage()
+		msg.SetAddressHeader("From", s.senderAddress, s.senderName)
+		msg.SetHeader("Bcc", receivers...)
+		msg.SetHeader("Subject", safeSubject)
+		msg.SetBody("text/html", safeBody)
+		err = s.dialer.DialAndSend(msg)
+	}
+	if err == nil {
+		s.log.Infow("Mail sent successfully",
+			"recipientCount", len(receivers))
+		metrics.MailSendSuccess.WithLabelValues(s.GetHost()).Inc()
+		return nil
 	}
 
+	s.log.Errorw("Failed to send mail", "error", err)
 	metrics.MailSendFailure.WithLabelValues(s.GetHost()).Inc()
-	return lastErr
+	return err
 }
 
 // sendPlainSMTP sends email using plain SMTP without STARTTLS

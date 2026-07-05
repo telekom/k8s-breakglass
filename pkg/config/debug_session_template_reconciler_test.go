@@ -90,6 +90,8 @@ func TestDebugSessionTemplateReconciler_Reconcile_ValidTemplate(t *testing.T) {
 	require.NotNil(t, readyCond, "Ready condition should be set")
 	assert.Equal(t, metav1.ConditionTrue, readyCond.Status)
 	assert.Equal(t, "Ready", readyCond.Reason)
+	assert.Equal(t, int64(1), updated.Status.ObservedGeneration)
+	assert.True(t, updated.Status.PodTemplateResolved)
 }
 
 func TestDebugSessionTemplateReconciler_Reconcile_WithValidPodTemplateRef(t *testing.T) {
@@ -205,6 +207,88 @@ func TestDebugSessionTemplateReconciler_Reconcile_WithMissingPodTemplateRef(t *t
 	require.NotNil(t, podRefCond, "PodTemplateRefValid condition should be set")
 	assert.Equal(t, metav1.ConditionFalse, podRefCond.Status)
 	assert.Equal(t, "PodTemplateNotFound", podRefCond.Reason)
+	assert.False(t, updated.Status.PodTemplateResolved)
+}
+
+func TestDebugSessionTemplateReconciler_Reconcile_BindingStatusFields(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	scheme := runtime.NewScheme()
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-template",
+			Generation: 3,
+			Labels: map[string]string{
+				"tier": "standard",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			DisplayName: "Test Template",
+			Mode:        breakglassv1alpha1.DebugSessionModeKubectlDebug,
+			KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+				EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
+					Enabled: true,
+				},
+			},
+		},
+	}
+	explicitBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "explicit-binding", Namespace: "team-a"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "test-template"},
+			Clusters:    []string{"cluster-a"},
+		},
+	}
+	selectorBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "selector-binding", Namespace: "team-b"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"tier": "standard"},
+			},
+			ClusterSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"env": "prod"},
+			},
+		},
+	}
+	disabledBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "disabled-binding", Namespace: "team-c"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "test-template"},
+			Clusters:    []string{"cluster-disabled"},
+			Disabled:    true,
+		},
+	}
+	clusterA := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Labels: map[string]string{"env": "dev"}},
+	}
+	clusterB := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-b", Labels: map[string]string{"env": "prod"}},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(sessionTemplate, explicitBinding, selectorBinding, disabledBinding, clusterA, clusterB).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSessionTemplate{}).
+		Build()
+
+	r := NewDebugSessionTemplateReconciler(fakeClient, logger)
+
+	ctx := context.Background()
+	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "test-template"}}
+	result, err := r.Reconcile(ctx, req)
+
+	require.NoError(t, err)
+	assert.Equal(t, reconcile.Result{}, result)
+
+	updated := &breakglassv1alpha1.DebugSessionTemplate{}
+	err = fakeClient.Get(ctx, req.NamespacedName, updated)
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(3), updated.Status.ObservedGeneration)
+	assert.True(t, updated.Status.PodTemplateResolved)
+	assert.Equal(t, int32(2), updated.Status.BindingCount)
+	assert.ElementsMatch(t, []string{"cluster-a", "cluster-b"}, updated.Status.BoundClusters)
 }
 
 func TestDebugSessionTemplateReconciler_Reconcile_NotFound(t *testing.T) {

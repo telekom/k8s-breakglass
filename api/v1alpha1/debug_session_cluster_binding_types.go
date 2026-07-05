@@ -595,9 +595,14 @@ func CheckNameCollisions(ctx context.Context, binding *DebugSessionClusterBindin
 		templateDisplayNames[t.Name] = displayName
 	}
 
+	clusterList := &ClusterConfigList{}
+	if err := bindingReader.List(ctx, clusterList); err != nil {
+		return nil, err
+	}
+
 	// Get the template names this binding references
 	thisTemplateNames := getBindingTemplateNames(binding, templateList.Items)
-	thisClusterNames := binding.Spec.Clusters
+	thisClusterNames := getBindingClusterNames(binding, clusterList.Items)
 
 	var collisions []NameCollision
 
@@ -613,7 +618,7 @@ func CheckNameCollisions(ctx context.Context, binding *DebugSessionClusterBindin
 		}
 
 		otherTemplateNames := getBindingTemplateNames(&other, templateList.Items)
-		otherClusterNames := other.Spec.Clusters
+		otherClusterNames := getBindingClusterNames(&other, clusterList.Items)
 
 		// Check for overlapping template+cluster combinations
 		for _, thisTemplate := range thisTemplateNames {
@@ -675,6 +680,48 @@ func getBindingTemplateNames(binding *DebugSessionClusterBinding, templates []De
 		if selector.Matches(labelset) {
 			names = append(names, t.Name)
 		}
+	}
+
+	return names
+}
+
+// getBindingClusterNames returns the effective cluster names referenced by a binding.
+func getBindingClusterNames(binding *DebugSessionClusterBinding, clusters []ClusterConfig) []string {
+	if binding == nil {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	names := make([]string, 0, len(binding.Spec.Clusters))
+	for _, clusterName := range binding.Spec.Clusters {
+		if clusterName == "" {
+			continue
+		}
+		if _, ok := seen[clusterName]; ok {
+			continue
+		}
+		seen[clusterName] = struct{}{}
+		names = append(names, clusterName)
+	}
+
+	if binding.Spec.ClusterSelector == nil {
+		return names
+	}
+
+	selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
+	if err != nil || selector.Empty() {
+		return names
+	}
+
+	for _, cluster := range clusters {
+		if !selector.Matches(labels.Set(cluster.Labels)) {
+			continue
+		}
+		if _, ok := seen[cluster.Name]; ok {
+			continue
+		}
+		seen[cluster.Name] = struct{}{}
+		names = append(names, cluster.Name)
 	}
 
 	return names

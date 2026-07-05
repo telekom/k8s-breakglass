@@ -252,9 +252,6 @@ func (l *MailProviderLoader) convertToRuntimeConfig(ctx context.Context, mp *bre
 	}
 
 	// Apply defaults
-	if config.RetryCount == 0 {
-		config.RetryCount = 3
-	}
 	if config.RetryBackoffMs == 0 {
 		config.RetryBackoffMs = 100
 	}

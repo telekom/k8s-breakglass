@@ -39,12 +39,12 @@ type QueueItem struct {
 	Succeeded bool
 }
 
-// Queue manages asynchronous mail sending with retries
+// Queue manages asynchronous mail sending with retries.
 type Queue struct {
 	sender           Sender
 	queue            chan *QueueItem
 	log              *zap.SugaredLogger
-	maxRetries       int
+	maxAttempts      int
 	initialBackoffMs int
 	wg               sync.WaitGroup
 	ctx              context.Context
@@ -52,11 +52,13 @@ type Queue struct {
 	maxQueueSize     int
 }
 
-// NewQueue creates a new mail queue for asynchronous sending
+// NewQueue creates a new mail queue for asynchronous sending.
+// maxRetries is the number of retries after the initial send attempt.
 func NewQueue(sender Sender, log *zap.SugaredLogger, maxRetries, initialBackoffMs, maxQueueSize int) *Queue {
-	if maxRetries <= 0 {
-		maxRetries = 5 // Default: 10s, 60s, 3m, 10m, 30m
+	if maxRetries < 0 {
+		maxRetries = 3
 	}
+	maxAttempts := maxRetries + 1
 	if initialBackoffMs <= 0 {
 		initialBackoffMs = 10000 // Default: 10 seconds
 	}
@@ -66,6 +68,7 @@ func NewQueue(sender Sender, log *zap.SugaredLogger, maxRetries, initialBackoffM
 
 	log.Infow("Initializing mail queue",
 		"maxRetries", maxRetries,
+		"maxAttempts", maxAttempts,
 		"initialBackoffMs", initialBackoffMs,
 		"maxQueueSize", maxQueueSize)
 
@@ -75,7 +78,7 @@ func NewQueue(sender Sender, log *zap.SugaredLogger, maxRetries, initialBackoffM
 		sender:           sender,
 		queue:            make(chan *QueueItem, maxQueueSize),
 		log:              log,
-		maxRetries:       maxRetries,
+		maxAttempts:      maxAttempts,
 		initialBackoffMs: initialBackoffMs,
 		maxQueueSize:     maxQueueSize,
 		ctx:              ctx,
@@ -200,7 +203,7 @@ func (q *Queue) workerLoop(consecutivePanics *int) (stopped bool) {
 				// Reset consecutive panic counter after processing without panic
 				*consecutivePanics = 0
 				// Track pending items only if not succeeded and we have retries left
-				if !item.Succeeded && item.Attempt < q.maxRetries {
+				if !item.Succeeded && item.Attempt < q.maxAttempts {
 					pendingItems = append(pendingItems, item)
 				}
 			}
@@ -217,7 +220,7 @@ func (q *Queue) workerLoop(consecutivePanics *int) (stopped bool) {
 					processedCount++
 				}
 				// Keep in pending list if not succeeded and still has retries
-				if !item.Succeeded && item.Attempt < q.maxRetries {
+				if !item.Succeeded && item.Attempt < q.maxAttempts {
 					remainingPending = append(remainingPending, item)
 				}
 			}
@@ -237,7 +240,7 @@ func (q *Queue) processItem(item *QueueItem) {
 	q.log.Infow("Processing queued email",
 		"id", item.ID,
 		"attempt", item.Attempt,
-		"maxRetries", q.maxRetries+1,
+		"maxAttempts", q.maxAttempts,
 		"receivers", len(item.Receivers))
 
 	err := q.sender.Send(item.Receivers, item.Subject, item.Body)
@@ -253,7 +256,7 @@ func (q *Queue) processItem(item *QueueItem) {
 	}
 
 	// Send failed, schedule retry if we have attempts left
-	if item.Attempt < q.maxRetries {
+	if item.Attempt < q.maxAttempts {
 		backoffMs := q.calculateBackoff(item.Attempt)
 		item.NextRetry = time.Now().Add(time.Duration(backoffMs) * time.Millisecond)
 
@@ -280,7 +283,7 @@ func (q *Queue) processItem(item *QueueItem) {
 func (q *Queue) processPending(items []*QueueItem) {
 	q.log.Infow("Processing pending items on shutdown", "count", len(items))
 	for _, item := range items {
-		if item.Attempt < q.maxRetries {
+		if item.Attempt < q.maxAttempts {
 			q.log.Infow("Attempting final send for pending item before shutdown",
 				"id", item.ID,
 				"attempt", item.Attempt)

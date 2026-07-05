@@ -407,6 +407,11 @@ spec:
     portForward: true # kubectl port-forward
 ```
 
+The controller updates `DebugSessionTemplate.status` with readiness conditions,
+the observed generation, pod-template reference resolution, active session
+usage, and clusters made available through active
+`DebugSessionClusterBinding` resources.
+
 ## Allowed Pod Operations
 
 The `allowedPodOperations` field controls which kubectl operations are permitted on debug session pods. This enables fine-grained access control for different use cases.
