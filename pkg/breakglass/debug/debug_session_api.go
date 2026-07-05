@@ -710,15 +710,28 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
 		return
 	}
-	if req.BindingRef == "" &&
-		!c.isDebugSessionRequesterAllowedForTemplateOrBindings(template, bindingList.Items, currentUserStr, userEmail, userGroups) {
-		reqLog.Warnw("User is not allowed to request debug session",
-			"templateRef", req.TemplateRef,
-			"user", currentUserStr,
-			"groupCount", len(userGroups),
-		)
-		apiresponses.RespondForbidden(ctx, "user is not allowed to request this debug session")
-		return
+	templateRequesterAllowed := isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, nil), currentUserStr, userEmail, userGroups)
+	requesterAllowedForTemplateOrBinding := templateRequesterAllowed
+	var applicableTemplateBindings []breakglassv1alpha1.DebugSessionClusterBinding
+	if req.BindingRef == "" {
+		applicableTemplateBindings = c.findBindingsForTemplate(template, bindingList.Items)
+		if !requesterAllowedForTemplateOrBinding {
+			for i := range applicableTemplateBindings {
+				if isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, &applicableTemplateBindings[i]), currentUserStr, userEmail, userGroups) {
+					requesterAllowedForTemplateOrBinding = true
+					break
+				}
+			}
+		}
+		if !requesterAllowedForTemplateOrBinding {
+			reqLog.Warnw("User is not allowed to request debug session",
+				"templateRef", req.TemplateRef,
+				"user", currentUserStr,
+				"groupCount", len(userGroups),
+			)
+			apiresponses.RespondForbidden(ctx, "user is not allowed to request this debug session")
+			return
+		}
 	}
 
 	var clusterConfigList breakglassv1alpha1.ClusterConfigList
@@ -840,15 +853,14 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 	} else {
 		for _, authorizationCluster := range authorizationClusters {
-			allowedResult = c.isClusterAllowedByTemplateOrBinding(template, authorizationCluster, bindingList.Items, clusterMap, clusterConfigList.Items)
+			allowedResult = c.isClusterAllowedByTemplateOrApplicableBindings(template, authorizationCluster, applicableTemplateBindings, clusterMap, clusterConfigList.Items)
 			if allowedResult.Allowed {
 				break
 			}
 		}
 	}
 	if !allowedResult.Allowed {
-		templateRequesterAllowed := isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, nil), currentUserStr, userEmail, userGroups)
-		if !templateRequesterAllowed && !c.isDebugSessionRequesterAllowedForTemplateOrBindings(template, bindingList.Items, currentUserStr, userEmail, userGroups) {
+		if !requesterAllowedForTemplateOrBinding {
 			reqLog.Warnw("User is not allowed to request debug session",
 				"templateRef", req.TemplateRef,
 				"user", currentUserStr,

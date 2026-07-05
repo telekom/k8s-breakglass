@@ -861,6 +861,17 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 	clusterConfigs map[string]*breakglassv1alpha1.ClusterConfig,
 	clusterConfigItems []breakglassv1alpha1.ClusterConfig,
 ) ClusterAllowedResult {
+	applicableBindings := c.findBindingsForTemplate(template, bindings)
+	return c.isClusterAllowedByTemplateOrApplicableBindings(template, clusterName, applicableBindings, clusterConfigs, clusterConfigItems)
+}
+
+func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrApplicableBindings(
+	template *breakglassv1alpha1.DebugSessionTemplate,
+	clusterName string,
+	applicableBindings []breakglassv1alpha1.DebugSessionClusterBinding,
+	clusterConfigs map[string]*breakglassv1alpha1.ClusterConfig,
+	clusterConfigItems []breakglassv1alpha1.ClusterConfig,
+) ClusterAllowedResult {
 	result := ClusterAllowedResult{}
 
 	hasTemplateClusterRestriction := template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0
@@ -869,7 +880,7 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 		"template", template.Name,
 		"cluster", clusterName,
 		"hasTemplateClusterRestriction", hasTemplateClusterRestriction,
-		"totalBindingsProvided", len(bindings),
+		"applicableBindingsProvided", len(applicableBindings),
 		"totalClusterConfigs", len(clusterConfigs),
 	)
 
@@ -909,7 +920,6 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 	}
 
 	// 2. Check if allowed by any binding that references this template
-	applicableBindings := c.findBindingsForTemplate(template, bindings)
 	sortDebugSessionClusterBindings(applicableBindings)
 	c.log.Debugw("Found bindings for template",
 		"template", template.Name,

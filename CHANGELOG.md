@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **DebugSession denial and HTTP log redaction**: Frontend HTTP error logging and unauthorized DebugSession cluster-denial responses now avoid exposing bearer tokens or template cluster patterns.
 - **BreakglassEscalation admission validation**: Escalation duration fields now reject non-positive or malformed values consistently, `idleTimeout` and `approvalTimeout` are checked against the effective `maxValidFor`, and invalid cluster glob patterns are rejected before they can affect session admission.
 - **BreakglassSession approver IDP enforcement**: Approval and rejection requests now enforce `BreakglassEscalation.spec.allowedIdentityProvidersForApprovers`, denying approvers whose authenticated IdentityProvider is missing or not allowed.
 - **Frontend debug logging hardening**: Production builds no longer enable verbose debug logging from URL or localStorage flags, group and claim refresh diagnostics log only counts and claim keys instead of sensitive group memberships or full profile claims, and stale OIDC refresh tokens are removed from browser session state before silent renew.
