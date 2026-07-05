@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2024 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+# Helpers for GitHub Actions E2E diagnostics. Keep sourced credential-bearing
+# values masked and avoid uploading Docker inspect environment fields.
+
+ci_escape_workflow_command_value() {
+  local value="$1"
+  value="${value//%/%25}"
+  value="${value//$'\r'/%0D}"
+  value="${value//$'\n'/%0A}"
+  printf '%s' "$value"
+}
+
+ci_mask_secret_like_e2e_env() {
+  local name value
+
+  while IFS= read -r name; do
+    case "$name" in
+      E2E_* | BREAKGLASS_* | KEYCLOAK_* | MAILHOG_* | PLAYWRIGHT_* | VITE_*)
+        case "$name" in
+          *SECRET* | *PASSWORD* | *PASS* | *TOKEN* | *PRIVATE* | *CREDENTIAL* | *AUTH_HEADER* | *COOKIE*)
+            value="${!name-}"
+            if [ -n "$value" ]; then
+              printf '::add-mask::%s\n' "$(ci_escape_workflow_command_value "$value")"
+            fi
+            ;;
+        esac
+        ;;
+    esac
+  done < <(compgen -e)
+}
+
+ci_print_e2e_env_allowlist() {
+  local name
+  local allowlist=(
+    E2E_TEST
+    E2E_NAMESPACE
+    E2E_CLUSTER_NAME
+    BREAKGLASS_API_URL
+    BREAKGLASS_WEBHOOK_URL
+    BREAKGLASS_METRICS_URL
+    KEYCLOAK_URL
+    KEYCLOAK_HOST
+    KEYCLOAK_PORT
+    KEYCLOAK_REALM
+    KEYCLOAK_CLIENT_ID
+    KEYCLOAK_ISSUER_HOST
+    KEYCLOAK_INTERNAL_URL
+    KEYCLOAK_SERVICE_HOSTNAME
+    MAILHOG_URL
+    MAILHOG_HOST
+    MAILHOG_PORT
+    MAILHOG_UI_PORT
+    PLAYWRIGHT_BASE_URL
+    VITE_API_BASE_URL
+    VITE_KEYCLOAK_URL
+    VITE_KEYCLOAK_REALM
+    VITE_KEYCLOAK_CLIENT_ID
+  )
+
+  for name in "${allowlist[@]}"; do
+    if [ "${!name+x}" = "x" ]; then
+      printf '%s=%s\n' "$name" "${!name}"
+    fi
+  done
+}
+
+ci_redacted_docker_inspect() {
+  local container="$1"
+  local output="$2"
+
+  if command -v jq >/dev/null 2>&1; then
+    docker inspect "$container" \
+      | jq 'walk(if type == "object" and has("Env") then del(.Env) else . end)' \
+      > "$output"
+  else
+    {
+      echo "jq unavailable; full docker inspect omitted to avoid environment disclosure."
+      echo "Container: $container"
+      echo
+      echo "State:"
+      docker inspect "$container" --format '{{json .State}}' 2>&1 || true
+      echo
+      echo "Mounts:"
+      docker inspect "$container" --format '{{json .Mounts}}' 2>&1 || true
+      echo
+      echo "NetworkSettings:"
+      docker inspect "$container" --format '{{json .NetworkSettings}}' 2>&1 || true
+    } > "$output"
+  fi
+}
