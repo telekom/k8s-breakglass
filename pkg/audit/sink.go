@@ -19,6 +19,7 @@ package audit
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -134,6 +135,7 @@ type WebhookSinkConfig struct {
 	BatchURL string // Optional: separate endpoint for batch writes (e.g., /events/batch)
 	Headers  map[string]string
 	Timeout  time.Duration
+	TLS      *tls.Config
 }
 
 // NewWebhookSink creates a new WebhookSink.
@@ -148,15 +150,26 @@ func NewWebhookSink(cfg WebhookSinkConfig, logger *zap.Logger) *WebhookSink {
 		batchURL = cfg.URL // Use same URL for batch if not specified
 	}
 
+	httpClient := &http.Client{
+		Timeout: timeout,
+	}
+	if cfg.TLS != nil {
+		defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			defaultTransport = &http.Transport{}
+		}
+		transport := defaultTransport.Clone()
+		transport.TLSClientConfig = cfg.TLS.Clone()
+		httpClient.Transport = transport
+	}
+
 	sink := &WebhookSink{
-		name:     cfg.Name,
-		url:      cfg.URL,
-		batchURL: batchURL,
-		httpClient: &http.Client{
-			Timeout: timeout,
-		},
-		headers: cfg.Headers,
-		logger:  logger.Named("webhook-sink"),
+		name:       cfg.Name,
+		url:        cfg.URL,
+		batchURL:   batchURL,
+		httpClient: httpClient,
+		headers:    cfg.Headers,
+		logger:     logger.Named("webhook-sink"),
 	}
 
 	sink.logger.Info("Webhook audit sink created",
