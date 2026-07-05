@@ -870,35 +870,32 @@ func (c *DebugSessionController) validateSpokeServiceAccount(
 }
 
 // requiresApproval checks if the session requires approval.
-// It checks both the template and the binding for approvers configuration.
-// Approval is required if either the template or binding specifies approvers
-// (unless auto-approve conditions are met).
+// Binding approvers replace template approvers when present; otherwise template
+// approvers are used. Approval is required when the effective approver set has
+// users or groups, unless auto-approve conditions are met.
 func (c *DebugSessionController) requiresApproval(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, ds *breakglassv1alpha1.DebugSession) bool {
-	// Check if binding has approvers configured (takes precedence)
+	// Binding approvers replace template approvers when the field is present,
+	// even if the binding intentionally sets an empty approver list.
 	if binding != nil && binding.Spec.Approvers != nil {
-		if len(binding.Spec.Approvers.Users) > 0 || len(binding.Spec.Approvers.Groups) > 0 {
-			c.log.Infow("Approval required by binding",
-				"session", ds.Name,
-				"binding", binding.Name,
-				"bindingNamespace", binding.Namespace)
-			// Check binding auto-approve conditions
-			if binding.Spec.Approvers.AutoApproveFor != nil {
-				if c.checkAutoApprove(binding.Spec.Approvers.AutoApproveFor, ds) {
-					return false
-				}
-			}
-			return true
+		if !debugSessionApproversConfigured(binding.Spec.Approvers) {
+			return false
 		}
+		c.log.Infow("Approval required by binding",
+			"session", ds.Name,
+			"binding", binding.Name,
+			"bindingNamespace", binding.Namespace)
+		// Check binding auto-approve conditions
+		if binding.Spec.Approvers.AutoApproveFor != nil {
+			if c.checkAutoApprove(binding.Spec.Approvers.AutoApproveFor, ds) {
+				return false
+			}
+		}
+		return true
 	}
 
 	// Check if template has approvers configured
-	if template.Spec.Approvers == nil {
+	if template == nil || !debugSessionApproversConfigured(template.Spec.Approvers) {
 		return false // No approvers configured = auto-approve
-	}
-
-	// Check if template has actual approvers (not just auto-approve rules)
-	if len(template.Spec.Approvers.Users) == 0 && len(template.Spec.Approvers.Groups) == 0 {
-		return false // No actual approvers configured
 	}
 
 	// Check template auto-approve conditions

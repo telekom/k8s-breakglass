@@ -310,6 +310,63 @@ func TestCanReadDebugSession_BindingApproversAreAuthoritative(t *testing.T) {
 	assert.False(t, result)
 }
 
+func TestCanReadDebugSession_BindingApproversEmptyVsNil(t *testing.T) {
+	for _, tt := range []struct {
+		name             string
+		bindingApprovers *breakglassv1alpha1.DebugSessionApprovers
+		want             bool
+	}{
+		{
+			name:             "empty binding approvers replace template",
+			bindingApprovers: &breakglassv1alpha1.DebugSessionApprovers{},
+			want:             false,
+		},
+		{
+			name:             "nil binding approvers inherit template",
+			bindingApprovers: nil,
+			want:             true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := zaptest.NewLogger(t).Sugar()
+			binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "prod-binding", Namespace: "breakglass"},
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					Approvers: tt.bindingApprovers,
+				},
+			}
+			template := &breakglassv1alpha1.DebugSessionTemplate{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+				Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+					Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+						Users: []string{"template-approver@example.com"},
+					},
+				},
+			}
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(Scheme).
+				WithObjects(binding, template).
+				Build()
+			ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
+				Spec: breakglassv1alpha1.DebugSessionSpec{
+					TemplateRef: "test-template",
+					RequestedBy: "alice@example.com",
+					BindingRef:  &breakglassv1alpha1.BindingReference{Name: "prod-binding", Namespace: "breakglass"},
+				},
+			}
+
+			result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{
+				username: "template-approver@example.com",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, result)
+		})
+	}
+}
+
 func TestCanReadDebugSession_ResolvedTemplateApproversAreAuthoritative(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	template := &breakglassv1alpha1.DebugSessionTemplate{

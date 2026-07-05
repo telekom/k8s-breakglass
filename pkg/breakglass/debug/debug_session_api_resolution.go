@@ -164,7 +164,7 @@ func (c *DebugSessionAPIController) resolveApproval(template *breakglassv1alpha1
 	info := &ApprovalInfo{}
 
 	approvers := effectiveDebugSessionApprovers(template, binding)
-	if approvers != nil {
+	if debugSessionApproversConfigured(approvers) {
 		info.Required = true
 		info.ApproverGroups = approvers.Groups
 		info.ApproverUsers = approvers.Users
@@ -209,10 +209,10 @@ func debugSessionAutoApproveMatches(autoApprove *breakglassv1alpha1.AutoApproveC
 }
 
 func effectiveDebugSessionApprovers(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *breakglassv1alpha1.DebugSessionApprovers {
-	if binding != nil && debugSessionApproversConfigured(binding.Spec.Approvers) {
+	if binding != nil && binding.Spec.Approvers != nil {
 		return binding.Spec.Approvers
 	}
-	if template != nil && debugSessionApproversConfigured(template.Spec.Approvers) {
+	if template != nil {
 		return template.Spec.Approvers
 	}
 	return nil
@@ -594,7 +594,7 @@ func (a *debugSessionApprovalAuthorizer) isIdentityAuthorizedToApprove(ctx conte
 				"session", session.Name, "binding", key.String())
 			return false
 		}
-		if debugSessionApproversConfigured(binding.Spec.Approvers) {
+		if binding.Spec.Approvers != nil {
 			return c.checkApproverAuthorizationForIdentity(binding.Spec.Approvers, identity)
 		}
 	}
