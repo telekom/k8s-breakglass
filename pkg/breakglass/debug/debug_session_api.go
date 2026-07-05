@@ -860,15 +860,6 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 	}
 	if !allowedResult.Allowed {
-		if !requesterAllowedForTemplateOrBinding {
-			reqLog.Warnw("User is not allowed to request debug session",
-				"templateRef", req.TemplateRef,
-				"user", currentUserStr,
-				"groupCount", len(userGroups),
-			)
-			apiresponses.RespondForbidden(ctx, "user is not allowed to request this debug session")
-			return
-		}
 		var errDetails string
 		if template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0 {
 			if templateRequesterAllowed {
