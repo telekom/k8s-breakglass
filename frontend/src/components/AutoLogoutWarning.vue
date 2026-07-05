@@ -41,6 +41,7 @@
 import { inject, onMounted, onUnmounted, ref } from "vue";
 import { AuthKey } from "@/keys";
 import { warn } from "@/services/logger";
+import { getStoredOIDCUser } from "@/services/auth";
 
 export default {
   name: "AutoLogoutWarning",
@@ -83,26 +84,34 @@ export default {
     }
 
     function checkExpiring() {
-      const userStr = localStorage.getItem(
-        "oidc.user:" + auth.userManager.settings.authority + ":" + auth.userManager.settings.client_id,
-      );
-      if (userStr) {
-        try {
-          const parsed = JSON.parse(userStr);
-          if (parsed && parsed.expires_at) {
-            const expiresIn = parsed.expires_at * 1000 - Date.now();
-            if (expiresIn < WARNING_THRESHOLD_MS && expiresIn > 0 && !dismissed.value) {
-              show.value = true;
-            } else {
-              show.value = false;
-              if (expiresIn > WARNING_THRESHOLD_MS) {
-                dismissed.value = false;
-              }
-            }
-          }
-        } catch (e) {
-          warn("AutoLogoutWarning", "Failed to parse OIDC user data from localStorage", e);
+      const userStr = getStoredOIDCUser(auth.userManager.settings.authority, auth.userManager.settings.client_id);
+      if (!userStr) {
+        show.value = false;
+        dismissed.value = false;
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(userStr);
+        if (!parsed?.expires_at) {
+          show.value = false;
+          dismissed.value = false;
+          return;
         }
+
+        const expiresIn = parsed.expires_at * 1000 - Date.now();
+        if (expiresIn < WARNING_THRESHOLD_MS && expiresIn > 0 && !dismissed.value) {
+          show.value = true;
+        } else {
+          show.value = false;
+          if (expiresIn > WARNING_THRESHOLD_MS) {
+            dismissed.value = false;
+          }
+        }
+      } catch (e) {
+        show.value = false;
+        dismissed.value = false;
+        warn("AutoLogoutWarning", "Failed to parse OIDC user data from browser storage", e);
       }
     }
 

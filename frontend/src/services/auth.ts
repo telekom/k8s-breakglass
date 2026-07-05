@@ -174,6 +174,35 @@ function getOIDCStorage(): Storage {
   return typeof window.sessionStorage !== "undefined" ? window.sessionStorage : fallbackStorage;
 }
 
+export function getOIDCUserStorageKey(authority: string | undefined, clientID: string | undefined): string | undefined {
+  if (!authority || !clientID) {
+    return undefined;
+  }
+  return `oidc.user:${authority}:${clientID}`;
+}
+
+function readBrowserStorageItem(getStorage: () => Storage | undefined, key: string): string | null {
+  try {
+    return getStorage()?.getItem(key) ?? null;
+  } catch (err) {
+    debug("AuthService", "Unable to read OIDC user from browser storage", err);
+    return null;
+  }
+}
+
+export function getStoredOIDCUser(authority: string | undefined, clientID: string | undefined): string | null {
+  const storageKey = getOIDCUserStorageKey(authority, clientID);
+  if (!storageKey) {
+    return null;
+  }
+  if (!isBrowser) {
+    return fallbackStorage.getItem(storageKey);
+  }
+
+  const sessionUser = readBrowserStorageItem(() => window.sessionStorage, storageKey);
+  return sessionUser ?? readBrowserStorageItem(() => window.localStorage, storageKey);
+}
+
 /**
  * Set the current direct authority for the active OIDC session.
  * The value is read by the custom fetch hook so we can scope
