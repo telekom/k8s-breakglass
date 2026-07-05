@@ -74,10 +74,12 @@ verify-release-provenance: ## Verify release image provenance signs the registry
 
 .PHONY: verify-generated
 verify-generated: generate manifests ## Verify generated API and manifest artifacts are checked in.
-	@git diff --exit-code -- api config || { \
+	@status="$$(git status --porcelain -- api config)"; \
+	if [ -n "$${status}" ]; then \
+		printf '%s\n' "$${status}"; \
 		echo "Generated files are stale. Run 'make generate manifests' and commit the result."; \
 		exit 1; \
-	}
+	fi
 
 .PHONY: verify-docs-snippets
 verify-docs-snippets: ## Verify docs and workflow snippets use current dev workload names.

@@ -16,6 +16,16 @@ filter_current_run='
   map(select(current_run_url | not))
 '
 
+latest_runs_by_check='
+  def check_key:
+    [((.app.id // .app.slug // .app.name // "unknown") | tostring), (.name // "")];
+  def run_order:
+    [(.started_at // .completed_at // .created_at // .updated_at // ""), (.id // 0)];
+  sort_by(check_key)
+  | group_by(check_key)
+  | map(max_by(run_order))
+'
+
 if [ -n "${CHECK_RUNS_JSON:-}" ]; then
   all_runs="$(jq -c '
     if type == "object" and has("check_runs") then .check_runs
@@ -30,11 +40,17 @@ else
   )"
 fi
 
-runs="$(jq -c --arg current_run_id "${current_run_id}" "${filter_current_run}" <<< "${all_runs}")"
+filtered_runs="$(jq -c --arg current_run_id "${current_run_id}" "${filter_current_run}" <<< "${all_runs}")"
 
-ignored_count="$(( $(jq 'length' <<< "${all_runs}") - $(jq 'length' <<< "${runs}") ))"
+ignored_count="$(( $(jq 'length' <<< "${all_runs}") - $(jq 'length' <<< "${filtered_runs}") ))"
 if [ "${ignored_count}" -gt 0 ]; then
   echo "Ignoring ${ignored_count} check run(s) from current release workflow run ${current_run_id}."
+fi
+
+runs="$(jq -c "${latest_runs_by_check}" <<< "${filtered_runs}")"
+superseded_count="$(( $(jq 'length' <<< "${filtered_runs}") - $(jq 'length' <<< "${runs}") ))"
+if [ "${superseded_count}" -gt 0 ]; then
+  echo "Ignoring ${superseded_count} superseded check run attempt(s); evaluating latest check run per app/name."
 fi
 
 failures="$(
