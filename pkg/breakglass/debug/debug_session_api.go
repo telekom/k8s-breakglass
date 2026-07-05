@@ -1339,26 +1339,6 @@ func effectiveDebugSessionAllowed(template *breakglassv1alpha1.DebugSessionTempl
 	return template.Spec.Allowed
 }
 
-func (c *DebugSessionAPIController) isDebugSessionRequesterAllowedForTemplateOrBindings(
-	template *breakglassv1alpha1.DebugSessionTemplate,
-	bindings []breakglassv1alpha1.DebugSessionClusterBinding,
-	username, email string,
-	userGroups []string,
-) bool {
-	if isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, nil), username, email, userGroups) {
-		return true
-	}
-
-	applicableBindings := c.findBindingsForTemplate(template, bindings)
-	for i := range applicableBindings {
-		if isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, &applicableBindings[i]), username, email, userGroups) {
-			return true
-		}
-	}
-
-	return false
-}
-
 func isDebugSessionRequesterAllowed(allowed *breakglassv1alpha1.DebugSessionAllowed, username, email string, userGroups []string) bool {
 	if allowed == nil || (len(allowed.Users) == 0 && len(allowed.Groups) == 0) {
 		return true
