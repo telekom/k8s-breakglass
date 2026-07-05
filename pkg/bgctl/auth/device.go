@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,11 @@ import (
 	"time"
 
 	"golang.org/x/oauth2"
+)
+
+const (
+	oidcErrorBodyLimit = 4 * 1024
+	oidcJSONBodyLimit  = 1 * 1024 * 1024
 )
 
 type oidcDiscovery struct {
@@ -86,12 +92,16 @@ func DeviceCodeLogin(ctx context.Context, cfg OIDCConfig) (*LoginResult, error) 
 		tokenResp, err := pollDeviceToken(ctx, client, endpoints.TokenEndpoint, cfg, deviceResp.DeviceCode)
 		if err != nil {
 			if errors.Is(err, errAuthorizationPending) {
-				time.Sleep(interval)
+				if err := waitForDevicePoll(ctx, interval); err != nil {
+					return nil, err
+				}
 				continue
 			}
 			if errors.Is(err, errSlowDown) {
 				interval += 5 * time.Second
-				time.Sleep(interval)
+				if err := waitForDevicePoll(ctx, interval); err != nil {
+					return nil, err
+				}
 				continue
 			}
 			return nil, err
@@ -126,11 +136,10 @@ func discoverOIDCEndpoints(ctx context.Context, client *http.Client, authority s
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("discovery failed: %s", string(body))
+		return nil, fmt.Errorf("discovery failed: %s", readOIDCErrorBody(resp.Body))
 	}
 	var discovery oidcDiscovery
-	if err := json.NewDecoder(resp.Body).Decode(&discovery); err != nil {
+	if err := decodeLimitedJSON(resp.Body, &discovery); err != nil {
 		return nil, err
 	}
 	return &discovery, nil
@@ -142,7 +151,7 @@ func requestDeviceCode(ctx context.Context, client *http.Client, endpoint string
 	if len(cfg.Scopes) > 0 {
 		values.Set("scope", strings.Join(cfg.Scopes, " "))
 	}
-	resp, err := client.PostForm(endpoint, values)
+	resp, err := postFormWithContext(ctx, client, endpoint, values)
 	if err != nil {
 		return nil, err
 	}
@@ -150,11 +159,10 @@ func requestDeviceCode(ctx context.Context, client *http.Client, endpoint string
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("device authorization failed: %s", string(body))
+		return nil, fmt.Errorf("device authorization failed: %s", readOIDCErrorBody(resp.Body))
 	}
 	var payload deviceCodeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := decodeLimitedJSON(resp.Body, &payload); err != nil {
 		return nil, err
 	}
 	return &payload, nil
@@ -165,7 +173,7 @@ func pollDeviceToken(ctx context.Context, client *http.Client, endpoint string, 
 	values.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
 	values.Set("device_code", deviceCode)
 	values.Set("client_id", cfg.ClientID)
-	resp, err := client.PostForm(endpoint, values)
+	resp, err := postFormWithContext(ctx, client, endpoint, values)
 	if err != nil {
 		return nil, err
 	}
@@ -173,18 +181,106 @@ func pollDeviceToken(ctx context.Context, client *http.Client, endpoint string, 
 		_ = resp.Body.Close()
 	}()
 	var payload tokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if resp.StatusCode >= 400 {
+		body, truncated, err := readLimitedBody(resp.Body, oidcErrorBodyLimit)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.NewDecoder(bytes.NewReader(body)).Decode(&payload); err != nil {
+			return nil, fmt.Errorf("device token failed: HTTP %d: %s", resp.StatusCode, formatLimitedBody(body, truncated, oidcErrorBodyLimit))
+		}
+		if err := deviceTokenPayloadError(payload); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("device token failed: HTTP %d: %s", resp.StatusCode, formatLimitedBody(body, truncated, oidcErrorBodyLimit))
+	}
+	if err := decodeLimitedJSON(resp.Body, &payload); err != nil {
 		return nil, err
 	}
+	if err := deviceTokenPayloadError(payload); err != nil {
+		return nil, err
+	}
+	return &payload, nil
+}
+
+func deviceTokenPayloadError(payload tokenResponse) error {
 	if payload.Error != "" {
 		switch payload.Error {
 		case "authorization_pending":
-			return nil, errAuthorizationPending
+			return errAuthorizationPending
 		case "slow_down":
-			return nil, errSlowDown
+			return errSlowDown
 		default:
-			return nil, fmt.Errorf("device token error: %s", payload.Error)
+			if description := strings.TrimSpace(payload.ErrorDesc); description != "" {
+				return fmt.Errorf("device token error: %s: %s", payload.Error, description)
+			}
+			return fmt.Errorf("device token error: %s", payload.Error)
 		}
 	}
-	return &payload, nil
+	return nil
+}
+
+func postFormWithContext(ctx context.Context, client *http.Client, endpoint string, values url.Values) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(values.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return client.Do(req)
+}
+
+func waitForDevicePoll(ctx context.Context, interval time.Duration) error {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func readOIDCErrorBody(body io.Reader) string {
+	data, truncated, err := readLimitedBody(body, oidcErrorBodyLimit)
+	if err != nil {
+		return fmt.Sprintf("failed to read response body: %v", err)
+	}
+	return formatLimitedBody(data, truncated, oidcErrorBodyLimit)
+}
+
+func decodeLimitedJSON(body io.Reader, target interface{}) error {
+	return decodeLimitedJSONWithLimit(body, target, oidcJSONBodyLimit)
+}
+
+func decodeLimitedJSONWithLimit(body io.Reader, target interface{}, limit int64) error {
+	data, truncated, err := readLimitedBody(body, limit)
+	if err != nil {
+		return err
+	}
+	if truncated {
+		return fmt.Errorf("oidc json response exceeds %d bytes", limit)
+	}
+	return json.NewDecoder(bytes.NewReader(data)).Decode(target)
+}
+
+func readLimitedBody(body io.Reader, limit int64) ([]byte, bool, error) {
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(data)) > limit {
+		return data[:limit], true, nil
+	}
+	return data, false, nil
+}
+
+func formatLimitedBody(data []byte, truncated bool, limit int64) string {
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		text = "<empty response body>"
+	}
+	if truncated {
+		return fmt.Sprintf("%s... (truncated after %d bytes)", text, limit)
+	}
+	return text
 }
