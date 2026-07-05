@@ -439,6 +439,49 @@ func TestSessionManager_GetSessionsByState(t *testing.T) {
 	})
 }
 
+func TestSessionManager_GetSessionsByStatesFallsBackToSingleFullList(t *testing.T) {
+	ctx := context.Background()
+	session1 := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-1", Namespace: "default"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStatePending,
+		},
+	}
+	session2 := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-2", Namespace: "default"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
+		},
+	}
+	session3 := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-3", Namespace: "default"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateRejected,
+		},
+	}
+	baseClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(session1, session2, session3).
+		Build()
+	recordingClient := &recordingListClient{Client: baseClient}
+	mgr := NewSessionManagerWithClient(recordingClient)
+
+	sessions, err := mgr.GetSessionsByStates(ctx, []breakglassv1alpha1.BreakglassSessionState{
+		breakglassv1alpha1.SessionStatePending,
+		breakglassv1alpha1.SessionStateApproved,
+	})
+
+	require.NoError(t, err)
+	gotNames := make([]string, 0, len(sessions))
+	for _, session := range sessions {
+		gotNames = append(gotNames, session.Name)
+	}
+	assert.ElementsMatch(t, []string{"session-1", "session-2"}, gotNames)
+	assert.Equal(t, []string{string(breakglassv1alpha1.SessionStatePending)}, recordedFieldSelectorValues(recordingClient.calls, "status.state"))
+	require.Len(t, recordingClient.calls, 2, "expected one indexed attempt and one full-list fallback")
+	assert.Nil(t, recordingClient.calls[1].FieldSelector)
+}
+
 func TestSessionManager_UpdateBreakglassSession(t *testing.T) {
 	ctx := context.Background()
 

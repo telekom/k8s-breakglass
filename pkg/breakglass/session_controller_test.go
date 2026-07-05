@@ -92,6 +92,34 @@ func (c clusterConfigListErrorClient) List(_ context.Context, _ client.ObjectLis
 	return c.err
 }
 
+type recordingListClient struct {
+	client.Client
+	calls []client.ListOptions
+}
+
+func (c *recordingListClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	listOpts := client.ListOptions{}
+	for _, opt := range opts {
+		opt.ApplyToList(&listOpts)
+	}
+	c.calls = append(c.calls, listOpts)
+	return c.Client.List(ctx, list, opts...)
+}
+
+func recordedFieldSelectorValues(calls []client.ListOptions, field string) []string {
+	values := make([]string, 0, len(calls))
+	for _, call := range calls {
+		if call.FieldSelector == nil {
+			continue
+		}
+		value, ok := call.FieldSelector.RequiresExactMatch(field)
+		if ok {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
 func TestDropK8sInternalFieldsSessionStripsMetadata(t *testing.T) {
 	s := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{
@@ -5220,6 +5248,63 @@ func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 	assertInvalidState(t, "/breakglassSessions?state=pending,not-a-state&mine=true", "notastate")
 	assertInvalidState(t, "/breakglassSessions?state=not-a-state&state=still-not-a-state&mine=true", "stillnotastate")
 	assertInvalidState(t, "/breakglassSessions?state=duplicate-invalid&state=duplicate-invalid&mine=true", "duplicateinvalid")
+}
+
+func TestBreakglassSessionStatusListPushesExactStateFiltersAndPreservesAuthorization(t *testing.T) {
+	viewer := "viewer@example.com"
+	makeSession := func(name, user, cluster string, state breakglassv1alpha1.BreakglassSessionState) *breakglassv1alpha1.BreakglassSession {
+		return &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      cluster,
+				User:         user,
+				GrantedGroup: "g",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{State: state},
+		}
+	}
+
+	authorizedPending := makeSession("authorized-pending", viewer, "prod", breakglassv1alpha1.SessionStatePending)
+	authorizedApproved := makeSession("authorized-approved", viewer, "prod", breakglassv1alpha1.SessionStateApproved)
+	otherPending := makeSession("other-pending", "other@example.com", "prod", breakglassv1alpha1.SessionStatePending)
+	otherClusterPending := makeSession("other-cluster-pending", viewer, "dev", breakglassv1alpha1.SessionStatePending)
+
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+	baseClient := builder.WithObjects(authorizedPending, authorizedApproved, otherPending, otherClusterPending).Build()
+	recordingClient := &recordingListClient{Client: baseClient}
+	sesmanager := SessionManager{Client: recordingClient}
+	escmanager := testEscalationLookup{Client: recordingClient}
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("email", viewer)
+			c.Set("username", "viewer")
+			c.Next()
+		}, "/config/config.yaml", nil, recordingClient)
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	req, err := http.NewRequest(http.MethodGet, "/breakglassSessions?cluster=prod&state=pending&state=approved&mine=true", nil)
+	require.NoError(t, err)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	res := w.Result()
+	require.Equal(t, http.StatusOK, res.StatusCode)
+
+	sessions := decodeBreakglassSessionListEnvelope(t, res.Body)
+	gotNames := make([]string, 0, len(sessions))
+	for _, session := range sessions {
+		gotNames = append(gotNames, session.Name)
+	}
+	assert.ElementsMatch(t, []string{"authorized-pending", "authorized-approved"}, gotNames)
+	assert.ElementsMatch(t, []string{
+		string(breakglassv1alpha1.SessionStatePending),
+		string(breakglassv1alpha1.SessionStateApproved),
+	}, recordedFieldSelectorValues(recordingClient.calls, "status.state"))
 }
 
 func TestFilterBreakglassSessionsApprovedByMe(t *testing.T) {

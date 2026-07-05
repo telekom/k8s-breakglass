@@ -68,6 +68,34 @@ func debugSessionAPITestRouter(t *testing.T, ctrl *DebugSessionAPIController, us
 	return router
 }
 
+type debugSessionRecordingListClient struct {
+	client.Client
+	calls []client.ListOptions
+}
+
+func (c *debugSessionRecordingListClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	listOpts := client.ListOptions{}
+	for _, opt := range opts {
+		opt.ApplyToList(&listOpts)
+	}
+	c.calls = append(c.calls, listOpts)
+	return c.Client.List(ctx, list, opts...)
+}
+
+func debugSessionRecordedFieldValues(calls []client.ListOptions, field string) []string {
+	values := make([]string, 0, len(calls))
+	for _, call := range calls {
+		if call.FieldSelector == nil {
+			continue
+		}
+		value, ok := call.FieldSelector.RequiresExactMatch(field)
+		if ok {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
 func TestBuildDebugSessionNameUsesCompactSubsecondEntropy(t *testing.T) {
 	base := time.Unix(1782420779, 1)
 	first := buildDebugSessionName("debug-session-requester", "tenant-a", base)
@@ -2123,6 +2151,86 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 		require.Equal(t, 1, response3.Total)
 		assert.False(t, response3.Sessions[0].IsParticipant, "charlie left the session, should not be isParticipant")
 	})
+}
+
+func TestHandleListDebugSessionsPushesIndexedFiltersAndPreservesAuthorization(t *testing.T) {
+	scheme := testScheme()
+	logger := zap.NewNop().Sugar()
+
+	approverTemplate := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+			Users: []string{"admin@example.com"},
+		},
+	}
+	otherApproverTemplate := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+			Users: []string{"other-admin@example.com"},
+		},
+	}
+	makeSession := func(name, cluster, requester string, state breakglassv1alpha1.DebugSessionState, template *breakglassv1alpha1.DebugSessionTemplateSpec) *breakglassv1alpha1.DebugSession {
+		return &breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     cluster,
+				TemplateRef: "standard-debug",
+				RequestedBy: requester,
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:            state,
+				ResolvedTemplate: template,
+			},
+		}
+	}
+
+	activeProd := makeSession("active-prod", "prod", "alice@example.com", breakglassv1alpha1.DebugSessionStateActive, approverTemplate)
+	pendingProd := makeSession("pending-prod", "prod", "bob@example.com", breakglassv1alpha1.DebugSessionStatePending, approverTemplate)
+	activeDev := makeSession("active-dev", "dev", "carol@example.com", breakglassv1alpha1.DebugSessionStateActive, approverTemplate)
+	failedProd := makeSession("failed-prod", "prod", "dave@example.com", breakglassv1alpha1.DebugSessionStateFailed, approverTemplate)
+	unauthorizedActiveProd := makeSession("unauthorized-active-prod", "prod", "mallory@example.com", breakglassv1alpha1.DebugSessionStateActive, otherApproverTemplate)
+
+	baseClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithIndex(&breakglassv1alpha1.DebugSession{}, "spec.cluster", func(obj client.Object) []string {
+			session, ok := obj.(*breakglassv1alpha1.DebugSession)
+			if !ok || session.Spec.Cluster == "" {
+				return nil
+			}
+			return []string{session.Spec.Cluster}
+		}).
+		WithIndex(&breakglassv1alpha1.DebugSession{}, "status.state", func(obj client.Object) []string {
+			session, ok := obj.(*breakglassv1alpha1.DebugSession)
+			if !ok || session.Status.State == "" {
+				return nil
+			}
+			return []string{string(session.Status.State)}
+		}).
+		WithObjects(activeProd, pendingProd, activeDev, failedProd, unauthorizedActiveProd).
+		WithStatusSubresource(activeProd, pendingProd, activeDev, failedProd, unauthorizedActiveProd).
+		Build()
+	recordingClient := &debugSessionRecordingListClient{Client: baseClient}
+	ctrl := NewDebugSessionAPIController(logger, recordingClient, nil, nil)
+	router := debugSessionAPITestRouter(t, ctrl, "admin@example.com", "", nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?cluster=prod&state=Active&state=Pending", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response DebugSessionListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	gotNames := make([]string, 0, len(response.Sessions))
+	for _, session := range response.Sessions {
+		gotNames = append(gotNames, session.Name)
+	}
+	assert.ElementsMatch(t, []string{"active-prod", "pending-prod"}, gotNames)
+	assert.ElementsMatch(t, []string{"prod", "prod"}, debugSessionRecordedFieldValues(recordingClient.calls, "spec.cluster"))
+	assert.ElementsMatch(t, []string{
+		string(breakglassv1alpha1.DebugSessionStateActive),
+		string(breakglassv1alpha1.DebugSessionStatePending),
+	}, debugSessionRecordedFieldValues(recordingClient.calls, "status.state"))
 }
 
 // TestDebugSessionAPIController_HandleGetDebugSession tests the handleGetDebugSession handler

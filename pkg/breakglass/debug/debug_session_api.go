@@ -429,6 +429,113 @@ func debugSessionIdentityMatches(identity debugSessionReadIdentity, values ...st
 	return false
 }
 
+func parseDebugSessionStateFilters(ctx *gin.Context) ([]breakglassv1alpha1.DebugSessionState, string, bool) {
+	rawStates := ctx.QueryArray("state")
+	states := make([]breakglassv1alpha1.DebugSessionState, 0, len(rawStates))
+	seen := map[breakglassv1alpha1.DebugSessionState]struct{}{}
+	for _, value := range rawStates {
+		for _, rawState := range strings.Split(value, ",") {
+			rawState = strings.TrimSpace(rawState)
+			if rawState == "" {
+				continue
+			}
+			state, ok := canonicalDebugSessionState(rawState)
+			if !ok {
+				return nil, rawState, false
+			}
+			if _, exists := seen[state]; exists {
+				continue
+			}
+			seen[state] = struct{}{}
+			states = append(states, state)
+		}
+	}
+	return states, "", true
+}
+
+func canonicalDebugSessionState(value string) (breakglassv1alpha1.DebugSessionState, bool) {
+	for state := range validDebugSessionStates {
+		if strings.EqualFold(state, value) {
+			return breakglassv1alpha1.DebugSessionState(state), true
+		}
+	}
+	return "", false
+}
+
+func debugSessionStateMatches(state breakglassv1alpha1.DebugSessionState, filters []breakglassv1alpha1.DebugSessionState) bool {
+	if len(filters) == 0 {
+		return true
+	}
+	for _, filter := range filters {
+		if state == filter {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *DebugSessionAPIController) listDebugSessionsWithFields(ctx context.Context, matchingFields ctrlclient.MatchingFields) ([]breakglassv1alpha1.DebugSession, bool, error) {
+	sessionList := &breakglassv1alpha1.DebugSessionList{}
+	listOpts := []ctrlclient.ListOption{}
+	if len(matchingFields) > 0 {
+		listOpts = append(listOpts, matchingFields)
+	}
+	if err := c.reader().List(ctx, sessionList, listOpts...); err != nil {
+		if len(matchingFields) > 0 && breakglass.IsFieldIndexError(err) {
+			fallbackList := &breakglassv1alpha1.DebugSessionList{}
+			if fallbackErr := c.reader().List(ctx, fallbackList); fallbackErr != nil {
+				return nil, false, fmt.Errorf("failed to list debug sessions after field-index fallback: %w", fallbackErr)
+			}
+			return fallbackList.Items, true, nil
+		}
+		return nil, false, err
+	}
+	return sessionList.Items, false, nil
+}
+
+func copyDebugSessionMatchingFields(in ctrlclient.MatchingFields) ctrlclient.MatchingFields {
+	out := make(ctrlclient.MatchingFields, len(in)+1)
+	for field, value := range in {
+		out[field] = value
+	}
+	return out
+}
+
+func (c *DebugSessionAPIController) listDebugSessionsForFilters(ctx context.Context, cluster string, states []breakglassv1alpha1.DebugSessionState) ([]breakglassv1alpha1.DebugSession, error) {
+	baseFields := ctrlclient.MatchingFields{}
+	if cluster != "" {
+		baseFields["spec.cluster"] = cluster
+	}
+
+	if len(states) == 0 {
+		sessions, _, err := c.listDebugSessionsWithFields(ctx, baseFields)
+		return sessions, err
+	}
+
+	sessions := make([]breakglassv1alpha1.DebugSession, 0)
+	seen := map[string]struct{}{}
+	for _, state := range states {
+		matchingFields := copyDebugSessionMatchingFields(baseFields)
+		matchingFields["status.state"] = string(state)
+		stateSessions, fellBack, err := c.listDebugSessionsWithFields(ctx, matchingFields)
+		if err != nil {
+			return nil, err
+		}
+		if fellBack {
+			return stateSessions, nil
+		}
+		for _, session := range stateSessions {
+			key := session.Namespace + "/" + session.Name
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			sessions = append(sessions, session)
+		}
+	}
+	return sessions, nil
+}
+
 // handleListDebugSessions returns a list of debug sessions
 func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
@@ -444,34 +551,19 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 	// Accept repeated ?state= params (e.g. ?state=Active&state=Pending) as well as
 	// a legacy single comma-separated value (e.g. ?state=Active,Pending).
 	// Comparison is case-insensitive so both "Active" and "active" match.
-	var states []string
-	for _, v := range ctx.QueryArray("state") {
-		for _, s := range strings.Split(v, ",") {
-			if s = strings.TrimSpace(s); s != "" {
-				states = append(states, s)
-			}
-		}
-	}
-	// Validate each requested state value against the canonical set.
-	for _, st := range states {
-		if !isValidDebugSessionState(st) {
-			apiresponses.RespondBadRequest(ctx, fmt.Sprintf("invalid state value: '%s'", st))
-			return
-		}
+	states, invalidState, ok := parseDebugSessionStateFilters(ctx)
+	if !ok {
+		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("invalid state value: '%s'", invalidState))
+		return
 	}
 	user := ctx.Query("user")
 	mine := ctx.Query("mine") == "true"
 
-	sessionList := &breakglassv1alpha1.DebugSessionList{}
-	listOpts := []ctrlclient.ListOption{}
-
-	// Note: cluster/state/user filters are applied client-side after fetching
-	// Field selectors would require additional indexer setup
-
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
 
-	if err := c.reader().List(apiCtx, sessionList, listOpts...); err != nil {
+	sessions, err := c.listDebugSessionsForFilters(apiCtx, cluster, states)
+	if err != nil {
 		reqLog.Errorw("Failed to list debug sessions", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to list debug sessions")
 		return
@@ -480,8 +572,8 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 	// Apply filters
 	var filtered []breakglassv1alpha1.DebugSession
 	readAuthorizer := c.newDebugSessionReadAuthorizer(identity)
-	for i := range sessionList.Items {
-		s := &sessionList.Items[i]
+	for i := range sessions {
+		s := &sessions[i]
 		canRead, err := readAuthorizer.canRead(apiCtx, s)
 		if err != nil {
 			reqLog.Errorw("Failed to evaluate debug session read authorization",
@@ -499,17 +591,8 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 			continue
 		}
 		// State filter
-		if len(states) > 0 {
-			matched := false
-			for _, st := range states {
-				if strings.EqualFold(string(s.Status.State), st) {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				continue
-			}
+		if !debugSessionStateMatches(s.Status.State, states) {
+			continue
 		}
 		// User filter
 		if user != "" && !debugSessionIdentityMatches(debugSessionReadIdentity{username: user, email: user}, s.Spec.RequestedBy, s.Spec.RequestedByEmail) {
@@ -1285,17 +1368,6 @@ var validDebugSessionStates = map[string]struct{}{
 	string(breakglassv1alpha1.DebugSessionStateExpired):         {},
 	string(breakglassv1alpha1.DebugSessionStateTerminated):      {},
 	string(breakglassv1alpha1.DebugSessionStateFailed):          {},
-}
-
-// isValidDebugSessionState returns true when val (case-insensitive) matches
-// one of the canonical DebugSessionState values.
-func isValidDebugSessionState(val string) bool {
-	for k := range validDebugSessionStates {
-		if strings.EqualFold(k, val) {
-			return true
-		}
-	}
-	return false
 }
 
 func parseDebugSessionBindingRef(bindingRef string) (string, string, bool) {
