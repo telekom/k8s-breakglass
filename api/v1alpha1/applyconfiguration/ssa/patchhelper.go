@@ -93,7 +93,7 @@ func patchApplyStatusViaUnstructuredWithOwner(ctx context.Context, c client.Clie
 	if err := json.Unmarshal(data, u); err != nil {
 		return 0, fmt.Errorf("failed to unmarshal apply configuration: %w", err)
 	}
-	ensureExplicitDebugSessionEmptyStatusLists(applyConfig, u)
+	ensureExplicitEmptyStatusLists(applyConfig, u)
 
 	// Clear managed fields.
 	u.SetManagedFields(nil)
@@ -147,26 +147,28 @@ func patchApplyStatusViaUnstructuredWithOwner(ctx context.Context, c client.Clie
 	return PatchApplyResultPatched, nil
 }
 
-func ensureExplicitDebugSessionEmptyStatusLists(applyConfig runtime.ApplyConfiguration, u *unstructured.Unstructured) {
-	dsConfig, ok := applyConfig.(*ac.DebugSessionApplyConfiguration)
-	if !ok || dsConfig.Status == nil {
+func ensureExplicitEmptyStatusLists(applyConfig runtime.ApplyConfiguration, u *unstructured.Unstructured) {
+	emptyLists := map[string]bool{}
+	if dsConfig, ok := applyConfig.(*ac.DebugSessionApplyConfiguration); ok && dsConfig.Status != nil {
+		emptyLists["auxiliaryResourceStatuses"] = dsConfig.Status.AuxiliaryResourceStatuses != nil && len(dsConfig.Status.AuxiliaryResourceStatuses) == 0
+		emptyLists["podTemplateResourceStatuses"] = dsConfig.Status.PodTemplateResourceStatuses != nil && len(dsConfig.Status.PodTemplateResourceStatuses) == 0
+	}
+	if templateConfig, ok := applyConfig.(*ac.DebugSessionTemplateApplyConfiguration); ok && templateConfig.Status != nil {
+		emptyLists["boundClusters"] = templateConfig.Status.BoundClusters != nil && len(templateConfig.Status.BoundClusters) == 0
+	}
+	if len(emptyLists) == 0 {
 		return
 	}
-	needsAuxiliary := dsConfig.Status.AuxiliaryResourceStatuses != nil && len(dsConfig.Status.AuxiliaryResourceStatuses) == 0
-	needsPodTemplate := dsConfig.Status.PodTemplateResourceStatuses != nil && len(dsConfig.Status.PodTemplateResourceStatuses) == 0
-	if !needsAuxiliary && !needsPodTemplate {
-		return
-	}
+
 	status, _ := u.Object["status"].(map[string]interface{})
 	if status == nil {
 		status = map[string]interface{}{}
 		u.Object["status"] = status
 	}
-	if needsAuxiliary {
-		status["auxiliaryResourceStatuses"] = []interface{}{}
-	}
-	if needsPodTemplate {
-		status["podTemplateResourceStatuses"] = []interface{}{}
+	for field, needsExplicitEmptyList := range emptyLists {
+		if needsExplicitEmptyList {
+			status[field] = []interface{}{}
+		}
 	}
 }
 

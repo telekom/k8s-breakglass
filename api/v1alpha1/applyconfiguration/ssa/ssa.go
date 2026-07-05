@@ -366,8 +366,8 @@ func DebugSessionTemplateStatusFrom(status *breakglassv1alpha1.DebugSessionTempl
 	result.WithTotalSessionCount(status.TotalSessionCount)
 	result.WithPodTemplateResolved(status.PodTemplateResolved)
 	result.WithBindingCount(status.BindingCount)
-	if len(status.BoundClusters) > 0 {
-		result.WithBoundClusters(status.BoundClusters...)
+	if status.BoundClusters != nil {
+		result.BoundClusters = append([]string{}, status.BoundClusters...)
 	}
 
 	// Set last used at

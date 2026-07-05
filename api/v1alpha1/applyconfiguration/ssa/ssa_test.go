@@ -604,7 +604,7 @@ func TestDebugSessionStatusFromPreservesExplicitEmptyResourceStatuses(t *testing
 
 	u := &unstructured.Unstructured{}
 	require.NoError(t, json.Unmarshal(data, u))
-	ensureExplicitDebugSessionEmptyStatusLists(applyConfig, u)
+	ensureExplicitEmptyStatusLists(applyConfig, u)
 
 	desiredStatus, ok := u.Object["status"].(map[string]interface{})
 	require.True(t, ok)
@@ -633,6 +633,34 @@ func TestDebugSessionStatusFromPreservesExplicitEmptyResourceStatuses(t *testing
 				"created":      true,
 			},
 		},
+	}
+	assert.False(t, statusSubsetMatch(currentStatus, desiredStatus))
+}
+
+func TestDebugSessionTemplateStatusFromPreservesExplicitEmptyBoundClusters(t *testing.T) {
+	status := &breakglassv1alpha1.DebugSessionTemplateStatus{
+		BindingCount:        0,
+		PodTemplateResolved: true,
+		BoundClusters:       []string{},
+	}
+	applyConfig := ac.DebugSessionTemplate("test-template").
+		WithStatus(DebugSessionTemplateStatusFrom(status))
+
+	data, err := json.Marshal(applyConfig)
+	require.NoError(t, err)
+
+	u := &unstructured.Unstructured{}
+	require.NoError(t, json.Unmarshal(data, u))
+	ensureExplicitEmptyStatusLists(applyConfig, u)
+
+	desiredStatus, ok := u.Object["status"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, []interface{}{}, desiredStatus["boundClusters"])
+
+	currentStatus := map[string]interface{}{
+		"bindingCount":        int64(0),
+		"podTemplateResolved": true,
+		"boundClusters":       []interface{}{"old-cluster"},
 	}
 	assert.False(t, statusSubsetMatch(currentStatus, desiredStatus))
 }
