@@ -90,12 +90,19 @@ E2E_EXCLUDE := grep -vE '/e2e($$|/)'
 vet: ## Run go vet against code.
 	go vet ./...
 
+.PHONY: prepare-test
+prepare-test: ## Regenerate code/manifests, format Go files, and run vet before testing.
+	$(MAKE) generate
+	$(MAKE) manifests
+	$(MAKE) fmt
+	$(MAKE) vet
+
 .PHONY: test
-test: manifests generate fmt vet ## Run all unit tests (controller + CLI).
+test: vet ## Run all unit tests (controller + CLI) without mutating generated or formatted files.
 	go test $(GO_TEST_FLAGS) $$(go list ./... | $(E2E_EXCLUDE)) -coverprofile cover.out
 
 .PHONY: test-controller
-test-controller: manifests generate fmt vet ## Run controller unit tests (excludes bgctl and e2e).
+test-controller: vet ## Run controller unit tests (excludes bgctl and e2e) without mutating generated or formatted files.
 	go test $(GO_TEST_FLAGS) $$(go list ./... | $(E2E_EXCLUDE) | grep -v bgctl) -coverprofile cover-controller.out
 
 .PHONY: validate-samples
