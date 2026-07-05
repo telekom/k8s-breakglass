@@ -215,6 +215,44 @@ func TestActivateScheduledSessions(t *testing.T) {
 		assert.True(t, hasCondition, "expected ScheduledStartTimeReached condition")
 	})
 
+	t.Run("canceled context skips scheduled activation", func(t *testing.T) {
+		scheduledTime := time.Now().Add(-5 * time.Minute)
+		session := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "scheduled-canceled",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				User:               "test@example.com",
+				Cluster:            "test-cluster",
+				GrantedGroup:       "admin",
+				ScheduledStartTime: &metav1.Time{Time: scheduledTime},
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+				ApprovedAt: metav1.NewTime(scheduledTime.Add(-30 * time.Minute)),
+				ExpiresAt:  metav1.NewTime(time.Now().UTC().Add(1 * time.Hour)),
+			},
+		}
+
+		fakeClient := newFakeActivationClient(session)
+		mgr := NewSessionManagerWithClient(fakeClient)
+		activator := NewScheduledSessionActivator(logger, mgr).
+			WithMailService(nil, "TestBranding", true)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		activator.ActivateScheduledSessions(ctx)
+
+		var updated breakglassv1alpha1.BreakglassSession
+		err := fakeClient.Get(context.Background(),
+			client.ObjectKey{Namespace: "breakglass", Name: "scheduled-canceled"},
+			&updated)
+		require.NoError(t, err)
+		assert.Equal(t, breakglassv1alpha1.SessionStateWaitingForScheduledTime, updated.Status.State)
+		assert.True(t, updated.Status.ActualStartTime.IsZero(), "ActualStartTime should not be set")
+	})
+
 	t.Run("leaves scheduled session waiting when activation status update fails", func(t *testing.T) {
 		scheduledTime := time.Now().Add(-5 * time.Minute)
 		session := &breakglassv1alpha1.BreakglassSession{

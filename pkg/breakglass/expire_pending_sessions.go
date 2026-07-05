@@ -10,19 +10,28 @@ import (
 )
 
 // ExpirePendingSessions sets state to Timeout for pending sessions that have expired (approval timeout).
-func (wc *BreakglassSessionController) ExpirePendingSessions() {
+func (wc *BreakglassSessionController) ExpirePendingSessions(ctxs ...context.Context) {
+	ctx := optionalCleanupContext(ctxs...)
+	if err := ctx.Err(); err != nil {
+		wc.log.Infow("skipping pending session expiry because context is cancelled", "error", err)
+		return
+	}
 	// Use indexed query to fetch only pending sessions (matching ExpireApprovedSessions pattern)
-	sessions, err := wc.sessionManager.GetSessionsByState(context.Background(), breakglassv1alpha1.SessionStatePending)
+	sessions, err := wc.sessionManager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStatePending)
 	if err != nil {
 		wc.log.Error("error listing breakglass sessions for pending expiry", err)
 		return
 	}
 	for _, ses := range sessions {
+		if err := ctx.Err(); err != nil {
+			wc.log.Infow("stopping pending session expiry because context is cancelled", "error", err)
+			return
+		}
 		if IsSessionApprovalTimedOut(ses) {
 			wc.log.Infow("Expiring pending session due to approval timeout", "session", ses.Name)
 			now := time.Now()
 			updated, applied, err := wc.updateSessionStatusIfCurrent(
-				context.Background(),
+				ctx,
 				ses,
 				breakglassv1alpha1.SessionStatePending,
 				IsSessionApprovalTimedOut,
@@ -53,7 +62,14 @@ func (wc *BreakglassSessionController) ExpirePendingSessions() {
 			}
 
 			metrics.SessionExpired.WithLabelValues(updated.Spec.Cluster).Inc()
-			wc.emitSessionExpiredAuditEvent(context.Background(), &updated, "approvalTimeout")
+			wc.emitSessionExpiredAuditEvent(ctx, &updated, "approvalTimeout")
+			if err := ctx.Err(); err != nil {
+				wc.log.Infow("skipping pending session expiry email because context is cancelled",
+					"session", updated.Name,
+					"namespace", updated.Namespace,
+					"error", err)
+				return
+			}
 			wc.sendSessionExpiredEmail(updated, "approvalTimeout")
 		}
 	}

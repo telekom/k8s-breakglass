@@ -12,21 +12,30 @@ import (
 )
 
 // ExpireApprovedSessions sets state to Expired for approved sessions that have passed ExpiresAt
-func (wc *BreakglassSessionController) ExpireApprovedSessions() {
+func (wc *BreakglassSessionController) ExpireApprovedSessions(ctxs ...context.Context) {
+	ctx := optionalCleanupContext(ctxs...)
+	if err := ctx.Err(); err != nil {
+		wc.log.Infow("skipping approved session expiry because context is cancelled", "error", err)
+		return
+	}
 	// Use indexed query to fetch only approved sessions
-	sessions, err := wc.sessionManager.GetSessionsByState(context.Background(), breakglassv1alpha1.SessionStateApproved)
+	sessions, err := wc.sessionManager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStateApproved)
 	if err != nil {
 		wc.log.Error("error listing breakglass sessions for approved expiry", err)
 		return
 	}
 	for _, ses := range sessions {
+		if err := ctx.Err(); err != nil {
+			wc.log.Infow("stopping approved session expiry because context is cancelled", "error", err)
+			return
+		}
 		if IsSessionExpired(ses) {
 			// Log intent and timestamps for easier debugging
 			now := time.Now()
 			wc.log.Infow("Expiring approved session due to reached ExpiresAt", "session", ses.Name, "expiresAt", ses.Status.ExpiresAt.Time, "now", now)
 
 			updated, applied, err := wc.updateSessionStatusIfCurrent(
-				context.Background(),
+				ctx,
 				ses,
 				breakglassv1alpha1.SessionStateApproved,
 				IsSessionExpired,
@@ -57,7 +66,14 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions() {
 			}
 
 			metrics.SessionExpired.WithLabelValues(updated.Spec.Cluster).Inc()
-			wc.emitSessionExpiredAuditEvent(context.Background(), &updated, "timeExpired")
+			wc.emitSessionExpiredAuditEvent(ctx, &updated, "timeExpired")
+			if err := ctx.Err(); err != nil {
+				wc.log.Infow("skipping approved session expiry email because context is cancelled",
+					"session", updated.Name,
+					"namespace", updated.Namespace,
+					"error", err)
+				return
+			}
 			wc.sendSessionExpiredEmail(updated, "timeExpired")
 		}
 	}
