@@ -501,6 +501,23 @@ func copyDebugSessionMatchingFields(in ctrlclient.MatchingFields) ctrlclient.Mat
 	return out
 }
 
+func filterDebugSessionsForIndexedFallback(sessions []breakglassv1alpha1.DebugSession, cluster string, states []breakglassv1alpha1.DebugSessionState) []breakglassv1alpha1.DebugSession {
+	if cluster == "" && len(states) == 0 {
+		return sessions
+	}
+	filtered := make([]breakglassv1alpha1.DebugSession, 0, len(sessions))
+	for _, session := range sessions {
+		if cluster != "" && session.Spec.Cluster != cluster {
+			continue
+		}
+		if !debugSessionStateMatches(session.Status.State, states) {
+			continue
+		}
+		filtered = append(filtered, session)
+	}
+	return filtered
+}
+
 func (c *DebugSessionAPIController) listDebugSessionsForFilters(ctx context.Context, cluster string, states []breakglassv1alpha1.DebugSessionState) ([]breakglassv1alpha1.DebugSession, error) {
 	baseFields := ctrlclient.MatchingFields{}
 	if cluster != "" {
@@ -508,7 +525,10 @@ func (c *DebugSessionAPIController) listDebugSessionsForFilters(ctx context.Cont
 	}
 
 	if len(states) == 0 {
-		sessions, _, err := c.listDebugSessionsWithFields(ctx, baseFields)
+		sessions, fellBack, err := c.listDebugSessionsWithFields(ctx, baseFields)
+		if fellBack {
+			return filterDebugSessionsForIndexedFallback(sessions, cluster, nil), err
+		}
 		return sessions, err
 	}
 
@@ -522,7 +542,7 @@ func (c *DebugSessionAPIController) listDebugSessionsForFilters(ctx context.Cont
 			return nil, err
 		}
 		if fellBack {
-			return stateSessions, nil
+			return filterDebugSessionsForIndexedFallback(stateSessions, cluster, states), nil
 		}
 		for _, session := range stateSessions {
 			key := session.Namespace + "/" + session.Name
