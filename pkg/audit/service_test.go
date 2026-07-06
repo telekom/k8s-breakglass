@@ -24,11 +24,19 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
+func newServiceTestScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	return scheme
+}
+
 func TestNewService(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -38,9 +46,7 @@ func TestNewService(t *testing.T) {
 
 func TestService_ReloadDisablesOnNilConfig(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -52,9 +58,7 @@ func TestService_ReloadDisablesOnNilConfig(t *testing.T) {
 
 func TestService_ReloadDisablesOnDisabledConfig(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -73,9 +77,7 @@ func TestService_ReloadDisablesOnDisabledConfig(t *testing.T) {
 
 func TestService_ReloadWithLogSink(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -109,9 +111,7 @@ func TestService_ReloadWithLogSink(t *testing.T) {
 
 func TestService_ReloadWithQueueConfig(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -144,9 +144,7 @@ func TestService_ReloadWithQueueConfig(t *testing.T) {
 
 func TestService_ReloadWithSampling(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -189,9 +187,7 @@ func TestService_ReloadWithSampling(t *testing.T) {
 
 func TestService_ReloadNoSinks(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -212,9 +208,7 @@ func TestService_ReloadNoSinks(t *testing.T) {
 
 func TestService_EmitWhenDisabled(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -237,9 +231,7 @@ func TestService_EmitWhenDisabled(t *testing.T) {
 
 func TestService_EmitWhenEnabled(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -281,9 +273,7 @@ func TestService_EmitWhenEnabled(t *testing.T) {
 
 func TestService_CloseWhenNotInitialized(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -295,9 +285,7 @@ func TestService_CloseWhenNotInitialized(t *testing.T) {
 
 func TestService_ReloadMultipleTimes(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -344,9 +332,7 @@ func TestService_ReloadMultipleTimes(t *testing.T) {
 
 func TestService_BuildWebhookSink(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -713,9 +699,7 @@ func TestService_BuildWebhookSinkRejectsNonControllerSecretNamespaces(t *testing
 
 func TestService_BuildKubernetesSink(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -743,9 +727,7 @@ func TestService_BuildKubernetesSink(t *testing.T) {
 
 func TestService_SkipsInvalidSinkType(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -778,9 +760,7 @@ func TestService_SkipsInvalidSinkType(t *testing.T) {
 
 func TestService_KafkaSinkMissingConfig(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -805,11 +785,46 @@ func TestService_KafkaSinkMissingConfig(t *testing.T) {
 	assert.False(t, svc.IsEnabled())
 }
 
+func TestService_BuildKafkaSinkRequiredAcks(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := newServiceTestScheme(t)
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	svc := NewService(client, nil, logger, "test-namespace")
+
+	tests := []struct {
+		name        string
+		requiredAck int
+	}{
+		{name: "all replicas", requiredAck: -1},
+		{name: "no acks", requiredAck: 0},
+		{name: "leader only", requiredAck: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sink, err := svc.buildKafkaSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+				Name: "kafka-sink",
+				Type: breakglassv1alpha1.AuditSinkTypeKafka,
+				Kafka: &breakglassv1alpha1.KafkaSinkSpec{
+					Brokers:      []string{"localhost:9092"},
+					Topic:        "audit-events",
+					RequiredAcks: tt.requiredAck,
+				},
+			})
+			require.NoError(t, err)
+			defer func() { _ = sink.Close() }()
+
+			kafkaSink, ok := sink.(*KafkaSink)
+			require.True(t, ok)
+			assert.Equal(t, tt.requiredAck, int(kafkaSink.writer.RequiredAcks))
+		})
+	}
+}
+
 func TestService_WebhookSinkMissingConfig(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -836,9 +851,7 @@ func TestService_WebhookSinkMissingConfig(t *testing.T) {
 
 func TestService_GetSecretKey(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -886,9 +899,7 @@ func TestDefaultQueuedSinkConfig(t *testing.T) {
 
 func TestService_GetSinkHealth_NoSinks(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -899,9 +910,7 @@ func TestService_GetSinkHealth_NoSinks(t *testing.T) {
 
 func TestService_GetSinkHealth_WithLogSink(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -935,9 +944,7 @@ func TestService_GetSinkHealth_WithLogSink(t *testing.T) {
 
 func TestService_GetQueuedSinkHealth_NoSinks(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -948,9 +955,7 @@ func TestService_GetQueuedSinkHealth_NoSinks(t *testing.T) {
 
 func TestService_GetQueuedSinkHealth_WithSink(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -986,9 +991,7 @@ func TestService_GetQueuedSinkHealth_WithSink(t *testing.T) {
 
 func TestService_BuildKafkaTLSConfig(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 
 	caSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1112,9 +1115,7 @@ func TestService_BuildKafkaTLSConfig(t *testing.T) {
 
 func TestService_BuildKafkaSASLConfig(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 
 	saslSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1237,9 +1238,7 @@ func TestService_BuildKafkaSASLConfig(t *testing.T) {
 
 func TestService_GetStats_NoManager(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -1251,9 +1250,7 @@ func TestService_GetStats_NoManager(t *testing.T) {
 
 func TestService_GetStats_WithManager(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -1288,9 +1285,7 @@ func TestService_GetStats_WithManager(t *testing.T) {
 
 func TestService_Manager_NilBeforeReload(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -1299,9 +1294,7 @@ func TestService_Manager_NilBeforeReload(t *testing.T) {
 
 func TestService_Manager_NonNilAfterSuccessfulReload(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")

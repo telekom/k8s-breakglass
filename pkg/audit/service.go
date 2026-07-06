@@ -522,6 +522,7 @@ func (s *Service) buildKafkaSink(ctx context.Context, sinkCfg breakglassv1alpha1
 		BatchSize:        sinkCfg.Kafka.BatchSize,
 		BatchTimeout:     time.Duration(sinkCfg.Kafka.BatchTimeoutSeconds) * time.Second,
 		RequiredAcks:     sinkCfg.Kafka.RequiredAcks,
+		RequiredAcksSet:  true,
 		CompressionCodec: sinkCfg.Kafka.Compression,
 		Async:            sinkCfg.Kafka.Async,
 	}
