@@ -2295,7 +2295,8 @@ func TestHandleListDebugSessionsFieldIndexFallbackPreservesFilters(t *testing.T)
 		WithStatusSubresource(activeProd, pendingProd, activeDev, failedProd, unauthorizedActiveProd).
 		Build()
 	missingIndexClient := &debugSessionMissingIndexClient{Client: baseClient}
-	ctrl := NewDebugSessionAPIController(logger, missingIndexClient, nil, nil)
+	apiReader := &debugSessionRecordingListClient{Client: baseClient}
+	ctrl := NewDebugSessionAPIController(logger, missingIndexClient, nil, nil).WithAPIReader(apiReader)
 	router := debugSessionAPITestRouter(t, ctrl, "admin@example.com", "", nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?cluster=prod&state=Active&state=Pending", nil)
@@ -2310,9 +2311,10 @@ func TestHandleListDebugSessionsFieldIndexFallbackPreservesFilters(t *testing.T)
 		gotNames = append(gotNames, session.Name)
 	}
 	assert.ElementsMatch(t, []string{"active-prod", "pending-prod"}, gotNames)
-	require.Len(t, missingIndexClient.calls, 2, "expected one indexed attempt and one full-list fallback")
+	require.Len(t, missingIndexClient.calls, 1, "expected one cached indexed attempt")
 	assert.NotNil(t, missingIndexClient.calls[0].FieldSelector)
-	assert.Nil(t, missingIndexClient.calls[1].FieldSelector)
+	require.Len(t, apiReader.calls, 1, "expected one uncached full-list fallback")
+	assert.Nil(t, apiReader.calls[0].FieldSelector)
 }
 
 // TestDebugSessionAPIController_HandleGetDebugSession tests the handleGetDebugSession handler

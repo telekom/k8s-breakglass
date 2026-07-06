@@ -476,12 +476,15 @@ func debugSessionStateMatches(state breakglassv1alpha1.DebugSessionState, filter
 
 func (c *DebugSessionAPIController) listDebugSessionsWithFields(ctx context.Context, matchingFields ctrlclient.MatchingFields) ([]breakglassv1alpha1.DebugSession, bool, error) {
 	sessionList := &breakglassv1alpha1.DebugSessionList{}
-	listOpts := []ctrlclient.ListOption{}
-	if len(matchingFields) > 0 {
-		listOpts = append(listOpts, matchingFields)
+	if len(matchingFields) == 0 {
+		if err := c.reader().List(ctx, sessionList); err != nil {
+			return nil, false, err
+		}
+		return sessionList.Items, false, nil
 	}
-	if err := c.reader().List(ctx, sessionList, listOpts...); err != nil {
-		if len(matchingFields) > 0 && breakglass.IsFieldIndexError(err) {
+
+	if err := c.client.List(ctx, sessionList, matchingFields); err != nil {
+		if breakglass.IsFieldIndexError(err) {
 			fallbackList := &breakglassv1alpha1.DebugSessionList{}
 			if fallbackErr := c.reader().List(ctx, fallbackList); fallbackErr != nil {
 				return nil, false, fmt.Errorf("failed to list debug sessions after field-index fallback: %w", fallbackErr)
