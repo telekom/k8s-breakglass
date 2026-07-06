@@ -176,31 +176,10 @@ describe("AutoLogoutWarning", () => {
   });
 
   it("returns null when browser storage access is blocked", () => {
-    const sessionStorageDescriptor = Object.getOwnPropertyDescriptor(window, "sessionStorage");
-    const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new DOMException("blocked", "SecurityError");
+    });
 
-    try {
-      Object.defineProperty(window, "sessionStorage", {
-        configurable: true,
-        get: () => {
-          throw new DOMException("blocked", "SecurityError");
-        },
-      });
-      Object.defineProperty(window, "localStorage", {
-        configurable: true,
-        get: () => {
-          throw new DOMException("blocked", "SecurityError");
-        },
-      });
-
-      expect(getStoredOIDCUser(AUTHORITY, CLIENT_ID)).toBeNull();
-    } finally {
-      if (sessionStorageDescriptor) {
-        Object.defineProperty(window, "sessionStorage", sessionStorageDescriptor);
-      }
-      if (localStorageDescriptor) {
-        Object.defineProperty(window, "localStorage", localStorageDescriptor);
-      }
-    }
+    expect(getStoredOIDCUser(AUTHORITY, CLIENT_ID)).toBeNull();
   });
 });
