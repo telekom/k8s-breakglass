@@ -646,7 +646,10 @@ func exactSessionStateFilters(tokens []string) ([]breakglassv1alpha1.BreakglassS
 	return states, len(states) > 0
 }
 
-func sessionMatchesListFilters(session breakglassv1alpha1.BreakglassSession, cluster, user, group string) bool {
+func sessionMatchesListFilters(session *breakglassv1alpha1.BreakglassSession, cluster, user, group string) bool {
+	if session == nil {
+		return false
+	}
 	if cluster != "" && session.Spec.Cluster != cluster {
 		return false
 	}
@@ -667,11 +670,12 @@ func (wc *BreakglassSessionController) listBreakglassSessionsForStatus(ctx conte
 		if err != nil {
 			return nil, err
 		}
-		for _, session := range stateSessions {
+		for i := range stateSessions {
+			session := &stateSessions[i]
 			if !sessionMatchesListFilters(session, cluster, user, group) {
 				continue
 			}
-			sessions = append(sessions, session)
+			sessions = append(sessions, *session)
 		}
 		return sessions, nil
 	}
