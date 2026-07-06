@@ -158,12 +158,14 @@ func (r *DebugSessionTemplateReconciler) resolveBindingStatus(
 	clusterNames := make(map[string]struct{})
 	relevantBindings := make([]*breakglassv1alpha1.DebugSessionClusterBinding, 0, len(bindingList.Items))
 	needsClusterConfigs := false
+	var bindingCount int32
 	for i := range bindingList.Items {
 		binding := &bindingList.Items[i]
 		if binding.Spec.Disabled || !bindingReferencesTemplate(binding, template) {
 			continue
 		}
 		relevantBindings = append(relevantBindings, binding)
+		bindingCount++
 		if binding.Spec.ClusterSelector != nil {
 			needsClusterConfigs = true
 		}
@@ -190,7 +192,7 @@ func (r *DebugSessionTemplateReconciler) resolveBindingStatus(
 	}
 	sort.Strings(boundClusters)
 
-	return int32(len(relevantBindings)), boundClusters, nil
+	return bindingCount, boundClusters, nil
 }
 
 func bindingReferencesTemplate(binding *breakglassv1alpha1.DebugSessionClusterBinding, template *breakglassv1alpha1.DebugSessionTemplate) bool {
