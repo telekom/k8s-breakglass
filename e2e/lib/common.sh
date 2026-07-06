@@ -1008,6 +1008,35 @@ is_keycloak_running() {
   $DOCKER ps --filter "name=$KEYCLOAK_CONTAINER_NAME" --filter "status=running" -q 2>/dev/null | grep -q .
 }
 
+docker_inspect_redacted() {
+  local container_name="$1"
+
+  if command -v jq >/dev/null 2>&1; then
+    $DOCKER inspect "$container_name" \
+      | jq 'walk(if type == "object" and has("Env") then del(.Env) else . end)'
+  else
+    printf '%s\n' "jq unavailable; full docker inspect omitted to avoid environment disclosure."
+    printf '%s\n' "Container: $container_name"
+    printf '\n%s\n' "State:"
+    $DOCKER inspect "$container_name" --format '{{json .State}}' 2>&1 || true
+    printf '\n%s\n' "Mounts:"
+    $DOCKER inspect "$container_name" --format '{{json .Mounts}}' 2>&1 || true
+    printf '\n%s\n' "NetworkSettings:"
+    $DOCKER inspect "$container_name" --format '{{json .NetworkSettings}}' 2>&1 || true
+  fi
+}
+
+docker_inspect_config_redacted() {
+  local container_name="$1"
+
+  if command -v jq >/dev/null 2>&1; then
+    $DOCKER inspect "$container_name" --format '{{json .Config}}' \
+      | jq 'if type == "object" and has("Env") then del(.Env) else . end'
+  else
+    printf '%s\n' "jq unavailable; docker Config omitted to avoid environment disclosure."
+  fi
+}
+
 # Start Keycloak as a standalone Docker container
 start_keycloak_container() {
   local tls_dir="${1:-}"
@@ -1189,12 +1218,12 @@ start_keycloak_container() {
     $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
     log "=== Container logs (all) ==="
     $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
-    log "=== Docker inspect (full) ==="
-    $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
+    log "=== Docker inspect (environment redacted) ==="
+    docker_inspect_redacted "$KEYCLOAK_CONTAINER_NAME" >&2 || true
     log "=== Docker inspect (mounts) ==="
     { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 | python3 -m json.tool 2>/dev/null || $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 || true; } >&2
-    log "=== Docker inspect (config/env) ==="
-    { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config.Env}}' 2>&1 | python3 -m json.tool 2>/dev/null || $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config.Env}}' 2>&1 || true; } >&2
+    log "=== Docker inspect (config environment redacted) ==="
+    docker_inspect_config_redacted "$KEYCLOAK_CONTAINER_NAME" >&2 || true
     log "=== Docker inspect (state) ==="
     { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .State}}' 2>&1 | python3 -m json.tool 2>/dev/null || $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .State}}' 2>&1 || true; } >&2
     log "=== Port check ==="
@@ -1213,13 +1242,13 @@ start_keycloak_container() {
     $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" --format "{{.Status}}" >&2 2>&1 || true
     log "=== Container logs (all) ==="
     $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
-    log "=== Docker inspect (mounts and env) ==="
+    log "=== Docker inspect (mounts and redacted config) ==="
     { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 | python3 -m json.tool 2>/dev/null || $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 || true; } >&2
-    { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config.Env}}' 2>&1 | python3 -m json.tool 2>/dev/null || $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config.Env}}' 2>&1 || true; } >&2
+    docker_inspect_config_redacted "$KEYCLOAK_CONTAINER_NAME" >&2 || true
     log "=== Docker inspect (state details) ==="
     { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .State}}' 2>&1 | python3 -m json.tool 2>/dev/null || $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .State}}' 2>&1 || true; } >&2
-    log "=== Docker inspect (full for debugging) ==="
-    $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
+    log "=== Docker inspect (environment redacted) ==="
+    docker_inspect_redacted "$KEYCLOAK_CONTAINER_NAME" >&2 || true
     return 1
   fi
   
@@ -1265,9 +1294,9 @@ start_keycloak_container() {
     $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
     log "=== Keycloak container full logs ==="
     $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
-    log "=== Docker inspect (mounts and config) ==="
+    log "=== Docker inspect (mounts and redacted config) ==="
     { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 | head -50 || true; } >&2
-    { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config}}' 2>&1 | head -50 || true; } >&2
+    { docker_inspect_config_redacted "$KEYCLOAK_CONTAINER_NAME" 2>&1 | head -50 || true; } >&2
     log "=== Port bindings on host ==="
     { netstat -tlnp 2>/dev/null | grep -E "8080|8443" || ss -tlnp 2>/dev/null | grep -E "8080|8443" || echo "Could not check ports"; } >&2
     log "=== Testing localhost connectivity ==="
