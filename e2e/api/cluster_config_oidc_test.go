@@ -255,8 +255,9 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 				DisplayName: "Test OIDC Provider",
 				Primary:     true,
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: keycloakIssuer,
-					ClientID:  "breakglass-ui",
+					Authority:        keycloakIssuer,
+					ClientID:         "breakglass-ui",
+					ExpectedAudience: "breakglass-ui",
 				},
 			},
 		}

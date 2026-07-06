@@ -147,8 +147,9 @@ users:
 			},
 			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://auth.example.com",
-					ClientID:  "primary-client",
+					Authority:        "https://auth.example.com",
+					ClientID:         "primary-client",
+					ExpectedAudience: "primary-client",
 				},
 				DisplayName: "Primary IDP",
 				Primary:     true,
@@ -169,8 +170,9 @@ users:
 			},
 			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://backup-auth.example.com",
-					ClientID:  "backup-client",
+					Authority:        "https://backup-auth.example.com",
+					ClientID:         "backup-client",
+					ExpectedAudience: "backup-client",
 				},
 				DisplayName: "Backup IDP",
 			},

@@ -407,7 +407,8 @@ func TestInvalidIdentityProviderConfigs(t *testing.T) {
 			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				OIDC: breakglassv1alpha1.OIDCConfig{
 					// Authority intentionally missing
-					ClientID: "some-client",
+					ClientID:         "some-client",
+					ExpectedAudience: "some-client",
 				},
 			},
 		}
@@ -430,7 +431,8 @@ func TestInvalidIdentityProviderConfigs(t *testing.T) {
 			},
 			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://example.com",
+					Authority:        "https://example.com",
+					ExpectedAudience: "some-client",
 					// ClientID intentionally missing
 				},
 			},
@@ -454,8 +456,9 @@ func TestInvalidIdentityProviderConfigs(t *testing.T) {
 			},
 			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "not-a-valid-url",
-					ClientID:  "some-client",
+					Authority:        "not-a-valid-url",
+					ClientID:         "some-client",
+					ExpectedAudience: "some-client",
 				},
 			},
 		}
@@ -478,8 +481,9 @@ func TestInvalidIdentityProviderConfigs(t *testing.T) {
 			},
 			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://example.com",
-					ClientID:  "some-client",
+					Authority:        "https://example.com",
+					ClientID:         "some-client",
+					ExpectedAudience: "some-client",
 				},
 				GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
 				Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
