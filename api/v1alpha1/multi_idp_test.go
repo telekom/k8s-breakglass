@@ -31,8 +31,9 @@ func TestIdentityProviderIssuerField(t *testing.T) {
 		},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "test-client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "test-client",
+				ExpectedAudience: "test-client",
 			},
 			Issuer:      "https://auth.example.com",
 			DisplayName: "Test IDP",
@@ -110,8 +111,9 @@ func TestBackwardCompatibilityPrimaryField(t *testing.T) {
 		},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "legacy-client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "legacy-client",
+				ExpectedAudience: "legacy-client",
 			},
 			Primary: true, // Backward compatibility
 		},

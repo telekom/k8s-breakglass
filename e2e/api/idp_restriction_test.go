@@ -52,8 +52,9 @@ func TestIdentityProviderCRUD(t *testing.T) {
 				DisplayName: "E2E Test IDP",
 				Issuer:      issuer,
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: issuer,
-					ClientID:  "test-client-id",
+					Authority:        issuer,
+					ClientID:         "test-client-id",
+					ExpectedAudience: "test-client-id",
 				},
 			},
 		}
@@ -82,8 +83,9 @@ func TestIdentityProviderCRUD(t *testing.T) {
 				DisplayName: "Original Name",
 				Issuer:      issuer,
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: issuer,
-					ClientID:  "original-client-id",
+					Authority:        issuer,
+					ClientID:         "original-client-id",
+					ExpectedAudience: "original-client-id",
 				},
 			},
 		}
@@ -123,8 +125,9 @@ func TestIdentityProviderCRUD(t *testing.T) {
 				DisplayName: "To Be Deleted",
 				Issuer:      issuer,
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: issuer,
-					ClientID:  "delete-client",
+					Authority:        issuer,
+					ClientID:         "delete-client",
+					ExpectedAudience: "delete-client",
 				},
 			},
 		}
@@ -162,8 +165,9 @@ func TestIdentityProviderRestrictions(t *testing.T) {
 				DisplayName: "Allowed IDP",
 				Issuer:      "https://allowed.example.com",
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://allowed.example.com",
-					ClientID:  "allowed-client",
+					Authority:        "https://allowed.example.com",
+					ClientID:         "allowed-client",
+					ExpectedAudience: "allowed-client",
 				},
 			},
 		}
@@ -200,8 +204,9 @@ func TestIdentityProviderRestrictions(t *testing.T) {
 				DisplayName: "Approver IDP",
 				Issuer:      "https://approver.example.com",
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://approver.example.com",
-					ClientID:  "approver-client",
+					Authority:        "https://approver.example.com",
+					ClientID:         "approver-client",
+					ExpectedAudience: "approver-client",
 				},
 			},
 		}
@@ -248,8 +253,9 @@ func TestIdentityProviderStatus(t *testing.T) {
 				DisplayName: "Status Test IDP",
 				Issuer:      "https://status.example.com",
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://status.example.com",
-					ClientID:  "status-client",
+					Authority:        "https://status.example.com",
+					ClientID:         "status-client",
+					ExpectedAudience: "status-client",
 				},
 			},
 		}
@@ -291,8 +297,9 @@ func TestMultipleIDPSelection(t *testing.T) {
 				DisplayName: "Corporate SSO",
 				Issuer:      "https://corp.example.com",
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://corp.example.com",
-					ClientID:  "corp-sso",
+					Authority:        "https://corp.example.com",
+					ClientID:         "corp-sso",
+					ExpectedAudience: "corp-sso",
 				},
 			},
 		}
@@ -309,8 +316,9 @@ func TestMultipleIDPSelection(t *testing.T) {
 				DisplayName: "Partner SSO",
 				Issuer:      "https://partner.example.com",
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://partner.example.com",
-					ClientID:  "partner-sso",
+					Authority:        "https://partner.example.com",
+					ClientID:         "partner-sso",
+					ExpectedAudience: "partner-sso",
 				},
 			},
 		}

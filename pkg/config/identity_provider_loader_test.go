@@ -36,8 +36,9 @@ func TestIdentityProviderLoader_LoadIdentityProvider(t *testing.T) {
 					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Primary: true,
 						OIDC: breakglassv1alpha1.OIDCConfig{
-							Authority: "https://auth.example.com",
-							ClientID:  "test-client",
+							Authority:        "https://auth.example.com",
+							ClientID:         "test-client",
+							ExpectedAudience: "test-client",
 						},
 					},
 				},
@@ -60,8 +61,9 @@ func TestIdentityProviderLoader_LoadIdentityProvider(t *testing.T) {
 					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Primary: true,
 						OIDC: breakglassv1alpha1.OIDCConfig{
-							Authority: "https://auth.example.com",
-							ClientID:  "test-client",
+							Authority:        "https://auth.example.com",
+							ClientID:         "test-client",
+							ExpectedAudience: "test-client",
 						},
 						GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
 						Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
@@ -109,8 +111,9 @@ func TestIdentityProviderLoader_LoadIdentityProvider(t *testing.T) {
 						Primary:  true,
 						Disabled: true,
 						OIDC: breakglassv1alpha1.OIDCConfig{
-							Authority: "https://disabled.example.com",
-							ClientID:  "disabled",
+							Authority:        "https://disabled.example.com",
+							ClientID:         "disabled",
+							ExpectedAudience: "disabled",
 						},
 					},
 				},
@@ -121,8 +124,9 @@ func TestIdentityProviderLoader_LoadIdentityProvider(t *testing.T) {
 					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Primary: false,
 						OIDC: breakglassv1alpha1.OIDCConfig{
-							Authority: "https://fallback.example.com",
-							ClientID:  "fallback",
+							Authority:        "https://fallback.example.com",
+							ClientID:         "fallback",
+							ExpectedAudience: "fallback",
 						},
 					},
 				},
@@ -148,8 +152,9 @@ func TestIdentityProviderLoader_LoadIdentityProvider(t *testing.T) {
 					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Disabled: true,
 						OIDC: breakglassv1alpha1.OIDCConfig{
-							Authority: "https://auth.example.com",
-							ClientID:  "test",
+							Authority:        "https://auth.example.com",
+							ClientID:         "test",
+							ExpectedAudience: "test",
 						},
 					},
 				},
@@ -166,8 +171,9 @@ func TestIdentityProviderLoader_LoadIdentityProvider(t *testing.T) {
 					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Primary: true,
 						OIDC: breakglassv1alpha1.OIDCConfig{
-							Authority: "https://auth.example.com",
-							ClientID:  "test",
+							Authority:        "https://auth.example.com",
+							ClientID:         "test",
+							ExpectedAudience: "test",
 						},
 						GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
 						Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
@@ -245,8 +251,9 @@ func TestIdentityProviderLoader_LoadIdentityProviderByName(t *testing.T) {
 					},
 					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						OIDC: breakglassv1alpha1.OIDCConfig{
-							Authority: "https://specific.example.com",
-							ClientID:  "specific",
+							Authority:        "https://specific.example.com",
+							ClientID:         "specific",
+							ExpectedAudience: "specific",
 						},
 					},
 				},
@@ -311,6 +318,7 @@ func TestIdentityProviderLoader_RejectsInsecureSkipVerify(t *testing.T) {
 					OIDC: breakglassv1alpha1.OIDCConfig{
 						Authority:          "https://auth.example.com",
 						ClientID:           "breakglass-ui",
+						ExpectedAudience:   "breakglass-ui",
 						InsecureSkipVerify: true,
 					},
 				},
@@ -322,8 +330,9 @@ func TestIdentityProviderLoader_RejectsInsecureSkipVerify(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "insecure-keycloak"},
 				Spec: breakglassv1alpha1.IdentityProviderSpec{
 					OIDC: breakglassv1alpha1.OIDCConfig{
-						Authority: "https://auth.example.com",
-						ClientID:  "breakglass-ui",
+						Authority:        "https://auth.example.com",
+						ClientID:         "breakglass-ui",
+						ExpectedAudience: "breakglass-ui",
 					},
 					GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
 					Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
@@ -378,8 +387,9 @@ func TestIdentityProviderLoader_ValidateIdentityProviderExists(t *testing.T) {
 					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Primary: true,
 						OIDC: breakglassv1alpha1.OIDCConfig{
-							Authority: "https://auth.example.com",
-							ClientID:  "test",
+							Authority:        "https://auth.example.com",
+							ClientID:         "test",
+							ExpectedAudience: "test",
 						},
 					},
 				},
@@ -393,8 +403,9 @@ func TestIdentityProviderLoader_ValidateIdentityProviderExists(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{Name: "fallback"},
 					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						OIDC: breakglassv1alpha1.OIDCConfig{
-							Authority: "https://auth.example.com",
-							ClientID:  "test",
+							Authority:        "https://auth.example.com",
+							ClientID:         "test",
+							ExpectedAudience: "test",
 						},
 					},
 				},
@@ -415,8 +426,9 @@ func TestIdentityProviderLoader_ValidateIdentityProviderExists(t *testing.T) {
 					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Disabled: true,
 						OIDC: breakglassv1alpha1.OIDCConfig{
-							Authority: "https://auth.example.com",
-							ClientID:  "test",
+							Authority:        "https://auth.example.com",
+							ClientID:         "test",
+							ExpectedAudience: "test",
 						},
 					},
 				},
@@ -425,8 +437,9 @@ func TestIdentityProviderLoader_ValidateIdentityProviderExists(t *testing.T) {
 					Spec: breakglassv1alpha1.IdentityProviderSpec{
 						Disabled: true,
 						OIDC: breakglassv1alpha1.OIDCConfig{
-							Authority: "https://auth2.example.com",
-							ClientID:  "test2",
+							Authority:        "https://auth2.example.com",
+							ClientID:         "test2",
+							ExpectedAudience: "test2",
 						},
 					},
 				},
@@ -472,8 +485,9 @@ func TestIdentityProviderLoader_ValidateIdentityProviderExists_ManagerCacheNotSt
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Primary: true,
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "demo",
+				Authority:        "https://auth.example.com",
+				ClientID:         "demo",
+				ExpectedAudience: "demo",
 			},
 		},
 	}
@@ -494,8 +508,9 @@ func TestIdentityProviderLoader_ValidateIdentityProviderExists_ManagerCacheStart
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Primary: true,
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "demo",
+				Authority:        "https://auth.example.com",
+				ClientID:         "demo",
+				ExpectedAudience: "demo",
 			},
 		},
 	}
@@ -587,8 +602,9 @@ func TestIdentityProviderLoader_CrossNamespaceSecrets(t *testing.T) {
 				Spec: breakglassv1alpha1.IdentityProviderSpec{
 					Primary: true,
 					OIDC: breakglassv1alpha1.OIDCConfig{
-						Authority: "https://auth.example.com",
-						ClientID:  "test",
+						Authority:        "https://auth.example.com",
+						ClientID:         "test",
+						ExpectedAudience: "test",
 					},
 					GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
 					Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
@@ -765,8 +781,9 @@ func TestIdentityProviderLoader_updateConversionFailureStatus(t *testing.T) {
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Primary: true,
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://authority",
-				ClientID:  "client",
+				Authority:        "https://authority",
+				ClientID:         "client",
+				ExpectedAudience: "client",
 			},
 		},
 	}
@@ -878,8 +895,9 @@ func TestLoadAllIdentityProviders_MultipleProviders(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-alpha"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://alpha.example.com",
-				ClientID:  "alpha-client",
+				Authority:        "https://alpha.example.com",
+				ClientID:         "alpha-client",
+				ExpectedAudience: "alpha-client",
 			},
 			Issuer:   "https://alpha.example.com",
 			Disabled: false,
@@ -890,8 +908,9 @@ func TestLoadAllIdentityProviders_MultipleProviders(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-beta"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://beta.example.com",
-				ClientID:  "beta-client",
+				Authority:        "https://beta.example.com",
+				ClientID:         "beta-client",
+				ExpectedAudience: "beta-client",
 			},
 			Issuer:   "https://beta.example.com",
 			Disabled: false,
@@ -902,8 +921,9 @@ func TestLoadAllIdentityProviders_MultipleProviders(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-gamma"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://gamma.example.com",
-				ClientID:  "gamma-client",
+				Authority:        "https://gamma.example.com",
+				ClientID:         "gamma-client",
+				ExpectedAudience: "gamma-client",
 			},
 			Issuer:   "https://gamma.example.com",
 			Disabled: false,
@@ -943,8 +963,9 @@ func TestLoadAllIdentityProviders_WithDisabledProvider(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "enabled-idp"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://enabled.example.com",
-				ClientID:  "enabled",
+				Authority:        "https://enabled.example.com",
+				ClientID:         "enabled",
+				ExpectedAudience: "enabled",
 			},
 			Issuer:   "https://enabled.example.com",
 			Disabled: false,
@@ -955,8 +976,9 @@ func TestLoadAllIdentityProviders_WithDisabledProvider(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "disabled-idp"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://disabled.example.com",
-				ClientID:  "disabled",
+				Authority:        "https://disabled.example.com",
+				ClientID:         "disabled",
+				ExpectedAudience: "disabled",
 			},
 			Issuer:   "https://disabled.example.com",
 			Disabled: true,
@@ -994,8 +1016,9 @@ func TestLoadAllIdentityProviders_WithConversionError(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "valid-idp"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://valid.example.com",
-				ClientID:  "valid",
+				Authority:        "https://valid.example.com",
+				ClientID:         "valid",
+				ExpectedAudience: "valid",
 			},
 			Issuer:   "https://valid.example.com",
 			Disabled: false,
@@ -1007,8 +1030,9 @@ func TestLoadAllIdentityProviders_WithConversionError(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "broken-idp"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://broken.example.com",
-				ClientID:  "broken",
+				Authority:        "https://broken.example.com",
+				ClientID:         "broken",
+				ExpectedAudience: "broken",
 			},
 			Issuer:            "https://broken.example.com",
 			Disabled:          false,
@@ -1060,8 +1084,9 @@ func TestLoadAllIdentityProviders_SkipsInsecureSkipVerify(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "valid-idp"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://valid.example.com",
-				ClientID:  "valid",
+				Authority:        "https://valid.example.com",
+				ClientID:         "valid",
+				ExpectedAudience: "valid",
 			},
 			Issuer: "https://valid.example.com",
 		},
@@ -1072,6 +1097,7 @@ func TestLoadAllIdentityProviders_SkipsInsecureSkipVerify(t *testing.T) {
 			OIDC: breakglassv1alpha1.OIDCConfig{
 				Authority:          "https://insecure.example.com",
 				ClientID:           "insecure",
+				ExpectedAudience:   "insecure",
 				InsecureSkipVerify: true,
 			},
 			Issuer: "https://insecure.example.com",
@@ -1122,8 +1148,9 @@ func TestLoadAllIdentityProviders_AllDisabled(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "disabled-1"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://disabled1.example.com",
-				ClientID:  "disabled1",
+				Authority:        "https://disabled1.example.com",
+				ClientID:         "disabled1",
+				ExpectedAudience: "disabled1",
 			},
 			Disabled: true,
 		},
@@ -1133,8 +1160,9 @@ func TestLoadAllIdentityProviders_AllDisabled(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "disabled-2"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://disabled2.example.com",
-				ClientID:  "disabled2",
+				Authority:        "https://disabled2.example.com",
+				ClientID:         "disabled2",
+				ExpectedAudience: "disabled2",
 			},
 			Disabled: true,
 		},
@@ -1183,8 +1211,9 @@ func TestLoadAllIdentityProviders_MetricsRecorder(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "broken-idp-metrics"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://broken.example.com",
-				ClientID:  "broken",
+				Authority:        "https://broken.example.com",
+				ClientID:         "broken",
+				ExpectedAudience: "broken",
 			},
 			Disabled:          false,
 			GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
@@ -1233,8 +1262,9 @@ func TestLoadIdentityProviderByIssuer_TrailingSlashNormalization(t *testing.T) {
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Issuer: "https://auth.example.com/",
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth.example.com/realms/test",
-				ClientID:  "test-client",
+				Authority:        "https://auth.example.com/realms/test",
+				ClientID:         "test-client",
+				ExpectedAudience: "test-client",
 			},
 		},
 	}
@@ -1289,8 +1319,9 @@ func TestLoadIdentityProviderByIssuer_AuthorityFallbackNormalization(t *testing.
 		ObjectMeta: metav1.ObjectMeta{Name: "authority-idp"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth.example.com/realms/test/",
-				ClientID:  "test-client",
+				Authority:        "https://auth.example.com/realms/test/",
+				ClientID:         "test-client",
+				ExpectedAudience: "test-client",
 			},
 		},
 	}

@@ -8,6 +8,7 @@
 #   This is critical for multi-IDP mode and is used by the SAR webhook to identify which provider
 #   authenticated a user based on their JWT token issuer claim.
 # - ClientID: The OIDC client identifier configured in your OIDC provider
+# - ExpectedAudience: The JWT aud claim required by the Breakglass API
 #
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: IdentityProvider
@@ -23,6 +24,10 @@ spec:
 
     # ClientID is the OIDC client ID for user authentication (frontend/UI)
     clientID: "breakglass-ui"
+
+    # ExpectedAudience is the required JWT aud claim for the Breakglass API.
+    # Configure your OIDC provider to include this audience in issued access tokens.
+    expectedAudience: "breakglass-ui"
 
     # JWKSEndpoint (optional) specifies a custom endpoint for fetching JSON Web Key Sets
     # If empty, defaults to Authority/.well-known/openid-configuration
@@ -71,6 +76,7 @@ spec:
     # Different OIDC provider authority
     authority: "https://backup-auth.example.com"
     clientID: "breakglass-ui-backup"
+    expectedAudience: "breakglass-ui-backup"
 
   # IMPORTANT: Each IdentityProvider in multi-IDP mode must have a UNIQUE issuer
   # This is how the system knows which provider authenticated a user (via JWT iss claim)

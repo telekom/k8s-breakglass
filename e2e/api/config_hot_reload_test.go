@@ -54,8 +54,9 @@ func TestIdentityProviderHotReload(t *testing.T) {
 			},
 			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://original-issuer.example.com",
-					ClientID:  "original-client-id",
+					Authority:        "https://original-issuer.example.com",
+					ClientID:         "original-client-id",
+					ExpectedAudience: "original-client-id",
 				},
 				Issuer: "https://original-issuer.example.com",
 			},
@@ -75,6 +76,7 @@ func TestIdentityProviderHotReload(t *testing.T) {
 		err = helpers.UpdateWithRetry(ctx, cli, &initial, func(idp *breakglassv1alpha1.IdentityProvider) error {
 			idp.Spec.OIDC.Authority = "https://updated-issuer.example.com"
 			idp.Spec.OIDC.ClientID = "updated-client-id"
+			idp.Spec.OIDC.ExpectedAudience = "updated-client-id"
 			idp.Spec.Issuer = "https://updated-issuer.example.com"
 			return nil
 		})
@@ -103,8 +105,9 @@ func TestIdentityProviderHotReload(t *testing.T) {
 			},
 			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://disabled-test.example.com",
-					ClientID:  "disabled-client",
+					Authority:        "https://disabled-test.example.com",
+					ClientID:         "disabled-client",
+					ExpectedAudience: "disabled-client",
 				},
 				Issuer:   "https://disabled-test.example.com",
 				Disabled: false,
@@ -419,18 +422,22 @@ func TestAPIReloadsDuringLiveTraffic(t *testing.T) {
 		}
 
 		originalClientID := testIDP.Spec.OIDC.ClientID
+		originalExpectedAudience := testIDP.Spec.OIDC.ExpectedAudience
 
 		// Ensure we restore the original client ID at the end
 		defer func() {
 			// Re-fetch to get latest version to avoid conflict
 			_ = helpers.UpdateWithRetry(ctx, cli, testIDP, func(idp *breakglassv1alpha1.IdentityProvider) error {
 				idp.Spec.OIDC.ClientID = originalClientID
+				idp.Spec.OIDC.ExpectedAudience = originalExpectedAudience
 				return nil
 			})
 		}()
 
 		err = helpers.UpdateWithRetry(ctx, cli, testIDP, func(idp *breakglassv1alpha1.IdentityProvider) error {
-			idp.Spec.OIDC.ClientID = "temporary-client-id-" + helpers.GenerateUniqueName("")
+			temporaryClientID := "temporary-client-id-" + helpers.GenerateUniqueName("")
+			idp.Spec.OIDC.ClientID = temporaryClientID
+			idp.Spec.OIDC.ExpectedAudience = temporaryClientID
 			return nil
 		})
 		require.NoError(t, err, "Failed to update test IDP")
@@ -448,6 +455,7 @@ func TestAPIReloadsDuringLiveTraffic(t *testing.T) {
 		// Explicitly restore (defer will handle it if this fails, but good to be explicit for the test flow)
 		err = helpers.UpdateWithRetry(ctx, cli, testIDP, func(idp *breakglassv1alpha1.IdentityProvider) error {
 			idp.Spec.OIDC.ClientID = originalClientID
+			idp.Spec.OIDC.ExpectedAudience = originalExpectedAudience
 			return nil
 		})
 		require.NoError(t, err, "Failed to restore test IDP")

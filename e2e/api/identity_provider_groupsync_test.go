@@ -38,8 +38,9 @@ func TestIdentityProviderGroupSync(t *testing.T) {
 			},
 			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://keycloak.example.com/realms/test",
-					ClientID:  "breakglass-ui",
+					Authority:        "https://keycloak.example.com/realms/test",
+					ClientID:         "breakglass-ui",
+					ExpectedAudience: "breakglass-ui",
 				},
 				GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
 				Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
@@ -73,8 +74,9 @@ func TestIdentityProviderGroupSync(t *testing.T) {
 			},
 			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://keycloak.example.com/realms/timeout-test",
-					ClientID:  "breakglass-ui",
+					Authority:        "https://keycloak.example.com/realms/timeout-test",
+					ClientID:         "breakglass-ui",
+					ExpectedAudience: "breakglass-ui",
 				},
 				GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
 				Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
@@ -105,8 +107,9 @@ func TestIdentityProviderGroupSync(t *testing.T) {
 			},
 			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://keycloak.example.com/realms/ca-test",
-					ClientID:  "breakglass-ui",
+					Authority:        "https://keycloak.example.com/realms/ca-test",
+					ClientID:         "breakglass-ui",
+					ExpectedAudience: "breakglass-ui",
 				},
 				GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
 				Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
@@ -138,6 +141,7 @@ func TestIdentityProviderOIDCConfig(t *testing.T) {
 		oidcConfig := breakglassv1alpha1.OIDCConfig{
 			Authority:            "https://auth.example.com",
 			ClientID:             "breakglass-ui",
+			ExpectedAudience:     "breakglass-ui",
 			JWKSEndpoint:         "https://auth.example.com/.well-known/jwks.json",
 			InsecureSkipVerify:   false,
 			CertificateAuthority: "-----BEGIN CERTIFICATE-----\n...",

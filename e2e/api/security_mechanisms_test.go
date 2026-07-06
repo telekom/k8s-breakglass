@@ -484,6 +484,7 @@ func TestSecurityGroupSyncSecretRequired(t *testing.T) {
 				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority:            "https://auth.example.com",
 					ClientID:             "test-client",
+					ExpectedAudience:     "test-client",
 					CertificateAuthority: keycloakCA,
 				},
 				Keycloak: &breakglassv1alpha1.KeycloakGroupSync{

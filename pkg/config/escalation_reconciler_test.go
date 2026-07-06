@@ -565,8 +565,9 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				Disabled: true,
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://example.com",
-					ClientID:  "test",
+					Authority:        "https://example.com",
+					ClientID:         "test",
+					ExpectedAudience: "test",
 				},
 			},
 		}
@@ -986,8 +987,9 @@ func TestEscalationReconciler_ValidateIDPRefs(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "enabled-idp"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://example.com",
-				ClientID:  "test",
+				Authority:        "https://example.com",
+				ClientID:         "test",
+				ExpectedAudience: "test",
 			},
 		},
 	}
@@ -997,8 +999,9 @@ func TestEscalationReconciler_ValidateIDPRefs(t *testing.T) {
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Disabled: true,
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://example.com",
-				ClientID:  "test",
+				Authority:        "https://example.com",
+				ClientID:         "test",
+				ExpectedAudience: "test",
 			},
 		},
 	}

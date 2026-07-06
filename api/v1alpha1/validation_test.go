@@ -490,8 +490,9 @@ func TestValidateIdentityProvider(t *testing.T) {
 			},
 			Spec: IdentityProviderSpec{
 				OIDC: OIDCConfig{
-					Authority: "https://auth.example.com",
-					ClientID:  "breakglass-client",
+					Authority:        "https://auth.example.com",
+					ClientID:         "breakglass-client",
+					ExpectedAudience: "breakglass-client",
 				},
 			},
 		}
@@ -522,6 +523,14 @@ func TestValidateIdentityProvider(t *testing.T) {
 		result := ValidateIdentityProvider(idp)
 		assert.False(t, result.IsValid())
 		assert.Contains(t, result.ErrorMessage(), "clientID")
+	})
+
+	t.Run("missing OIDC expectedAudience", func(t *testing.T) {
+		idp := validIDP()
+		idp.Spec.OIDC.ExpectedAudience = ""
+		result := ValidateIdentityProvider(idp)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "expectedAudience")
 	})
 
 	t.Run("invalid OIDC authority URL", func(t *testing.T) {
@@ -1530,8 +1539,9 @@ func TestValidateIdentityProvider_MalformedResources(t *testing.T) {
 			},
 			Spec: IdentityProviderSpec{
 				OIDC: OIDCConfig{
-					Authority: "://not-a-valid-url",
-					ClientID:  "client",
+					Authority:        "://not-a-valid-url",
+					ClientID:         "client",
+					ExpectedAudience: "client",
 				},
 			},
 		}
@@ -1547,8 +1557,9 @@ func TestValidateIdentityProvider_MalformedResources(t *testing.T) {
 			},
 			Spec: IdentityProviderSpec{
 				OIDC: OIDCConfig{
-					Authority: "https://auth.example.com",
-					ClientID:  "client",
+					Authority:        "https://auth.example.com",
+					ClientID:         "client",
+					ExpectedAudience: "client",
 				},
 				GroupSyncProvider: GroupSyncProviderKeycloak,
 				Keycloak:          &KeycloakGroupSync{}, // Empty config

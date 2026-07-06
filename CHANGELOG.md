@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Required IdentityProvider JWT audience validation**: `IdentityProvider.spec.oidc.expectedAudience` is now required and CRD-backed auth refuses providers without it. Existing IdentityProvider resources must be updated with an expected audience and the OIDC provider must issue tokens whose `aud` claim contains that value before upgrading.
 - **DebugSession denial and HTTP log redaction**: Frontend HTTP error logging and unauthorized DebugSession cluster-denial responses now avoid exposing bearer tokens or template cluster patterns.
 - **bgctl self-update checksum enforcement**: `bgctl update` now refuses to install
   release archives when the matching `.sha256` asset is missing or cannot be
@@ -160,7 +161,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **OIDC discovery JWKS URI origin validation (SEC-003)** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Discovered `jwks_uri` origin (hostname and port) must match the configured authority to prevent SSRF if a compromised IDP discovery endpoint returns a malicious JWKS URI pointing to an internal, unrelated, or different-port host
 - **Audience refresh singleflight deduplication** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Periodic audience refresh from IdentityProvider now uses singleflight to prevent thundering herd when many requests arrive simultaneously after the refresh interval elapses
 - **Issuer trailing slash normalization** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): `LoadIdentityProviderByIssuer` now normalizes trailing slashes in both the incoming issuer and `IdentityProvider.spec.issuer` for the primary match, consistent with the auth layer's canonicalization
-- **JWT audience claim validation (SEC-005a)** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Conditional JWT `aud` claim validation when `IdentityProvider.spec.oidc.expectedAudience` is configured. Prevents cross-service token confusion from other OIDC clients at the same provider. Requires a matching audience protocol mapper in the IDP. When unconfigured (default), audience validation is skipped for backwards compatibility
+- **JWT audience claim validation (SEC-005a)** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): JWT `aud` claim validation now uses `IdentityProvider.spec.oidc.expectedAudience` to prevent cross-service token confusion from other OIDC clients at the same provider. Requires a matching audience protocol mapper in the IDP.
 - **JWT expiration required (SEC-005b)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459)): JWT parser now rejects tokens without an `exp` claim via `jwt.WithExpirationRequired()`
 - **TLS minimum version (SEC-003)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459)): Set `tls.VersionTLS12` as minimum on the API server and all OIDC proxy / JWKS HTTP clients
 - **X-Request-ID sanitization (SEC-004)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459)): Validate `X-Request-ID` header (alphanumeric + `-_.:`; max 128 chars) and replace invalid values with a generated UUID to prevent log injection

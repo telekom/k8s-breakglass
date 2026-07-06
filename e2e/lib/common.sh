@@ -1563,7 +1563,8 @@ spec:
   issuer: \"$issuer_url\"
   oidc:
     authority: \"$issuer_url\"
-    clientID: \"breakglass\""
+    clientID: \"breakglass-ui\"
+    expectedAudience: \"breakglass-ui\""
   
   # Add CA if provided
   if [ -n "$ca_pem" ] && [ -f "$ca_pem" ]; then

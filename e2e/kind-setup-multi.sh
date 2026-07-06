@@ -1142,7 +1142,8 @@ spec:
   displayName: "Main IDP (Employees)"
   oidc:
     authority: "${main_issuer_url}"
-    clientID: "breakglass"
+    clientID: "breakglass-ui"
+    expectedAudience: "breakglass-ui"
     certificateAuthority: |
 $(printf '%s\n' "$keycloak_ca_pem" | sed 's/^/      /')
   issuer: "${main_issuer_url}"
@@ -1168,6 +1169,7 @@ spec:
   oidc:
     authority: "${contractors_issuer_url}"
     clientID: "breakglass-contractors"
+    expectedAudience: "breakglass-contractors"
     certificateAuthority: |
 $(printf '%s\n' "$keycloak_ca_pem" | sed 's/^/      /')
   issuer: "${contractors_issuer_url}"

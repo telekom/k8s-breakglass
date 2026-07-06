@@ -339,6 +339,12 @@ func ValidateIdentityProvider(idp *IdentityProvider) *ValidationResult {
 		result.Errors = append(result.Errors, validateIdentifierFormat(idp.Spec.OIDC.ClientID, oidcPath.Child("clientID"))...)
 	}
 
+	if idp.Spec.OIDC.ExpectedAudience == "" {
+		result.Errors = append(result.Errors, field.Required(oidcPath.Child("expectedAudience"), "OIDC expectedAudience is required"))
+	} else {
+		result.Errors = append(result.Errors, validateIdentifierFormat(idp.Spec.OIDC.ExpectedAudience, oidcPath.Child("expectedAudience"))...)
+	}
+
 	if idp.Spec.OIDC.InsecureSkipVerify {
 		result.Errors = append(result.Errors, field.Forbidden(oidcPath.Child("insecureSkipVerify"),
 			"insecureSkipVerify is not supported for IdentityProvider OIDC/JWKS authentication; configure certificateAuthority"))

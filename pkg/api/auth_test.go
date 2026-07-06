@@ -729,6 +729,7 @@ func TestGetJWKSForIssuerRejectsInsecureSkipVerifyBeforeCA(t *testing.T) {
 					OIDC: breakglassv1alpha1.OIDCConfig{
 						Authority:            "https://oidc.example.com",
 						ClientID:             "breakglass-ui",
+						ExpectedAudience:     "breakglass-ui",
 						CertificateAuthority: testCertificatePEM(t),
 						InsecureSkipVerify:   true,
 					},
@@ -745,6 +746,7 @@ func TestGetJWKSForIssuerRejectsInsecureSkipVerifyBeforeCA(t *testing.T) {
 					OIDC: breakglassv1alpha1.OIDCConfig{
 						Authority:            "https://keycloak.example.com/realms/test",
 						ClientID:             "breakglass-ui",
+						ExpectedAudience:     "breakglass-ui",
 						CertificateAuthority: testCertificatePEM(t),
 					},
 					Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
@@ -936,6 +938,7 @@ func TestGetJWKSForIssuer_EvictsCachedJWKSWhenLiveIDPBecomesInsecure(t *testing.
 			Issuer:               issuer,
 			Authority:            issuer,
 			ClientID:             "breakglass-ui",
+			ExpectedAudience:     "breakglass-ui",
 			CertificateAuthority: caPEM,
 		},
 	}
@@ -953,7 +956,7 @@ func TestGetJWKSForIssuer_EvictsCachedJWKSWhenLiveIDPBecomesInsecure(t *testing.
 	_, audience, idpName, cacheHit, err := auth.getJWKSForIssuer(t.Context(), issuer)
 	require.NoError(t, err)
 	assert.False(t, cacheHit)
-	assert.Empty(t, audience)
+	assert.Equal(t, "breakglass-ui", audience)
 	assert.Equal(t, "secure-idp", idpName)
 
 	auth.jwksMutex.Lock()
@@ -969,6 +972,7 @@ func TestGetJWKSForIssuer_EvictsCachedJWKSWhenLiveIDPBecomesInsecure(t *testing.
 		Issuer:             issuer,
 		Authority:          issuer,
 		ClientID:           "breakglass-ui",
+		ExpectedAudience:   "breakglass-ui",
 		InsecureSkipVerify: true,
 	})
 
@@ -995,8 +999,9 @@ func TestGetJWKSForIssuer_InvalidAuthorityRejected(t *testing.T) {
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Issuer: "https://auth.example.com",
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "http://insecure.example.com",
-				ClientID:  "test-client",
+				Authority:        "http://insecure.example.com",
+				ClientID:         "test-client",
+				ExpectedAudience: "test-client",
 			},
 		},
 	}

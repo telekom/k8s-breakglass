@@ -93,8 +93,9 @@ func TestIdentityProviderReconciler_ReconcileSuccess(t *testing.T) {
 		},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "test-client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "test-client",
+				ExpectedAudience: "test-client",
 			},
 		},
 	}
@@ -160,8 +161,9 @@ func TestIdentityProviderReconciler_ReconcileReloadError(t *testing.T) {
 		},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "test-client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "test-client",
+				ExpectedAudience: "test-client",
 			},
 		},
 	}
@@ -204,8 +206,9 @@ func TestIdentityProviderReconciler_ReconcileWithMultipleIDPs(t *testing.T) {
 		},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "test-client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "test-client",
+				ExpectedAudience: "test-client",
 			},
 			Primary: true,
 		},
@@ -217,8 +220,9 @@ func TestIdentityProviderReconciler_ReconcileWithMultipleIDPs(t *testing.T) {
 		},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "test-client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "test-client",
+				ExpectedAudience: "test-client",
 			},
 			Primary: false,
 		},
@@ -669,8 +673,9 @@ func TestIdentityProviderReconciler_GetCachedIdentityProviders(t *testing.T) {
 		},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "test-client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "test-client",
+				ExpectedAudience: "test-client",
 			},
 		},
 	}
@@ -704,8 +709,9 @@ func TestIdentityProviderReconciler_GetEnabledIdentityProviders(t *testing.T) {
 		},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "test-client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "test-client",
+				ExpectedAudience: "test-client",
 			},
 		},
 	}
@@ -735,8 +741,9 @@ func TestIdentityProviderReconciler_DisabledIDPsFilteredFromCache(t *testing.T) 
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Disabled: false,
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "test-client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "test-client",
+				ExpectedAudience: "test-client",
 			},
 		},
 	}
@@ -748,8 +755,9 @@ func TestIdentityProviderReconciler_DisabledIDPsFilteredFromCache(t *testing.T) 
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Disabled: true,
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth2.example.com",
-				ClientID:  "test-client-2",
+				Authority:        "https://auth2.example.com",
+				ClientID:         "test-client-2",
+				ExpectedAudience: "test-client-2",
 			},
 		},
 	}

@@ -632,8 +632,9 @@ func TestMultipleIdentityProvidersFeature(t *testing.T) {
 				DisplayName: "Primary Corporate OIDC",
 				Issuer:      "https://auth-corp.example.com",
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://auth-corp.example.com",
-					ClientID:  "breakglass-ui",
+					Authority:        "https://auth-corp.example.com",
+					ClientID:         "breakglass-ui",
+					ExpectedAudience: "breakglass-ui",
 				},
 			},
 		}
@@ -660,8 +661,9 @@ func TestMultipleIdentityProvidersFeature(t *testing.T) {
 				DisplayName: "Keycloak Provider",
 				Issuer:      "https://keycloak.example.com/realms/master",
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://keycloak.example.com",
-					ClientID:  "breakglass-ui-keycloak",
+					Authority:        "https://keycloak.example.com",
+					ClientID:         "breakglass-ui-keycloak",
+					ExpectedAudience: "breakglass-ui-keycloak",
 				},
 			},
 		}
