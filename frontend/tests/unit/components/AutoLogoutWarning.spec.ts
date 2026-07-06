@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { mount, type VueWrapper } from "@vue/test-utils";
+import { nextTick } from "vue";
 import AutoLogoutWarning from "@/components/AutoLogoutWarning.vue";
 import { AuthKey } from "@/keys";
 import { getOIDCUserStorageKey, getStoredOIDCUser } from "@/services/auth";
@@ -58,6 +59,7 @@ describe("AutoLogoutWarning", () => {
 
   const runExpiryCheck = async () => {
     await vi.advanceTimersByTimeAsync(5000);
+    await nextTick();
   };
 
   const storeOIDCUser = (storage: Storage, expiresAt: number | undefined) => {
