@@ -314,14 +314,22 @@ func limitedDownloadCopy(dst io.Writer, src io.Reader, maxBytes int64) error {
 	}
 
 	var probe [1]byte
-	extra, probeErr := src.Read(probe[:])
-	if probeErr != nil && !errors.Is(probeErr, io.EOF) {
-		return probeErr
+	const maxEmptyProbeReads = 100
+	for emptyReads := 0; ; emptyReads++ {
+		extra, probeErr := src.Read(probe[:])
+		if probeErr != nil && !errors.Is(probeErr, io.EOF) {
+			return probeErr
+		}
+		if extra > 0 {
+			return fmt.Errorf("download exceeds maximum allowed size of %d bytes", maxBytes)
+		}
+		if errors.Is(probeErr, io.EOF) {
+			return nil
+		}
+		if emptyReads >= maxEmptyProbeReads {
+			return fmt.Errorf("download size probe made no progress after %d reads", maxEmptyProbeReads+1)
+		}
 	}
-	if extra > 0 {
-		return fmt.Errorf("download exceeds maximum allowed size of %d bytes", maxBytes)
-	}
-	return nil
 }
 
 // progressReader wraps an io.Reader and prints download progress to stderr.

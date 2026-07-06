@@ -537,6 +537,26 @@ func (r *errAfterDataReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+type emptyReadAfterDataReader struct {
+	data          []byte
+	emptyAfter    int
+	returnedEmpty bool
+	pos           int
+}
+
+func (r *emptyReadAfterDataReader) Read(p []byte) (int, error) {
+	if r.pos >= len(r.data) {
+		return 0, io.EOF
+	}
+	if r.pos >= r.emptyAfter && !r.returnedEmpty {
+		r.returnedEmpty = true
+		return 0, nil
+	}
+	n := copy(p, r.data[r.pos:])
+	r.pos += n
+	return n, nil
+}
+
 func TestLimitedCopyReturnsProbeReadError(t *testing.T) {
 	limit := int64(4)
 	src := &errAfterDataReader{data: []byte("test"), err: io.ErrUnexpectedEOF}
@@ -544,6 +564,17 @@ func TestLimitedCopyReturnsProbeReadError(t *testing.T) {
 	var dst bytes.Buffer
 	err := limitedCopy(&dst, src, limit)
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+}
+
+func TestLimitedDownloadCopyRejectsOversizedAfterEmptyProbeRead(t *testing.T) {
+	limit := int64(4)
+	src := &emptyReadAfterDataReader{data: []byte("extra"), emptyAfter: int(limit)}
+
+	var dst bytes.Buffer
+	err := limitedDownloadCopy(&dst, src, limit)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "download exceeds maximum allowed size")
+	assert.Equal(t, "extr", dst.String())
 }
 
 func TestExtractTarGzAllowsValidArchive(t *testing.T) {
