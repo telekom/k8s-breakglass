@@ -37,6 +37,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -185,6 +186,10 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 			}
 		}
 	}
+	includeEventTypes, excludeEventTypes, sharedEventTypeFilters := managerEventTypeFilters(enabledConfigs)
+	if !sharedEventTypeFilters {
+		s.logger.Debug("manager event-type pre-filter disabled because enabled AuditConfigs use different event-type filters")
+	}
 
 	// Create isolated multi-sink: each sink gets its own queue for isolation
 	// If one sink is slow/blocked, it won't affect other sinks
@@ -209,6 +214,8 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 		sampleRateConfigured:    sampleRateConfigured,
 		HighVolumeEventTypes:    highVolume,
 		AlwaysCaptureEventTypes: alwaysCapture,
+		IncludeEventTypes:       includeEventTypes,
+		ExcludeEventTypes:       excludeEventTypes,
 		WriteTimeout:            5 * time.Second,
 		// DirectSinks references the same sink instances stored in s.sinks.
 		// On the next ReloadMultiple call, the Manager is closed (draining all
@@ -268,6 +275,33 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 
 	metrics.AuditConfigReloads.WithLabelValues("success").Inc()
 	return nil
+}
+
+func managerEventTypeFilters(configs []*breakglassv1alpha1.AuditConfig) ([]string, []string, bool) {
+	if len(configs) == 0 {
+		return nil, nil, true
+	}
+
+	var include []string
+	var exclude []string
+	for i, config := range configs {
+		var currentInclude []string
+		var currentExclude []string
+		if config != nil && config.Spec.Filtering != nil {
+			currentInclude = config.Spec.Filtering.IncludeEventTypes
+			currentExclude = config.Spec.Filtering.ExcludeEventTypes
+		}
+		if i == 0 {
+			include = append([]string(nil), currentInclude...)
+			exclude = append([]string(nil), currentExclude...)
+			continue
+		}
+		if !slices.Equal(include, currentInclude) || !slices.Equal(exclude, currentExclude) {
+			return nil, nil, false
+		}
+	}
+
+	return include, exclude, true
 }
 
 // Emit sends an audit event asynchronously.
@@ -459,6 +493,23 @@ func (s *Service) buildSinks(ctx context.Context, config *breakglassv1alpha1.Aud
 				zap.String("type", string(sinkCfg.Type)),
 				zap.Int("failure_threshold", cbCfg.FailureThreshold),
 				zap.Duration("open_timeout", cbCfg.OpenTimeout))
+		}
+
+		sink = NewFilteredSink(sink, EventFilterConfig{
+			IncludeEventTypes: sinkCfg.EventTypes,
+			MinSeverity:       Severity(sinkCfg.MinSeverity),
+		})
+		if config.Spec.Filtering != nil {
+			sink = NewFilteredSink(sink, EventFilterConfig{
+				IncludeEventTypes: config.Spec.Filtering.IncludeEventTypes,
+				ExcludeEventTypes: config.Spec.Filtering.ExcludeEventTypes,
+				IncludeUsers:      config.Spec.Filtering.IncludeUsers,
+				ExcludeUsers:      config.Spec.Filtering.ExcludeUsers,
+				IncludeNamespaces: config.Spec.Filtering.IncludeNamespaces,
+				ExcludeNamespaces: config.Spec.Filtering.ExcludeNamespaces,
+				IncludeResources:  config.Spec.Filtering.IncludeResources,
+				ExcludeResources:  config.Spec.Filtering.ExcludeResources,
+			})
 		}
 
 		sinks = append(sinks, sink)

@@ -293,6 +293,9 @@ type Target struct {
 
 	// APIGroup is the API group of the resource
 	APIGroup string `json:"apiGroup,omitempty"`
+
+	// NamespaceLabels contains labels for namespace selector filtering when known.
+	NamespaceLabels map[string]string `json:"namespaceLabels,omitempty"`
 }
 
 // RequestContext contains correlation and context information

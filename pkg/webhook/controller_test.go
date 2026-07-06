@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -3652,4 +3653,102 @@ func TestAuditEmitWithDifferentEventSeverities(t *testing.T) {
 			wc.emitPodSecurityAudit(ctx, "test@example.com", []string{"group1"}, "cluster1", sar, "policy1", tc.result)
 		})
 	}
+}
+
+func TestAuditTargetFromSARIncludesNamespaceLabels(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	ctx := context.Background()
+	wc := NewWebhookController(logger.Sugar(), config.Config{}, nil, nil, nil, nil,
+		WithNamespaceLabelsFetchFunc(func(_ context.Context, clusterName, namespace string) (map[string]string, error) {
+			if clusterName != "cluster1" || namespace != "production" {
+				return nil, fmt.Errorf("unexpected namespace lookup %s/%s", clusterName, namespace)
+			}
+			return map[string]string{"audit-enabled": "true"}, nil
+		}),
+	)
+
+	sar := &authorizationv1.SubjectAccessReview{
+		Spec: authorizationv1.SubjectAccessReviewSpec{
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Namespace: "production",
+				Verb:      "get",
+				Resource:  "pods",
+				Name:      "pod-a",
+			},
+		},
+	}
+
+	target, verb, subresource, apiGroup := wc.auditTargetFromSAR(ctx, "cluster1", sar)
+
+	assert.Equal(t, "pods", target.Kind)
+	assert.Equal(t, "pod-a", target.Name)
+	assert.Equal(t, "production", target.Namespace)
+	assert.Equal(t, "cluster1", target.Cluster)
+	assert.Equal(t, map[string]string{"audit-enabled": "true"}, target.NamespaceLabels)
+	assert.Equal(t, "get", verb)
+	assert.Empty(t, subresource)
+	assert.Empty(t, apiGroup)
+}
+
+func TestAuditTargetFromSARBoundsNamespaceLabelLookup(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	ctx := context.Background()
+	var sawDeadline bool
+	wc := NewWebhookController(logger.Sugar(), config.Config{}, nil, nil, nil, nil,
+		WithNamespaceLabelsFetchFunc(func(ctx context.Context, _, _ string) (map[string]string, error) {
+			deadline, ok := ctx.Deadline()
+			sawDeadline = ok
+			if ok {
+				assert.LessOrEqual(t, time.Until(deadline), auditNamespaceLabelLookupTimeout)
+			}
+			return map[string]string{"audit-enabled": "true"}, nil
+		}),
+	)
+
+	sar := &authorizationv1.SubjectAccessReview{
+		Spec: authorizationv1.SubjectAccessReviewSpec{
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Namespace: "production",
+				Verb:      "get",
+				Resource:  "pods",
+			},
+		},
+	}
+
+	target, _, _, _ := wc.auditTargetFromSAR(ctx, "cluster1", sar)
+
+	assert.True(t, sawDeadline)
+	assert.Equal(t, map[string]string{"audit-enabled": "true"}, target.NamespaceLabels)
+}
+
+func TestAuditTargetFromSARSkipsNamespaceLabelsForNonResource(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	ctx := context.Background()
+	called := false
+	wc := NewWebhookController(logger.Sugar(), config.Config{}, nil, nil, nil, nil,
+		WithNamespaceLabelsFetchFunc(func(context.Context, string, string) (map[string]string, error) {
+			called = true
+			return nil, nil
+		}),
+	)
+
+	sar := &authorizationv1.SubjectAccessReview{
+		Spec: authorizationv1.SubjectAccessReviewSpec{
+			NonResourceAttributes: &authorizationv1.NonResourceAttributes{
+				Path: "/metrics",
+				Verb: "get",
+			},
+		},
+	}
+
+	target, verb, subresource, apiGroup := wc.auditTargetFromSAR(ctx, "cluster1", sar)
+
+	assert.False(t, called)
+	assert.Equal(t, "nonresource", target.Kind)
+	assert.Equal(t, "/metrics", target.Name)
+	assert.Equal(t, "cluster1", target.Cluster)
+	assert.Nil(t, target.NamespaceLabels)
+	assert.Equal(t, "get", verb)
+	assert.Empty(t, subresource)
+	assert.Empty(t, apiGroup)
 }

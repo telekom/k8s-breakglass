@@ -933,6 +933,39 @@ func TestValidateAuditConfig(t *testing.T) {
 		assert.False(t, result.IsValid())
 		assert.Contains(t, result.ErrorMessage(), "Duplicate")
 	})
+
+	t.Run("invalid filtering glob pattern", func(t *testing.T) {
+		ac := validAC()
+		ac.Spec.Filtering = &AuditFilterConfig{
+			IncludeUsers: []string{"["},
+		}
+		result := ValidateAuditConfig(ac)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "spec.filtering.includeUsers[0]")
+		assert.Contains(t, result.ErrorMessage(), "invalid glob pattern")
+	})
+
+	t.Run("invalid namespace filtering glob pattern", func(t *testing.T) {
+		ac := validAC()
+		ac.Spec.Filtering = &AuditFilterConfig{
+			IncludeNamespaces: &NamespaceFilter{
+				Patterns: []string{"prod-["},
+			},
+		}
+		result := ValidateAuditConfig(ac)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "spec.filtering.includeNamespaces.patterns[0]")
+		assert.Contains(t, result.ErrorMessage(), "invalid glob pattern")
+	})
+
+	t.Run("invalid sink event type glob pattern", func(t *testing.T) {
+		ac := validAC()
+		ac.Spec.Sinks[0].EventTypes = []string{"session.["}
+		result := ValidateAuditConfig(ac)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "spec.sinks[0].eventTypes[0]")
+		assert.Contains(t, result.ErrorMessage(), "invalid glob pattern")
+	})
 }
 
 func TestValidateAuditConfig_KafkaSink(t *testing.T) {
