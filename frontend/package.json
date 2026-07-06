@@ -1,6 +1,7 @@
 {
-  "name": "breakglass",
+  "name": "@telekom/k8s-breakglass-frontend",
   "version": "0.0.0",
+  "private": true,
   "engines": {
     "node": ">=24.11.0"
   },
