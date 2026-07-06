@@ -1856,6 +1856,7 @@ spec:
     authority: "https://${KEYCLOAK_SERVICE_HOSTNAME}:8443/realms/${KEYCLOAK_REALM}"
     # OIDC client ID (must match realm configuration)
     clientID: "breakglass-ui"
+    expectedAudience: "breakglass-ui"
     # Trust the generated Keycloak CA for self-signed E2E certificates.
     certificateAuthority: |
 $KEYCLOAK_CA_INLINE
