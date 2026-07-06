@@ -179,6 +179,32 @@ func TestRequestDeviceCodeTruncatesOversizedErrorBody(t *testing.T) {
 	require.NotContains(t, err.Error(), "TAIL")
 }
 
+func TestDiscoverOIDCEndpointsWrapsOversizedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"token_endpoint":"` + strings.Repeat("a", oidcJSONBodyLimit) + `"}`))
+	}))
+	defer server.Close()
+
+	_, err := discoverOIDCEndpoints(context.Background(), server.Client(), server.URL)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "decode OIDC discovery response")
+	require.Contains(t, err.Error(), server.URL+"/.well-known/openid-configuration")
+	require.Contains(t, err.Error(), "oidc json response exceeds 1048576 bytes")
+}
+
+func TestRequestDeviceCodeWrapsOversizedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"device_code":"` + strings.Repeat("a", oidcJSONBodyLimit) + `"}`))
+	}))
+	defer server.Close()
+
+	_, err := requestDeviceCode(context.Background(), server.Client(), server.URL, OIDCConfig{ClientID: "bgctl"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "decode device authorization response")
+	require.Contains(t, err.Error(), server.URL)
+	require.Contains(t, err.Error(), "oidc json response exceeds 1048576 bytes")
+}
+
 func TestPollDeviceTokenRejectsOversizedSuccessBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"access_token":"` + strings.Repeat("a", oidcJSONBodyLimit) + `"}`))
@@ -187,7 +213,23 @@ func TestPollDeviceTokenRejectsOversizedSuccessBody(t *testing.T) {
 
 	_, err := pollDeviceToken(context.Background(), server.Client(), server.URL, OIDCConfig{ClientID: "bgctl"}, "abc")
 	require.Error(t, err)
+	require.Contains(t, err.Error(), "decode device token response")
+	require.Contains(t, err.Error(), server.URL)
 	require.Contains(t, err.Error(), "oidc json response exceeds 1048576 bytes")
+}
+
+func TestPollDeviceTokenWrapsInvalidErrorResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("{not-json"))
+	}))
+	defer server.Close()
+
+	_, err := pollDeviceToken(context.Background(), server.Client(), server.URL, OIDCConfig{ClientID: "bgctl"}, "abc")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "decode device token error response")
+	require.Contains(t, err.Error(), server.URL)
+	require.Contains(t, err.Error(), "HTTP 400")
 }
 
 func TestPollDeviceTokenIncludesErrorDescription(t *testing.T) {

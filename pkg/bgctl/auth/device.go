@@ -140,7 +140,7 @@ func discoverOIDCEndpoints(ctx context.Context, client *http.Client, authority s
 	}
 	var discovery oidcDiscovery
 	if err := decodeLimitedJSON(resp.Body, &discovery); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode OIDC discovery response from %s: %w", url, err)
 	}
 	return &discovery, nil
 }
@@ -163,7 +163,7 @@ func requestDeviceCode(ctx context.Context, client *http.Client, endpoint string
 	}
 	var payload deviceCodeResponse
 	if err := decodeLimitedJSON(resp.Body, &payload); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode device authorization response from %s: %w", endpoint, err)
 	}
 	return &payload, nil
 }
@@ -184,10 +184,10 @@ func pollDeviceToken(ctx context.Context, client *http.Client, endpoint string, 
 	if resp.StatusCode >= 400 {
 		body, truncated, err := readLimitedBody(resp.Body, oidcErrorBodyLimit)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read device token error response from %s: %w", endpoint, err)
 		}
 		if err := json.NewDecoder(bytes.NewReader(body)).Decode(&payload); err != nil {
-			return nil, fmt.Errorf("device token failed: HTTP %d: %s", resp.StatusCode, formatLimitedBody(body, truncated, oidcErrorBodyLimit))
+			return nil, fmt.Errorf("decode device token error response from %s: %w (HTTP %d: %s)", endpoint, err, resp.StatusCode, formatLimitedBody(body, truncated, oidcErrorBodyLimit))
 		}
 		if err := deviceTokenPayloadError(payload); err != nil {
 			return nil, err
@@ -195,7 +195,7 @@ func pollDeviceToken(ctx context.Context, client *http.Client, endpoint string, 
 		return nil, fmt.Errorf("device token failed: HTTP %d: %s", resp.StatusCode, formatLimitedBody(body, truncated, oidcErrorBodyLimit))
 	}
 	if err := decodeLimitedJSON(resp.Body, &payload); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode device token response from %s: %w", endpoint, err)
 	}
 	if err := deviceTokenPayloadError(payload); err != nil {
 		return nil, err
