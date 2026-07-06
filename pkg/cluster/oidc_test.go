@@ -508,6 +508,121 @@ func TestOIDCTokenProvider_RefreshToken(t *testing.T) {
 	assert.Equal(t, 2, tokenCallCount) // One more call for refresh
 }
 
+func TestOIDCTokenProvider_ClientCredentialsFlow_BoundsTokenResponse(t *testing.T) {
+	tests := []struct {
+		name          string
+		statusCode    int
+		body          string
+		wantToken     string
+		wantErr       string
+		wantTooLarge  bool
+		wantNoContent string
+	}{
+		{
+			name:       "normal response succeeds",
+			statusCode: http.StatusOK,
+			body:       `{"access_token":"bounded-access-token","token_type":"Bearer","expires_in":3600}`,
+			wantToken:  "bounded-access-token",
+		},
+		{
+			name:         "over-limit token response fails",
+			statusCode:   http.StatusOK,
+			body:         strings.Repeat("x", int(maxOIDCResponseBodyBytes)+1),
+			wantErr:      "failed to read token response",
+			wantTooLarge: true,
+		},
+		{
+			name:          "over-limit non-200 response remains bounded",
+			statusCode:    http.StatusBadGateway,
+			body:          strings.Repeat("provider failure\n", int(maxOIDCResponseBodyBytes)/len("provider failure\n")+1) + "tail-marker",
+			wantErr:       "token request returned status 502",
+			wantTooLarge:  true,
+			wantNoContent: "tail-marker",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			_ = corev1.AddToScheme(scheme)
+
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "oidc-secret",
+					Namespace: "default",
+				},
+				Data: map[string][]byte{
+					"client-secret": []byte("test-secret"),
+				},
+			}
+			k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
+			provider := NewOIDCTokenProvider(k8sClient, zap.NewNop().Sugar())
+
+			mux := http.NewServeMux()
+			mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(oidcDiscovery{
+					Issuer:        "http://" + r.Host,
+					TokenEndpoint: "http://" + r.Host + "/token",
+				})
+			})
+			mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.statusCode)
+				_, _ = w.Write([]byte(tt.body))
+			})
+
+			server := httptest.NewServer(mux)
+			defer server.Close()
+
+			oidcConfig := &breakglassv1alpha1.OIDCAuthConfig{
+				IssuerURL: server.URL,
+				ClientID:  "test-client",
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{
+					Name:      "oidc-secret",
+					Namespace: "default",
+					Key:       "client-secret",
+				},
+			}
+
+			token, err := provider.clientCredentialsFlow(context.Background(), oidcConfig)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				require.NotNil(t, token)
+				assert.Equal(t, tt.wantToken, token.AccessToken)
+				return
+			}
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+			if tt.wantTooLarge {
+				assert.Contains(t, err.Error(), errOIDCResponseBodyTooLarge.Error())
+			}
+			if tt.wantNoContent != "" {
+				assert.NotContains(t, err.Error(), tt.wantNoContent)
+				assert.LessOrEqual(t, len(err.Error()), int(maxOIDCResponseBodyBytes)+512)
+			}
+		})
+	}
+}
+
+func TestOIDCTokenProvider_DiscoverTokenEndpoint_ResponseBodyTooLarge(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/.well-known/openid-configuration", r.URL.Path)
+		_, _ = w.Write([]byte(strings.Repeat("x", int(maxOIDCResponseBodyBytes)+1)))
+	}))
+	defer server.Close()
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	provider := NewOIDCTokenProvider(k8sClient, zap.NewNop().Sugar())
+
+	_, err := provider.discoverTokenEndpoint(context.Background(), &breakglassv1alpha1.OIDCAuthConfig{IssuerURL: server.URL})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read OIDC discovery")
+	assert.Contains(t, err.Error(), errOIDCResponseBodyTooLarge.Error())
+}
+
 func TestOIDCTokenProvider_TOFUCache(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)

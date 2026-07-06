@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -33,6 +34,8 @@ import (
 // TokenRefreshBuffer is the duration before expiry when we proactively refresh tokens
 const TokenRefreshBuffer = 30 * time.Second
 
+const maxOIDCResponseBodyBytes = 256 << 10
+
 var tofuHandshakeTimeout = 5 * time.Second
 
 // ErrRefreshTokenExpired indicates the offline refresh token is invalid, expired, or revoked.
@@ -42,6 +45,8 @@ var ErrRefreshTokenExpired = errors.New("refresh token expired or revoked")
 // ErrDegradedAuth indicates the primary auth flow (refresh token) failed but fallback
 // to client_credentials succeeded. The checker uses this to set DegradedAuth condition.
 var ErrDegradedAuth = errors.New("primary auth degraded, using fallback credentials")
+
+var errOIDCResponseBodyTooLarge = errors.New("oidc response body too large")
 
 // fallbackCredentials stores IDP Keycloak SA credentials for fallback auth
 // when the primary refresh token flow fails. Stored separately from the primary
@@ -97,6 +102,18 @@ type oidcDiscovery struct {
 	TokenEndpoint         string `json:"token_endpoint"`
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
 	JWKSURI               string `json:"jwks_uri"`
+}
+
+func readOIDCResponseBody(body io.Reader) ([]byte, error) {
+	limit := int(maxOIDCResponseBodyBytes)
+	data, err := io.ReadAll(io.LimitReader(body, int64(limit)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > limit {
+		return data[:limit], fmt.Errorf("%w: exceeded %d bytes", errOIDCResponseBodyTooLarge, limit)
+	}
+	return data, nil
 }
 
 // NewOIDCTokenProvider creates a new OIDC token provider
@@ -680,13 +697,16 @@ func (p *OIDCTokenProvider) refreshToken(ctx context.Context, oidc *breakglassv1
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read refresh token response: %w", err)
-	}
+	body, err := readOIDCResponseBody(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
+		if err != nil {
+			return nil, fmt.Errorf("refresh token request returned status %d: %s: %w", resp.StatusCode, string(body), err)
+		}
 		return nil, fmt.Errorf("refresh token request returned status %d: %s", resp.StatusCode, string(body))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to read refresh token response: %w", err)
 	}
 
 	var tokenResp tokenResponse
@@ -753,13 +773,16 @@ func (p *OIDCTokenProvider) clientCredentialsFlow(ctx context.Context, oidc *bre
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read token response: %w", err)
-	}
+	body, err := readOIDCResponseBody(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
+		if err != nil {
+			return nil, fmt.Errorf("token request returned status %d: %s: %w", resp.StatusCode, string(body), err)
+		}
 		return nil, fmt.Errorf("token request returned status %d: %s", resp.StatusCode, string(body))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to read token response: %w", err)
 	}
 
 	var tokenResp tokenResponse
@@ -843,13 +866,16 @@ func (p *OIDCTokenProvider) TokenExchangeFlow(ctx context.Context, oidc *breakgl
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read token exchange response: %w", err)
-	}
+	body, err := readOIDCResponseBody(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
+		if err != nil {
+			return nil, fmt.Errorf("token exchange returned status %d: %s: %w", resp.StatusCode, string(body), err)
+		}
 		return nil, fmt.Errorf("token exchange returned status %d: %s", resp.StatusCode, string(body))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to read token exchange response: %w", err)
 	}
 
 	var tokenResp tokenResponse
@@ -969,13 +995,16 @@ func (p *OIDCTokenProvider) tokenExchangeWithActorToken(ctx context.Context, oid
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read token exchange response: %w", err)
-	}
+	body, err := readOIDCResponseBody(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
+		if err != nil {
+			return nil, fmt.Errorf("token exchange returned status %d: %s: %w", resp.StatusCode, string(body), err)
+		}
 		return nil, fmt.Errorf("token exchange returned status %d: %s", resp.StatusCode, string(body))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to read token exchange response: %w", err)
 	}
 
 	var tokenResp tokenResponse
@@ -1043,8 +1072,13 @@ func (p *OIDCTokenProvider) discoverTokenEndpoint(ctx context.Context, oidc *bre
 		return "", fmt.Errorf("OIDC discovery returned status %d", resp.StatusCode)
 	}
 
+	body, err := readOIDCResponseBody(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read OIDC discovery: %w", err)
+	}
+
 	var discovery oidcDiscovery
-	if err := json.NewDecoder(resp.Body).Decode(&discovery); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&discovery); err != nil {
 		return "", fmt.Errorf("failed to parse OIDC discovery: %w", err)
 	}
 
