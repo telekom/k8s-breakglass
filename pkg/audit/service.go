@@ -52,6 +52,8 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
+var systemCertPool = x509.SystemCertPool
+
 // Service manages the audit system lifecycle, including sink creation and event emission.
 // It watches AuditConfig changes and reconfigures the audit manager accordingly.
 type Service struct {
@@ -725,9 +727,10 @@ func (s *Service) buildWebhookTLSConfig(ctx context.Context, tlsCfg *breakglassv
 		return nil, fmt.Errorf("failed to load webhook CA certificate: %w", err)
 	}
 
-	rootCAs, err := x509.SystemCertPool()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load system CA pool: %w", err)
+	rootCAs, err := systemCertPool()
+	if err != nil && s.logger != nil {
+		s.logger.Warn("failed to load system CA pool, using custom webhook CA pool only",
+			zap.String("error", err.Error()))
 	}
 	if rootCAs == nil {
 		rootCAs = x509.NewCertPool()

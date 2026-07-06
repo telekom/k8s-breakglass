@@ -5,7 +5,9 @@ package audit
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -545,6 +547,48 @@ func TestService_BuildWebhookSinkTLSWithCASecret(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, sink.Write(context.Background(), &Event{ID: "tls", Type: EventSessionRequested}))
 	assert.True(t, received)
+}
+
+func TestService_BuildWebhookTLSConfigUsesCustomCAWhenSystemPoolFails(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	caSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "webhook-ca",
+			Namespace: "test-namespace",
+		},
+		Data: map[string][]byte{
+			"ca.crt": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}),
+		},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(caSecret).Build()
+	svc := NewService(client, nil, logger, "test-namespace")
+
+	oldSystemCertPool := systemCertPool
+	systemCertPool = func() (*x509.CertPool, error) {
+		return nil, errors.New("system roots unavailable")
+	}
+	defer func() {
+		systemCertPool = oldSystemCertPool
+	}()
+
+	cfg, err := svc.buildWebhookTLSConfig(context.Background(), &breakglassv1alpha1.WebhookTLSSpec{
+		CASecretRef: &breakglassv1alpha1.SecretKeySelector{
+			Name:      "webhook-ca",
+			Namespace: "test-namespace",
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, cfg.RootCAs)
+	assert.NotEmpty(t, cfg.RootCAs.Subjects())
 }
 
 func TestService_BuildWebhookSinkMissingSecretErrors(t *testing.T) {
