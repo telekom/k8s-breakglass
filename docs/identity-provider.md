@@ -31,6 +31,7 @@ spec:
   oidc:
     authority: "https://auth.example.com"
     clientID: "breakglass-ui"
+    expectedAudience: "breakglass-ui"
     # Optional: CA certificate for TLS validation
     certificateAuthority: |
       -----BEGIN CERTIFICATE-----
@@ -84,6 +85,7 @@ spec:
   oidc:
     authority: "https://auth-corp.example.com"
     clientID: "breakglass-ui"
+    expectedAudience: "breakglass-ui"
   issuer: "https://auth-corp.example.com"  # ← Unique issuer
   displayName: "Corporate OIDC"
 
@@ -97,6 +99,7 @@ spec:
   oidc:
     authority: "https://keycloak.example.com"
     clientID: "breakglass-ui"
+    expectedAudience: "breakglass-ui"
   issuer: "https://keycloak.example.com/realms/master"  # ← Different issuer
   displayName: "Keycloak Provider"
 ```
@@ -119,6 +122,7 @@ spec:
   oidc:
     authority: "https://auth.example.com"
     clientID: "breakglass-ui"
+    expectedAudience: "breakglass-ui"
   
   # Enable Keycloak group synchronization
   groupSyncProvider: Keycloak
@@ -214,6 +218,7 @@ spec:
   oidc:
     authority: "https://auth-primary.example.com"
     clientID: "breakglass-ui"
+    expectedAudience: "breakglass-ui"
 
 ---
 # Fallback provider
@@ -226,6 +231,7 @@ spec:
   oidc:
     authority: "https://auth-secondary.example.com"
     clientID: "breakglass-ui"
+    expectedAudience: "breakglass-ui"
 ```
 
 **Load Priority:**
@@ -259,6 +265,7 @@ spec:
   oidc:
     authority: "https://auth.example.com"
     clientID: "breakglass-ui"
+    expectedAudience: "breakglass-ui"
   
   # Session limits for users from this IDP
   sessionLimits:
@@ -360,7 +367,8 @@ metadata:
 spec:
   oidc:
     authority: "https://auth.enterprise.com"
-    clientID: "breakglass"
+    clientID: "breakglass-ui"
+    expectedAudience: "breakglass-ui"
   
   sessionLimits:
     # Most users: 2 concurrent sessions
@@ -493,6 +501,7 @@ spec:
   oidc:
     authority: "https://auth.example.com"
     clientID: "breakglass-ui"
+    expectedAudience: "breakglass-ui"
   groupSyncProvider: Keycloak
   keycloak:
     baseURL: "https://keycloak.example.com"
