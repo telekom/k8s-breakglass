@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **OIDC proxy CORS header**: API CORS preflight responses now allow `X-OIDC-Authority` for browser-based multi-IDP OIDC proxy flows. (#1130)
 - **Frontend direct approval route refresh**: Direct approval pages now reload session details when navigating between `/session/{name}/approve` links within the same mounted view.
 - **Frontend debug refresh accessibility**: The Debug Sessions refresh icon button now exposes a screen-reader label through Scale's `inner-aria-label`.
 - **BreakglassSession ownership filters**: `mine=true` and `approvedByMe=true` no longer implicitly include sessions where the caller is only an approver unless `approver=true` is also requested.
