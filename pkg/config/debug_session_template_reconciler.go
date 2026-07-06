@@ -167,7 +167,7 @@ func (r *DebugSessionTemplateReconciler) resolveBindingStatus(
 		}
 		relevantBindings = append(relevantBindings, binding)
 		bindingCount++
-		if binding.Spec.ClusterSelector != nil {
+		if bindingUsesClusterSelector(binding) {
 			needsClusterConfigs = true
 		}
 	}
@@ -244,6 +244,14 @@ func resolveBindingClusterNames(binding *breakglassv1alpha1.DebugSessionClusterB
 		names = append(names, cluster.Name)
 	}
 	return names
+}
+
+func bindingUsesClusterSelector(binding *breakglassv1alpha1.DebugSessionClusterBinding) bool {
+	if binding == nil || binding.Spec.ClusterSelector == nil {
+		return false
+	}
+	selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
+	return err == nil && !selector.Empty()
 }
 
 func addTemplateRequest(requests map[types.NamespacedName]reconcile.Request, templateName string) {

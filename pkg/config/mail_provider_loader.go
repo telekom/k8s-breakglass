@@ -246,7 +246,7 @@ func (l *MailProviderLoader) convertToRuntimeConfig(ctx context.Context, mp *bre
 		DisableTLS:           mp.Spec.SMTP.DisableTLS,
 		SenderAddress:        mp.Spec.Sender.Address,
 		SenderName:           mp.Spec.Sender.Name,
-		RetryCount:           mp.Spec.Retry.Count,
+		RetryCount:           mailProviderRetryCount(mp.Spec.Retry),
 		RetryBackoffMs:       mp.Spec.Retry.InitialBackoffMs,
 		QueueSize:            mp.Spec.Retry.QueueSize,
 	}
@@ -279,6 +279,13 @@ func (l *MailProviderLoader) convertToRuntimeConfig(ctx context.Context, mp *bre
 		"default", config.Default)
 
 	return config, nil
+}
+
+func mailProviderRetryCount(retry breakglassv1alpha1.RetryConfig) int {
+	if retry.Count == 0 && retry.InitialBackoffMs == 0 && retry.QueueSize == 0 {
+		return 3
+	}
+	return retry.Count
 }
 
 // getSecretValue retrieves a value from a Kubernetes Secret

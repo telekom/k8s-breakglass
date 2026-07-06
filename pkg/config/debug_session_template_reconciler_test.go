@@ -313,6 +313,54 @@ func TestDebugSessionTemplateReconciler_TemplatesForBindingSkipsDisabledBinding(
 	assert.Empty(t, requests)
 }
 
+func TestBindingUsesClusterSelectorRequiresValidNonEmptySelector(t *testing.T) {
+	tests := []struct {
+		name     string
+		selector *metav1.LabelSelector
+		want     bool
+	}{
+		{
+			name: "nil selector",
+			want: false,
+		},
+		{
+			name:     "empty selector",
+			selector: &metav1.LabelSelector{},
+			want:     false,
+		},
+		{
+			name: "invalid selector",
+			selector: &metav1.LabelSelector{
+				MatchExpressions: []metav1.LabelSelectorRequirement{{
+					Key:      "env",
+					Operator: metav1.LabelSelectorOperator("Invalid"),
+					Values:   []string{"prod"},
+				}},
+			},
+			want: false,
+		},
+		{
+			name: "valid selector",
+			selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"env": "prod"},
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					ClusterSelector: tt.selector,
+				},
+			}
+
+			assert.Equal(t, tt.want, bindingUsesClusterSelector(binding))
+		})
+	}
+}
+
 func TestDebugSessionTemplateReconciler_Reconcile_NotFound(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	scheme := runtime.NewScheme()
