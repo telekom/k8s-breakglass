@@ -80,7 +80,7 @@ func (e *jwksFetchRateLimitedError) Unwrap() error { return errJWKSFetchRateLimi
 type jwksCacheEntry struct {
 	issuer              string
 	idpName             string // resolved IDP name, cached to avoid redundant K8s API calls
-	expectedAudience    string // from IDP config; when non-empty, JWT aud claim is validated
+	expectedAudience    string // from IDP config; JWT aud claim is validated
 	audienceRefreshedAt time.Time
 	audienceAttemptedAt time.Time
 	jwks                keyfunc.Keyfunc
@@ -134,6 +134,12 @@ func (a *AuthHandler) validateJWKSIdentityProviderConfig(idpCfg *config.Identity
 	if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
 		if a.log != nil {
 			a.log.Warnw("refusing insecure TLS verification for IDP", "idp", idpCfg.Name)
+		}
+		return errUnknownIdentityProvider
+	}
+	if idpCfg.ExpectedAudience == "" {
+		if a.log != nil {
+			a.log.Warnw("refusing IDP without expected audience", "idp", idpCfg.Name)
 		}
 		return errUnknownIdentityProvider
 	}
@@ -657,10 +663,10 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		jwt.WithExpirationRequired(), // SEC-005: reject tokens without exp claim
 	}
 
-	// SEC-005: Audience validation when expectedAudience is configured.
+	// SEC-005: Audience validation for CRD-backed identity providers.
 	// Prevents cross-service token confusion from other OIDC clients at the
-	// same IDP. Only applied when the admin explicitly sets expectedAudience
-	// and configures a matching audience protocol mapper in their IDP.
+	// same IDP. IdentityProvider CRDs require expectedAudience and a matching
+	// audience protocol mapper in the IDP.
 	if expectedAudience != "" {
 		parserOpts = append(parserOpts, jwt.WithAudience(expectedAudience))
 	}

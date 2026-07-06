@@ -174,7 +174,7 @@ These protections are in addition to the existing LRU cache for JWKS key sets.
 
 ### Audience Validation (SEC-005)
 
-When an `IdentityProvider` CRD has the `expectedAudience` field configured, the middleware validates the JWT `aud` claim against that value. This prevents token reuse from other services that share the same OIDC provider — a common cross-service token confusion attack.
+Every `IdentityProvider` CRD must set `spec.oidc.expectedAudience`. The middleware validates the JWT `aud` claim against that value. This prevents token reuse from other services that share the same OIDC provider — a common cross-service token confusion attack.
 
 ```yaml
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
@@ -182,12 +182,10 @@ kind: IdentityProvider
 spec:
   oidc:
     clientID: "breakglass-ui"
-    expectedAudience: "breakglass-ui"  # optional: enables JWT aud validation
+    expectedAudience: "breakglass-ui"
 ```
 
-This requires a matching audience protocol mapper in your identity provider (e.g., Keycloak) that adds the expected value to the `aud` claim in issued tokens.
-
-If `expectedAudience` is empty (default), audience validation is skipped for backwards compatibility.
+This requires a matching audience protocol mapper in your identity provider (e.g., Keycloak) that adds the expected value to the `aud` claim in issued tokens. Existing `IdentityProvider` resources created before this requirement must be updated with `spec.oidc.expectedAudience` before applying the new CRD or rolling out the new controller.
 
 ### Token Storage in the Browser
 

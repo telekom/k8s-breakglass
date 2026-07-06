@@ -904,6 +904,7 @@ func TestHandleOIDCProxyUsesSelectedIdentityProviderCA(t *testing.T) {
 			OIDC: breakglassv1alpha1.OIDCConfig{
 				Authority:            upstream.URL,
 				ClientID:             "breakglass-ui",
+				ExpectedAudience:     "breakglass-ui",
 				CertificateAuthority: certificatePEMForTLSServer(t, upstream),
 			},
 		},

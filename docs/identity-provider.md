@@ -44,7 +44,7 @@ spec:
 |-------|------|----------|-------------|
 | `authority` | string | ✅ Yes | OIDC provider authority endpoint (e.g., `https://auth.example.com`). The frontend redirects users to this endpoint for authentication. |
 | `clientID` | string | ✅ Yes | OIDC client ID for the Breakglass UI (frontend). Configured in your OIDC provider. |
-| `expectedAudience` | string | ❌ No | Expected JWT `aud` claim value. When set, tokens must contain this audience. Requires a matching audience protocol mapper in your IDP. If empty, audience validation is skipped. |
+| `expectedAudience` | string | ✅ Yes | Expected JWT `aud` claim value. Tokens must contain this audience. Requires a matching audience protocol mapper in your IDP. |
 | `jwksEndpoint` | string | ❌ No | JWKS endpoint for key sets. Defaults to `{authority}/.well-known/openid-configuration` |
 | `insecureSkipVerify` | boolean | ❌ No | Deprecated for OIDC/JWKS authentication. Admission and runtime auth/OIDC proxy/group sync paths reject this setting. Leave unset/`false` and use `certificateAuthority` for private CAs. |
 | `certificateAuthority` | string | ❌ No | PEM-encoded CA certificate for OIDC issuer TLS validation |
