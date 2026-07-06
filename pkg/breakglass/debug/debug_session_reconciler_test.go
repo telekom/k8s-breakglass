@@ -4490,7 +4490,7 @@ func TestRequiresApproval(t *testing.T) {
 		assert.False(t, result, "Should not require approval when approvers struct exists but has no users/groups")
 	})
 
-	t.Run("binding_with_empty_approvers_struct_falls_through_to_template", func(t *testing.T) {
+	t.Run("binding_with_empty_approvers_struct_replaces_template", func(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
@@ -4507,8 +4507,23 @@ func TestRequiresApproval(t *testing.T) {
 			},
 		}
 		result := controller.requiresApproval(template, binding, baseSession)
-		// Binding approvers is empty, so it falls through to template check
-		assert.True(t, result, "Should fall through to template when binding has empty approvers")
+		assert.False(t, result, "Should not require approval when binding explicitly replaces template approvers with an empty list")
+	})
+
+	t.Run("binding_with_nil_approvers_inherits_template", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Groups: []string{"template-approvers"},
+				},
+			},
+		}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-binding", Namespace: "default"},
+			Spec:       breakglassv1alpha1.DebugSessionClusterBindingSpec{},
+		}
+		result := controller.requiresApproval(template, binding, baseSession)
+		assert.True(t, result, "Should inherit template approvers when binding approvers are nil")
 	})
 
 	t.Run("wildcard_cluster_pattern_auto_approve", func(t *testing.T) {

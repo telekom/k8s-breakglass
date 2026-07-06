@@ -1396,7 +1396,10 @@ func (a *debugSessionReadAuthorizer) isExplicitDebugSessionApprover(ctx context.
 	if err != nil {
 		return false, err
 	}
-	if debugSessionApproversConfigured(approvers) {
+	if approvers != nil {
+		if !debugSessionApproversConfigured(approvers) {
+			return false, nil
+		}
 		return a.approverAuthorizationMatches(approvers), nil
 	}
 	if session.Status.ResolvedTemplate != nil &&

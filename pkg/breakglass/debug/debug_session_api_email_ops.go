@@ -33,7 +33,7 @@ func (c *DebugSessionAPIController) sendDebugSessionRequestEmail(ctx context.Con
 	}
 
 	approvers := effectiveDebugSessionApprovers(template, binding)
-	if approvers == nil {
+	if !debugSessionApproversConfigured(approvers) {
 		c.log.Debugw("No approvers configured for debug session template, skipping request email", "session", session.Name, "template", debugSessionTemplateName(template))
 		return
 	}
@@ -987,7 +987,7 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrApplicableBindin
 
 func isApprovalRequiredForSession(session *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) bool {
 	approvers := effectiveDebugSessionApprovers(template, binding)
-	if approvers == nil {
+	if !debugSessionApproversConfigured(approvers) {
 		return false
 	}
 	if session != nil && debugSessionAutoApproveMatches(approvers.AutoApproveFor, session.Spec.Cluster, session.Spec.UserGroups) {

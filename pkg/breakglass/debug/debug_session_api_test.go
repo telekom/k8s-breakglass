@@ -8805,7 +8805,7 @@ func TestDebugSessionAPIController_resolveApproval(t *testing.T) {
 		assert.True(t, result.CanAutoApprove)
 	})
 
-	t.Run("empty binding approvers fall back to template", func(t *testing.T) {
+	t.Run("empty binding approvers disable approval", func(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
@@ -8818,6 +8818,27 @@ func TestDebugSessionAPIController_resolveApproval(t *testing.T) {
 			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				Approvers: &breakglassv1alpha1.DebugSessionApprovers{},
 			},
+		}
+
+		result := controller.resolveApproval(template, binding, cc, []string{"dev-team"})
+
+		assert.False(t, result.Required)
+		assert.False(t, result.CanAutoApprove)
+		assert.Empty(t, result.ApproverGroups)
+		assert.Empty(t, result.ApproverUsers)
+	})
+
+	t.Run("nil binding approvers fall back to template", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Groups: []string{"template-approvers"},
+					Users:  []string{"template-approver@example.com"},
+				},
+			},
+		}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{},
 		}
 
 		result := controller.resolveApproval(template, binding, cc, []string{"dev-team"})
