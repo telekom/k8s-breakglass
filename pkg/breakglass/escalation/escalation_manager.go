@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 
 	"go.uber.org/zap"
@@ -117,6 +118,63 @@ func (em *EscalationManager) GetBreakglassEscalationsWithSelector(ctx context.Co
 	return ess.Items, nil
 }
 
+func escalationGroupIndexLookupValues(groups, oidcPrefixes []string) []string {
+	seen := make(map[string]struct{}, len(groups)*(len(oidcPrefixes)+1))
+	values := make([]string, 0, len(groups)*(len(oidcPrefixes)+1))
+	add := func(value string) {
+		if value == "" {
+			return
+		}
+		if _, exists := seen[value]; exists {
+			return
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+
+	for _, group := range groups {
+		add(group)
+		for _, prefix := range oidcPrefixes {
+			if prefix == "" {
+				continue
+			}
+			if strings.HasPrefix(group, prefix) {
+				add(strings.TrimPrefix(group, prefix))
+				continue
+			}
+			add(prefix + group)
+		}
+	}
+	return values
+}
+
+func (em *EscalationManager) collectEscalationsByFieldIndex(ctx context.Context, field string, values []string) ([]breakglassv1alpha1.BreakglassEscalation, bool, error) {
+	if len(values) == 0 {
+		return nil, true, nil
+	}
+
+	collected := make([]breakglassv1alpha1.BreakglassEscalation, 0)
+	seen := make(map[string]struct{})
+	for _, value := range values {
+		list := breakglassv1alpha1.BreakglassEscalationList{}
+		if err := em.List(ctx, &list, client.MatchingFields{field: value}); err != nil {
+			if breakglass.IsFieldIndexError(err) {
+				return nil, false, nil
+			}
+			return nil, false, fmt.Errorf("failed to list BreakglassEscalation by %s: %w", field, err)
+		}
+		for _, item := range list.Items {
+			key := item.Namespace + "/" + item.Name
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			collected = append(collected, item)
+		}
+	}
+	return collected, true, nil
+}
+
 // GetBreakglassEscalation retrieves a single BreakglassEscalation by namespace/name using the cached controller-runtime client.
 // Prefer this over filter-based scans when the owner reference is known to minimize cache iterations.
 func (em *EscalationManager) GetBreakglassEscalation(ctx context.Context, namespace, name string) (*breakglassv1alpha1.BreakglassEscalation, error) {
@@ -142,40 +200,24 @@ func (em *EscalationManager) GetGroupBreakglassEscalations(ctx context.Context,
 	log := em.getLogger()
 	log.Debugw("Fetching group BreakglassEscalations", "groupCount", len(groups))
 	metrics.APIEndpointRequests.WithLabelValues("GetGroupBreakglassEscalations").Inc()
-	// First try index-based lookup for each group and collect results (deduped)
-	collectedMap := map[string]breakglassv1alpha1.BreakglassEscalation{}
-	for _, g := range groups {
-		list := breakglassv1alpha1.BreakglassEscalationList{}
-		if err := em.List(ctx, &list, client.MatchingFields{"spec.allowed.group": g}); err == nil {
-			log.Debugw("Index lookup for group returned items", "group", system.RedactGroupName(g), "count", len(list.Items))
-			for _, it := range list.Items {
-				// apply group normalization check to be safe (fake client may ignore MatchingFields)
-				allowed := it.Spec.Allowed.Groups
-				// normalize OIDC prefixes for comparison
-				normAllowed := allowed
-				if cfg, err := em.getConfig(); err == nil && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
-					normAllowed = breakglass.StripOIDCPrefixes(allowed, cfg.Kubernetes.OIDCPrefixes)
-				}
-				if slices.Contains(normAllowed, g) {
-					collectedMap[it.Namespace+"/"+it.Name] = it
-				}
+
+	oidcPrefixes := em.getOIDCPrefixes()
+	collected, indexed, err := em.collectEscalationsByFieldIndex(ctx, "spec.allowed.group", escalationGroupIndexLookupValues(groups, oidcPrefixes))
+	if err != nil {
+		return nil, err
+	}
+	if indexed {
+		output := make([]breakglassv1alpha1.BreakglassEscalation, 0, len(collected))
+		for _, item := range collected {
+			if groupsMatch(groups, item.Spec.Allowed.Groups, oidcPrefixes) {
+				output = append(output, item)
 			}
 		}
-	}
-	if len(collectedMap) > 0 {
-		collected := make([]breakglassv1alpha1.BreakglassEscalation, 0, len(collectedMap))
-		for _, v := range collectedMap {
-			collected = append(collected, v)
-		}
-		return collected, nil
+		log.Debugw("Fetched group escalation candidates with group index", "candidateCount", len(collected), "matched", len(output))
+		return output, nil
 	}
 
-	// Fallback to full filter if indices not available or returned nothing
-	var oidcPrefixes []string
-	if cfg, err := em.getConfig(); err == nil && len(cfg.Kubernetes.OIDCPrefixes) > 0 {
-		oidcPrefixes = cfg.Kubernetes.OIDCPrefixes
-		log.Debugw("Loaded OIDC prefixes for group normalization", "prefixes", oidcPrefixes)
-	}
+	// Fallback to full filter if the group index is unavailable or unsupported.
 	return em.GetBreakglassEscalationsWithFilter(ctx, func(be breakglassv1alpha1.BreakglassEscalation) bool {
 		allowedGroups := be.Spec.Allowed.Groups
 		if len(oidcPrefixes) > 0 {
@@ -260,15 +302,23 @@ func (em *EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Co
 	log.Debugw("Fetching cluster-group BreakglassEscalations", "cluster", cluster, "groupCount", len(groups))
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterGroupBreakglassEscalations").Inc()
 
-	all, err := em.GetAllBreakglassEscalations(ctx)
+	oidcPrefixes := em.getOIDCPrefixes()
+	collected, indexed, err := em.collectEscalationsByFieldIndex(ctx, "spec.allowed.group", escalationGroupIndexLookupValues(groups, oidcPrefixes))
 	if err != nil {
 		return nil, err
 	}
-	collected := all
-	log.Debugw("Fetched full escalation scan", "cluster", cluster, "totalEscalations", len(collected))
+	if !indexed {
+		all, err := em.GetAllBreakglassEscalations(ctx)
+		if err != nil {
+			return nil, err
+		}
+		collected = all
+		log.Debugw("Fell back to full escalation scan", "cluster", cluster, "totalEscalations", len(collected))
+	} else {
+		log.Debugw("Fetched escalation candidates with group index", "cluster", cluster, "candidateCount", len(collected))
+	}
 
 	// Filter collected by cluster matching and groups using shared helpers
-	oidcPrefixes := em.getOIDCPrefixes()
 	out := make([]breakglassv1alpha1.BreakglassEscalation, 0)
 	for _, be := range collected {
 		if !escalationMatchesCluster(be, cluster) {
@@ -294,14 +344,29 @@ func (em *EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Co
 
 // GetClusterGroupTargetBreakglassEscalation returns escalations for specific cluster, user groups, and target group
 func (em *EscalationManager) GetClusterGroupTargetBreakglassEscalation(ctx context.Context, cluster string, userGroups []string, targetGroup string) ([]breakglassv1alpha1.BreakglassEscalation, error) {
-	em.getLogger().Debugw("Fetching cluster-group-target BreakglassEscalations", "cluster", cluster, "userGroupCount", len(userGroups), "targetGroupHint", system.RedactGroupName(targetGroup))
+	log := em.getLogger()
+	log.Debugw("Fetching cluster-group-target BreakglassEscalations", "cluster", cluster, "userGroupCount", len(userGroups), "targetGroupHint", system.RedactGroupName(targetGroup))
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterGroupTargetBreakglassEscalation").Inc()
 
-	all, err := em.GetAllBreakglassEscalations(ctx)
-	if err != nil {
-		return nil, err
+	var collected []breakglassv1alpha1.BreakglassEscalation
+	indexed := false
+	if targetGroup != "" {
+		var err error
+		collected, indexed, err = em.collectEscalationsByFieldIndex(ctx, "spec.escalatedGroup", []string{targetGroup})
+		if err != nil {
+			return nil, err
+		}
 	}
-	collected := all
+	if !indexed {
+		all, err := em.GetAllBreakglassEscalations(ctx)
+		if err != nil {
+			return nil, err
+		}
+		collected = all
+		log.Debugw("Fell back to full target escalation scan", "cluster", cluster, "targetGroupHint", system.RedactGroupName(targetGroup), "totalEscalations", len(collected))
+	} else {
+		log.Debugw("Fetched escalation candidates with target-group index", "cluster", cluster, "targetGroupHint", system.RedactGroupName(targetGroup), "candidateCount", len(collected))
+	}
 
 	// Filter collected by cluster and allowed groups using shared helpers
 	oidcPrefixes := em.getOIDCPrefixes()

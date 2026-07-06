@@ -119,7 +119,7 @@ func (c *SessionManager) list(ctx context.Context, list client.ObjectList, opts 
 	return c.Client.List(ctx, list, opts...)
 }
 
-// isFieldIndexError returns true if the error indicates a missing field index
+// IsFieldIndexError returns true if the error indicates a missing field index
 // or unsupported field selector—i.e. it is safe to fall back to a full list +
 // client-side filter.  All other errors (RBAC, network, etcd) are real failures.
 //
@@ -128,7 +128,7 @@ func (c *SessionManager) list(ctx context.Context, list client.ObjectList, opts 
 // against known error messages. If controller-runtime changes wording in a
 // future release, the regression tests in session_manager_test.go
 // (TestIsFieldIndexError*) will catch the change.
-func isFieldIndexError(err error) bool {
+func IsFieldIndexError(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -189,7 +189,7 @@ func (c *SessionManager) GetSessionsByState(ctx context.Context,
 	// Use the cached client (c.Client.List) for indexed queries.
 	// Field indexes are only available in the cache, not via APIReader.
 	if err := c.Client.List(ctx, &bsl, client.MatchingFields{"status.state": string(state)}); err != nil {
-		if !isFieldIndexError(err) {
+		if !IsFieldIndexError(err) {
 			// Real error (RBAC, network, etc.) — return it directly.
 			log.Errorw("Failed to list BreakglassSessions by state", "state", state, "error", err)
 			return nil, fmt.Errorf("failed to list BreakglassSessions by state: %w", err)
@@ -300,7 +300,7 @@ func (c *SessionManager) GetUserBreakglassSessions(ctx context.Context,
 	// Use the cached client (c.Client.List) for indexed queries.
 	// Field indexes are only available in the cache, not via APIReader.
 	if err := c.Client.List(ctx, &bsl, client.MatchingFields{"spec.user": user}); err != nil {
-		if !isFieldIndexError(err) {
+		if !IsFieldIndexError(err) {
 			log.Errorw("Failed to list BreakglassSessions for user", "user", user, "error", err)
 			return nil, fmt.Errorf("failed to list BreakglassSessions for user: %w", err)
 		}
@@ -335,7 +335,7 @@ func (c *SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 	// Use the cached client (c.Client.List) for indexed queries.
 	// Field indexes are only available in the cache, not via APIReader.
 	if err := c.Client.List(ctx, &bsl, client.MatchingFields{"spec.cluster": cluster, "spec.user": user}); err != nil {
-		if !isFieldIndexError(err) {
+		if !IsFieldIndexError(err) {
 			log.Errorw("Failed to list BreakglassSessions for cluster/user", "cluster", cluster, "user", user, "error", err)
 			return nil, fmt.Errorf("failed to list BreakglassSessions for cluster/user: %w", err)
 		}
