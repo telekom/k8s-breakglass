@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 
 	"go.uber.org/zap"
@@ -269,6 +270,9 @@ func (r *DebugSessionTemplateReconciler) templatesForBinding(ctx context.Context
 	if !ok || binding == nil {
 		return nil
 	}
+	if binding.Spec.Disabled {
+		return nil
+	}
 
 	requests := make(map[types.NamespacedName]reconcile.Request)
 	if binding.Spec.TemplateRef != nil {
@@ -355,10 +359,20 @@ func (r *DebugSessionTemplateReconciler) SetupWithManager(mgr ctrl.Manager) erro
 		DeleteFunc: func(e event.DeleteEvent) bool { return true },
 	}
 
+	clusterConfigLabelChangePredicate := predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldCluster := e.ObjectOld.(*breakglassv1alpha1.ClusterConfig)
+			newCluster := e.ObjectNew.(*breakglassv1alpha1.ClusterConfig)
+			return !maps.Equal(oldCluster.Labels, newCluster.Labels)
+		},
+		CreateFunc: func(e event.CreateEvent) bool { return true },
+		DeleteFunc: func(e event.DeleteEvent) bool { return true },
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&breakglassv1alpha1.DebugSessionTemplate{}, builder.WithPredicates(specChangePredicate)).
 		Watches(&breakglassv1alpha1.DebugSessionClusterBinding{}, handler.EnqueueRequestsFromMapFunc(r.templatesForBinding)).
-		Watches(&breakglassv1alpha1.ClusterConfig{}, handler.EnqueueRequestsFromMapFunc(r.templatesForClusterConfig)).
+		Watches(&breakglassv1alpha1.ClusterConfig{}, handler.EnqueueRequestsFromMapFunc(r.templatesForClusterConfig), builder.WithPredicates(clusterConfigLabelChangePredicate)).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: 2,
 		}).

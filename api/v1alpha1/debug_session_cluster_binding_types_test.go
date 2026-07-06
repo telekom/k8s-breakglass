@@ -119,6 +119,68 @@ func TestDebugSessionClusterBinding_IsDisabled(t *testing.T) {
 	})
 }
 
+func TestBindingUsesClusterSelectorRequiresValidNonEmptySelector(t *testing.T) {
+	tests := []struct {
+		name    string
+		binding *DebugSessionClusterBinding
+		want    bool
+	}{
+		{
+			name:    "nil binding",
+			binding: nil,
+			want:    false,
+		},
+		{
+			name: "nil selector",
+			binding: &DebugSessionClusterBinding{
+				Spec: DebugSessionClusterBindingSpec{},
+			},
+			want: false,
+		},
+		{
+			name: "empty selector",
+			binding: &DebugSessionClusterBinding{
+				Spec: DebugSessionClusterBindingSpec{
+					ClusterSelector: &metav1.LabelSelector{},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "invalid selector",
+			binding: &DebugSessionClusterBinding{
+				Spec: DebugSessionClusterBindingSpec{
+					ClusterSelector: &metav1.LabelSelector{
+						MatchExpressions: []metav1.LabelSelectorRequirement{{
+							Key:      "env",
+							Operator: metav1.LabelSelectorOperator("not-a-real-operator"),
+							Values:   []string{"prod"},
+						}},
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "valid selector",
+			binding: &DebugSessionClusterBinding{
+				Spec: DebugSessionClusterBindingSpec{
+					ClusterSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"env": "prod"},
+					},
+				},
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, bindingUsesClusterSelector(tt.binding))
+		})
+	}
+}
+
 func TestDebugSessionClusterBinding_SetCondition(t *testing.T) {
 	binding := &DebugSessionClusterBinding{
 		ObjectMeta: metav1.ObjectMeta{

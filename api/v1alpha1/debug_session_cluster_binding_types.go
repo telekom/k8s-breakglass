@@ -690,7 +690,11 @@ func getBindingTemplateNames(binding *DebugSessionClusterBinding, templates []De
 }
 
 func bindingUsesClusterSelector(binding *DebugSessionClusterBinding) bool {
-	return binding != nil && binding.Spec.ClusterSelector != nil
+	if binding == nil || binding.Spec.ClusterSelector == nil {
+		return false
+	}
+	selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
+	return err == nil && !selector.Empty()
 }
 
 func bindingsUseClusterSelector(bindings []DebugSessionClusterBinding) bool {

@@ -291,6 +291,28 @@ func TestDebugSessionTemplateReconciler_Reconcile_BindingStatusFields(t *testing
 	assert.ElementsMatch(t, []string{"cluster-a", "cluster-b"}, updated.Status.BoundClusters)
 }
 
+func TestDebugSessionTemplateReconciler_TemplatesForBindingSkipsDisabledBinding(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	scheme := runtime.NewScheme()
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+	r := NewDebugSessionTemplateReconciler(fakeClient, logger)
+
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "disabled-binding"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "test-template"},
+			Disabled:    true,
+		},
+	}
+
+	requests := r.templatesForBinding(context.Background(), binding)
+	assert.Empty(t, requests)
+}
+
 func TestDebugSessionTemplateReconciler_Reconcile_NotFound(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	scheme := runtime.NewScheme()
