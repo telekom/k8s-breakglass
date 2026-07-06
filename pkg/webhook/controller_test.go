@@ -3690,6 +3690,37 @@ func TestAuditTargetFromSARIncludesNamespaceLabels(t *testing.T) {
 	assert.Empty(t, apiGroup)
 }
 
+func TestAuditTargetFromSARBoundsNamespaceLabelLookup(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	ctx := context.Background()
+	var sawDeadline bool
+	wc := NewWebhookController(logger.Sugar(), config.Config{}, nil, nil, nil, nil,
+		WithNamespaceLabelsFetchFunc(func(ctx context.Context, _, _ string) (map[string]string, error) {
+			deadline, ok := ctx.Deadline()
+			sawDeadline = ok
+			if ok {
+				assert.LessOrEqual(t, time.Until(deadline), auditNamespaceLabelLookupTimeout)
+			}
+			return map[string]string{"audit-enabled": "true"}, nil
+		}),
+	)
+
+	sar := &authorizationv1.SubjectAccessReview{
+		Spec: authorizationv1.SubjectAccessReviewSpec{
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Namespace: "production",
+				Verb:      "get",
+				Resource:  "pods",
+			},
+		},
+	}
+
+	target, _, _, _ := wc.auditTargetFromSAR(ctx, "cluster1", sar)
+
+	assert.True(t, sawDeadline)
+	assert.Equal(t, map[string]string{"audit-enabled": "true"}, target.NamespaceLabels)
+}
+
 func TestAuditTargetFromSARSkipsNamespaceLabelsForNonResource(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	ctx := context.Background()

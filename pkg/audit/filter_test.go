@@ -222,6 +222,11 @@ func TestFilteredSinkResourceFilterMatchesSingularPluralAliases(t *testing.T) {
 	}
 }
 
+func TestResourceFilterAllowedSkipsCandidateExpansionWithoutPatterns(t *testing.T) {
+	assert.True(t, resourceFilterAllowed("", nil, nil))
+	assert.True(t, resourceFilterAllowed("pods", nil, nil))
+}
+
 func TestFilteredSinkNamespaceSelectorTermsWhenLabelsArePresent(t *testing.T) {
 	var received []string
 	sink := NewFilteredSink(&testSink{

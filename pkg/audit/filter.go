@@ -174,6 +174,9 @@ func patternFilterAllowed(value string, includePatterns, excludePatterns []strin
 }
 
 func resourceFilterAllowed(kind string, includePatterns, excludePatterns []string) bool {
+	if len(includePatterns) == 0 && len(excludePatterns) == 0 {
+		return true
+	}
 	candidates := resourceFilterCandidates(kind)
 	if matchesAnyPattern(excludePatterns, candidates) {
 		return false

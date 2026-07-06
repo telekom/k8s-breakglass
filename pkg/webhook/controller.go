@@ -36,6 +36,8 @@ const denyReasonMessage = "Access denied. To request temporary access via Breakg
 
 const maxSARBodySize = 1 << 20 // 1 MiB
 
+const auditNamespaceLabelLookupTimeout = 500 * time.Millisecond
+
 // buildReason appends a helpful link to the breakglass frontend for a given cluster.
 func (wc *WebhookController) buildBreakglassLink(cluster string) string {
 	base := strings.TrimRight(wc.config.Frontend.BaseURL, "/")
@@ -624,7 +626,9 @@ func (wc *WebhookController) auditNamespaceLabels(ctx context.Context, cluster, 
 	if namespace == "" || (wc.namespaceLabelsFetchFn == nil && wc.ccProvider == nil) {
 		return nil
 	}
-	labels, err := wc.fetchNamespaceLabels(ctx, cluster, namespace)
+	lookupCtx, cancel := context.WithTimeout(ctx, auditNamespaceLabelLookupTimeout)
+	defer cancel()
+	labels, err := wc.fetchNamespaceLabels(lookupCtx, cluster, namespace)
 	if err != nil {
 		if wc.log != nil {
 			wc.log.Debugw("failed to fetch namespace labels for audit event filtering",
