@@ -58,7 +58,7 @@ type EventFilterConfig struct {
 	excludeNamespaceMatcher *utils.NamespaceMatcher
 }
 
-// NewFilteredSink wraps a sink with event type and severity filtering.
+// NewFilteredSink wraps a sink with the configured audit event filters.
 func NewFilteredSink(sink Sink, filter EventFilterConfig) Sink {
 	filtered := &filteredSink{
 		sink:   sink,

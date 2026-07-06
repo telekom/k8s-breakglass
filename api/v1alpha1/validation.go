@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"regexp"
 	"strings"
 	"text/template"
@@ -561,6 +562,10 @@ func ValidateAuditConfig(ac *AuditConfig) *ValidationResult {
 		result.Errors = append(result.Errors, field.Required(specPath.Child("sinks"), "at least one audit sink must be configured"))
 	}
 
+	if ac.Spec.Filtering != nil {
+		result.Errors = append(result.Errors, validateAuditFiltering(ac.Spec.Filtering, specPath.Child("filtering"))...)
+	}
+
 	// Track sink names for duplicate detection
 	seenNames := make(map[string]bool)
 
@@ -580,6 +585,7 @@ func ValidateAuditConfig(ac *AuditConfig) *ValidationResult {
 			}
 			seenNames[sink.Name] = true
 		}
+		result.Errors = append(result.Errors, validateGlobPatterns(sink.EventTypes, sinkPath.Child("eventTypes"))...)
 
 		// Validate sink-specific configuration based on type
 		switch sink.Type {
@@ -595,6 +601,40 @@ func ValidateAuditConfig(ac *AuditConfig) *ValidationResult {
 	}
 
 	return result
+}
+
+func validateAuditFiltering(filter *AuditFilterConfig, filterPath *field.Path) field.ErrorList {
+	var errs field.ErrorList
+	if filter == nil {
+		return errs
+	}
+
+	errs = append(errs, validateGlobPatterns(filter.IncludeEventTypes, filterPath.Child("includeEventTypes"))...)
+	errs = append(errs, validateGlobPatterns(filter.ExcludeEventTypes, filterPath.Child("excludeEventTypes"))...)
+	errs = append(errs, validateGlobPatterns(filter.IncludeUsers, filterPath.Child("includeUsers"))...)
+	errs = append(errs, validateGlobPatterns(filter.ExcludeUsers, filterPath.Child("excludeUsers"))...)
+	errs = append(errs, validateNamespaceFilterGlobPatterns(filter.IncludeNamespaces, filterPath.Child("includeNamespaces"))...)
+	errs = append(errs, validateNamespaceFilterGlobPatterns(filter.ExcludeNamespaces, filterPath.Child("excludeNamespaces"))...)
+	errs = append(errs, validateGlobPatterns(filter.IncludeResources, filterPath.Child("includeResources"))...)
+	errs = append(errs, validateGlobPatterns(filter.ExcludeResources, filterPath.Child("excludeResources"))...)
+	return errs
+}
+
+func validateNamespaceFilterGlobPatterns(filter *NamespaceFilter, filterPath *field.Path) field.ErrorList {
+	if filter == nil {
+		return nil
+	}
+	return validateGlobPatterns(filter.Patterns, filterPath.Child("patterns"))
+}
+
+func validateGlobPatterns(patterns []string, patternsPath *field.Path) field.ErrorList {
+	var errs field.ErrorList
+	for i, pattern := range patterns {
+		if _, err := path.Match(pattern, ""); err != nil {
+			errs = append(errs, field.Invalid(patternsPath.Index(i), pattern, fmt.Sprintf("invalid glob pattern: %v", err)))
+		}
+	}
+	return errs
 }
 
 // validateKafkaSink validates Kafka sink configuration

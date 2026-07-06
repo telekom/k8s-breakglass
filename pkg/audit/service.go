@@ -37,6 +37,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -156,8 +157,6 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 	sampleRateConfigured := false
 	var highVolume []EventType
 	var alwaysCapture []EventType
-	var includeEventTypes []string
-	var excludeEventTypes []string
 
 	// Use the first config's queue settings as baseline
 	if len(enabledConfigs) > 0 {
@@ -186,10 +185,10 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 				alwaysCapture = append(alwaysCapture, EventType(ac))
 			}
 		}
-		if len(enabledConfigs) == 1 && config.Spec.Filtering != nil {
-			includeEventTypes = append(includeEventTypes, config.Spec.Filtering.IncludeEventTypes...)
-			excludeEventTypes = append(excludeEventTypes, config.Spec.Filtering.ExcludeEventTypes...)
-		}
+	}
+	includeEventTypes, excludeEventTypes, sharedEventTypeFilters := managerEventTypeFilters(enabledConfigs)
+	if !sharedEventTypeFilters {
+		s.logger.Debug("manager event-type pre-filter disabled because enabled AuditConfigs use different event-type filters")
 	}
 
 	// Create isolated multi-sink: each sink gets its own queue for isolation
@@ -276,6 +275,33 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 
 	metrics.AuditConfigReloads.WithLabelValues("success").Inc()
 	return nil
+}
+
+func managerEventTypeFilters(configs []*breakglassv1alpha1.AuditConfig) ([]string, []string, bool) {
+	if len(configs) == 0 {
+		return nil, nil, true
+	}
+
+	var include []string
+	var exclude []string
+	for i, config := range configs {
+		var currentInclude []string
+		var currentExclude []string
+		if config != nil && config.Spec.Filtering != nil {
+			currentInclude = config.Spec.Filtering.IncludeEventTypes
+			currentExclude = config.Spec.Filtering.ExcludeEventTypes
+		}
+		if i == 0 {
+			include = append([]string(nil), currentInclude...)
+			exclude = append([]string(nil), currentExclude...)
+			continue
+		}
+		if !slices.Equal(include, currentInclude) || !slices.Equal(exclude, currentExclude) {
+			return nil, nil, false
+		}
+	}
+
+	return include, exclude, true
 }
 
 // Emit sends an audit event asynchronously.

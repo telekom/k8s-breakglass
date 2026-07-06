@@ -185,6 +185,76 @@ func TestService_ReloadWithSampling(t *testing.T) {
 	_ = svc.Close()
 }
 
+func TestService_ReloadMultipleUsesSharedEventTypeFilters(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	svc := NewService(client, nil, logger, "test-namespace")
+	configs := []*breakglassv1alpha1.AuditConfig{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "config-a"},
+			Spec: breakglassv1alpha1.AuditConfigSpec{
+				Enabled:   true,
+				Filtering: &breakglassv1alpha1.AuditFilterConfig{IncludeEventTypes: []string{"session.*"}, ExcludeEventTypes: []string{"session.denied"}},
+				Sinks:     []breakglassv1alpha1.AuditSinkConfig{{Name: "log-a", Type: breakglassv1alpha1.AuditSinkTypeLog}},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "config-b"},
+			Spec: breakglassv1alpha1.AuditConfigSpec{
+				Enabled:   true,
+				Filtering: &breakglassv1alpha1.AuditFilterConfig{IncludeEventTypes: []string{"session.*"}, ExcludeEventTypes: []string{"session.denied"}},
+				Sinks:     []breakglassv1alpha1.AuditSinkConfig{{Name: "log-b", Type: breakglassv1alpha1.AuditSinkTypeLog}},
+			},
+		},
+	}
+
+	err := svc.ReloadMultiple(context.Background(), configs)
+	require.NoError(t, err)
+	require.NotNil(t, svc.manager)
+	assert.Equal(t, []string{"session.*"}, svc.manager.config.IncludeEventTypes)
+	assert.Equal(t, []string{"session.denied"}, svc.manager.config.ExcludeEventTypes)
+	_ = svc.Close()
+}
+
+func TestService_ReloadMultipleDisablesManagerEventFilterForDifferentConfigs(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	svc := NewService(client, nil, logger, "test-namespace")
+	configs := []*breakglassv1alpha1.AuditConfig{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "config-a"},
+			Spec: breakglassv1alpha1.AuditConfigSpec{
+				Enabled:   true,
+				Filtering: &breakglassv1alpha1.AuditFilterConfig{IncludeEventTypes: []string{"session.*"}},
+				Sinks:     []breakglassv1alpha1.AuditSinkConfig{{Name: "log-a", Type: breakglassv1alpha1.AuditSinkTypeLog}},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "config-b"},
+			Spec: breakglassv1alpha1.AuditConfigSpec{
+				Enabled:   true,
+				Filtering: &breakglassv1alpha1.AuditFilterConfig{IncludeEventTypes: []string{"access.*"}},
+				Sinks:     []breakglassv1alpha1.AuditSinkConfig{{Name: "log-b", Type: breakglassv1alpha1.AuditSinkTypeLog}},
+			},
+		},
+	}
+
+	err := svc.ReloadMultiple(context.Background(), configs)
+	require.NoError(t, err)
+	require.NotNil(t, svc.manager)
+	assert.Empty(t, svc.manager.config.IncludeEventTypes)
+	assert.Empty(t, svc.manager.config.ExcludeEventTypes)
+	_ = svc.Close()
+}
+
 func TestService_ReloadNoSinks(t *testing.T) {
 	logger := zap.NewNop()
 	scheme := newServiceTestScheme(t)

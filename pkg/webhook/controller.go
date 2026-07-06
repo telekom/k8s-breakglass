@@ -489,22 +489,7 @@ func (wc *WebhookController) emitAccessDecisionAudit(ctx context.Context, userna
 		severity = audit.SeverityWarning
 	}
 
-	// Build target information from SAR
-	var resource, name, namespace, verb, subresource, apiGroup string
-	if sar.Spec.ResourceAttributes != nil {
-		ra := sar.Spec.ResourceAttributes
-		resource = ra.Resource
-		name = ra.Name
-		namespace = ra.Namespace
-		verb = ra.Verb
-		subresource = ra.Subresource
-		apiGroup = ra.Group
-	} else if sar.Spec.NonResourceAttributes != nil {
-		nra := sar.Spec.NonResourceAttributes
-		resource = "nonresource"
-		name = nra.Path
-		verb = nra.Verb
-	}
+	target, verb, subresource, apiGroup := wc.auditTargetFromSAR(ctx, cluster, sar)
 
 	// Build details map
 	details := map[string]interface{}{
@@ -525,12 +510,7 @@ func (wc *WebhookController) emitAccessDecisionAudit(ctx context.Context, userna
 			User:   username,
 			Groups: groups,
 		},
-		Target: audit.Target{
-			Kind:      resource,
-			Name:      name,
-			Namespace: namespace,
-			Cluster:   cluster,
-		},
+		Target:  target,
 		Details: details,
 	}
 
@@ -543,22 +523,7 @@ func (wc *WebhookController) emitPolicyDenialAudit(ctx context.Context, username
 		return
 	}
 
-	// Build target information from SAR
-	var resource, name, namespace, verb, subresource, apiGroup string
-	if sar.Spec.ResourceAttributes != nil {
-		ra := sar.Spec.ResourceAttributes
-		resource = ra.Resource
-		name = ra.Name
-		namespace = ra.Namespace
-		verb = ra.Verb
-		subresource = ra.Subresource
-		apiGroup = ra.Group
-	} else if sar.Spec.NonResourceAttributes != nil {
-		nra := sar.Spec.NonResourceAttributes
-		resource = "nonresource"
-		name = nra.Path
-		verb = nra.Verb
-	}
+	target, verb, subresource, apiGroup := wc.auditTargetFromSAR(ctx, cluster, sar)
 
 	event := &audit.Event{
 		Type:     audit.EventAccessDeniedPolicy,
@@ -567,12 +532,7 @@ func (wc *WebhookController) emitPolicyDenialAudit(ctx context.Context, username
 			User:   username,
 			Groups: groups,
 		},
-		Target: audit.Target{
-			Kind:      resource,
-			Name:      name,
-			Namespace: namespace,
-			Cluster:   cluster,
-		},
+		Target: target,
 		Details: map[string]interface{}{
 			"policyName":  policyName,
 			"policyScope": scope,
@@ -610,17 +570,7 @@ func (wc *WebhookController) emitPodSecurityAudit(ctx context.Context, username 
 		severity = audit.SeverityInfo
 	}
 
-	// Build target information from SAR
-	var resource, name, namespace, verb, subresource, apiGroup string
-	if sar.Spec.ResourceAttributes != nil {
-		ra := sar.Spec.ResourceAttributes
-		resource = ra.Resource
-		name = ra.Name
-		namespace = ra.Namespace
-		verb = ra.Verb
-		subresource = ra.Subresource
-		apiGroup = ra.Group
-	}
+	target, verb, subresource, apiGroup := wc.auditTargetFromSAR(ctx, cluster, sar)
 
 	event := &audit.Event{
 		Type:     eventType,
@@ -629,12 +579,7 @@ func (wc *WebhookController) emitPodSecurityAudit(ctx context.Context, username 
 			User:   username,
 			Groups: groups,
 		},
-		Target: audit.Target{
-			Kind:      resource,
-			Name:      name,
-			Namespace: namespace,
-			Cluster:   cluster,
-		},
+		Target: target,
 		Details: map[string]interface{}{
 			"policyName":      policyName,
 			"action":          result.Action,
@@ -649,6 +594,48 @@ func (wc *WebhookController) emitPodSecurityAudit(ctx context.Context, username 
 	}
 
 	wc.auditService.Emit(ctx, event)
+}
+
+func (wc *WebhookController) auditTargetFromSAR(ctx context.Context, cluster string, sar *authorizationv1.SubjectAccessReview) (audit.Target, string, string, string) {
+	target := audit.Target{Cluster: cluster}
+	var verb, subresource, apiGroup string
+	if sar == nil {
+		return target, verb, subresource, apiGroup
+	}
+	if sar.Spec.ResourceAttributes != nil {
+		ra := sar.Spec.ResourceAttributes
+		target.Kind = ra.Resource
+		target.Name = ra.Name
+		target.Namespace = ra.Namespace
+		target.NamespaceLabels = wc.auditNamespaceLabels(ctx, cluster, ra.Namespace)
+		verb = ra.Verb
+		subresource = ra.Subresource
+		apiGroup = ra.Group
+	} else if sar.Spec.NonResourceAttributes != nil {
+		nra := sar.Spec.NonResourceAttributes
+		target.Kind = "nonresource"
+		target.Name = nra.Path
+		verb = nra.Verb
+	}
+	return target, verb, subresource, apiGroup
+}
+
+func (wc *WebhookController) auditNamespaceLabels(ctx context.Context, cluster, namespace string) map[string]string {
+	if namespace == "" || (wc.namespaceLabelsFetchFn == nil && wc.ccProvider == nil) {
+		return nil
+	}
+	labels, err := wc.fetchNamespaceLabels(ctx, cluster, namespace)
+	if err != nil {
+		if wc.log != nil {
+			wc.log.Debugw("failed to fetch namespace labels for audit event filtering",
+				"error", err.Error(), "cluster", cluster, "namespace", namespace)
+		}
+		return nil
+	}
+	if len(labels) == 0 {
+		return nil
+	}
+	return labels
 }
 
 // getUserGroupsForCluster removed (unused)
