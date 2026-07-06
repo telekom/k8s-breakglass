@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - **DebugSession denial and HTTP log redaction**: Frontend HTTP error logging and unauthorized DebugSession cluster-denial responses now avoid exposing bearer tokens or template cluster patterns.
+- **bgctl self-update checksum enforcement**: `bgctl update` now refuses to install
+  release archives when the matching `.sha256` asset is missing or cannot be
+  downloaded, instead of proceeding without verification.
 - **BreakglassEscalation admission validation**: Escalation duration fields now reject non-positive or malformed values consistently, `idleTimeout` and `approvalTimeout` are checked against the effective `maxValidFor`, and invalid cluster glob patterns are rejected before they can affect session admission.
 - **OIDC upstream response handling**: OIDC discovery, JWKS, userinfo, token, and Keycloak API reads now enforce bounded response bodies, preventing oversized identity-provider responses from exhausting controller memory. (#1131)
 - **BreakglassSession approver IDP enforcement**: Approval and rejection requests now enforce `BreakglassEscalation.spec.allowedIdentityProvidersForApprovers`, denying approvers whose authenticated IdentityProvider is missing or not allowed.

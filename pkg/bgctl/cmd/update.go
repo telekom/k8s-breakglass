@@ -29,6 +29,8 @@ const (
 	// maxBinarySize is the maximum allowed size for extracted binaries (500 MB).
 	maxBinarySize = 500 << 20
 
+	maxUpdateErrorBodyBytes = 4 << 10
+
 	defaultUpdateAPIHTTPTimeout      = 30 * time.Second
 	defaultUpdateDownloadHTTPTimeout = 5 * time.Minute
 )
@@ -159,7 +161,7 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 		return err
 	}
 
-	if err := verifyChecksumIfAvailable(ctx, release.Assets, assetName, archivePath); err != nil {
+	if err := verifyChecksum(ctx, release.Assets, assetName, archivePath); err != nil {
 		return err
 	}
 
@@ -194,8 +196,7 @@ func fetchLatestRelease(ctx context.Context) (*githubRelease, error) {
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed to fetch release: %s", string(body))
+		return nil, fmt.Errorf("failed to fetch release: %s", readUpdateErrorBody(resp.Body))
 	}
 	var release githubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
@@ -218,8 +219,7 @@ func fetchReleaseByTag(ctx context.Context, tag string) (*githubRelease, error) 
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed to fetch release: %s", string(body))
+		return nil, fmt.Errorf("failed to fetch release: %s", readUpdateErrorBody(resp.Body))
 	}
 	var release githubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
@@ -259,8 +259,7 @@ func downloadFile(ctx context.Context, url, path string) error {
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("download failed: %s", string(body))
+		return fmt.Errorf("download failed: %s", readUpdateErrorBody(resp.Body))
 	}
 	out, err := os.Create(path)
 	if err != nil {
@@ -332,11 +331,24 @@ func formatBytes(b int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-func verifyChecksumIfAvailable(ctx context.Context, assets []githubAsset, name, filePath string) error {
+func readUpdateErrorBody(r io.Reader) string {
+	body, _ := io.ReadAll(io.LimitReader(r, maxUpdateErrorBodyBytes+1))
+	truncated := len(body) > maxUpdateErrorBodyBytes
+	if truncated {
+		body = body[:maxUpdateErrorBodyBytes]
+	}
+	text := strings.TrimSpace(string(body))
+	if truncated {
+		text += "... (truncated)"
+	}
+	return text
+}
+
+func verifyChecksum(ctx context.Context, assets []githubAsset, name, filePath string) error {
 	checksumName := name + ".sha256"
 	url := findAssetURL(assets, checksumName)
 	if url == "" {
-		return nil
+		return fmt.Errorf("refusing update without checksum verification: checksum asset not found for %s", checksumName)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -350,7 +362,11 @@ func verifyChecksumIfAvailable(ctx context.Context, assets []githubAsset, name, 
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode >= 400 {
-		return nil
+		body := readUpdateErrorBody(resp.Body)
+		if body != "" {
+			return fmt.Errorf("refusing update without checksum verification: checksum download failed: %s: %s", resp.Status, body)
+		}
+		return fmt.Errorf("refusing update without checksum verification: checksum download failed: %s", resp.Status)
 	}
 	checksumBytes, err := io.ReadAll(resp.Body)
 	if err != nil {

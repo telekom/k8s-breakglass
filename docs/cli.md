@@ -306,6 +306,10 @@ bgctl update --version v1.2.0
 bgctl update rollback
 ```
 
+`bgctl update` fails closed when the matching `.sha256` checksum asset is missing
+or cannot be downloaded. Download the release archive and checksum manually if a
+release needs to be installed before its checksum asset is available.
+
 ## Exit Codes
 
 - `0` - Success
