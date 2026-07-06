@@ -167,6 +167,48 @@ func TestExpirePendingSessions(t *testing.T) {
 		assert.Equal(t, breakglassv1alpha1.SessionStateApproved, updatedSession.Status.State)
 	})
 
+	t.Run("canceled context skips pending expiry", func(t *testing.T) {
+		pendingSession := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "pending-canceled",
+				Namespace:         "breakglass",
+				CreationTimestamp: metav1.NewTime(time.Now().UTC().Add(-2 * time.Hour)),
+			},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				User:    "test@example.com",
+				Cluster: "test-cluster",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStatePending,
+				TimeoutAt: metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(pendingSession).
+			WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+			WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexerExpire).
+			Build()
+		mgr := NewSessionManagerWithClient(fakeClient)
+		controller := &BreakglassSessionController{
+			log:            logger,
+			sessionManager: mgr,
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		controller.ExpirePendingSessions(ctx)
+
+		var updatedSession breakglassv1alpha1.BreakglassSession
+		err := fakeClient.Get(context.Background(),
+			client.ObjectKey{Namespace: pendingSession.Namespace, Name: pendingSession.Name},
+			&updatedSession)
+		require.NoError(t, err)
+		assert.Equal(t, breakglassv1alpha1.SessionStatePending, updatedSession.Status.State)
+		assert.Empty(t, updatedSession.Status.ReasonEnded)
+	})
+
 	t.Run("does not overwrite concurrent terminal transition during retry", func(t *testing.T) {
 		pendingSession := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{

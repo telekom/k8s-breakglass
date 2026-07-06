@@ -81,8 +81,12 @@ func (ssa *ScheduledSessionActivator) WithAuditService(auditService AuditEmitter
 // ActivateScheduledSessions checks sessions in WaitingForScheduledTime state.
 // Sessions whose ScheduledStartTime has arrived transition to Approved so the RBAC group can be applied.
 // Sessions that can no longer be valid are expired instead of being activated late.
-func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
-	ctx := context.Background()
+func (ssa *ScheduledSessionActivator) ActivateScheduledSessions(ctxs ...context.Context) {
+	ctx := optionalCleanupContext(ctxs...)
+	if err := ctx.Err(); err != nil {
+		ssa.log.Infow("skipping scheduled session activation because context is cancelled", "error", err)
+		return
+	}
 
 	// Use indexed query to fetch only sessions waiting for scheduled time
 	sessions, err := ssa.sessionManager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStateWaitingForScheduledTime)
@@ -93,6 +97,10 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 
 	now := time.Now()
 	for _, ses := range sessions {
+		if err := ctx.Err(); err != nil {
+			ssa.log.Infow("stopping scheduled session activation because context is cancelled", "error", err)
+			return
+		}
 		listedMissingScheduledTime := ses.Spec.ScheduledStartTime == nil || ses.Spec.ScheduledStartTime.IsZero()
 		if !listedMissingScheduledTime && now.Before(ses.Spec.ScheduledStartTime.Time) {
 			// Not yet time for this session; avoid a live read until the cached
@@ -177,9 +185,16 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions() {
 		// Record metric for successful activation
 		metrics.SessionActivated.WithLabelValues(ses.Spec.Cluster).Inc()
 
-		ssa.emitSessionActivatedAuditEvent(ses)
+		ssa.emitSessionActivatedAuditEvent(ctx, ses)
 
 		// Send activation notification email
+		if err := ctx.Err(); err != nil {
+			ssa.log.Infow("skipping scheduled session activation email because context is cancelled",
+				"session", ses.Name,
+				"namespace", ses.Namespace,
+				"error", err)
+			return
+		}
 		ssa.sendSessionActivatedEmail(ses)
 
 		// RBAC group will now be applied by the authorization controller
@@ -295,12 +310,12 @@ func (ssa *ScheduledSessionActivator) currentWaitingScheduledSession(
 	return current, true
 }
 
-func (ssa *ScheduledSessionActivator) emitSessionActivatedAuditEvent(session breakglassv1alpha1.BreakglassSession) {
+func (ssa *ScheduledSessionActivator) emitSessionActivatedAuditEvent(ctx context.Context, session breakglassv1alpha1.BreakglassSession) {
 	if ssa.auditService == nil || !ssa.auditService.IsEnabled() {
 		return
 	}
 
-	ssa.auditService.Emit(context.Background(), &audit.Event{
+	ssa.auditService.Emit(ctx, &audit.Event{
 		Type:      audit.EventSessionActivated,
 		Severity:  audit.SeverityInfo,
 		Timestamp: time.Now().UTC(),

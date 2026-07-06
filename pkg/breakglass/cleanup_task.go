@@ -118,6 +118,15 @@ func (cr CleanupRoutine) CleanupRoutine(ctx context.Context) {
 
 func (cr CleanupRoutine) clean(ctx context.Context) {
 	cr.Log.Info("Running breakglass session cleanup task")
+	cleanupCtx := ctx
+	if cleanupCtx == nil {
+		cleanupCtx = context.Background()
+	}
+	// Bound all cleanup operations under a single timeout so shutdown is
+	// predictable and we don't accumulate slow API calls.
+	opCtx, cancel := context.WithTimeout(cleanupCtx, DefaultCleanupOperationTimeout)
+	defer cancel()
+
 	// Activate scheduled sessions first (before expiry checks)
 	if cr.Manager != nil {
 		activator := NewScheduledSessionActivator(cr.Log, cr.Manager).
@@ -125,7 +134,7 @@ func (cr CleanupRoutine) clean(ctx context.Context) {
 		if cr.AuditService != nil {
 			activator = activator.WithAuditService(cr.AuditService)
 		}
-		activator.ActivateScheduledSessions()
+		activator.ActivateScheduledSessions(opCtx)
 	}
 
 	// Build session controller once for the expiry operations below.
@@ -138,19 +147,10 @@ func (cr CleanupRoutine) clean(ctx context.Context) {
 			disableEmail:   cr.DisableEmail,
 			config:         config.Config{Frontend: config.Frontend{BrandingName: cr.BrandingName}},
 		}
-		sessionCtrl.ExpirePendingSessions()
+		sessionCtrl.ExpirePendingSessions(opCtx)
 		// Expire approved sessions whose ExpiresAt has passed
-		sessionCtrl.ExpireApprovedSessions()
+		sessionCtrl.ExpireApprovedSessions(opCtx)
 	}
-
-	cleanupCtx := ctx
-	if cleanupCtx == nil {
-		cleanupCtx = context.Background()
-	}
-	// Bound all cleanup operations under a single timeout so shutdown is
-	// predictable and we don't accumulate slow API calls.
-	opCtx, cancel := context.WithTimeout(cleanupCtx, DefaultCleanupOperationTimeout)
-	defer cancel()
 
 	if cr.Manager != nil {
 		// Remove duplicate active sessions (same cluster/user/grantedGroup triple).
@@ -180,6 +180,13 @@ func (cr CleanupRoutine) clean(ctx context.Context) {
 		}
 	}
 	cr.Log.Info("Finished breakglass session cleanup task")
+}
+
+func optionalCleanupContext(ctxs ...context.Context) context.Context {
+	if len(ctxs) > 0 && ctxs[0] != nil {
+		return ctxs[0]
+	}
+	return context.Background()
 }
 
 // pruneActivityTracker builds a set of active (approved) session NamespacedNames

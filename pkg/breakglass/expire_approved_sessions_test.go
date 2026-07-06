@@ -102,6 +102,47 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 		assert.True(t, hasExpiredCondition, "expected Expired condition to be set")
 	})
 
+	t.Run("canceled context skips approved expiry", func(t *testing.T) {
+		session := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "approved-canceled",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				User:         "test@example.com",
+				Cluster:      "test-cluster",
+				GrantedGroup: "admin",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:           breakglassv1alpha1.SessionStateApproved,
+				ApprovedAt:      metav1.NewTime(time.Now().UTC().Add(-2 * time.Hour)),
+				ActualStartTime: metav1.NewTime(time.Now().UTC().Add(-2 * time.Hour)),
+				ExpiresAt:       metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)),
+			},
+		}
+
+		fakeClient := newFakeApprovedClient(session)
+		mgr := NewSessionManagerWithClient(fakeClient)
+		controller := &BreakglassSessionController{
+			log:            logger,
+			sessionManager: mgr,
+			disableEmail:   true,
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		controller.ExpireApprovedSessions(ctx)
+
+		var updated breakglassv1alpha1.BreakglassSession
+		err := fakeClient.Get(context.Background(),
+			client.ObjectKey{Namespace: "breakglass", Name: "approved-canceled"},
+			&updated)
+		require.NoError(t, err)
+		assert.Equal(t, breakglassv1alpha1.SessionStateApproved, updated.Status.State)
+		assert.Empty(t, updated.Status.ReasonEnded)
+		assert.True(t, updated.Status.RetainedUntil.IsZero())
+	})
+
 	t.Run("does not expire approved session before ExpiresAt", func(t *testing.T) {
 		session := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
