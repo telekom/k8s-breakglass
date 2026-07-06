@@ -7,8 +7,8 @@ spec:
   displayName: "Main IDP (Employees)"
   oidc:
     authority: "https://auth.example.com"
-    clientID: "breakglass"
-    expectedAudience: "breakglass"
+    clientID: "breakglass-ui"
+    expectedAudience: "breakglass-ui"
   # Issuer URL for token validation
   issuer: "https://auth.example.com"
   primary: true
