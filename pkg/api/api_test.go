@@ -360,6 +360,21 @@ func TestOriginValidationMiddleware(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.Code)
 	})
 
+	t.Run("allows OIDC authority header in preflight", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodOptions, "/api/probe", nil)
+		require.NoError(t, err)
+		req.Header.Set("Origin", "https://allowed.example.com")
+		req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+		req.Header.Set("Access-Control-Request-Headers", "X-OIDC-Authority")
+		w := httptest.NewRecorder()
+
+		server.gin.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusNoContent, w.Code)
+		allowedHeaders := strings.Split(w.Header().Get("Access-Control-Allow-Headers"), ",")
+		require.True(t, headerListContains(allowedHeaders, "X-OIDC-Authority"))
+	})
+
 	t.Run("blocks disallowed origin", func(t *testing.T) {
 		resp := makeRequest(http.MethodGet, "https://evil.example.com")
 		require.Equal(t, http.StatusForbidden, resp.Code)
@@ -375,6 +390,15 @@ func TestOriginValidationMiddleware(t *testing.T) {
 		require.Equal(t, http.StatusForbidden, resp.Code)
 		require.Empty(t, resp.Body.String(), "response should come from CORS middleware, not origin validator")
 	})
+}
+
+func headerListContains(headers []string, want string) bool {
+	for _, header := range headers {
+		if strings.EqualFold(strings.TrimSpace(header), want) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestServer_RegisterAll(t *testing.T) {

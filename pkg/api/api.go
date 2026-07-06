@@ -314,7 +314,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		cors.New(cors.Config{
 			AllowOrigins:     allowedOrigins,
 			AllowMethods:     []string{http.MethodGet, http.MethodPut, http.MethodPatch, http.MethodPost, http.MethodOptions},
-			AllowHeaders:     []string{"Origin", "Authorization", "Content-Type"},
+			AllowHeaders:     []string{"Origin", "Authorization", "Content-Type", "X-OIDC-Authority"},
 			ExposeHeaders:    []string{"Authorization", "X-Notification-Sent"},
 			AllowCredentials: true,
 			MaxAge:           12 * time.Hour,
