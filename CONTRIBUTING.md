@@ -77,6 +77,11 @@ npm run lint
 npm run typecheck
 ```
 
+`make test` and `make test-controller` are check-only targets: they run vet and
+tests, but do not regenerate manifests, regenerate code, or format Go files. Run
+the mutating targets explicitly when you intend to update generated or formatted
+files, for example `make generate manifests fmt` or `make prepare-test`.
+
 ### 4. Update Documentation
 - Update relevant docs in `docs/`
 - Add changelog entry in [CHANGELOG.md](CHANGELOG.md)
