@@ -232,7 +232,12 @@ These capture access to non-API endpoints:
 
 ## Filtering
 
-Control which events are captured:
+Control which events are captured. Configured filters are enforced before
+events reach sinks: global event-type filters run before manager queueing and
+synchronous writes, and global user, namespace, resource, and event-type filters
+are applied at every sink. Sink-local `eventTypes` and `minSeverity` filters
+then further narrow each sink's output. Exclude filters take precedence over
+include filters.
 
 ```yaml
 spec:
@@ -255,8 +260,9 @@ spec:
     
     # Filter by namespace
     excludeNamespaces:
-      - kube-system
-      - kube-public
+      patterns:
+        - kube-system
+        - kube-public
     
     # Filter by resource type
     includeResources:
@@ -294,6 +300,10 @@ This allows dynamic namespace selection based on labels, which is useful when:
 - New namespaces are created frequently
 - Namespace naming conventions vary
 - You want to use Kubernetes-native label selectors
+
+Label selector terms are evaluated only when the audit event includes
+`target.namespaceLabels`; name patterns continue to match on
+`target.namespace`. Events without namespace labels do not match selector terms.
 
 ## Sampling
 

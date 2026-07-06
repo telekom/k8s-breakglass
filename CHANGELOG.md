@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BreakglassSession state filters**: `GET /api/breakglassSessions` now returns `400 Bad Request` for unknown non-empty `state` filter tokens.
 - **DebugSession reconciler audit and failure mail wiring**: Lifecycle audit events and requester failure emails now use the configured audit and mail services, while invalid failure-mail recipients are rejected before enqueueing.
 - **Audit webhook sink auth and TLS**: Webhook audit sinks now apply `authSecretRef` bearer/basic credentials and `tls.caSecretRef`/`insecureSkipVerify` settings when constructing the outbound HTTP client, while preserving explicitly configured `Authorization` headers. (#1141)
+- **Audit filtering enforcement**: Global `AuditConfig.spec.filtering` event-type filters now run before manager queueing and synchronous writes, and configured user, namespace, resource, event-type, and sink severity filters are enforced before events reach audit sinks. (PR #1143)
 - **BreakglassSession duplicate cleanup live guard**: Duplicate-session cleanup now revalidates live session state before terminating duplicates, preserving concurrent rejection, withdrawal, expiry, or activity transitions.
 - Added `maxItems` limit to `PodSecurityScope.Subresources`.
 - **Frontend modal dismissal**: Approval, review, and withdraw modals now keep destructive actions mounted while requests are in flight, and support Escape or modal-close dismissal only when closing is safe.
