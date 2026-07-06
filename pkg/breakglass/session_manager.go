@@ -183,33 +183,70 @@ func (c *SessionManager) GetAllBreakglassSessions(ctx context.Context) ([]breakg
 func (c *SessionManager) GetSessionsByState(ctx context.Context,
 	state breakglassv1alpha1.BreakglassSessionState,
 ) ([]breakglassv1alpha1.BreakglassSession, error) {
+	return c.GetSessionsByStates(ctx, []breakglassv1alpha1.BreakglassSessionState{state})
+}
+
+// GetSessionsByStates returns all sessions matching any of the specified states.
+// It uses the status.state field index for efficient lookup when available. If
+// the index is missing, it falls back to a single full list plus client-side
+// filtering instead of issuing one full-list fallback per requested state.
+func (c *SessionManager) GetSessionsByStates(ctx context.Context,
+	states []breakglassv1alpha1.BreakglassSessionState,
+) ([]breakglassv1alpha1.BreakglassSession, error) {
 	log := c.getLogger()
-	log.Debugw("Fetching BreakglassSessions by state (using field index)", "state", state)
-	bsl := breakglassv1alpha1.BreakglassSessionList{}
-	// Use the cached client (c.Client.List) for indexed queries.
-	// Field indexes are only available in the cache, not via APIReader.
-	if err := c.Client.List(ctx, &bsl, client.MatchingFields{"status.state": string(state)}); err != nil {
-		if !IsFieldIndexError(err) {
-			// Real error (RBAC, network, etc.) — return it directly.
-			log.Errorw("Failed to list BreakglassSessions by state", "state", state, "error", err)
-			return nil, fmt.Errorf("failed to list BreakglassSessions by state: %w", err)
+
+	stateSet := make(map[breakglassv1alpha1.BreakglassSessionState]struct{}, len(states))
+	uniqueStates := make([]breakglassv1alpha1.BreakglassSessionState, 0, len(states))
+	for _, state := range states {
+		if _, exists := stateSet[state]; exists {
+			continue
 		}
-		// Field index not available — fall back to client-side filtering.
-		log.Debugw("Field index not available; falling back to client-side filtering", "state", state, "error", err)
-		all, err := c.GetAllBreakglassSessions(ctx)
-		if err != nil {
-			return nil, err
-		}
-		filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(all))
-		for _, s := range all {
-			if s.Status.State == state {
-				filtered = append(filtered, s)
-			}
-		}
-		return filtered, nil
+		stateSet[state] = struct{}{}
+		uniqueStates = append(uniqueStates, state)
 	}
-	log.Infow("Fetched BreakglassSessions by state (indexed)", "count", len(bsl.Items), "state", state)
-	return bsl.Items, nil
+	if len(uniqueStates) == 0 {
+		return nil, nil
+	}
+
+	log.Debugw("Fetching BreakglassSessions by states (using field index)", "states", uniqueStates)
+	sessions := make([]breakglassv1alpha1.BreakglassSession, 0)
+	seen := make(map[string]struct{})
+	for _, state := range uniqueStates {
+		bsl := breakglassv1alpha1.BreakglassSessionList{}
+		// Use the cached client (c.Client.List) for indexed queries.
+		// Field indexes are only available in the cache, not via APIReader.
+		if err := c.Client.List(ctx, &bsl, client.MatchingFields{"status.state": string(state)}); err != nil {
+			if !IsFieldIndexError(err) {
+				// Real error (RBAC, network, etc.) — return it directly.
+				log.Errorw("Failed to list BreakglassSessions by state", "state", state, "error", err)
+				return nil, fmt.Errorf("failed to list BreakglassSessions by state: %w", err)
+			}
+			// Field index not available — fall back to one full list and filter
+			// all requested states in-memory.
+			log.Debugw("Field index not available; falling back to client-side filtering", "states", uniqueStates, "error", err)
+			all, err := c.GetAllBreakglassSessions(ctx)
+			if err != nil {
+				return nil, err
+			}
+			filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(all))
+			for _, s := range all {
+				if _, ok := stateSet[s.Status.State]; ok {
+					filtered = append(filtered, s)
+				}
+			}
+			return filtered, nil
+		}
+		for _, session := range bsl.Items {
+			key := session.Namespace + "/" + session.Name
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			sessions = append(sessions, session)
+		}
+	}
+	log.Infow("Fetched BreakglassSessions by states (indexed)", "count", len(sessions), "states", uniqueStates)
+	return sessions, nil
 }
 
 // Get all stored GetClusterGroupAccess

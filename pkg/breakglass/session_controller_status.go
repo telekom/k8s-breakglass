@@ -613,6 +613,92 @@ func (wc *BreakglassSessionController) handleRejectBreakglassSession(c *gin.Cont
 	wc.setSessionStatus(c, breakglassv1alpha1.SessionConditionTypeRejected)
 }
 
+var exactSessionStateFilterValues = map[string]breakglassv1alpha1.BreakglassSessionState{
+	"pending":                 breakglassv1alpha1.SessionStatePending,
+	"approved":                breakglassv1alpha1.SessionStateApproved,
+	"waiting":                 breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+	"waitingforscheduledtime": breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+	"scheduled":               breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+	"rejected":                breakglassv1alpha1.SessionStateRejected,
+	"withdrawn":               breakglassv1alpha1.SessionStateWithdrawn,
+	"idleexpired":             breakglassv1alpha1.SessionStateIdleExpired,
+	"timeout":                 breakglassv1alpha1.SessionStateTimeout,
+	"approvaltimeout":         breakglassv1alpha1.SessionStateTimeout,
+}
+
+func exactSessionStateFilters(tokens []string) ([]breakglassv1alpha1.BreakglassSessionState, bool) {
+	if len(tokens) == 0 {
+		return nil, false
+	}
+	states := make([]breakglassv1alpha1.BreakglassSessionState, 0, len(tokens))
+	seen := make(map[breakglassv1alpha1.BreakglassSessionState]struct{}, len(tokens))
+	for _, token := range tokens {
+		state, ok := exactSessionStateFilterValues[token]
+		if !ok {
+			return nil, false
+		}
+		if _, exists := seen[state]; exists {
+			continue
+		}
+		seen[state] = struct{}{}
+		states = append(states, state)
+	}
+	return states, len(states) > 0
+}
+
+func sessionMatchesListFilters(session *breakglassv1alpha1.BreakglassSession, cluster, user, group string) bool {
+	if session == nil {
+		return false
+	}
+	if cluster != "" && session.Spec.Cluster != cluster {
+		return false
+	}
+	if user != "" && session.Spec.User != user {
+		return false
+	}
+	if group != "" && session.Spec.GrantedGroup != group {
+		return false
+	}
+	return true
+}
+
+func (wc *BreakglassSessionController) listBreakglassSessionsForStatus(ctx context.Context, reqLog *zap.SugaredLogger, cluster, user, group string, stateFilters []string) ([]breakglassv1alpha1.BreakglassSession, error) {
+	if states, ok := exactSessionStateFilters(stateFilters); ok {
+		sessions := make([]breakglassv1alpha1.BreakglassSession, 0)
+		reqLog.Debugw("Using state index for sessions query", "states", states)
+		stateSessions, err := wc.sessionManager.GetSessionsByStates(ctx, states)
+		if err != nil {
+			return nil, err
+		}
+		for i := range stateSessions {
+			session := &stateSessions[i]
+			if !sessionMatchesListFilters(session, cluster, user, group) {
+				continue
+			}
+			sessions = append(sessions, *session)
+		}
+		return sessions, nil
+	}
+
+	if cluster != "" || user != "" || group != "" {
+		fs := fields.Set{}
+		if cluster != "" {
+			fs["spec.cluster"] = cluster
+		}
+		if user != "" {
+			fs["spec.user"] = user
+		}
+		if group != "" {
+			fs["spec.grantedGroup"] = group
+		}
+		selector := fields.SelectorFromSet(fs)
+		reqLog.Debugw("Using field selector for sessions query", "selector", selector.String())
+		return wc.sessionManager.GetBreakglassSessionsWithSelector(ctx, selector)
+	}
+
+	return wc.sessionManager.GetAllBreakglassSessions(ctx)
+}
+
 // handleGetBreakglassSessionStatus handles GET /status for breakglass session
 func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Context) {
 	reqLog := system.GetReqLogger(c, wc.log)
@@ -693,24 +779,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 
 	var sessions []breakglassv1alpha1.BreakglassSession
 	var err error
-	if clusterQ != "" || userQ != "" || groupQ != "" {
-		// Build field selector from provided params
-		fs := fields.Set{}
-		if clusterQ != "" {
-			fs["spec.cluster"] = clusterQ
-		}
-		if userQ != "" {
-			fs["spec.user"] = userQ
-		}
-		if groupQ != "" {
-			fs["spec.grantedGroup"] = groupQ
-		}
-		selector := fields.SelectorFromSet(fs)
-		reqLog.Debugw("Using field selector for sessions query", "selector", selector.String())
-		sessions, err = wc.sessionManager.GetBreakglassSessionsWithSelector(ctx, selector)
-	} else {
-		sessions, err = wc.sessionManager.GetAllBreakglassSessions(ctx)
-	}
+	sessions, err = wc.listBreakglassSessionsForStatus(ctx, reqLog, clusterQ, userQ, groupQ, stateFilters)
 	if err != nil {
 		reqLog.Error("Error getting breakglass sessions", zap.Error(err))
 		apiresponses.RespondInternalError(c, "list sessions", err, reqLog)
