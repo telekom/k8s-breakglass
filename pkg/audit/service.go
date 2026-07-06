@@ -33,8 +33,12 @@ package audit
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,6 +51,8 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
+
+var systemCertPool = x509.SystemCertPool
 
 // Service manages the audit system lifecycle, including sink creation and event emission.
 // It watches AuditConfig changes and reconfigures the audit manager accordingly.
@@ -490,7 +496,7 @@ func (s *Service) buildSink(ctx context.Context, sinkCfg breakglassv1alpha1.Audi
 		return s.buildKafkaSink(ctx, sinkCfg)
 
 	case breakglassv1alpha1.AuditSinkTypeWebhook:
-		return s.buildWebhookSink(sinkCfg)
+		return s.buildWebhookSink(ctx, sinkCfg)
 
 	case breakglassv1alpha1.AuditSinkTypeKubernetes:
 		return s.buildKubernetesSink(sinkCfg)
@@ -606,20 +612,135 @@ func (s *Service) buildKafkaSASLConfig(ctx context.Context, saslCfg *breakglassv
 	return cfg, nil
 }
 
-func (s *Service) buildWebhookSink(sinkCfg breakglassv1alpha1.AuditSinkConfig) (Sink, error) {
+func (s *Service) buildWebhookSink(ctx context.Context, sinkCfg breakglassv1alpha1.AuditSinkConfig) (Sink, error) {
 	if sinkCfg.Webhook == nil {
 		return nil, fmt.Errorf("webhook config required for webhook sink")
+	}
+
+	headers := cloneHeaders(sinkCfg.Webhook.Headers)
+	var err error
+	headers, err = s.applyWebhookAuth(ctx, sinkCfg.Webhook, headers)
+	if err != nil {
+		return nil, err
 	}
 
 	webhookCfg := WebhookSinkConfig{
 		Name:     sinkCfg.Name,
 		URL:      sinkCfg.Webhook.URL,
 		BatchURL: sinkCfg.Webhook.BatchURL,
-		Headers:  sinkCfg.Webhook.Headers,
+		Headers:  headers,
 		Timeout:  time.Duration(sinkCfg.Webhook.TimeoutSeconds) * time.Second,
 	}
 
+	if sinkCfg.Webhook.TLS != nil {
+		tlsCfg, err := s.buildWebhookTLSConfig(ctx, sinkCfg.Webhook.TLS)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build webhook TLS config: %w", err)
+		}
+		webhookCfg.TLS = tlsCfg
+	}
+
 	return NewWebhookSink(webhookCfg, s.logger), nil
+}
+
+func cloneHeaders(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+
+	cloned := make(map[string]string, len(headers))
+	for key, value := range headers {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func (s *Service) applyWebhookAuth(ctx context.Context, webhookCfg *breakglassv1alpha1.WebhookSinkSpec, headers map[string]string) (map[string]string, error) {
+	if webhookCfg.AuthSecretRef == nil || hasAuthorizationHeader(headers) {
+		return headers, nil
+	}
+
+	namespace := webhookCfg.AuthSecretRef.Namespace
+	if err := s.requireControllerNamespace("webhook auth", webhookCfg.AuthSecretRef.Name, namespace); err != nil {
+		return nil, err
+	}
+
+	secret := &corev1.Secret{}
+	if err := s.client.Get(ctx, types.NamespacedName{Name: webhookCfg.AuthSecretRef.Name, Namespace: namespace}, secret); err != nil {
+		return nil, fmt.Errorf("failed to get webhook auth secret %s/%s: %w", namespace, webhookCfg.AuthSecretRef.Name, err)
+	}
+
+	if headers == nil {
+		headers = make(map[string]string, 1)
+	}
+
+	if token, ok := secret.Data["token"]; ok {
+		headers["Authorization"] = "Bearer " + string(token)
+		return headers, nil
+	}
+
+	username, hasUsername := secret.Data["username"]
+	password, hasPassword := secret.Data["password"]
+	if hasUsername && hasPassword {
+		credentials := append(append([]byte{}, username...), ':')
+		credentials = append(credentials, password...)
+		headers["Authorization"] = "Basic " + base64.StdEncoding.EncodeToString(credentials)
+		return headers, nil
+	}
+
+	return nil, fmt.Errorf("webhook auth secret %s/%s must contain either token or username/password", namespace, webhookCfg.AuthSecretRef.Name)
+}
+
+func (s *Service) requireControllerNamespace(refType, name, namespace string) error {
+	if namespace != s.configNS {
+		return fmt.Errorf("%s secret %q namespace must be controller namespace %q, got %q", refType, name, s.configNS, namespace)
+	}
+	return nil
+}
+
+func hasAuthorizationHeader(headers map[string]string) bool {
+	for key := range headers {
+		if strings.EqualFold(key, "Authorization") {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) buildWebhookTLSConfig(ctx context.Context, tlsCfg *breakglassv1alpha1.WebhookTLSSpec) (*tls.Config, error) {
+	cfg := &tls.Config{
+		InsecureSkipVerify: tlsCfg.InsecureSkipVerify, // #nosec G402 -- Explicit AuditConfig option for private webhook endpoints.
+		MinVersion:         tls.VersionTLS12,
+	}
+
+	if tlsCfg.CASecretRef == nil {
+		return cfg, nil
+	}
+
+	namespace := tlsCfg.CASecretRef.Namespace
+	if err := s.requireControllerNamespace("webhook CA", tlsCfg.CASecretRef.Name, namespace); err != nil {
+		return nil, err
+	}
+
+	caData, err := s.getSecretKey(ctx, tlsCfg.CASecretRef.Name, namespace, "ca.crt")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load webhook CA certificate: %w", err)
+	}
+
+	rootCAs, err := systemCertPool()
+	if err != nil && s.logger != nil {
+		s.logger.Warn("failed to load system CA pool, using custom webhook CA pool only",
+			zap.String("error", err.Error()))
+	}
+	if rootCAs == nil {
+		rootCAs = x509.NewCertPool()
+	}
+	if ok := rootCAs.AppendCertsFromPEM(caData); !ok {
+		return nil, fmt.Errorf("failed to parse webhook CA certificate from secret %s/%s", namespace, tlsCfg.CASecretRef.Name)
+	}
+	cfg.RootCAs = rootCAs
+
+	return cfg, nil
 }
 
 func (s *Service) buildKubernetesSink(sinkCfg breakglassv1alpha1.AuditSinkConfig) (Sink, error) {

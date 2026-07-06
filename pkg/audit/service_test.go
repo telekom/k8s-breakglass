@@ -5,6 +5,11 @@ package audit
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -372,6 +377,338 @@ func TestService_BuildWebhookSink(t *testing.T) {
 
 	// Cleanup
 	_ = svc.Close()
+}
+
+func TestService_BuildWebhookSinkAuthSecretBearer(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	authSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "webhook-auth",
+			Namespace: "test-namespace",
+		},
+		Data: map[string][]byte{
+			"token": []byte("secret-token"),
+		},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(authSecret).Build()
+	svc := NewService(client, nil, logger, "test-namespace")
+
+	var authHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	sink, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+		Name: "webhook-sink",
+		Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+		Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+			URL: server.URL,
+			AuthSecretRef: &breakglassv1alpha1.SecretKeySelector{
+				Name:      "webhook-auth",
+				Namespace: "test-namespace",
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, sink.Write(context.Background(), &Event{ID: "bearer", Type: EventSessionRequested}))
+	assert.Equal(t, "Bearer secret-token", authHeader)
+}
+
+func TestService_BuildWebhookSinkAuthSecretBasic(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	authSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "webhook-auth",
+			Namespace: "test-namespace",
+		},
+		Data: map[string][]byte{
+			"username": []byte("audit-user"),
+			"password": []byte("audit-pass"),
+		},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(authSecret).Build()
+	svc := NewService(client, nil, logger, "test-namespace")
+
+	var authHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	sink, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+		Name: "webhook-sink",
+		Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+		Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+			URL: server.URL,
+			AuthSecretRef: &breakglassv1alpha1.SecretKeySelector{
+				Name:      "webhook-auth",
+				Namespace: "test-namespace",
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, sink.Write(context.Background(), &Event{ID: "basic", Type: EventSessionRequested}))
+	assert.Equal(t, "Basic YXVkaXQtdXNlcjphdWRpdC1wYXNz", authHeader)
+}
+
+func TestService_BuildWebhookSinkAuthorizationHeaderPrecedence(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	authSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "webhook-auth",
+			Namespace: "test-namespace",
+		},
+		Data: map[string][]byte{
+			"token": []byte("secret-token"),
+		},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(authSecret).Build()
+	svc := NewService(client, nil, logger, "test-namespace")
+
+	var authHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	sink, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+		Name: "webhook-sink",
+		Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+		Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+			URL: server.URL,
+			Headers: map[string]string{
+				"Authorization": "Bearer explicit-token",
+			},
+			AuthSecretRef: &breakglassv1alpha1.SecretKeySelector{
+				Name:      "webhook-auth",
+				Namespace: "test-namespace",
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, sink.Write(context.Background(), &Event{ID: "precedence", Type: EventSessionRequested}))
+	assert.Equal(t, "Bearer explicit-token", authHeader)
+}
+
+func TestService_BuildWebhookSinkTLSWithCASecret(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	var received bool
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		received = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	caSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "webhook-ca",
+			Namespace: "test-namespace",
+		},
+		Data: map[string][]byte{
+			"ca.crt": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}),
+		},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(caSecret).Build()
+	svc := NewService(client, nil, logger, "test-namespace")
+
+	sink, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+		Name: "webhook-sink",
+		Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+		Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+			URL: server.URL,
+			TLS: &breakglassv1alpha1.WebhookTLSSpec{
+				CASecretRef: &breakglassv1alpha1.SecretKeySelector{
+					Name:      "webhook-ca",
+					Namespace: "test-namespace",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, sink.Write(context.Background(), &Event{ID: "tls", Type: EventSessionRequested}))
+	assert.True(t, received)
+}
+
+func TestService_BuildWebhookTLSConfigUsesCustomCAWhenSystemPoolFails(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	caSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "webhook-ca",
+			Namespace: "test-namespace",
+		},
+		Data: map[string][]byte{
+			"ca.crt": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}),
+		},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(caSecret).Build()
+	svc := NewService(client, nil, logger, "test-namespace")
+
+	oldSystemCertPool := systemCertPool
+	systemCertPool = func() (*x509.CertPool, error) {
+		return nil, errors.New("system roots unavailable")
+	}
+	defer func() {
+		systemCertPool = oldSystemCertPool
+	}()
+
+	cfg, err := svc.buildWebhookTLSConfig(context.Background(), &breakglassv1alpha1.WebhookTLSSpec{
+		CASecretRef: &breakglassv1alpha1.SecretKeySelector{
+			Name:      "webhook-ca",
+			Namespace: "test-namespace",
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, cfg.RootCAs)
+
+	httpClient := server.Client()
+	httpClient.Transport = &http.Transport{TLSClientConfig: cfg}
+	resp, err := httpClient.Get(server.URL)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
+}
+
+func TestService_BuildWebhookSinkMissingSecretErrors(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+	svc := NewService(client, nil, logger, "test-namespace")
+
+	_, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+		Name: "webhook-sink",
+		Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+		Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+			URL: "https://example.com/audit",
+			AuthSecretRef: &breakglassv1alpha1.SecretKeySelector{
+				Name:      "missing-auth",
+				Namespace: "test-namespace",
+			},
+		},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get webhook auth secret")
+
+	_, err = svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+		Name: "webhook-sink",
+		Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+		Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+			URL: "https://example.com/audit",
+			TLS: &breakglassv1alpha1.WebhookTLSSpec{
+				CASecretRef: &breakglassv1alpha1.SecretKeySelector{
+					Name:      "missing-ca",
+					Namespace: "test-namespace",
+				},
+			},
+		},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to load webhook CA certificate")
+}
+
+func TestService_BuildWebhookSinkRejectsNonControllerSecretNamespaces(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+	svc := NewService(client, nil, logger, "test-namespace")
+
+	t.Run("auth secret namespace", func(t *testing.T) {
+		_, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+			Name: "webhook-sink",
+			Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+			Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+				URL: "https://example.com/audit",
+				AuthSecretRef: &breakglassv1alpha1.SecretKeySelector{
+					Name:      "webhook-auth",
+					Namespace: "other-namespace",
+				},
+			},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `webhook auth secret "webhook-auth" namespace must be controller namespace "test-namespace", got "other-namespace"`)
+	})
+
+	t.Run("auth secret missing namespace", func(t *testing.T) {
+		_, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+			Name: "webhook-sink",
+			Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+			Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+				URL: "https://example.com/audit",
+				AuthSecretRef: &breakglassv1alpha1.SecretKeySelector{
+					Name: "webhook-auth",
+				},
+			},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `webhook auth secret "webhook-auth" namespace must be controller namespace "test-namespace", got ""`)
+	})
+
+	t.Run("CA secret namespace", func(t *testing.T) {
+		_, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+			Name: "webhook-sink",
+			Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+			Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+				URL: "https://example.com/audit",
+				TLS: &breakglassv1alpha1.WebhookTLSSpec{
+					CASecretRef: &breakglassv1alpha1.SecretKeySelector{
+						Name:      "webhook-ca",
+						Namespace: "other-namespace",
+					},
+				},
+			},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `webhook CA secret "webhook-ca" namespace must be controller namespace "test-namespace", got "other-namespace"`)
+	})
+
+	t.Run("CA secret missing namespace", func(t *testing.T) {
+		_, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+			Name: "webhook-sink",
+			Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+			Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+				URL: "https://example.com/audit",
+				TLS: &breakglassv1alpha1.WebhookTLSSpec{
+					CASecretRef: &breakglassv1alpha1.SecretKeySelector{
+						Name: "webhook-ca",
+					},
+				},
+			},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `webhook CA secret "webhook-ca" namespace must be controller namespace "test-namespace", got ""`)
+	})
 }
 
 func TestService_BuildKubernetesSink(t *testing.T) {

@@ -125,12 +125,21 @@ sinks:
         Content-Type: application/json
       authSecretRef:
         name: splunk-hec-token      # Secret with 'token' key for Bearer auth
+        namespace: breakglass-system
       timeoutSeconds: 10
       tls:
         caSecretRef:
           name: splunk-ca
+          namespace: breakglass-system
       batchSize: 50                 # Send events in batches
 ```
+
+`authSecretRef` is optional and supports either a `token` key for `Bearer`
+authentication or `username` and `password` keys for Basic authentication. If
+`headers` already contains an `Authorization` header, that explicit header is
+kept. `tls.caSecretRef` loads a `ca.crt` key into the webhook HTTP client's
+trust store, while `tls.insecureSkipVerify` disables certificate verification
+for private test endpoints and should not be used in production.
 
 ### Log Sink
 
@@ -437,7 +446,22 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: webhook-auth
+  namespace: breakglass-system
 type: Opaque
 stringData:
   token: your-bearer-token
+```
+
+For Basic authentication, use `username` and `password` instead of `token`:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: webhook-basic-auth
+  namespace: breakglass-system
+type: Opaque
+stringData:
+  username: audit-user
+  password: audit-password
 ```
