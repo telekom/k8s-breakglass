@@ -69,6 +69,7 @@ spec:
                 description: DisplayName is a human-readable name for this mail provider
                 type: string
               retry:
+                default: {}
                 description: Retry contains retry and queue configuration
                 properties:
                   count:

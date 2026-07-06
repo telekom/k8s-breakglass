@@ -350,6 +350,10 @@ func DebugSessionTemplateStatusFrom(status *breakglassv1alpha1.DebugSessionTempl
 
 	result := ac.DebugSessionTemplateStatus()
 
+	if status.ObservedGeneration > 0 {
+		result.WithObservedGeneration(status.ObservedGeneration)
+	}
+
 	// Set conditions
 	for i := range status.Conditions {
 		result.WithConditions(ConditionFrom(&status.Conditions[i]))
@@ -358,6 +362,13 @@ func DebugSessionTemplateStatusFrom(status *breakglassv1alpha1.DebugSessionTempl
 	// Always set active session count — zero is a meaningful value that SSA
 	// must declare so the patchHelper can detect decrements back to 0.
 	result.WithActiveSessionCount(status.ActiveSessionCount)
+	result.WithPendingSessionCount(status.PendingSessionCount)
+	result.WithTotalSessionCount(status.TotalSessionCount)
+	result.WithPodTemplateResolved(status.PodTemplateResolved)
+	result.WithBindingCount(status.BindingCount)
+	if status.BoundClusters != nil {
+		result.BoundClusters = append([]string{}, status.BoundClusters...)
+	}
 
 	// Set last used at
 	if status.LastUsedAt != nil && !status.LastUsedAt.IsZero() {

@@ -604,7 +604,7 @@ func TestDebugSessionStatusFromPreservesExplicitEmptyResourceStatuses(t *testing
 
 	u := &unstructured.Unstructured{}
 	require.NoError(t, json.Unmarshal(data, u))
-	ensureExplicitDebugSessionEmptyStatusLists(applyConfig, u)
+	ensureExplicitEmptyStatusLists(applyConfig, u)
 
 	desiredStatus, ok := u.Object["status"].(map[string]interface{})
 	require.True(t, ok)
@@ -633,6 +633,34 @@ func TestDebugSessionStatusFromPreservesExplicitEmptyResourceStatuses(t *testing
 				"created":      true,
 			},
 		},
+	}
+	assert.False(t, statusSubsetMatch(currentStatus, desiredStatus))
+}
+
+func TestDebugSessionTemplateStatusFromPreservesExplicitEmptyBoundClusters(t *testing.T) {
+	status := &breakglassv1alpha1.DebugSessionTemplateStatus{
+		BindingCount:        0,
+		PodTemplateResolved: true,
+		BoundClusters:       []string{},
+	}
+	applyConfig := ac.DebugSessionTemplate("test-template").
+		WithStatus(DebugSessionTemplateStatusFrom(status))
+
+	data, err := json.Marshal(applyConfig)
+	require.NoError(t, err)
+
+	u := &unstructured.Unstructured{}
+	require.NoError(t, json.Unmarshal(data, u))
+	ensureExplicitEmptyStatusLists(applyConfig, u)
+
+	desiredStatus, ok := u.Object["status"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, []interface{}{}, desiredStatus["boundClusters"])
+
+	currentStatus := map[string]interface{}{
+		"bindingCount":        int64(0),
+		"podTemplateResolved": true,
+		"boundClusters":       []interface{}{"old-cluster"},
 	}
 	assert.False(t, statusSubsetMatch(currentStatus, desiredStatus))
 }
@@ -853,6 +881,44 @@ func TestConditionFrom(t *testing.T) {
 func TestConditionFromNil(t *testing.T) {
 	result := ConditionFrom(nil)
 	assert.Nil(t, result)
+}
+
+func TestDebugSessionTemplateStatusFrom(t *testing.T) {
+	lastUsed := metav1.Now()
+	status := &breakglassv1alpha1.DebugSessionTemplateStatus{
+		ObservedGeneration:  7,
+		ActiveSessionCount:  2,
+		PendingSessionCount: 1,
+		TotalSessionCount:   5,
+		LastUsedAt:          &lastUsed,
+		PodTemplateResolved: true,
+		BoundClusters:       []string{"cluster-a", "cluster-b"},
+		BindingCount:        3,
+		Conditions: []metav1.Condition{
+			{
+				Type:               "Ready",
+				Status:             metav1.ConditionTrue,
+				ObservedGeneration: 7,
+				LastTransitionTime: lastUsed,
+				Reason:             "Ready",
+				Message:            "Template is ready",
+			},
+		},
+	}
+
+	result := DebugSessionTemplateStatusFrom(status)
+
+	require.NotNil(t, result)
+	assert.Equal(t, int64(7), *result.ObservedGeneration)
+	assert.Equal(t, int32(2), *result.ActiveSessionCount)
+	assert.Equal(t, int32(1), *result.PendingSessionCount)
+	assert.Equal(t, int64(5), *result.TotalSessionCount)
+	assert.Equal(t, lastUsed, *result.LastUsedAt)
+	assert.True(t, *result.PodTemplateResolved)
+	assert.Equal(t, []string{"cluster-a", "cluster-b"}, result.BoundClusters)
+	assert.Equal(t, int32(3), *result.BindingCount)
+	require.Len(t, result.Conditions, 1)
+	assert.Equal(t, "Ready", *result.Conditions[0].Type)
 }
 
 // TestDebugSessionApprovalFrom tests conversion of DebugSessionApproval.

@@ -52,6 +52,7 @@ type MailProviderSpec struct {
 
 	// Retry contains retry and queue configuration
 	// +optional
+	// +kubebuilder:default={}
 	Retry RetryConfig `json:"retry,omitempty"`
 }
 

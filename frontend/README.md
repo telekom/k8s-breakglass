@@ -133,6 +133,7 @@ npm run build
 
 ```sh
 npm run lint
+npm run lint:fix
 ```
 
 ### Accessibility Testing
