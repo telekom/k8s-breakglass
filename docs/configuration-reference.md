@@ -135,7 +135,7 @@ server:
 
 ```bash
 # Check if origin is allowed (look for blocked_request_origin in logs)
-kubectl logs -l app=breakglass-controller | grep blocked_request_origin
+kubectl logs -n breakglass-system -l app=breakglass | grep blocked_request_origin
 
 # Verify CORS headers in response
 curl -v -H "Origin: https://breakglass.example.com" https://api.breakglass.example.com/api/config
@@ -642,12 +642,12 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: breakglass-controller
+  name: breakglass-manager
 spec:
   template:
     spec:
       containers:
-      - name: controller
+      - name: breakglass
         args:
           - --config-path=/etc/breakglass/config.yaml
         volumeMounts:
@@ -765,7 +765,7 @@ When a `BreakglassSession` is created, the controller resolves all potential app
 
 1. **Monitor warning logs:** Watch for truncation warnings in controller logs:
    ```bash
-   kubectl logs -n breakglass-system -l app=breakglass-manager | grep -i "truncat\|too many members\|no remaining capacity"
+   kubectl logs -n breakglass-system -l app=breakglass | grep -i "truncat\|too many members\|no remaining capacity"
    ```
 
 2. **Check approver counts:** Sessions with truncated approvers will still work correctly, but some potential approvers may not be notified.

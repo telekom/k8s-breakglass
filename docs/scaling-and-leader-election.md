@@ -645,20 +645,20 @@ Manifests generated in:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: breakglass-controller
+  name: breakglass-manager
   namespace: breakglass-system
 spec:
   replicas: 1  # Single instance
   selector:
     matchLabels:
-      app: breakglass-controller
+      app: breakglass
   template:
     metadata:
       labels:
-        app: breakglass-controller
+        app: breakglass
     spec:
       containers:
-      - name: controller
+      - name: breakglass
         image: breakglass:latest
         args:
           - --enable-leader-election=true  # Optional, no effect with replicas: 1
@@ -680,17 +680,17 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: breakglass-controller
+  name: breakglass-manager
   namespace: breakglass-system
 spec:
   replicas: 3  # Multiple replicas
   selector:
     matchLabels:
-      app: breakglass-controller
+      app: breakglass
   template:
     metadata:
       labels:
-        app: breakglass-controller
+        app: breakglass
     spec:
       affinity:
         podAntiAffinity:
@@ -702,11 +702,11 @@ spec:
                 - key: app
                   operator: In
                   values:
-                  - breakglass-controller
+                  - breakglass
               topologyKey: kubernetes.io/hostname
       
       containers:
-      - name: controller
+      - name: breakglass
         image: breakglass:latest
         args:
           - --enable-leader-election=true  # IMPORTANT: Enables leader election
@@ -741,7 +741,7 @@ spec:
           initialDelaySeconds: 10
           periodSeconds: 5
       
-      serviceAccountName: breakglass-controller
+      serviceAccountName: breakglass-manager
 ```
 
 ### Helm Values (from charts/escalation-config)
@@ -775,7 +775,7 @@ affinity:
           - key: app
             operator: In
             values:
-            - breakglass-controller
+            - breakglass
         topologyKey: kubernetes.io/hostname
 ```
 

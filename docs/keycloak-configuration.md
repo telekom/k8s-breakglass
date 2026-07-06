@@ -1258,7 +1258,7 @@ Expected: `type: Ready`, `status: "True"` and `type: GroupSyncHealthy`, `status:
 
 Check controller logs for successful group resolution:
 ```bash
-kubectl logs -n breakglass-system deployment/breakglass-controller | \
+kubectl logs -n breakglass-system deployment/breakglass-manager | \
   grep -i 'group.*member\|keycloak.*group'
 ```
 

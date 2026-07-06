@@ -1283,7 +1283,7 @@ kubectl get breakglassescalation <name> -o jsonpath='{.status.conditions}' | jq 
 kubectl get events --field-selector involvedObject.kind=BreakglassEscalation
 
 # Check controller logs (if accessible)
-kubectl logs -n breakglass deployment/breakglass-controller -f --grep=escalation
+kubectl logs -n breakglass-system deployment/breakglass-manager -f | grep escalation
 ```
 
 ## Best Practices

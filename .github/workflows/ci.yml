@@ -32,6 +32,8 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Verify release provenance workflow
         run: make verify-release-provenance
+      - name: Verify documentation snippets
+        run: make verify-docs-snippets
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
@@ -150,8 +152,8 @@ jobs:
           cache: true
       - name: Install tools
         run: make controller-gen kustomize
-      - name: Generate manifests
-        run: make manifests
+      - name: Verify generated artifacts
+        run: make verify-generated
       - name: Build all kustomize targets
         run: |
           mkdir -p manifests-current
@@ -1862,8 +1864,8 @@ jobs:
           if [ "$UI_READY" = "false" ]; then
             echo "ERROR: Controller UI not responding on port 8080 within 15 seconds"
             echo "Checking controller pod status..."
-            kubectl get pods -n breakglass-system -l app=breakglass-manager || true
-            kubectl logs -n breakglass-system -l app=breakglass-manager --tail=50 || true
+            kubectl get pods -n breakglass-system -l app=breakglass || true
+            kubectl logs -n breakglass-system -l app=breakglass --tail=50 || true
             exit 1
           fi
 
@@ -1894,8 +1896,8 @@ jobs:
           # Test controller UI (already verified in previous step, just double-check)
           test_service "Controller UI" "http://localhost:8080" 15 "-s" || {
             echo "Controller UI failed health check - checking controller status"
-            kubectl get pods -n breakglass-system -l app=breakglass-manager || true
-            kubectl logs -n breakglass-system -l app=breakglass-manager --tail=50 || true
+            kubectl get pods -n breakglass-system -l app=breakglass || true
+            kubectl logs -n breakglass-system -l app=breakglass --tail=50 || true
           }
           
           # Test MailHog

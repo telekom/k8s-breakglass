@@ -733,7 +733,7 @@ spec:
   clientSecret:
     secretRef:
       name: corporate-secret
-      namespace: breakglass
+      namespace: breakglass-system
   disabled: false
 
 ---
@@ -748,7 +748,7 @@ spec:
   clientSecret:
     secretRef:
       name: keycloak-secret
-      namespace: breakglass
+      namespace: breakglass-system
   disabled: false
 ```
 

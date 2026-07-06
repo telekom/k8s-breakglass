@@ -380,7 +380,7 @@ journalctl -u kubelet | grep authorization
 kubectl --kubeconfig=/etc/kubernetes/breakglass-webhook-kubeconfig.yaml cluster-info
 
 # Check breakglass logs
-kubectl logs -n breakglass-system deployment/breakglass-controller
+kubectl logs -n breakglass-system deployment/breakglass-manager
 ```
 
 ## Preventing Recursive Webhook Calls

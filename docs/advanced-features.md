@@ -792,7 +792,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: corp-oidc-client-secret
-  namespace: breakglass
+  namespace: breakglass-system
 type: Opaque
 data:
   clientSecret: <base64-secret>
@@ -802,7 +802,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: keycloak-client-secret
-  namespace: breakglass
+  namespace: breakglass-system
 type: Opaque
 data:
   clientSecret: <base64-secret>
@@ -957,11 +957,11 @@ Track authentication patterns by IDP:
 
 ```bash
 # Count successful logins by issuer
-kubectl logs deployment/breakglass-controller -n breakglass \
+kubectl logs deployment/breakglass-manager -n breakglass-system \
   | grep "iss" | sort | uniq -c
 
 # Monitor token validation failures
-kubectl logs deployment/breakglass-controller -n breakglass \
+kubectl logs deployment/breakglass-manager -n breakglass-system \
   | grep -i "token.*invalid\|issuer.*unknown"
 
 # Check IDP configuration status

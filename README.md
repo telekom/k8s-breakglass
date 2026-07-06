@@ -145,7 +145,7 @@ make install                            # install CRDs
 make deploy_dev                         # deploy breakglass and dependencies
 
 # Access the application
-# Breakglass UI:  https://breakglass-dev:30081
+# Breakglass UI:  https://breakglass-dev:31081
 # Keycloak:       https://breakglass-dev:30083
 # MailHog:        http://breakglass-dev:30084
 ```
