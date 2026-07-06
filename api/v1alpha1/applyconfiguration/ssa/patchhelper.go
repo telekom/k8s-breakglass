@@ -148,13 +148,19 @@ func patchApplyStatusViaUnstructuredWithOwner(ctx context.Context, c client.Clie
 }
 
 func ensureExplicitEmptyStatusLists(applyConfig runtime.ApplyConfiguration, u *unstructured.Unstructured) {
-	emptyLists := map[string]bool{}
+	emptyLists := map[string]struct{}{}
 	if dsConfig, ok := applyConfig.(*ac.DebugSessionApplyConfiguration); ok && dsConfig.Status != nil {
-		emptyLists["auxiliaryResourceStatuses"] = dsConfig.Status.AuxiliaryResourceStatuses != nil && len(dsConfig.Status.AuxiliaryResourceStatuses) == 0
-		emptyLists["podTemplateResourceStatuses"] = dsConfig.Status.PodTemplateResourceStatuses != nil && len(dsConfig.Status.PodTemplateResourceStatuses) == 0
+		if dsConfig.Status.AuxiliaryResourceStatuses != nil && len(dsConfig.Status.AuxiliaryResourceStatuses) == 0 {
+			emptyLists["auxiliaryResourceStatuses"] = struct{}{}
+		}
+		if dsConfig.Status.PodTemplateResourceStatuses != nil && len(dsConfig.Status.PodTemplateResourceStatuses) == 0 {
+			emptyLists["podTemplateResourceStatuses"] = struct{}{}
+		}
 	}
 	if templateConfig, ok := applyConfig.(*ac.DebugSessionTemplateApplyConfiguration); ok && templateConfig.Status != nil {
-		emptyLists["boundClusters"] = templateConfig.Status.BoundClusters != nil && len(templateConfig.Status.BoundClusters) == 0
+		if templateConfig.Status.BoundClusters != nil && len(templateConfig.Status.BoundClusters) == 0 {
+			emptyLists["boundClusters"] = struct{}{}
+		}
 	}
 	if len(emptyLists) == 0 {
 		return
@@ -165,10 +171,8 @@ func ensureExplicitEmptyStatusLists(applyConfig runtime.ApplyConfiguration, u *u
 		status = map[string]interface{}{}
 		u.Object["status"] = status
 	}
-	for field, needsExplicitEmptyList := range emptyLists {
-		if needsExplicitEmptyList {
-			status[field] = []interface{}{}
-		}
+	for field := range emptyLists {
+		status[field] = []interface{}{}
 	}
 }
 

@@ -2385,6 +2385,7 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: retry
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.RetryConfig
+      default: {}
     - name: sender
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SenderConfig

@@ -1037,8 +1037,9 @@ func TestCheckNameCollisions(t *testing.T) {
 
 		cluster := &ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:   "cluster-1",
-				Labels: map[string]string{"env": "prod", "tier": "critical"},
+				Name:      "cluster-1",
+				Namespace: "default",
+				Labels:    map[string]string{"env": "prod", "tier": "critical"},
 			},
 		}
 
@@ -1094,8 +1095,9 @@ func TestCheckNameCollisions(t *testing.T) {
 
 		cluster := &ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:   "cluster-1",
-				Labels: map[string]string{"env": "prod"},
+				Name:      "cluster-1",
+				Namespace: "default",
+				Labels:    map[string]string{"env": "prod"},
 			},
 		}
 

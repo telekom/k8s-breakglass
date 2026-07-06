@@ -260,10 +260,10 @@ func TestDebugSessionTemplateReconciler_Reconcile_BindingStatusFields(t *testing
 		},
 	}
 	clusterA := &breakglassv1alpha1.ClusterConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Labels: map[string]string{"env": "dev"}},
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Namespace: "default", Labels: map[string]string{"env": "dev"}},
 	}
 	clusterB := &breakglassv1alpha1.ClusterConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: "cluster-b", Labels: map[string]string{"env": "prod"}},
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-b", Namespace: "default", Labels: map[string]string{"env": "prod"}},
 	}
 
 	fakeClient := fake.NewClientBuilder().

@@ -595,14 +595,18 @@ func CheckNameCollisions(ctx context.Context, binding *DebugSessionClusterBindin
 		templateDisplayNames[t.Name] = displayName
 	}
 
-	clusterList := &ClusterConfigList{}
-	if err := bindingReader.List(ctx, clusterList); err != nil {
-		return nil, err
+	var clusters []ClusterConfig
+	if bindingUsesClusterSelector(binding) || bindingsUseClusterSelector(bindingList.Items) {
+		clusterList := &ClusterConfigList{}
+		if err := bindingReader.List(ctx, clusterList); err != nil {
+			return nil, err
+		}
+		clusters = clusterList.Items
 	}
 
 	// Get the template names this binding references
 	thisTemplateNames := getBindingTemplateNames(binding, templateList.Items)
-	thisClusterNames := getBindingClusterNames(binding, clusterList.Items)
+	thisClusterNames := getBindingClusterNames(binding, clusters)
 
 	var collisions []NameCollision
 
@@ -618,7 +622,7 @@ func CheckNameCollisions(ctx context.Context, binding *DebugSessionClusterBindin
 		}
 
 		otherTemplateNames := getBindingTemplateNames(&other, templateList.Items)
-		otherClusterNames := getBindingClusterNames(&other, clusterList.Items)
+		otherClusterNames := getBindingClusterNames(&other, clusters)
 
 		// Check for overlapping template+cluster combinations
 		for _, thisTemplate := range thisTemplateNames {
@@ -683,6 +687,19 @@ func getBindingTemplateNames(binding *DebugSessionClusterBinding, templates []De
 	}
 
 	return names
+}
+
+func bindingUsesClusterSelector(binding *DebugSessionClusterBinding) bool {
+	return binding != nil && binding.Spec.ClusterSelector != nil
+}
+
+func bindingsUseClusterSelector(bindings []DebugSessionClusterBinding) bool {
+	for i := range bindings {
+		if bindingUsesClusterSelector(&bindings[i]) {
+			return true
+		}
+	}
+	return false
 }
 
 // getBindingClusterNames returns the effective cluster names referenced by a binding.

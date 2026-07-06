@@ -86,6 +86,10 @@ MailProvider replaces the legacy `mail` configuration from `config.yaml` with a 
 | `initialBackoffMs` | int | No | 100 | Initial backoff in milliseconds (10-60000) |
 | `queueSize` | int | No | 1000 | Max pending emails in queue (10-10000) |
 
+If `retry` is omitted, the Kubernetes API defaults it to these values. To disable
+mail retries, set `retry.count: 0` explicitly; the queue still uses the default
+backoff and queue size unless you override them.
+
 ## Status
 
 ### MailProviderStatus

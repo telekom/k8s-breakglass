@@ -155,21 +155,31 @@ func (r *DebugSessionTemplateReconciler) resolveBindingStatus(
 		return 0, nil, fmt.Errorf("list debug session cluster bindings: %w", err)
 	}
 
-	clusterList := &breakglassv1alpha1.ClusterConfigList{}
-	if err := r.client.List(ctx, clusterList); err != nil {
-		return 0, nil, fmt.Errorf("list cluster configs: %w", err)
-	}
-
 	clusterNames := make(map[string]struct{})
-	var bindingCount int32
+	relevantBindings := make([]*breakglassv1alpha1.DebugSessionClusterBinding, 0, len(bindingList.Items))
+	needsClusterConfigs := false
 	for i := range bindingList.Items {
 		binding := &bindingList.Items[i]
 		if binding.Spec.Disabled || !bindingReferencesTemplate(binding, template) {
 			continue
 		}
+		relevantBindings = append(relevantBindings, binding)
+		if binding.Spec.ClusterSelector != nil {
+			needsClusterConfigs = true
+		}
+	}
 
-		bindingCount++
-		for _, clusterName := range resolveBindingClusterNames(binding, clusterList.Items) {
+	var clusters []breakglassv1alpha1.ClusterConfig
+	if needsClusterConfigs {
+		clusterList := &breakglassv1alpha1.ClusterConfigList{}
+		if err := r.client.List(ctx, clusterList); err != nil {
+			return 0, nil, fmt.Errorf("list cluster configs: %w", err)
+		}
+		clusters = clusterList.Items
+	}
+
+	for _, binding := range relevantBindings {
+		for _, clusterName := range resolveBindingClusterNames(binding, clusters) {
 			clusterNames[clusterName] = struct{}{}
 		}
 	}
@@ -180,7 +190,7 @@ func (r *DebugSessionTemplateReconciler) resolveBindingStatus(
 	}
 	sort.Strings(boundClusters)
 
-	return bindingCount, boundClusters, nil
+	return int32(len(relevantBindings)), boundClusters, nil
 }
 
 func bindingReferencesTemplate(binding *breakglassv1alpha1.DebugSessionClusterBinding, template *breakglassv1alpha1.DebugSessionTemplate) bool {
