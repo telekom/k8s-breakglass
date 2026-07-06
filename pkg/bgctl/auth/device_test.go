@@ -113,7 +113,6 @@ func TestDeviceCodeLoginCancelsDuringPollingWait(t *testing.T) {
 		t.Fatal("timed out waiting for initial authorization_pending response")
 	}
 
-	time.Sleep(20 * time.Millisecond)
 	start := time.Now()
 	cancel()
 
