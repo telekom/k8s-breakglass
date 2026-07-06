@@ -588,7 +588,13 @@ func TestService_BuildWebhookTLSConfigUsesCustomCAWhenSystemPoolFails(t *testing
 	})
 	require.NoError(t, err)
 	require.NotNil(t, cfg.RootCAs)
-	assert.NotEmpty(t, cfg.RootCAs.Subjects())
+
+	httpClient := server.Client()
+	httpClient.Transport = &http.Transport{TLSClientConfig: cfg}
+	resp, err := httpClient.Get(server.URL)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
 }
 
 func TestService_BuildWebhookSinkMissingSecretErrors(t *testing.T) {
