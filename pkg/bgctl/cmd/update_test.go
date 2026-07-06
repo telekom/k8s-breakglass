@@ -233,6 +233,25 @@ func TestVerifyChecksumDownloadFailure(t *testing.T) {
 	assert.Contains(t, err.Error(), "404")
 }
 
+func TestVerifyChecksumDownloadFailureBoundsErrorBody(t *testing.T) {
+	filePath := filepath.Join(t.TempDir(), "bgctl.bin")
+	require.NoError(t, os.WriteFile(filePath, []byte("hello"), 0o644))
+
+	body := strings.Repeat("x", maxUpdateErrorBodyBytes+1024)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+
+	assets := []githubAsset{{Name: "bgctl.bin.sha256", URL: server.URL}}
+	err := verifyChecksum(context.Background(), assets, "bgctl.bin", filePath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "checksum download failed")
+	assert.Contains(t, err.Error(), "(truncated)")
+	assert.NotContains(t, err.Error(), strings.Repeat("x", maxUpdateErrorBodyBytes+1))
+}
+
 func TestExtractTarGz(t *testing.T) {
 	tmpDir := t.TempDir()
 	archivePath := filepath.Join(tmpDir, "bgctl.tar.gz")
