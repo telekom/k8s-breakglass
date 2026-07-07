@@ -37,6 +37,27 @@ func useUpdateDownloadClient(t *testing.T, client *http.Client) {
 	})
 }
 
+func releaseTransportWithChecksum(tag, assetURL string, assetBytes []byte) roundTripFunc {
+	return func(req *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(req.URL.Path, ".sha256") {
+			hash := sha256.Sum256(assetBytes)
+			checksum := hex.EncodeToString(hash[:]) + "  " + assetFileName() + "\n"
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(checksum)),
+				Header:     make(http.Header),
+			}, nil
+		}
+
+		body := io.NopCloser(strings.NewReader(`{"tag_name":"` + tag + `","assets":[{"name":"` + assetFileName() + `","browser_download_url":"` + assetURL + `"},{"name":"` + assetFileName() + `.sha256","browser_download_url":"` + assetURL + `.sha256"}]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	}
+}
+
 func TestAssetFileName_CurrentPlatform(t *testing.T) {
 	name := assetFileName()
 	if runtime.GOOS == "windows" {
@@ -71,6 +92,677 @@ func TestFormatBytes(t *testing.T) {
 	assert.Equal(t, "1.0 MB", formatBytes(1024*1024))
 }
 
+func TestUpdateStatusf(t *testing.T) {
+	oldWriter := updateStatusWriter
+	t.Cleanup(func() { updateStatusWriter = oldWriter })
+
+	var buf bytes.Buffer
+	updateStatusWriter = &buf
+
+	updateStatusf("Downloading %s...", "bgctl_linux_amd64.tar.gz")
+
+	assert.Equal(t, "Downloading bgctl_linux_amd64.tar.gz...\n", buf.String())
+}
+
+func TestUpdateStatusfNilWriter(t *testing.T) {
+	oldWriter := updateStatusWriter
+	t.Cleanup(func() { updateStatusWriter = oldWriter })
+
+	updateStatusWriter = nil
+	updateStatusf("this should be ignored")
+}
+
+func TestUpdateCommandUsesLatestReleaseForDryRun(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateStatusWriter = oldStatusWriter
+	})
+
+	var requestedPath string
+	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestedPath = req.URL.EscapedPath()
+		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.30","assets":[{"name":"` + assetFileName() + `","browser_download_url":"https://example.com/latest-bgctl.tar.gz"}]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	var output bytes.Buffer
+	var status bytes.Buffer
+	updateStatusWriter = &status
+	cmd := NewUpdateCommand()
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"--dry-run"})
+
+	require.NoError(t, cmd.Execute())
+
+	assert.Equal(t, "/repos/telekom/k8s-breakglass/releases/latest", requestedPath)
+	assert.Contains(t, status.String(), "Checking latest bgctl release...")
+	assert.Contains(t, status.String(), "Selected release v0.1.0-beta.30 asset")
+	assert.Contains(t, output.String(), "Would download https://example.com/latest-bgctl.tar.gz")
+}
+
+func TestUpdateCommandUsesVersionFlagForDryRun(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateStatusWriter = oldStatusWriter
+	})
+
+	var requestedPath string
+	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestedPath = req.URL.EscapedPath()
+		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.29","assets":[{"name":"` + assetFileName() + `","browser_download_url":"https://example.com/bgctl.tar.gz"}]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	})}
+	updateStatusWriter = io.Discard
+
+	var output bytes.Buffer
+	cmd := NewUpdateCommand()
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"--version", "v0.1.0-beta.29", "--dry-run"})
+
+	require.NoError(t, cmd.Execute())
+
+	assert.True(t, strings.HasSuffix(requestedPath, "/releases/tags/v0.1.0-beta.29"), "unexpected release lookup path: %s", requestedPath)
+	assert.Contains(t, output.String(), "Would download https://example.com/bgctl.tar.gz")
+}
+
+func TestUpdateCommandDisabledByEnvironment(t *testing.T) {
+	t.Setenv("BGCTL_DISABLE_UPDATE", "true")
+
+	cmd := NewUpdateCommand()
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update disabled by BGCTL_DISABLE_UPDATE")
+}
+
+func TestUpdateCommandReturnsMissingAssetError(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateStatusWriter = oldStatusWriter
+	})
+
+	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.30","assets":[]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	})}
+	updateStatusWriter = io.Discard
+	cmd := NewUpdateCommand()
+	cmd.SetArgs([]string{"--dry-run"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "asset not found for "+assetFileName())
+}
+
+func TestUpdateRollbackVersionAcceptsYesFlag(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateStatusWriter = oldStatusWriter
+	})
+
+	var requestedPath string
+	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestedPath = req.URL.EscapedPath()
+		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.28","assets":[{"name":"` + assetFileName() + `","browser_download_url":"https://example.com/rollback-bgctl.tar.gz"}]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	})}
+	updateStatusWriter = io.Discard
+
+	var output bytes.Buffer
+	cmd := NewUpdateCommand()
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"rollback", "--version", "v0.1.0-beta.28", "--yes", "--dry-run"})
+
+	require.NoError(t, cmd.Execute())
+
+	assert.True(t, strings.HasSuffix(requestedPath, "/releases/tags/v0.1.0-beta.28"), "unexpected release lookup path: %s", requestedPath)
+	assert.Contains(t, output.String(), "Would download https://example.com/rollback-bgctl.tar.gz")
+}
+
+func TestUpdateCheckWritesToCommandOutput(t *testing.T) {
+	oldClient := updateHTTPClient
+	t.Cleanup(func() { updateHTTPClient = oldClient })
+
+	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.30","assets":[]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	var output bytes.Buffer
+	cmd := NewUpdateCommand()
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"check"})
+
+	require.NoError(t, cmd.Execute())
+
+	assert.Contains(t, output.String(), "Current version:")
+	assert.Contains(t, output.String(), "Latest version:  v0.1.0-beta.30")
+}
+
+func TestUpdateCheckReturnsFetchError(t *testing.T) {
+	oldClient := updateHTTPClient
+	t.Cleanup(func() { updateHTTPClient = oldClient })
+
+	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body := io.NopCloser(strings.NewReader("release api unavailable"))
+		return &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	})}
+	cmd := NewUpdateCommand()
+	cmd.SetArgs([]string{"check"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to fetch release: release api unavailable")
+}
+
+func TestUpdateRollbackDryRunWritesToCommandOutput(t *testing.T) {
+	var output bytes.Buffer
+	cmd := NewUpdateCommand()
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"rollback", "--dry-run"})
+
+	require.NoError(t, cmd.Execute())
+
+	assert.Contains(t, output.String(), "Would rollback to ")
+	assert.Contains(t, output.String(), ".old")
+}
+
+func TestUpdateRollbackPreviousReturnsExecutableError(t *testing.T) {
+	oldCurrentExecutable := currentExecutable
+	t.Cleanup(func() { currentExecutable = oldCurrentExecutable })
+
+	currentExecutable = func() (string, error) {
+		return "", assert.AnError
+	}
+	cmd := NewUpdateCommand()
+	cmd.SetArgs([]string{"rollback", "--yes"})
+
+	err := cmd.Execute()
+	require.ErrorIs(t, err, assert.AnError)
+}
+
+func TestUpdateRollbackPreviousMissingBackupReportsPath(t *testing.T) {
+	oldCurrentExecutable := currentExecutable
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() {
+		currentExecutable = oldCurrentExecutable
+		updateStatusWriter = oldStatusWriter
+	})
+
+	executablePath := filepath.Join(t.TempDir(), "bgctl")
+	currentExecutable = func() (string, error) {
+		return executablePath, nil
+	}
+	var status bytes.Buffer
+	updateStatusWriter = &status
+	cmd := NewUpdateCommand()
+	cmd.SetArgs([]string{"rollback", "--yes"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rollback binary not found: "+executablePath+".old")
+	assert.Empty(t, status.String())
+}
+
+func TestUpdateRollbackPreviousReturnsReplaceError(t *testing.T) {
+	oldCurrentExecutable := currentExecutable
+	oldReplaceBinary := replaceBinaryFunc
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() {
+		currentExecutable = oldCurrentExecutable
+		replaceBinaryFunc = oldReplaceBinary
+		updateStatusWriter = oldStatusWriter
+	})
+
+	executablePath := filepath.Join(t.TempDir(), "bgctl")
+	oldPath := executablePath + ".old"
+	require.NoError(t, os.WriteFile(oldPath, []byte("old binary"), 0o755))
+	currentExecutable = func() (string, error) {
+		return executablePath, nil
+	}
+	replaceBinaryFunc = func(gotExe, gotOld string) error {
+		assert.Equal(t, executablePath, gotExe)
+		assert.Equal(t, oldPath, gotOld)
+		return assert.AnError
+	}
+	updateStatusWriter = io.Discard
+	cmd := NewUpdateCommand()
+	cmd.SetArgs([]string{"rollback", "--yes"})
+
+	err := cmd.Execute()
+	require.ErrorIs(t, err, assert.AnError)
+}
+
+func TestUpdateRollbackPreviousRequiresConfirmationInNonInteractiveMode(t *testing.T) {
+	oldCurrentExecutable := currentExecutable
+	t.Cleanup(func() { currentExecutable = oldCurrentExecutable })
+
+	currentExecutable = func() (string, error) {
+		executablePath := filepath.Join(t.TempDir(), "bgctl")
+		require.NoError(t, os.WriteFile(executablePath+".old", []byte("old binary"), 0o755))
+		return executablePath, nil
+	}
+
+	cmd := NewUpdateCommand()
+	cmd.SetContext(context.WithValue(context.Background(), runtimeKey{}, &runtimeState{
+		nonInteractive: true,
+		writer:         io.Discard,
+	}))
+	cmd.SetArgs([]string{"rollback"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "confirmation required")
+}
+
+func TestUpdateRollbackPreviousPromptUsesStatusWriter(t *testing.T) {
+	oldCurrentExecutable := currentExecutable
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() {
+		currentExecutable = oldCurrentExecutable
+		updateStatusWriter = oldStatusWriter
+	})
+
+	currentExecutable = func() (string, error) {
+		executablePath := filepath.Join(t.TempDir(), "bgctl")
+		require.NoError(t, os.WriteFile(executablePath+".old", []byte("old binary"), 0o755))
+		return executablePath, nil
+	}
+
+	var stdout bytes.Buffer
+	var status bytes.Buffer
+	updateStatusWriter = &status
+	cmd := NewUpdateCommand()
+	cmd.SetOut(&stdout)
+	cmd.SetIn(strings.NewReader("n\n"))
+	cmd.SetArgs([]string{"rollback"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "canceled")
+	assert.Contains(t, status.String(), "rollback bgctl to")
+	assert.Empty(t, stdout.String())
+}
+
+func TestUpdateCommandRequiresConfirmationInNonInteractiveMode(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateStatusWriter = oldStatusWriter
+	})
+
+	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.30","assets":[{"name":"` + assetFileName() + `","browser_download_url":"https://example.com/bgctl.tar.gz"}]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	})}
+	updateStatusWriter = io.Discard
+
+	cmd := NewUpdateCommand()
+	cmd.SetContext(context.WithValue(context.Background(), runtimeKey{}, &runtimeState{
+		nonInteractive: true,
+		writer:         io.Discard,
+	}))
+	cmd.SetArgs([]string{"--version", "v0.1.0-beta.30"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "confirmation required")
+}
+
+func TestUpdateCommandPromptUsesStatusWriter(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateStatusWriter = oldStatusWriter
+	})
+
+	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.30","assets":[{"name":"` + assetFileName() + `","browser_download_url":"https://example.com/bgctl.tar.gz"}]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	var stdout bytes.Buffer
+	var status bytes.Buffer
+	updateStatusWriter = &status
+	cmd := NewUpdateCommand()
+	cmd.SetOut(&stdout)
+	cmd.SetIn(strings.NewReader("n\n"))
+	cmd.SetArgs([]string{"--version", "v0.1.0-beta.30"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "canceled")
+	assert.Contains(t, status.String(), "update bgctl to v0.1.0-beta.30")
+	assert.Empty(t, stdout.String())
+}
+
+func TestUpdateRollbackVersionPromptUsesRollbackAction(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateStatusWriter = oldStatusWriter
+	})
+
+	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.28","assets":[{"name":"` + assetFileName() + `","browser_download_url":"https://example.com/rollback-bgctl.tar.gz"}]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	var prompt bytes.Buffer
+	updateStatusWriter = &prompt
+	var stdout bytes.Buffer
+	cmd := NewUpdateCommand()
+	cmd.SetOut(&stdout)
+	cmd.SetIn(strings.NewReader("n\n"))
+	cmd.SetArgs([]string{"rollback", "--version", "v0.1.0-beta.28"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "canceled")
+	assert.Contains(t, prompt.String(), "rollback bgctl to v0.1.0-beta.28")
+	assert.Empty(t, stdout.String())
+}
+
+func TestUpdatePromptRuntimeDefaultsToStderr(t *testing.T) {
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() { updateStatusWriter = oldStatusWriter })
+
+	updateStatusWriter = nil
+	cmd := NewUpdateCommand()
+	cmd.SetContext(context.WithValue(context.Background(), runtimeKey{}, &runtimeState{
+		nonInteractive: true,
+		writer:         io.Discard,
+	}))
+
+	rt := updatePromptRuntime(cmd)
+
+	assert.True(t, rt.nonInteractive)
+	assert.Same(t, os.Stderr, rt.writer)
+}
+
+func TestUpdateCommandRunsInstallFlowWithStatusMessages(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldStatusWriter := updateStatusWriter
+	oldCurrentExecutable := currentExecutable
+	oldReplaceBinary := replaceBinaryFunc
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateStatusWriter = oldStatusWriter
+		currentExecutable = oldCurrentExecutable
+		replaceBinaryFunc = oldReplaceBinary
+	})
+
+	archivePath := filepath.Join(t.TempDir(), assetFileName())
+	require.NoError(t, writeTarGz(archivePath, map[string]string{
+		"bgctl": "binary",
+	}))
+	archiveBytes, err := os.ReadFile(archivePath)
+	require.NoError(t, err)
+	downloadServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(archiveBytes)
+	}))
+	defer downloadServer.Close()
+
+	updateHTTPClient = &http.Client{Transport: releaseTransportWithChecksum("v0.1.0-beta.30", downloadServer.URL+"/bgctl.tar.gz", archiveBytes)}
+
+	executablePath := filepath.Join(t.TempDir(), "bgctl")
+	currentExecutable = func() (string, error) {
+		return executablePath, nil
+	}
+	var replacedFrom string
+	replaceBinaryFunc = func(exe, replacement string) error {
+		assert.Equal(t, executablePath, exe)
+		replacedFrom = replacement
+		content, readErr := os.ReadFile(replacement)
+		require.NoError(t, readErr)
+		assert.Equal(t, "binary", string(content))
+		return nil
+	}
+
+	var status bytes.Buffer
+	updateStatusWriter = &status
+	cmd := NewUpdateCommand()
+	cmd.SetArgs([]string{"--yes"})
+
+	require.NoError(t, cmd.Execute())
+
+	require.NotEmpty(t, replacedFrom)
+	assert.Contains(t, status.String(), "Checking latest bgctl release...")
+	assert.Contains(t, status.String(), "Selected release v0.1.0-beta.30 asset")
+	assert.Contains(t, status.String(), "Downloading "+assetFileName()+"...")
+	assert.Contains(t, status.String(), "Verifying checksum...")
+	assert.Contains(t, status.String(), "Extracting bgctl...")
+	assert.Contains(t, status.String(), "Installing bgctl to "+executablePath+"...")
+	assert.Contains(t, status.String(), "Updated bgctl to v0.1.0-beta.30")
+}
+
+func TestUpdateRollbackVersionRunsInstallFlowWithRollbackStatus(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldStatusWriter := updateStatusWriter
+	oldCurrentExecutable := currentExecutable
+	oldReplaceBinary := replaceBinaryFunc
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateStatusWriter = oldStatusWriter
+		currentExecutable = oldCurrentExecutable
+		replaceBinaryFunc = oldReplaceBinary
+	})
+
+	archivePath := filepath.Join(t.TempDir(), assetFileName())
+	require.NoError(t, writeTarGz(archivePath, map[string]string{
+		"bgctl": "binary",
+	}))
+	archiveBytes, err := os.ReadFile(archivePath)
+	require.NoError(t, err)
+	downloadServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(archiveBytes)
+	}))
+	defer downloadServer.Close()
+
+	updateHTTPClient = &http.Client{Transport: releaseTransportWithChecksum("v0.1.0-beta.28", downloadServer.URL+"/bgctl.tar.gz", archiveBytes)}
+
+	executablePath := filepath.Join(t.TempDir(), "bgctl")
+	currentExecutable = func() (string, error) {
+		return executablePath, nil
+	}
+	replaceBinaryFunc = func(exe, replacement string) error {
+		assert.Equal(t, executablePath, exe)
+		content, readErr := os.ReadFile(replacement)
+		require.NoError(t, readErr)
+		assert.Equal(t, "binary", string(content))
+		return nil
+	}
+
+	var status bytes.Buffer
+	updateStatusWriter = &status
+	cmd := NewUpdateCommand()
+	cmd.SetArgs([]string{"rollback", "--version", "v0.1.0-beta.28", "--yes"})
+
+	require.NoError(t, cmd.Execute())
+
+	assert.Contains(t, status.String(), "Rolled back bgctl to v0.1.0-beta.28")
+	assert.NotContains(t, status.String(), "Updated bgctl to v0.1.0-beta.28")
+}
+
+func TestUpdateCommandReturnsDownloadError(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldDownloadClient := updateDownloadHTTPClient
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateDownloadHTTPClient = oldDownloadClient
+		updateStatusWriter = oldStatusWriter
+	})
+
+	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.30","assets":[{"name":"` + assetFileName() + `","browser_download_url":"https://example.com/bgctl.tar.gz"}]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	})}
+	updateDownloadHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return nil, assert.AnError
+	})}
+	updateStatusWriter = io.Discard
+
+	cmd := NewUpdateCommand()
+	cmd.SetArgs([]string{"--yes"})
+
+	err := cmd.Execute()
+	require.ErrorIs(t, err, assert.AnError)
+}
+
+func TestUpdateCommandReturnsExtractError(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateStatusWriter = oldStatusWriter
+	})
+
+	archiveBytes := []byte("not an archive")
+	downloadServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(archiveBytes)
+	}))
+	defer downloadServer.Close()
+	updateHTTPClient = &http.Client{Transport: releaseTransportWithChecksum("v0.1.0-beta.30", downloadServer.URL+"/bgctl.tar.gz", archiveBytes)}
+	updateStatusWriter = io.Discard
+
+	cmd := NewUpdateCommand()
+	cmd.SetArgs([]string{"--yes"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+}
+
+func TestUpdateCommandReturnsCurrentExecutableError(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldStatusWriter := updateStatusWriter
+	oldCurrentExecutable := currentExecutable
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateStatusWriter = oldStatusWriter
+		currentExecutable = oldCurrentExecutable
+	})
+
+	archivePath := filepath.Join(t.TempDir(), assetFileName())
+	require.NoError(t, writeTarGz(archivePath, map[string]string{
+		"bgctl": "binary",
+	}))
+	archiveBytes, err := os.ReadFile(archivePath)
+	require.NoError(t, err)
+	downloadServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(archiveBytes)
+	}))
+	defer downloadServer.Close()
+	updateHTTPClient = &http.Client{Transport: releaseTransportWithChecksum("v0.1.0-beta.30", downloadServer.URL+"/bgctl.tar.gz", archiveBytes)}
+	currentExecutable = func() (string, error) {
+		return "", assert.AnError
+	}
+	updateStatusWriter = io.Discard
+
+	cmd := NewUpdateCommand()
+	cmd.SetArgs([]string{"--yes"})
+
+	err = cmd.Execute()
+	require.ErrorIs(t, err, assert.AnError)
+}
+
+func TestUpdateCommandReturnsReplaceError(t *testing.T) {
+	oldClient := updateHTTPClient
+	oldStatusWriter := updateStatusWriter
+	oldCurrentExecutable := currentExecutable
+	oldReplaceBinary := replaceBinaryFunc
+	t.Cleanup(func() {
+		updateHTTPClient = oldClient
+		updateStatusWriter = oldStatusWriter
+		currentExecutable = oldCurrentExecutable
+		replaceBinaryFunc = oldReplaceBinary
+	})
+
+	archivePath := filepath.Join(t.TempDir(), assetFileName())
+	require.NoError(t, writeTarGz(archivePath, map[string]string{
+		"bgctl": "binary",
+	}))
+	archiveBytes, err := os.ReadFile(archivePath)
+	require.NoError(t, err)
+	downloadServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(archiveBytes)
+	}))
+	defer downloadServer.Close()
+	updateHTTPClient = &http.Client{Transport: releaseTransportWithChecksum("v0.1.0-beta.30", downloadServer.URL+"/bgctl.tar.gz", archiveBytes)}
+	executablePath := filepath.Join(t.TempDir(), "bgctl")
+	currentExecutable = func() (string, error) {
+		return executablePath, nil
+	}
+	replaceBinaryFunc = func(gotExe, replacement string) error {
+		assert.Equal(t, executablePath, gotExe)
+		assert.NotEmpty(t, replacement)
+		return assert.AnError
+	}
+	updateStatusWriter = io.Discard
+
+	cmd := NewUpdateCommand()
+	cmd.SetArgs([]string{"--yes"})
+
+	err = cmd.Execute()
+	require.ErrorIs(t, err, assert.AnError)
+}
+
 func TestDownloadFile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -87,6 +779,28 @@ func TestDownloadFile(t *testing.T) {
 	content, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, "payload", string(content))
+}
+
+func TestDownloadFileWritesProgressToStatusWriter(t *testing.T) {
+	oldStatusWriter := updateStatusWriter
+	t.Cleanup(func() { updateStatusWriter = oldStatusWriter })
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "7")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("payload"))
+	}))
+	defer server.Close()
+
+	var status bytes.Buffer
+	updateStatusWriter = &status
+
+	path := filepath.Join(t.TempDir(), "download.bin")
+	err := downloadFile(context.Background(), server.URL, path)
+	require.NoError(t, err)
+
+	assert.Contains(t, status.String(), "7 B/7 B")
+	assert.Contains(t, status.String(), "100%")
 }
 
 func TestDownloadFileErrorStatus(t *testing.T) {
@@ -279,7 +993,7 @@ func TestFetchReleaseByTagEscapesPathSegment(t *testing.T) {
 
 	_, err := fetchReleaseByTag(context.Background(), "v1.0.0/../x")
 	require.NoError(t, err)
-	assert.True(t, strings.HasSuffix(escapedPath, "/releases/tags/1.0.0%2F..%2Fx"), "unexpected escaped path: %s", escapedPath)
+	assert.True(t, strings.HasSuffix(escapedPath, "/releases/tags/v1.0.0%2F..%2Fx"), "unexpected escaped path: %s", escapedPath)
 }
 
 func TestVerifyChecksum(t *testing.T) {

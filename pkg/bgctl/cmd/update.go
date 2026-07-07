@@ -39,8 +39,11 @@ const (
 )
 
 var (
-	updateHTTPClient         = &http.Client{Timeout: defaultUpdateAPIHTTPTimeout}
-	updateDownloadHTTPClient = &http.Client{Timeout: defaultUpdateDownloadHTTPTimeout}
+	updateHTTPClient                   = &http.Client{Timeout: defaultUpdateAPIHTTPTimeout}
+	updateDownloadHTTPClient           = &http.Client{Timeout: defaultUpdateDownloadHTTPTimeout}
+	updateStatusWriter       io.Writer = os.Stderr
+	currentExecutable                  = os.Executable
+	replaceBinaryFunc                  = replaceBinary
 )
 
 type githubRelease struct {
@@ -57,8 +60,20 @@ func NewUpdateCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update bgctl",
+		Long: `Update bgctl from the k8s-breakglass GitHub releases.
+
+The command downloads the platform-specific archive, verifies a checksum when
+one is published, extracts the bgctl binary, and replaces the current binary.`,
+		Example: `  bgctl update --dry-run
+  bgctl update --yes
+  bgctl update --version v1.2.3 --yes`,
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runUpdate(cmd, "")
+			versionTag, err := cmd.Flags().GetString("version")
+			if err != nil {
+				return err
+			}
+			return runUpdate(cmd, versionTag)
 		},
 	}
 
@@ -74,15 +89,17 @@ func NewUpdateCommand() *cobra.Command {
 
 func newUpdateCheckCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "check",
-		Short: "Check for updates",
+		Use:          "check",
+		Short:        "Check for updates",
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			release, err := fetchLatestRelease(commandContext(cmd))
 			if err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(os.Stdout, "Current version: %s\n", version.Version)
-			_, _ = fmt.Fprintf(os.Stdout, "Latest version:  %s\n", release.TagName)
+			out := cmd.OutOrStdout()
+			_, _ = fmt.Fprintf(out, "Current version: %s\n", version.Version)
+			_, _ = fmt.Fprintf(out, "Latest version:  %s\n", release.TagName)
 			return nil
 		},
 	}
@@ -90,30 +107,46 @@ func newUpdateCheckCommand() *cobra.Command {
 
 func newUpdateRollbackCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "rollback",
-		Short: "Rollback to previous version",
+		Use:          "rollback",
+		Short:        "Rollback to previous version",
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			versionTag, _ := cmd.Flags().GetString("version")
-			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			versionTag, err := cmd.Flags().GetString("version")
+			if err != nil {
+				return err
+			}
+			dryRun, err := cmd.Flags().GetBool("dry-run")
+			if err != nil {
+				return err
+			}
+			confirm, err := cmd.Flags().GetBool("yes")
+			if err != nil {
+				return err
+			}
 			if versionTag != "" {
 				return runUpdate(cmd, versionTag)
 			}
-			exe, err := os.Executable()
+			exe, err := currentExecutable()
 			if err != nil {
 				return err
 			}
 			oldPath := exe + ".old"
 			if dryRun {
-				_, _ = fmt.Fprintf(os.Stdout, "Would rollback to %s\n", oldPath)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Would rollback to %s\n", oldPath)
 				return nil
 			}
 			if _, err := os.Stat(oldPath); err != nil {
 				return fmt.Errorf("rollback binary not found: %s", oldPath)
 			}
-			return replaceBinary(exe, oldPath)
+			rt := updatePromptRuntime(cmd)
+			if err := confirmAction(cmd, rt, "rollback bgctl to", oldPath, confirm); err != nil {
+				return err
+			}
+			return replaceBinaryFunc(exe, oldPath)
 		},
 	}
 	cmd.Flags().String("version", "", "Rollback to specific version tag")
+	cmd.Flags().Bool("yes", false, "Skip confirmation")
 	cmd.Flags().Bool("dry-run", false, "Show actions without rollback")
 	return cmd
 }
@@ -124,14 +157,21 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	if strings.EqualFold(os.Getenv("BGCTL_DISABLE_UPDATE"), "true") {
 		return fmt.Errorf("update disabled by BGCTL_DISABLE_UPDATE")
 	}
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	confirm, _ := cmd.Flags().GetBool("yes")
+	dryRun, err := cmd.Flags().GetBool("dry-run")
+	if err != nil {
+		return err
+	}
+	confirm, err := cmd.Flags().GetBool("yes")
+	if err != nil {
+		return err
+	}
 
 	var release *githubRelease
-	var err error
 	if versionTag == "" {
+		updateStatusf("Checking latest bgctl release...")
 		release, err = fetchLatestRelease(ctx)
 	} else {
+		updateStatusf("Fetching bgctl release %s...", versionTag)
 		release, err = fetchReleaseByTag(ctx, versionTag)
 	}
 	if err != nil {
@@ -142,13 +182,19 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	if assetURL == "" {
 		return fmt.Errorf("asset not found for %s", assetName)
 	}
+	updateStatusf("Selected release %s asset %s", release.TagName, assetName)
 
 	if dryRun {
-		_, _ = fmt.Fprintf(os.Stdout, "Would download %s\n", assetURL)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Would download %s\n", assetURL)
 		return nil
 	}
-	if !confirm {
-		_, _ = fmt.Fprintf(os.Stdout, "Updating to %s. Use --yes to skip confirmation.\n", release.TagName)
+	rt := updatePromptRuntime(cmd)
+	action := "update bgctl to"
+	if cmd.Name() == "rollback" {
+		action = "rollback bgctl to"
+	}
+	if err := confirmAction(cmd, rt, action, release.TagName, confirm); err != nil {
+		return err
 	}
 
 	tmpDir, err := os.MkdirTemp("", "bgctl-update")
@@ -160,23 +206,56 @@ func runUpdate(cmd *cobra.Command, versionTag string) error {
 	}()
 
 	archivePath := filepath.Join(tmpDir, assetName)
+	updateStatusf("Downloading %s...", assetName)
 	if err := downloadFile(ctx, assetURL, archivePath); err != nil {
 		return err
 	}
 
+	updateStatusf("Verifying checksum...")
 	if err := verifyChecksum(ctx, release.Assets, assetName, archivePath); err != nil {
 		return err
 	}
 
+	updateStatusf("Extracting bgctl...")
 	extracted, err := extractBinary(archivePath, tmpDir)
 	if err != nil {
 		return err
 	}
-	exe, err := os.Executable()
+	exe, err := currentExecutable()
 	if err != nil {
 		return err
 	}
-	return replaceBinary(exe, extracted)
+	updateStatusf("Installing bgctl to %s...", exe)
+	if err := replaceBinaryFunc(exe, extracted); err != nil {
+		return err
+	}
+	completion := "Updated bgctl to"
+	if cmd.Name() == "rollback" {
+		completion = "Rolled back bgctl to"
+	}
+	updateStatusf("%s %s", completion, release.TagName)
+	return nil
+}
+
+func updatePromptRuntime(cmd *cobra.Command) *runtimeState {
+	rt, err := getRuntime(cmd)
+	if err != nil {
+		rt = &runtimeState{}
+	}
+	promptRuntime := *rt
+	if updateStatusWriter != nil {
+		promptRuntime.writer = updateStatusWriter
+	} else {
+		promptRuntime.writer = os.Stderr
+	}
+	return &promptRuntime
+}
+
+func updateStatusf(format string, args ...any) {
+	if updateStatusWriter == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(updateStatusWriter, format+"\n", args...)
 }
 
 func commandContext(cmd *cobra.Command) context.Context {
@@ -209,7 +288,7 @@ func fetchLatestRelease(ctx context.Context) (*githubRelease, error) {
 }
 
 func fetchReleaseByTag(ctx context.Context, tag string) (*githubRelease, error) {
-	releaseURL := fmt.Sprintf("https://api.github.com/repos/telekom/k8s-breakglass/releases/tags/%s", url.PathEscape(strings.TrimPrefix(tag, "v")))
+	releaseURL := fmt.Sprintf("https://api.github.com/repos/telekom/k8s-breakglass/releases/tags/%s", url.PathEscape(tag))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releaseURL, nil)
 	if err != nil {
 		return nil, err
@@ -282,6 +361,7 @@ func downloadFileWithLimit(ctx context.Context, url, path string, maxBytes int64
 		reader = &progressReader{
 			reader: resp.Body,
 			total:  resp.ContentLength,
+			writer: updateStatusWriter,
 		}
 	}
 
@@ -294,7 +374,9 @@ func downloadFileWithLimit(ctx context.Context, url, path string, maxBytes int64
 
 	// Clear the progress line
 	if resp.ContentLength > 0 {
-		_, _ = fmt.Fprint(os.Stderr, "\r                                                  \r")
+		if updateStatusWriter != nil {
+			_, _ = fmt.Fprint(updateStatusWriter, "\r                                                  \r")
+		}
 	}
 	if err != nil {
 		_ = os.Remove(path)
@@ -332,17 +414,18 @@ func limitedDownloadCopy(dst io.Writer, src io.Reader, maxBytes int64) error {
 	}
 }
 
-// progressReader wraps an io.Reader and prints download progress to stderr.
+// progressReader wraps an io.Reader and prints download progress.
 type progressReader struct {
 	reader      io.Reader
 	total       int64
 	downloaded  int64
 	lastPercent int
+	writer      io.Writer
 }
 
 func (pr *progressReader) Read(p []byte) (int, error) {
 	n, err := pr.reader.Read(p)
-	if n > 0 {
+	if n > 0 && pr.writer != nil {
 		pr.downloaded += int64(n)
 		percent := int(float64(pr.downloaded) / float64(pr.total) * 100)
 		// Only update display when percent changes to avoid excessive output
@@ -351,7 +434,7 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 			downloaded := formatBytes(pr.downloaded)
 			total := formatBytes(pr.total)
 			bar := progressBar(percent, 30)
-			_, _ = fmt.Fprintf(os.Stderr, "\r%s %s/%s %d%%", bar, downloaded, total, percent)
+			_, _ = fmt.Fprintf(pr.writer, "\r%s %s/%s %d%%", bar, downloaded, total, percent)
 		}
 	}
 	return n, err
