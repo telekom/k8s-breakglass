@@ -37,6 +37,27 @@ func useUpdateDownloadClient(t *testing.T, client *http.Client) {
 	})
 }
 
+func releaseTransportWithChecksum(tag, assetURL string, assetBytes []byte) roundTripFunc {
+	return func(req *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(req.URL.Path, ".sha256") {
+			hash := sha256.Sum256(assetBytes)
+			checksum := hex.EncodeToString(hash[:]) + "  " + assetFileName() + "\n"
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(checksum)),
+				Header:     make(http.Header),
+			}, nil
+		}
+
+		body := io.NopCloser(strings.NewReader(`{"tag_name":"` + tag + `","assets":[{"name":"` + assetFileName() + `","browser_download_url":"` + assetURL + `"},{"name":"` + assetFileName() + `.sha256","browser_download_url":"` + assetURL + `.sha256"}]}`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+		}, nil
+	}
+}
+
 func TestAssetFileName_CurrentPlatform(t *testing.T) {
 	name := assetFileName()
 	if runtime.GOOS == "windows" {
@@ -530,14 +551,7 @@ func TestUpdateCommandRunsInstallFlowWithStatusMessages(t *testing.T) {
 	}))
 	defer downloadServer.Close()
 
-	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.30","assets":[{"name":"` + assetFileName() + `","browser_download_url":"` + downloadServer.URL + `/bgctl.tar.gz"}]}`))
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       body,
-			Header:     make(http.Header),
-		}, nil
-	})}
+	updateHTTPClient = &http.Client{Transport: releaseTransportWithChecksum("v0.1.0-beta.30", downloadServer.URL+"/bgctl.tar.gz", archiveBytes)}
 
 	executablePath := filepath.Join(t.TempDir(), "bgctl")
 	currentExecutable = func() (string, error) {
@@ -594,14 +608,7 @@ func TestUpdateRollbackVersionRunsInstallFlowWithRollbackStatus(t *testing.T) {
 	}))
 	defer downloadServer.Close()
 
-	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.28","assets":[{"name":"` + assetFileName() + `","browser_download_url":"` + downloadServer.URL + `/bgctl.tar.gz"}]}`))
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       body,
-			Header:     make(http.Header),
-		}, nil
-	})}
+	updateHTTPClient = &http.Client{Transport: releaseTransportWithChecksum("v0.1.0-beta.28", downloadServer.URL+"/bgctl.tar.gz", archiveBytes)}
 
 	executablePath := filepath.Join(t.TempDir(), "bgctl")
 	currentExecutable = func() (string, error) {
@@ -664,19 +671,13 @@ func TestUpdateCommandReturnsExtractError(t *testing.T) {
 		updateStatusWriter = oldStatusWriter
 	})
 
+	archiveBytes := []byte("not an archive")
 	downloadServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("not an archive"))
+		_, _ = w.Write(archiveBytes)
 	}))
 	defer downloadServer.Close()
-	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.30","assets":[{"name":"` + assetFileName() + `","browser_download_url":"` + downloadServer.URL + `/bgctl.tar.gz"}]}`))
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       body,
-			Header:     make(http.Header),
-		}, nil
-	})}
+	updateHTTPClient = &http.Client{Transport: releaseTransportWithChecksum("v0.1.0-beta.30", downloadServer.URL+"/bgctl.tar.gz", archiveBytes)}
 	updateStatusWriter = io.Discard
 
 	cmd := NewUpdateCommand()
@@ -707,14 +708,7 @@ func TestUpdateCommandReturnsCurrentExecutableError(t *testing.T) {
 		_, _ = w.Write(archiveBytes)
 	}))
 	defer downloadServer.Close()
-	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.30","assets":[{"name":"` + assetFileName() + `","browser_download_url":"` + downloadServer.URL + `/bgctl.tar.gz"}]}`))
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       body,
-			Header:     make(http.Header),
-		}, nil
-	})}
+	updateHTTPClient = &http.Client{Transport: releaseTransportWithChecksum("v0.1.0-beta.30", downloadServer.URL+"/bgctl.tar.gz", archiveBytes)}
 	currentExecutable = func() (string, error) {
 		return "", assert.AnError
 	}
@@ -750,14 +744,7 @@ func TestUpdateCommandReturnsReplaceError(t *testing.T) {
 		_, _ = w.Write(archiveBytes)
 	}))
 	defer downloadServer.Close()
-	updateHTTPClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
-		body := io.NopCloser(strings.NewReader(`{"tag_name":"v0.1.0-beta.30","assets":[{"name":"` + assetFileName() + `","browser_download_url":"` + downloadServer.URL + `/bgctl.tar.gz"}]}`))
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       body,
-			Header:     make(http.Header),
-		}, nil
-	})}
+	updateHTTPClient = &http.Client{Transport: releaseTransportWithChecksum("v0.1.0-beta.30", downloadServer.URL+"/bgctl.tar.gz", archiveBytes)}
 	executablePath := filepath.Join(t.TempDir(), "bgctl")
 	currentExecutable = func() (string, error) {
 		return executablePath, nil
