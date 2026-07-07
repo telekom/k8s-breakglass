@@ -5491,6 +5491,30 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 			TimeoutAt: metav1.NewTime(time.Now().UTC().Add(time.Hour)),
 		},
 	}
+	ambiguousA := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "ambiguous-reader-session", Namespace: "team-a"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-read",
+			User:         "alice@example.com",
+			GrantedGroup: "approvable",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStatePending,
+			TimeoutAt: metav1.NewTime(time.Now().UTC().Add(time.Hour)),
+		},
+	}
+	ambiguousB := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "ambiguous-reader-session", Namespace: "team-b"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-read",
+			User:         "alice@example.com",
+			GrantedGroup: "approvable",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStatePending,
+			TimeoutAt: metav1.NewTime(time.Now().UTC().Add(time.Hour)),
+		},
+	}
 	esc := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "esc-readable"},
 		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
@@ -5500,7 +5524,7 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 		},
 	}
 
-	cli := builder.WithObjects(pending, approved, usernameRequester, esc).Build()
+	cli := builder.WithObjects(pending, approved, usernameRequester, ambiguousA, ambiguousB, esc).Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := testEscalationLookup{Client: cli}
 	logger, _ := zap.NewDevelopment()
@@ -5595,6 +5619,17 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, "reader-sess-3", sessionNameFromBody(body))
 	require.True(t, isRequesterFromBody(body), "expected approval metadata to recognize requester without email claim")
+
+	status, body = serveAs("alice@example.com", "missing-reader-session")
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "session not found", body["error"])
+	require.Equal(t, "NOT_FOUND", body["code"])
+	require.Equal(t, "missing-reader-session", body["session"])
+
+	status, body = serveAs("alice@example.com", "ambiguous-reader-session")
+	require.Equal(t, http.StatusInternalServerError, status)
+	require.Equal(t, "failed to lookup session", body["error"])
+	require.Equal(t, "INTERNAL_ERROR", body["code"])
 }
 
 func TestGetBreakglassSessionByNameApprovalTimedOutMetadata(t *testing.T) {
@@ -8680,6 +8715,30 @@ func TestWaitingForScheduledTimeSessionsOccupyRequestSlots(t *testing.T) {
 		require.False(t, ok)
 		require.Equal(t, http.StatusConflict, w.Code)
 		require.Contains(t, w.Body.String(), "already approved")
+	})
+
+	t.Run("duplicate request returns generic conflict for malformed slot-occupying session", func(t *testing.T) {
+		session := waitingSession("malformed-waiting-session")
+		session.Status.ApprovedAt = metav1.Time{}
+		cli := newIndexedClient(session)
+		ctrl := newController(cli)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+
+		ok := ctrl.checkDuplicateSession(
+			c,
+			context.Background(),
+			"user@example.com",
+			"test-cluster",
+			"admin-group",
+			zap.NewNop().Sugar(),
+		)
+
+		require.False(t, ok)
+		require.Equal(t, http.StatusConflict, w.Code)
+		require.Contains(t, w.Body.String(), "session exists")
+		require.Contains(t, w.Body.String(), `"code":"CONFLICT"`)
 	})
 
 	t.Run("per-user limit counts scheduled waiting sessions", func(t *testing.T) {

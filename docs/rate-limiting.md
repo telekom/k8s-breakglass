@@ -130,6 +130,7 @@ When a request is rate limited, the server returns HTTP `429 Too Many Requests` 
 ```json
 {
   "error": "Rate limit exceeded. Please authenticate for higher limits.",
+  "code": "TOO_MANY_REQUESTS",
   "authenticated": false
 }
 ```
@@ -138,6 +139,7 @@ When a request is rate limited, the server returns HTTP `429 Too Many Requests` 
 ```json
 {
   "error": "Rate limit exceeded, please try again later",
+  "code": "TOO_MANY_REQUESTS",
   "authenticated": true
 }
 ```

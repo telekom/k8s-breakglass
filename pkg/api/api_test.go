@@ -59,6 +59,33 @@ func TestNewServer(t *testing.T) {
 	}
 }
 
+func TestServerUnifiedErrorMiddlewareRespondsAfterHandlerError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	logger := zaptest.NewLogger(t)
+	server := NewServer(logger, config.Config{
+		Server: config.Server{
+			AllowedOrigins: []string{"https://test.example.com"},
+		},
+	}, true, &AuthHandler{})
+	server.gin.GET("/handler-error", func(c *gin.Context) {
+		_ = c.Error(errors.New("boom")).SetMeta("route failed")
+	})
+
+	req, err := http.NewRequest(http.MethodGet, "/handler-error", nil)
+	require.NoError(t, err)
+	w := httptest.NewRecorder()
+
+	server.gin.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	var response APIError
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	assert.Equal(t, "boom", response.Error)
+	assert.Equal(t, "INTERNAL_ERROR", response.Code)
+	assert.Equal(t, "route failed", response.Details)
+}
+
 func TestServer_getConfig(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -378,6 +405,11 @@ func TestOriginValidationMiddleware(t *testing.T) {
 	t.Run("blocks disallowed origin", func(t *testing.T) {
 		resp := makeRequest(http.MethodGet, "https://evil.example.com")
 		require.Equal(t, http.StatusForbidden, resp.Code)
+
+		var body map[string]string
+		require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &body))
+		require.Equal(t, "origin not allowed", body["error"])
+		require.Equal(t, "FORBIDDEN", body["code"])
 	})
 
 	t.Run("skips when origin header missing", func(t *testing.T) {
@@ -518,13 +550,13 @@ func TestServer_NoRoute_API_Json404(t *testing.T) {
 	server.gin.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
-	// Response should be JSON containing error and path
-	var body map[string]interface{}
+	// Response should use the standard API error shape and include the path as details.
+	var body map[string]string
 	err = json.Unmarshal(w.Body.Bytes(), &body)
 	assert.NoError(t, err)
-	assert.Contains(t, body, "error")
-	assert.Contains(t, body, "path")
-	assert.Equal(t, "/api/unknown/thing", body["path"])
+	assert.Equal(t, "API endpoint not found", body["error"])
+	assert.Equal(t, "NOT_FOUND", body["code"])
+	assert.Equal(t, "/api/unknown/thing", body["details"])
 }
 
 func TestServer_NoRoute_SPA_Fallback(t *testing.T) {

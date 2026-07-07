@@ -63,6 +63,88 @@ func TestRespondNotFoundSimple(t *testing.T) {
 	assert.Equal(t, "NOT_FOUND", resp.Code)
 }
 
+func TestRespondError(t *testing.T) {
+	tests := []struct {
+		name         string
+		status       int
+		expectedCode string
+	}{
+		{
+			name:         "bad request",
+			status:       http.StatusBadRequest,
+			expectedCode: "BAD_REQUEST",
+		},
+		{
+			name:         "unauthorized",
+			status:       http.StatusUnauthorized,
+			expectedCode: "UNAUTHORIZED",
+		},
+		{
+			name:         "forbidden",
+			status:       http.StatusForbidden,
+			expectedCode: "FORBIDDEN",
+		},
+		{
+			name:         "not found",
+			status:       http.StatusNotFound,
+			expectedCode: "NOT_FOUND",
+		},
+		{
+			name:         "conflict",
+			status:       http.StatusConflict,
+			expectedCode: "CONFLICT",
+		},
+		{
+			name:         "unprocessable entity",
+			status:       http.StatusUnprocessableEntity,
+			expectedCode: "UNPROCESSABLE_ENTITY",
+		},
+		{
+			name:         "too many requests",
+			status:       http.StatusTooManyRequests,
+			expectedCode: "TOO_MANY_REQUESTS",
+		},
+		{
+			name:         "bad gateway",
+			status:       http.StatusBadGateway,
+			expectedCode: "BAD_GATEWAY",
+		},
+		{
+			name:         "service unavailable",
+			status:       http.StatusServiceUnavailable,
+			expectedCode: "SERVICE_UNAVAILABLE",
+		},
+		{
+			name:         "unknown client status",
+			status:       http.StatusTeapot,
+			expectedCode: "ERROR",
+		},
+		{
+			name:         "unknown server status",
+			status:       http.StatusGatewayTimeout,
+			expectedCode: "INTERNAL_ERROR",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+
+			RespondError(c, tt.status, "API endpoint error", "/api/missing")
+
+			assert.Equal(t, tt.status, w.Code)
+
+			var resp APIError
+			err := json.Unmarshal(w.Body.Bytes(), &resp)
+			require.NoError(t, err)
+			assert.Equal(t, "API endpoint error", resp.Error)
+			assert.Equal(t, tt.expectedCode, resp.Code)
+			assert.Equal(t, "/api/missing", resp.Details)
+		})
+	}
+}
+
 func TestRespondUnauthorized(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -203,6 +285,83 @@ func TestRespondInternalErrorSimple(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "unexpected error", resp.Error)
 	assert.Equal(t, "INTERNAL_ERROR", resp.Code)
+}
+
+func TestRespondTooManyRequests(t *testing.T) {
+	tests := []struct {
+		name     string
+		message  string
+		expected string
+	}{
+		{
+			name:     "custom message",
+			message:  "session creation rate limit exceeded",
+			expected: "session creation rate limit exceeded",
+		},
+		{
+			name:     "default message",
+			message:  "",
+			expected: "too many requests",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+
+			RespondTooManyRequests(c, tt.message)
+
+			assert.Equal(t, http.StatusTooManyRequests, w.Code)
+
+			var resp APIError
+			err := json.Unmarshal(w.Body.Bytes(), &resp)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, resp.Error)
+			assert.Equal(t, "TOO_MANY_REQUESTS", resp.Code)
+		})
+	}
+}
+
+func TestRespondTooManyRequestsWithAuthState(t *testing.T) {
+	tests := []struct {
+		name          string
+		message       string
+		authenticated bool
+		expected      string
+	}{
+		{
+			name:          "authenticated custom message",
+			message:       "rate limit exceeded",
+			authenticated: true,
+			expected:      "rate limit exceeded",
+		},
+		{
+			name:          "anonymous default message",
+			message:       "",
+			authenticated: false,
+			expected:      "too many requests",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+
+			RespondTooManyRequestsWithAuthState(c, tt.message, tt.authenticated)
+
+			assert.Equal(t, http.StatusTooManyRequests, w.Code)
+
+			var resp APIError
+			err := json.Unmarshal(w.Body.Bytes(), &resp)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, resp.Error)
+			assert.Equal(t, "TOO_MANY_REQUESTS", resp.Code)
+			require.NotNil(t, resp.Authenticated)
+			assert.Equal(t, tt.authenticated, *resp.Authenticated)
+		})
+	}
 }
 
 func TestRespondServiceUnavailable(t *testing.T) {

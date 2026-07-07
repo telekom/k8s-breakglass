@@ -238,6 +238,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 			log.Info("http_request", zap.String("cid", fmt.Sprintf("%v", cid)), zap.String("method", c.Request.Method), zap.String("path", c.FullPath()), zap.Int("status", c.Writer.Status()), zap.Duration("latency", time.Since(start)))
 		},
 		func(c *gin.Context) { // unified error propagation: if handler set context error, respond JSON
+			c.Next()
 			if len(c.Errors) > 0 {
 				cid, _ := c.Get("cid")
 				first := c.Errors[0]
@@ -254,8 +255,12 @@ func NewServer(log *zap.Logger, cfg config.Config,
 					// Use zap.String to avoid stacktrace in error logs
 					log.Error("handler_error", zap.String("cid", fmt.Sprintf("%v", cid)), zap.String("error", first.Error()), zap.String("meta", metaStr))
 				}
-				if !c.IsAborted() {
-					c.JSON(c.Writer.Status(), gin.H{"error": first.Error(), "cid": cid, "meta": metaStr})
+				if !c.IsAborted() && !c.Writer.Written() {
+					status := c.Writer.Status()
+					if status < http.StatusBadRequest {
+						status = http.StatusInternalServerError
+					}
+					RespondError(c, status, first.Error(), metaStr)
 				}
 			}
 		},
@@ -303,9 +308,9 @@ func NewServer(log *zap.Logger, cfg config.Config,
 
 		cid, _ := c.Get("cid")
 		log.Warn("blocked_request_origin", zap.String("origin", originHeader), zap.String("normalized_origin", normalized), zap.String("cid", fmt.Sprintf("%v", cid)))
-		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-			"error": "origin not allowed",
-			"cid":   cid,
+		c.AbortWithStatusJSON(http.StatusForbidden, APIError{
+			Error: "origin not allowed",
+			Code:  "FORBIDDEN",
 		})
 	})
 
@@ -338,7 +343,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// Custom NoRoute: JSON 404 for /api/*, SPA fallback for others
 	engine.NoRoute(func(c *gin.Context) {
 		if len(c.Request.URL.Path) >= 5 && c.Request.URL.Path[:5] == "/api/" {
-			c.JSON(http.StatusNotFound, gin.H{"error": "API endpoint not found", "path": c.Request.URL.Path})
+			RespondError(c, http.StatusNotFound, "API endpoint not found", c.Request.URL.Path)
 		} else {
 			ServeSPA("/", "/frontend/dist/")(c)
 		}
