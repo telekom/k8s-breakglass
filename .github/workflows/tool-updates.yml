@@ -45,10 +45,18 @@ jobs:
             local repo=$1
             local current=$2
             local name=$3
+            local latest
             latest=$(gh api "repos/${repo}/releases/latest" --jq '.tag_name' 2>/dev/null || echo "unknown")
-            if [ "$latest" != "unknown" ] && [ "$latest" != "$current" ]; then
-              echo "  - **${name}**: ${current} → ${latest} ([releases](https://github.com/${repo}/releases))" >> updates.md
-              echo "found=true" >> $GITHUB_OUTPUT
+            if [ "$latest" = "unknown" ]; then
+              return
+            fi
+
+            # Some projects publish component-prefixed tags, for example kustomize/v5.8.1.
+            # Compare against the version suffix used by versions.env to avoid false positives.
+            local latest_version="${latest##*/}"
+            if [ "$latest_version" != "$current" ]; then
+              echo "  - **${name}**: ${current} → ${latest_version} ([releases](https://github.com/${repo}/releases))" >> updates.md
+              echo "found=true" >> "$GITHUB_OUTPUT"
             fi
           }
 
