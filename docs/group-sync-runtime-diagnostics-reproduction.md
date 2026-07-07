@@ -33,6 +33,17 @@ GOCACHE=/tmp/k8s-breakglass-repro-go-cache go test ./pkg/breakglass/escalation \
 
 Expected result on this branch: both tests fail.
 
+## Fixed Behavior
+
+The corresponding fix wraps Keycloak group-search errors with the
+`/admin/realms/{realm}/groups` endpoint and a `view-users` permission hint, so
+the returned sync error is actionable without correlating controller logs.
+
+`GroupFetchFailed` events emitted for IdentityProvider-backed group sync now
+carry the affected `BreakglassEscalation` namespace on the synthetic
+`IdentityProvider` event target, avoiding empty involved-object namespaces in
+runtime diagnostics.
+
 ## Existing Upstream Coverage Not Duplicated
 
 Current `origin/main` already removed stale event text that pointed operators to

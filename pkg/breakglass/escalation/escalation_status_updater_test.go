@@ -19,6 +19,7 @@ package escalation
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -643,6 +644,22 @@ func TestKeycloakGroupMemberResolver_Members_GroupSearchForbiddenIsActionable(t 
 		assert.Contains(t, errText, "/admin/realms/"+realm+"/groups")
 		assert.Contains(t, errText, "view-users")
 	}
+}
+
+func TestKeycloakGroupSearchErrorRedactsCauseTextAndUnwraps(t *testing.T) {
+	cause := fmt.Errorf("Get \"https://client:secret@keycloak.example.test/admin/realms/t-caas/groups?search=dttcaas-platform-poweruser\": dial tcp: connection refused")
+	err := keycloakGroupSearchError{
+		endpoint: keycloakGroupsEndpoint("https://client:secret@keycloak.example.test", "t-caas"),
+		cause:    cause,
+	}
+
+	errText := err.Error()
+	assert.Contains(t, errText, "https://keycloak.example.test/admin/realms/t-caas/groups")
+	assert.Contains(t, errText, "view-users")
+	assert.NotContains(t, errText, "client:secret")
+	assert.NotContains(t, errText, "search=")
+	assert.NotContains(t, errText, "dttcaas-platform-poweruser")
+	assert.True(t, errors.Is(err, cause))
 }
 
 func TestSetupResolverReturnsQuietNoopWhenGroupSyncDisabled(t *testing.T) {
