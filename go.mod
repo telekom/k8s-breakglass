@@ -6,7 +6,7 @@ require (
 	github.com/Masterminds/sprig/v3 v3.3.0
 	github.com/MicahParks/keyfunc/v3 v3.8.0
 	github.com/Nerzal/gocloak/v13 v13.9.0
-	github.com/coreos/go-oidc/v3 v3.19.0
+	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/gin-contrib/cors v1.7.7
 	github.com/gin-contrib/static v1.1.6
 	github.com/gin-contrib/zap v1.1.7
@@ -146,8 +146,8 @@ require (
 	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sync v0.21.0
-	golang.org/x/sys v0.45.0
+	golang.org/x/sync v0.22.0
+	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.43.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/time v0.15.0
