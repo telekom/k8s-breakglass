@@ -52,7 +52,7 @@
     "@types/express": "^5.0.6",
     "@types/humanize-duration": "^3.27.4",
     "@vitejs/plugin-legacy": "^8.2.0",
-    "@vitejs/plugin-vue": "^6.0.7",
+    "@vitejs/plugin-vue": "^6.0.8",
     "@vitest/coverage-v8": "^4.1.10",
     "@vue/eslint-config-prettier": "^10.2.0",
     "@vue/eslint-config-typescript": "^14.9.0",
