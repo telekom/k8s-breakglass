@@ -40,8 +40,8 @@
     "jose": "^6.2.3",
     "oidc-client-ts": "^3.5.0",
     "pinia": "^3.0.4",
-    "vue": "^3.5.39",
-    "vue-router": "^5.1.0"
+    "vue": "^3.5.40",
+    "vue-router": "^5.2.0"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",
@@ -52,7 +52,7 @@
     "@types/express": "^5.0.6",
     "@types/humanize-duration": "^3.27.4",
     "@vitejs/plugin-legacy": "^8.2.0",
-    "@vitejs/plugin-vue": "^6.0.7",
+    "@vitejs/plugin-vue": "^6.0.8",
     "@vitest/coverage-v8": "^4.1.10",
     "@vue/eslint-config-prettier": "^10.2.0",
     "@vue/eslint-config-typescript": "^14.9.0",
