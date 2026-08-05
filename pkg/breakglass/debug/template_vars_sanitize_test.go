@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
+	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -202,10 +203,69 @@ func TestSanitizeTemplateVar_CollapsesLineBreaksToSpace(t *testing.T) {
 
 // TestSanitizeTemplateVar_DefusesDocumentSeparators covers a value that begins with
 // a YAML document marker, which would start or end a document at column 0.
+//
+// Per the YAML spec a document indicator is only a marker when it is followed by
+// end-of-input or whitespace, so every case here is a genuine marker.
 func TestSanitizeTemplateVar_DefusesDocumentSeparators(t *testing.T) {
-	assert.Equal(t, " ---", sanitizeTemplateVar("---"))
-	assert.Equal(t, " ...", sanitizeTemplateVar("..."))
-	assert.Equal(t, " --- foo", sanitizeTemplateVar("---\nfoo"))
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"bare directives-end", "---", " ---"},
+		{"bare document-end", "...", " ..."},
+		{"marker then space", "--- ", " --- "},
+		{"marker then tab", "---\t", " ---\t"},
+		{"marker then newline", "---\nfoo", " --- foo"},
+		{"document-end then newline", "...\nfoo", " ... foo"},
+		{"marker then comment", "--- # c", " --- # c"},
+		{"marker plus injection payload", "---\nhostNetwork: true", " --- hostNetwork: true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, sanitizeTemplateVar(tc.value),
+				"a real document marker must be defused")
+		})
+	}
+}
+
+// TestSanitizeTemplateVar_PreservesNonMarkerTripleIndicators pins the tightened
+// predicate. "---foo" and "...bar" are plain YAML scalars, not document markers --
+// a marker requires end-of-input or whitespace after the indicator -- so rewriting
+// them would break the byte-for-byte-preservation guarantee this change promises.
+//
+// This test fails before the neutralizeDocumentSeparator tightening (the old
+// strings.HasPrefix check prefixed a space to all of these) and passes after.
+func TestSanitizeTemplateVar_PreservesNonMarkerTripleIndicators(t *testing.T) {
+	unchanged := []string{
+		"---foo",
+		"...bar",
+		"----",
+		"....",
+		"---:",
+		"...v1.2.3",
+		"---foo bar",
+		"--->redirect",
+		"...trailing ellipsis text",
+	}
+
+	for _, value := range unchanged {
+		assert.Equal(t, value, sanitizeTemplateVar(value),
+			"non-marker value must pass through unchanged: %q", value)
+	}
+}
+
+// TestStartsWithDocumentMarker_MatchesYAMLSpec exercises the predicate directly,
+// including the near-miss cases that separate a marker from a plain scalar.
+func TestStartsWithDocumentMarker_MatchesYAMLSpec(t *testing.T) {
+	markers := []string{"---", "...", "--- ", "...\t", "---\n", "...\r\n", "--- a: b"}
+	for _, value := range markers {
+		assert.True(t, startsWithDocumentMarker(value), "must be treated as a marker: %q", value)
+	}
+
+	plain := []string{"", "-", "--", "..", "---foo", "...bar", "----", "....", "a---", " ---", "x", "---é"}
+	for _, value := range plain {
+		assert.False(t, startsWithDocumentMarker(value), "must not be treated as a marker: %q", value)
+	}
 }
 
 // TestSanitizeTemplateVarsReportingChanges proves the rewrite is observable rather
@@ -292,9 +352,28 @@ func FuzzSanitizeTemplateVar(f *testing.F) {
 			}
 		}
 
-		// A sanitized value must never begin a YAML document at column 0.
-		if strings.HasPrefix(got, "---") || strings.HasPrefix(got, "...") {
+		// A sanitized value must never begin a YAML document at column 0. Checked
+		// against the spec predicate, not a bare HasPrefix, because "---foo" is a
+		// plain scalar and must be preserved rather than rewritten.
+		if startsWithDocumentMarker(got) {
 			t.Fatalf("sanitized value still starts with a document separator: input=%q output=%q", value, got)
+		}
+
+		// Independent cross-check of the predicate against a real YAML parser: if
+		// the sanitized value is parsed alone as a document it must still be a
+		// single scalar node, never a document split. This catches a predicate that
+		// is too narrow, which HasPrefix-style assertions cannot.
+		var parsed []yaml.Node
+		decoder := yaml.NewDecoder(strings.NewReader(got))
+		for {
+			var node yaml.Node
+			if err := decoder.Decode(&node); err != nil {
+				break
+			}
+			parsed = append(parsed, node)
+		}
+		if len(parsed) > 1 {
+			t.Fatalf("sanitized value parsed as %d documents: input=%q output=%q", len(parsed), value, got)
 		}
 
 		// Sanitizing an already-sanitized value must be a no-op, otherwise repeated

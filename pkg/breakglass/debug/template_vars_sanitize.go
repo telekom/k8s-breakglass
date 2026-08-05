@@ -19,13 +19,14 @@ package debug
 import (
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // Rendered templates are YAML documents, and every value that reaches
 // AuxiliaryResourceContext.Vars originates from an end user via
 // DebugSession.spec.extraDeployValues. A value carrying a line break can close the
-// scalar it was substituted into and open sibling YAML keys, so an
-// `{{ .Vars.x }}` interpolation anywhere in a document is enough to inject
+// scalar it was substituted into and open sibling YAML keys, so a
+// `{{ .vars.x }}` interpolation anywhere in a document is enough to inject
 // arbitrary structure into that document -- including hostNetwork/hostPID/hostIPC,
 // which applyPodOverridesStruct honours verbatim.
 //
@@ -72,11 +73,60 @@ var yamlLineTerminatorReplacer = strings.NewReplacer(
 	"\u2029", " ",
 )
 
+// documentMarkerIndicators are the two YAML document indicators: the
+// directives-end marker "---" and the document-end marker "...".
+var documentMarkerIndicators = []string{"---", "..."}
+
+// documentMarkerFollowers are the bytes that may follow a document indicator for
+// it to still be recognised as a marker. Per the YAML spec (c-directives-end /
+// c-document-end) the indicator must be followed by end-of-input, s-white (space
+// or tab) or a line break; anything else makes the token a plain scalar.
+//
+// The line terminators are listed even though sanitizeTemplateVar collapses them
+// before this runs, so the predicate stays correct on its own rather than
+// depending on call order.
+const documentMarkerFollowers = " \t" + yamlLineTerminatorChars
+
+// startsWithDocumentMarker reports whether value begins with a genuine YAML
+// document marker, i.e. one that a parser would honour if the value landed at
+// column 0.
+//
+// This is deliberately narrower than "starts with --- or ...": values such as
+// "---foo" or "...bar" are plain scalars, not markers, and rewriting them would
+// break the byte-for-byte-preservation guarantee for legitimate input. Only a
+// marker followed by end-of-string or whitespace can split a document.
+func startsWithDocumentMarker(value string) bool {
+	for _, indicator := range documentMarkerIndicators {
+		rest, found := strings.CutPrefix(value, indicator)
+		if !found {
+			continue
+		}
+		if rest == "" {
+			return true
+		}
+		// Decode a full rune rather than slicing a byte, so a multi-byte follower
+		// is classified correctly and invalid UTF-8 (RuneError, not a follower)
+		// falls through to "plain scalar".
+		follower, _ := utf8.DecodeRuneInString(rest)
+		if strings.ContainsRune(documentMarkerFollowers, follower) {
+			return true
+		}
+	}
+	return false
+}
+
 // neutralizeDocumentSeparator defuses a value that begins with a YAML document
-// marker ("---" or "..."), which would otherwise start or end a document when
-// substituted at the start of a line.
+// marker, which would otherwise start or end a document when substituted at the
+// start of a line. A single leading space is enough: an indented "---" is not a
+// document marker, because markers are only recognised at column 0.
+//
+// Only the prefix is inspected. A marker anywhere else in the value cannot split
+// the document, because sanitizeTemplateVar has already collapsed every line
+// terminator to a space by the time this runs, so the value occupies a single
+// line and "a --- b" is just a plain scalar. A leading space in the value has the
+// same effect for the same reason, so it needs no further handling.
 func neutralizeDocumentSeparator(value string) string {
-	if strings.HasPrefix(value, "---") || strings.HasPrefix(value, "...") {
+	if startsWithDocumentMarker(value) {
 		return " " + value
 	}
 	return value

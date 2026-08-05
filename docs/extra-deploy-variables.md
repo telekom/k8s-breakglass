@@ -214,7 +214,13 @@ Every value that reaches `.vars` is escaped before template rendering begins, in
 `buildVarsFromSession` (see `pkg/breakglass/debug/template_vars_sanitize.go`).
 Line terminators — LF, CR, CRLF, NEL (U+0085), LINE SEPARATOR (U+2028) and
 PARAGRAPH SEPARATOR (U+2029) — are collapsed to a single space, and a leading
-`---`/`...` document marker is defused.
+`---`/`...` document marker is defused by prefixing a space, since a document
+marker is only recognised at column 0.
+
+Everything else is preserved byte-for-byte. In particular a *leading* `---`/`...`
+is only treated as a document marker when the YAML spec says it is one — followed
+by end-of-value or whitespace. Values such as `---foo` or `...bar` are plain
+scalars and pass through unchanged.
 
 This matters because a value containing a newline used to be able to close the
 scalar it was substituted into and open **sibling YAML keys**. In a
