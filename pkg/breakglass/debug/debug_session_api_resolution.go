@@ -595,7 +595,7 @@ func (a *debugSessionApprovalAuthorizer) isIdentityAuthorizedToApprove(ctx conte
 			return false
 		}
 		if binding.Spec.Approvers != nil {
-			return c.checkApproverAuthorizationForIdentity(binding.Spec.Approvers, identity)
+			return a.approverSetAuthorizes(session, binding.Spec.Approvers, identity, "binding")
 		}
 	}
 
@@ -610,16 +610,41 @@ func (a *debugSessionApprovalAuthorizer) isIdentityAuthorizedToApprove(ctx conte
 			return false
 		}
 
-		// If template has no approvers configured, allow any authenticated user
-		if template.Spec.Approvers == nil {
-			return true
-		}
-
-		return c.checkApproverAuthorizationForIdentity(template.Spec.Approvers, identity)
+		return a.approverSetAuthorizes(session, template.Spec.Approvers, identity, "template")
 	}
 
 	// Use resolved template from status
-	return c.checkApproverAuthorizationForIdentity(session.Status.ResolvedTemplate.Approvers, identity)
+	return a.approverSetAuthorizes(session, session.Status.ResolvedTemplate.Approvers, identity, "resolvedTemplate")
+}
+
+// approverSetAuthorizes decides whether identity may approve under the given
+// effective approver set.
+//
+// An absent or empty approver set is NOT an allow-all. Treating it as one made the
+// entire authenticated population an approver, which defeats four-eyes control.
+// The read authorizer has always guarded its approver checks with
+// debugSessionApproversConfigured (see isExplicitDebugSessionApprover); the approve
+// path simply did not apply the same predicate. It does now, so read and approve
+// agree on what "configured" means.
+//
+// This is not a lockout: the reconciler's requiresApproval() uses the same
+// predicate, so a session whose effective approver set is empty is auto-approved
+// and never enters PendingApproval -- and both the approve and reject endpoints
+// reject any session that is not PendingApproval. There is therefore no session
+// that was approvable before this change and is unapprovable after it.
+func (a *debugSessionApprovalAuthorizer) approverSetAuthorizes(
+	session *breakglassv1alpha1.DebugSession,
+	approvers *breakglassv1alpha1.DebugSessionApprovers,
+	identity debugSessionReadIdentity,
+	source string,
+) bool {
+	if !debugSessionApproversConfigured(approvers) {
+		a.controller.log.Infow(
+			"Denying debug session approval: no approvers configured, so no user is an approver",
+			"session", session.Name, "approverSource", source, "approver", identity.username)
+		return false
+	}
+	return a.controller.checkApproverAuthorizationForIdentity(approvers, identity)
 }
 
 func (a *debugSessionApprovalAuthorizer) getBinding(ctx context.Context, key ctrlclient.ObjectKey) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
@@ -712,11 +737,6 @@ func (c *DebugSessionAPIController) checkApproverAuthorization(approvers *breakg
 				}
 			}
 		}
-	}
-
-	// If no approvers defined at all, allow any authenticated user
-	if len(approvers.Users) == 0 && len(approvers.Groups) == 0 {
-		return true
 	}
 
 	return false
