@@ -208,17 +208,57 @@ The API error response includes the required groups:
 }
 ```
 
+## YAML injection is blocked at the boundary
+
+Every value that reaches `.vars` is escaped before template rendering begins, in
+`buildVarsFromSession` (see `pkg/breakglass/debug/template_vars_sanitize.go`).
+Line terminators — LF, CR, CRLF, NEL (U+0085), LINE SEPARATOR (U+2028) and
+PARAGRAPH SEPARATOR (U+2029) — are collapsed to a single space, and a leading
+`---`/`...` document marker is defused.
+
+This matters because a value containing a newline used to be able to close the
+scalar it was substituted into and open **sibling YAML keys**. In a
+`podOverridesTemplate` that meant an end user could inject `hostNetwork: true`,
+`hostPID: true` or `hostIPC: true`, which `applyPodOverridesStruct` applies to the
+debug pod verbatim:
+
+```yaml
+# Template written by an operator:
+nodeSelector:
+  kubernetes.io/hostname: {{ .vars.node }}
+
+# Formerly, a user submitting node = "worker-1\nhostNetwork: true" rendered:
+nodeSelector:
+  kubernetes.io/hostname: worker-1
+hostNetwork: true          # <-- injected sibling key, honoured by the controller
+```
+
+Escaping happens at the single point where untrusted values enter a render
+context, so **no template author has to remember to do anything**. Values are
+escaped, not rejected, so ordinary values (image references, quantities,
+comma-joined multiSelect values, prose containing `:` or `#`) render unchanged.
+
+> Note: a value whose line breaks are collapsed may still produce a document that
+> does not parse (for example `worker-1 hostNetwork: true` in a scalar position).
+> That fails the session closed with a YAML parse error rather than producing a
+> privileged pod.
+
 ## Template Functions
 
 ### `yamlQuote`
 
-**CRITICAL: Always use for user-provided values to prevent YAML injection.**
+Recommended for user-provided values used in ambiguous scalar positions.
+
+Structural injection is already prevented at the boundary (see above), so
+`yamlQuote` is defence-in-depth rather than the primary control. It remains useful
+for keeping values unambiguous — quoting `true`, `null` or values containing `:`
+so they are read as strings rather than as booleans, nulls or nested mappings.
 
 ```yaml
-# SAFE: User input is properly quoted
+# Explicit and unambiguous
 label: {{ .vars.customerName | yamlQuote }}
 
-# UNSAFE: Could break YAML if input contains special chars
+# Also safe from structural injection, but the value may be retyped by YAML
 label: {{ .vars.customerName }}
 ```
 
