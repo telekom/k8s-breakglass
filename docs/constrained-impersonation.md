@@ -137,13 +137,49 @@ operator assertion, and never keys off the gauge alone.
 The mode is **not** a header. KEP-5284 adds no headers; the API server derives the
 mode from the shape of the impersonated identity.
 
-| Mode | Selected when |
+| Mode | Selected when | Configurable in breakglass |
+|---|---|---|
+| `associated-node` | user is `system:node:<name>`, only username set, requestor's own node matches | **No** — see below |
+| `arbitrary-node` | user is `system:node:<name>`, only username set, valid DNS subdomain | Yes |
+| `serviceaccount` | user is `system:serviceaccount:<ns>:<name>`, only username set | Yes |
+| `user-info` | user is neither a node nor a ServiceAccount; the only mode supporting uid/groups/extra | Yes |
+| `legacy` | fallback when every constrained mode denies | Yes |
+
+### `associated-node` is recognised but not configurable
+
+`mode: associated-node` is **rejected at admission** on `DebugSessionTemplate` and
+`DebugSessionClusterBinding`. Applying it fails with an actionable error rather than
+being accepted and then failing when a session tries to deploy.
+
+**Why it is rejected rather than implemented.** The API server only selects this mode
+when the impersonated node name matches the **requestor's own** node, read from the
+requestor's `authentication.kubernetes.io/node-name` extra — i.e. it requires a
+node-bound ServiceAccount token. Making breakglass satisfy that would mean injecting
+the controller pod's own node name via the downward API (`fieldRef: spec.nodeName`),
+and **the node the controller happens to be scheduled on is arbitrary** with respect
+to the spoke cluster, the session, and the target workload.
+
+Breakglass authorizes **human users via OIDC**, not node-bound ServiceAccounts, so a
+controller impersonating whichever node it landed on grants something semantically
+meaningless. Wiring it would convert a loud, obvious failure into a **silent fake
+success** — strictly worse than refusing. Rejecting at admission also moves the
+failure from mid-incident to `kubectl apply`, which is where you want it.
+
+Use instead:
+
+| Instead of `associated-node` | Use |
 |---|---|
-| `associated-node` | user is `system:node:<name>`, only username set, requestor's own node matches |
-| `arbitrary-node` | user is `system:node:<name>`, only username set, valid DNS subdomain |
-| `serviceaccount` | user is `system:serviceaccount:<ns>:<name>`, only username set |
-| `user-info` | user is neither a node nor a ServiceAccount; the only mode supporting uid/groups/extra |
-| `legacy` | fallback when every constrained mode denies |
+| impersonating a specific node | `arbitrary-node` with `userName: system:node:<name>` |
+| impersonating a ServiceAccount | `serviceaccount` (or just `serviceAccountRef`) |
+| impersonating a user | `user-info` |
+
+**The mode remains fully recognised for authorization.** This is deliberate
+defence-in-depth: the verb parser still classifies `impersonate:associated-node` and
+`impersonate-on:associated-node:<verb>`, and a `DenyPolicy` can still name
+`associated-node` to deny it. So if such a grant is applied to a spoke out-of-band,
+breakglass recognises the verb and can refuse it — rather than treating it as an
+unknown verb. The mode constant therefore stays in `pkg/impersonation`; only
+*configuring* it is blocked.
 
 ## Footguns
 
@@ -451,6 +487,18 @@ What this means in practice:
   an earlier revision of this branch.
 
 No CRD field is added or changed by this fix, and no stored object needs migration.
+
+**`mode: associated-node` is now rejected at admission.** This cannot break a working
+configuration, because the mode never worked: it always failed at deploy time, since
+the breakglass pod has no `NODE_NAME` injected and the mode cannot be satisfied by a
+non-node-bound identity. An object that was already broken is now rejected at
+`kubectl apply` instead of failing later, mid-incident.
+
+If you have such an object stored from before this change, it will be refused on the
+next update and its sessions will fail with an explanatory error naming the supported
+alternatives (`arbitrary-node`, `serviceaccount`, `user-info`). No sample, fixture,
+chart value or default in this repository uses the mode, so nothing shipped needs
+changing.
 
 ## Not configurable
 

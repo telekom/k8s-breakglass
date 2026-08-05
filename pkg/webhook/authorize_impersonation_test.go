@@ -571,6 +571,69 @@ func TestEvaluateImpersonation_DenyAllRule(t *testing.T) {
 	}
 }
 
+// TestEvaluateImpersonation_AssociatedNodeStillDeniable is the defence-in-depth
+// guard for a mode breakglass refuses to CONFIGURE.
+//
+// `mode: associated-node` is rejected at admission (it needs a node-bound
+// ServiceAccount identity, which breakglass's OIDC model does not have). That blocks
+// operators from configuring it — it must NOT remove the authorizer's knowledge of
+// the verbs. If a grant for `impersonate:associated-node` is applied out-of-band, the
+// webhook still has to recognise and be able to deny it.
+//
+// The failure mode this prevents: deleting the mode constant would make the parser
+// classify these verbs as VerbKindMalformed or, worse, VerbKindOther — and an
+// unrecognised verb reaching the generic path is exactly the silent-grant hole this
+// whole feature exists to close.
+func TestEvaluateImpersonation_AssociatedNodeStillDeniable(t *testing.T) {
+	verbs := []struct {
+		verb, group, resource, name string
+		wantKind                    impersonation.VerbKind
+	}{
+		// Identity check. associated-node takes no resourceNames, so the apiserver
+		// issues it with Name="*".
+		{
+			"impersonate:associated-node", "authentication.k8s.io", "nodes", "*",
+			impersonation.VerbKindIdentity,
+		},
+		// Action check, evaluated against the target request's own resource.
+		{
+			"impersonate-on:associated-node:list", "", "pods", "",
+			impersonation.VerbKindAction,
+		},
+	}
+
+	for _, v := range verbs {
+		t.Run(v.verb, func(t *testing.T) {
+			// The verb must still parse as a real impersonation verb, not as unknown.
+			parsed := impersonation.ParseVerb(v.verb)
+			require.Equal(t, v.wantKind, parsed.Kind,
+				"%q no longer classifies as a recognised impersonation verb; the "+
+					"associated-node mode constant must stay in pkg/impersonation even though "+
+					"breakglass refuses to configure the mode", v.verb)
+			assert.Equal(t, impersonation.ModeAssociatedNode, parsed.Mode)
+
+			// And a DenyPolicy naming the mode must still deny it through the webhook.
+			pol := &breakglassv1alpha1.DenyPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "deny-associated-node"},
+				Spec: breakglassv1alpha1.DenyPolicySpec{
+					ImpersonationRules: []breakglassv1alpha1.ImpersonationDenyRule{{
+						Modes: []breakglassv1alpha1.ImpersonationMode{
+							breakglassv1alpha1.ImpersonationModeAssociatedNode,
+						},
+					}},
+				},
+			}
+
+			f := newImpersonationFixture(t, nil, pol).
+				withSAR(v.verb, v.group, v.resource, "", v.name, "default")
+
+			require.True(t, f.wc.evaluateImpersonation(f.c, f.s),
+				"an out-of-band %q grant could not be denied by policy", v.verb)
+			assert.False(t, f.response(t).Status.Allowed)
+		})
+	}
+}
+
 // TestEvaluateImpersonation_ScopedDenyPolicyDoesNotLeak asserts appliesTo scoping
 // is honoured, so a policy for one cluster cannot deny on another.
 func TestEvaluateImpersonation_ScopedDenyPolicyDoesNotLeak(t *testing.T) {

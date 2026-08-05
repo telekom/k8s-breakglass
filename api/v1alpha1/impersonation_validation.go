@@ -102,6 +102,31 @@ func validateImpersonationConstraints(ic *ImpersonationConfig, fieldPath *field.
 		return errs
 	}
 
+	// associated-node is a valid KEP-5284 mode, and the authorization webhook still
+	// recognises and can deny its verbs, but breakglass cannot CONFIGURE it. Rejecting
+	// it here converts a mid-incident runtime failure into a `kubectl apply` error.
+	//
+	// Why it cannot work, rather than merely being unimplemented: the mode is only
+	// selected when the impersonated node name equals the REQUESTOR's own node, taken
+	// from its authentication.kubernetes.io/node-name extra. Satisfying that would mean
+	// injecting the controller pod's own node via the downward API — and the node the
+	// controller happens to be scheduled on is arbitrary with respect to the spoke
+	// cluster, the session and the target workload. Breakglass authorizes humans via
+	// OIDC, not node-bound ServiceAccounts, so a controller impersonating its own node
+	// grants something semantically meaningless. Wiring it would turn a loud failure
+	// into a silent fake success, which is strictly worse.
+	if ic.Mode == ImpersonationModeAssociatedNode {
+		errs = append(errs, field.Invalid(fieldPath.Child("mode"), ic.Mode,
+			"mode associated-node is not supported by breakglass. The API server only selects it "+
+				"when the impersonated node matches the REQUESTOR's own node (via its "+
+				"authentication.kubernetes.io/node-name extra), so it requires a node-bound "+
+				"ServiceAccount token. Breakglass authorizes human users via OIDC and has no "+
+				"node-bound identity, so this mode would fail at deploy time or silently fall back "+
+				"to legacy (unconstrained) impersonation. Use arbitrary-node to impersonate a "+
+				"specific node, serviceaccount for a ServiceAccount, or user-info for a user."))
+		return errs
+	}
+
 	mode := InferImpersonationMode(ic)
 
 	if ic.ServiceAccountRef != nil && ic.UserName != "" {
@@ -322,13 +347,9 @@ func warnImpersonationConfigIssues(ic *ImpersonationConfig, fieldPath *field.Pat
 		}
 	}
 
-	if mode == ImpersonationModeAssociatedNode {
-		warnings = append(warnings, fmt.Sprintf(
-			"%s: associated-node mode requires the requesting identity to be a ServiceAccount "+
-				"carrying the authentication.kubernetes.io/node-name extra, which means a pod-bound "+
-				"token with the node name injected via the downward API. A controller running off a "+
-				"static kubeconfig can never satisfy it and will fall back to legacy.", fieldPath))
-	}
+	// No associated-node warning here on purpose: validateImpersonationConstraints
+	// REJECTS that mode outright, so a warning could never be the outcome. See the
+	// rejection there for why the mode is unsupportable in the OIDC model.
 
 	return warnings
 }

@@ -970,6 +970,18 @@ const (
 	// ImpersonationModeAssociatedNode impersonates only the node the requesting
 	// ServiceAccount is itself scheduled on. Requires the requestor to carry the
 	// authentication.kubernetes.io/node-name extra.
+	//
+	// NOT CONFIGURABLE on an ImpersonationConfig: validateImpersonationConstraints
+	// rejects it. Breakglass authorizes human users via OIDC and has no node-bound
+	// ServiceAccount identity, so the mode could only ever impersonate whichever node
+	// the controller pod happened to land on — arbitrary with respect to the spoke,
+	// the session and the target workload, and a silent fake success if wired.
+	//
+	// The constant remains part of the enum and of pkg/impersonation deliberately, as
+	// defence-in-depth: the verb parser must still classify
+	// impersonate:associated-node and impersonate-on:associated-node:<verb>, and a
+	// DenyPolicy must still be able to name the mode in order to deny a grant applied
+	// out-of-band. Removing it would turn deniable verbs into unrecognised ones.
 	ImpersonationModeAssociatedNode ImpersonationMode = "associated-node"
 
 	// ImpersonationModeLegacy uses the classic unconstrained `impersonate` verb in

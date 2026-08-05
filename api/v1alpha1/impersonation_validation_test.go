@@ -142,7 +142,8 @@ func TestValidateImpersonationConstraints_ValidConfigs(t *testing.T) {
 			"arbitrary-node fqdn",
 			&ImpersonationConfig{Mode: ImpersonationModeArbitraryNode, UserName: "system:node:worker-1.example.com"},
 		},
-		{"associated-node", &ImpersonationConfig{Mode: ImpersonationModeAssociatedNode, UserName: "system:node:worker-1"}},
+		// associated-node is deliberately absent: it is rejected at admission. See
+		// TestValidateImpersonationConstraints_AssociatedNodeRejected.
 		{
 			"legacy tolerates anything short of system:masters",
 			&ImpersonationConfig{
@@ -183,7 +184,7 @@ func TestValidateImpersonationConstraints_HeaderMixingTrapRejected(t *testing.T)
 	}{
 		{ImpersonationModeServiceAccount, "system:serviceaccount:ns:sa"},
 		{ImpersonationModeArbitraryNode, "system:node:worker-1"},
-		{ImpersonationModeAssociatedNode, "system:node:worker-1"},
+		// associated-node omitted: rejected outright before the mixing check runs.
 	}
 
 	offenders := []struct {
@@ -226,9 +227,13 @@ func TestValidateImpersonationConstraints_HeaderMixingTrapRejected(t *testing.T)
 func TestValidateImpersonationConstraints_SystemMastersRejectedInEveryMode(t *testing.T) {
 	// The API server hard-denies system:masters in constrained mode but NOT for
 	// legacy. Breakglass refuses it everywhere.
+	// associated-node is excluded because it is rejected for being that mode at all,
+	// before the system:masters check is reached. It is therefore still refused — just
+	// for a different, stricter reason. See
+	// TestValidateImpersonationConstraints_AssociatedNodeRejected.
 	modes := []ImpersonationMode{
 		ImpersonationModeUserInfo, ImpersonationModeServiceAccount,
-		ImpersonationModeArbitraryNode, ImpersonationModeAssociatedNode,
+		ImpersonationModeArbitraryNode,
 		ImpersonationModeLegacy,
 	}
 
@@ -424,9 +429,11 @@ func TestWarnImpersonationConfigIssues(t *testing.T) {
 			"", true,
 		},
 		{
-			"associated-node warns about downward API requirement",
+			// associated-node is a hard admission ERROR, not a warning, so warning on
+			// it too would be noise the operator can never act on differently.
+			"associated-node does not warn because it is rejected outright",
 			&ImpersonationConfig{Mode: ImpersonationModeAssociatedNode, UserName: "system:node:w1"},
-			"node-name", false,
+			"", true,
 		},
 	}
 

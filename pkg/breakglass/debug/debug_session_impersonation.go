@@ -7,7 +7,6 @@ package debug
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"k8s.io/client-go/rest"
 
@@ -23,19 +22,13 @@ var breakglassProbeCapability = func(clusterName string) impersonation.Capabilit
 	return breakglass.ProbeCapabilityCache().Get(clusterName)
 }
 
-// nodeNameEnvVar is the environment variable the breakglass pod is expected to
-// carry its own node name in, injected via the downward API:
-//
-//	env:
-//	- name: NODE_NAME
-//	  valueFrom:
-//	    fieldRef:
-//	      fieldPath: spec.nodeName
-//
-// This is required for associated-node impersonation (KEP-5284 knob 10): the mode
-// is only selected when the impersonated node name matches the requestor's own
-// node, and the requestor has no other way to learn which node that is.
-const nodeNameEnvVar = "NODE_NAME"
+// Note on associated-node (KEP-5284 knob 10): breakglass deliberately does NOT
+// inject its own node name via the downward API, and no NODE_NAME env var is read.
+// The mode is only selected when the impersonated node matches the REQUESTOR's node,
+// so wiring it would impersonate whichever node this controller pod happens to be
+// scheduled on — arbitrary with respect to the spoke, the session and the target
+// workload, and meaningless in a model that authorizes humans via OIDC. The mode is
+// rejected at admission instead; see validateImpersonationConstraints.
 
 // applyImpersonation sets restCfg.Impersonate from an ImpersonationConfig,
 // honouring the spoke's constrained-impersonation capability.
@@ -107,15 +100,20 @@ func (c *DebugSessionController) buildImpersonationIdentity(
 		identity.Extra = impConfig.Extra
 	}
 
+	// associated-node is rejected at admission (see validateImpersonationConstraints),
+	// so this is only reachable for an object stored before that validation existed.
+	// It fails loudly rather than falling back, because the alternative is impersonating
+	// whichever node this controller pod happens to be scheduled on — arbitrary with
+	// respect to the spoke, the session and the target workload, and silently
+	// unconstrained if it lands on legacy.
 	if mode == impersonation.ModeAssociatedNode {
-		nodeName := os.Getenv(nodeNameEnvVar)
-		if nodeName == "" {
-			return identity, mode, fmt.Errorf(
-				"associated-node impersonation requires the %s environment variable, injected via the "+
-					"downward API from spec.nodeName; the breakglass pod does not have it set",
-				nodeNameEnvVar)
-		}
-		identity.UserName = impersonation.UsernameNodePrefix + nodeName
+		return identity, mode, fmt.Errorf(
+			"mode associated-node is not supported by breakglass: it requires a node-bound "+
+				"ServiceAccount token whose %s extra matches the impersonated node, and breakglass "+
+				"authorizes human users via OIDC with no node-bound identity. This object predates "+
+				"the admission check that now rejects this mode; change it to arbitrary-node, "+
+				"serviceaccount or user-info",
+			impersonation.NodeNameExtraKey)
 	}
 
 	return identity, mode, nil
