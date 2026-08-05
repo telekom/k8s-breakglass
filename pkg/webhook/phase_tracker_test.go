@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -134,4 +135,79 @@ func TestSARPhases_Constants(t *testing.T) {
 	assert.Equal(t, SARPhase("session_sars"), PhaseSessionSARs)
 	assert.Equal(t, SARPhase("escalations"), PhaseEscalations)
 	assert.Equal(t, SARPhase("total"), PhaseTotal)
+}
+
+// TestSARPhaseTracker_InvalidClusterNameNeverBecomesLabel is the cardinality
+// regression test for #185. clusterName is the raw :cluster_name route parameter
+// and was used verbatim as a Prometheus label on a HistogramVec (9 phases x
+// buckets) before the cluster had been resolved, so a remote caller could mint an
+// unbounded number of series and grow the operator heap without bound. Every
+// value that is not a valid Kubernetes object name must collapse onto one series.
+func TestSARPhaseTracker_InvalidClusterNameNeverBecomesLabel(t *testing.T) {
+	vec := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "test_breakglass_webhook_sar_phase_duration_cardinality",
+		Help:    "Test metric for cardinality",
+		Buckets: []float64{.0001, .001, .01},
+	}, []string{"cluster", "phase"})
+	reg := prometheus.NewRegistry()
+	require.NoError(t, reg.Register(vec))
+
+	original := metrics.WebhookSARPhaseDuration
+	metrics.WebhookSARPhaseDuration = vec
+	t.Cleanup(func() { metrics.WebhookSARPhaseDuration = original })
+
+	// Attacker-controlled route parameter values: none is a valid object name.
+	hostile := []string{
+		"../../etc/passwd",
+		"Cluster With Spaces",
+		"UPPERCASE",
+		"a{b=\"c\"}",
+		"trailing-dash-",
+		strings.Repeat("x", 254),
+		"\n",
+	}
+	for _, name := range hostile {
+		NewSARPhaseTracker(name, zap.NewNop().Sugar()).EndPhase(PhaseParse)
+	}
+
+	families, err := reg.Gather()
+	require.NoError(t, err)
+	require.Len(t, families, 1)
+
+	labelValues := map[string]struct{}{}
+	for _, m := range families[0].GetMetric() {
+		for _, l := range m.GetLabel() {
+			if l.GetName() == "cluster" {
+				labelValues[l.GetValue()] = struct{}{}
+			}
+		}
+	}
+
+	assert.Equal(t, map[string]struct{}{metrics.LabelValueInvalid: {}}, labelValues,
+		"every invalid cluster name must collapse onto a single placeholder series")
+	for _, name := range hostile {
+		assert.NotContains(t, labelValues, name, "hostile input must never become a label value")
+	}
+
+	// A legitimate cluster name is still recorded verbatim.
+	NewSARPhaseTracker("prod-cluster-01", zap.NewNop().Sugar()).EndPhase(PhaseParse)
+	families, err = reg.Gather()
+	require.NoError(t, err)
+	found := false
+	for _, m := range families[0].GetMetric() {
+		for _, l := range m.GetLabel() {
+			if l.GetName() == "cluster" && l.GetValue() == "prod-cluster-01" {
+				found = true
+			}
+		}
+	}
+	assert.True(t, found, "valid cluster names must be preserved unchanged")
+}
+
+// TestSARPhaseTracker_EmptyClusterNameLabel documents that an absent route
+// parameter is distinguishable from a hostile one.
+func TestSARPhaseTracker_EmptyClusterNameLabel(t *testing.T) {
+	assert.Equal(t, metrics.LabelValueUnknown, NewSARPhaseTracker("", zap.NewNop().Sugar()).clusterLabel)
+	assert.Equal(t, metrics.LabelValueInvalid, NewSARPhaseTracker("Bad Name", zap.NewNop().Sugar()).clusterLabel)
+	assert.Equal(t, "good-name", NewSARPhaseTracker("good-name", zap.NewNop().Sugar()).clusterLabel)
 }

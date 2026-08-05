@@ -30,9 +30,16 @@ type authorizeState struct {
 	// Immutable inputs
 	startTime   time.Time
 	clusterName string
-	ctx         context.Context //nolint:containedctx // request-scoped context: authorizeState is created per HTTP request and passed to private helpers; storing ctx here avoids threading it through every helper signature while keeping it out of global state
-	reqLog      *zap.SugaredLogger
-	phases      *SARPhaseTracker
+	// clusterLabel is clusterName reduced to a bounded set of Prometheus label
+	// values. clusterName is the raw :cluster_name route parameter, used as a
+	// metric label before the cluster has been resolved, so using it verbatim
+	// lets a remote caller create unbounded metric series (heap growth that is
+	// never reclaimed). Use clusterLabel for metrics, clusterName for logs and
+	// user-facing messages.
+	clusterLabel string
+	ctx          context.Context //nolint:containedctx // request-scoped context: authorizeState is created per HTTP request and passed to private helpers; storing ctx here avoids threading it through every helper signature while keeping it out of global state
+	reqLog       *zap.SugaredLogger
+	phases       *SARPhaseTracker
 
 	// Parsed request
 	sar authorizationv1.SubjectAccessReview
@@ -59,12 +66,14 @@ type authorizeState struct {
 // parseSARRequest reads the request body, unmarshals the SubjectAccessReview, and
 // initialises the authorizeState. Returns (state, ok); writes HTTP status on failure.
 func (wc *WebhookController) parseSARRequest(c *gin.Context) (*authorizeState, bool) {
+	clusterName := c.Param("cluster_name")
 	s := &authorizeState{
-		startTime:   time.Now(),
-		clusterName: c.Param("cluster_name"),
-		ctx:         c.Request.Context(),
+		startTime:    time.Now(),
+		clusterName:  clusterName,
+		clusterLabel: metrics.SafeClusterLabel(clusterName),
+		ctx:          c.Request.Context(),
 	}
-	metrics.WebhookSARRequests.WithLabelValues(s.clusterName).Inc()
+	metrics.WebhookSARRequests.WithLabelValues(s.clusterLabel).Inc()
 	wc.log.With("cluster", s.clusterName).Debug("Processing authorization request for cluster")
 
 	s.phases = NewSARPhaseTracker(s.clusterName, wc.log)
@@ -122,12 +131,12 @@ func (wc *WebhookController) resolveClusterConfig(c *gin.Context, s *authorizeSt
 						"Ask your platform administrators to onboard the cluster or choose one of the onboarded clusters.",
 					s.clusterName, actionSummary)
 				reason = wc.finalizeReason(reason, false, s.clusterName)
-				metrics.WebhookSARDenied.WithLabelValues(s.clusterName).Inc()
-				metrics.WebhookSARDuration.WithLabelValues(s.clusterName, "denied").
+				metrics.WebhookSARDenied.WithLabelValues(s.clusterLabel).Inc()
+				metrics.WebhookSARDuration.WithLabelValues(s.clusterLabel, "denied").
 					Observe(time.Since(s.startTime).Seconds())
 				if s.sar.Spec.ResourceAttributes != nil {
 					metrics.WebhookSARDecisions.WithLabelValues(
-						s.clusterName, "denied", "cluster-missing").Inc()
+						s.clusterLabel, "denied", "cluster-missing").Inc()
 				}
 				s.reqLog.Warnw("Cluster not registered for Breakglass", "cluster", s.clusterName)
 				c.JSON(http.StatusOK, &SubjectAccessReviewResponse{
@@ -239,10 +248,10 @@ func (wc *WebhookController) checkEarlyDebugSession(c *gin.Context, s *authorize
 				s.reqLog.Infow("Debug session authorizing pod operation (bypassing deny policies)",
 					"session", debugSession, "pod", ra.Name,
 					"namespace", ra.Namespace, "operation", ra.Subresource)
-				metrics.WebhookSARAllowed.WithLabelValues(s.clusterName).Inc()
+				metrics.WebhookSARAllowed.WithLabelValues(s.clusterLabel).Inc()
 				metrics.WebhookSARDecisions.WithLabelValues(
-					s.clusterName, "allowed", "debug-session").Inc()
-				metrics.WebhookSARDuration.WithLabelValues(s.clusterName, "allowed").
+					s.clusterLabel, "allowed", "debug-session").Inc()
+				metrics.WebhookSARDuration.WithLabelValues(s.clusterLabel, "allowed").
 					Observe(time.Since(s.startTime).Seconds())
 				reason := wc.finalizeReason(debugReason, true, s.clusterName)
 				c.JSON(http.StatusOK, &SubjectAccessReviewResponse{
@@ -349,10 +358,10 @@ func (wc *WebhookController) evaluateDenyPolicies(c *gin.Context, s *authorizeSt
 				"activeSessions", len(s.sessions),
 			)
 			// Emit denied metric for global policy short-circuit
-			metrics.WebhookSARDenied.WithLabelValues(s.clusterName).Inc()
+			metrics.WebhookSARDenied.WithLabelValues(s.clusterLabel).Inc()
 			metrics.WebhookSARDecisions.WithLabelValues(
-				s.clusterName, "denied", "global").Inc()
-			metrics.WebhookSARDuration.WithLabelValues(s.clusterName, "denied").
+				s.clusterLabel, "denied", "global").Inc()
+			metrics.WebhookSARDuration.WithLabelValues(s.clusterLabel, "denied").
 				Observe(time.Since(s.startTime).Seconds())
 			s.reqLog.Debugw("Global denyEval matched", "policy", pol, "action", act)
 
@@ -399,10 +408,10 @@ func (wc *WebhookController) evaluateDenyPolicies(c *gin.Context, s *authorizeSt
 					"username", s.sar.Spec.User,
 				)
 				// Emit denied metric for session-scoped policy short-circuit
-				metrics.WebhookSARDenied.WithLabelValues(s.clusterName).Inc()
+				metrics.WebhookSARDenied.WithLabelValues(s.clusterLabel).Inc()
 				metrics.WebhookSARDecisions.WithLabelValues(
-					s.clusterName, "denied", "session").Inc()
-				metrics.WebhookSARDuration.WithLabelValues(s.clusterName, "denied").
+					s.clusterLabel, "denied", "session").Inc()
+				metrics.WebhookSARDuration.WithLabelValues(s.clusterLabel, "denied").
 					Observe(time.Since(s.startTime).Seconds())
 				s.reqLog.Debugw("Session denyEval matched", "policy", pol, "session", sess.Name, "action", act)
 
@@ -435,10 +444,10 @@ func (wc *WebhookController) denyPolicyEvaluationFailure(
 ) bool {
 	s.reqLog.With("error", err.Error(), "scope", scope, "action", act).
 		Error("deny policy evaluation failed closed")
-	metrics.WebhookSARDenied.WithLabelValues(s.clusterName).Inc()
+	metrics.WebhookSARDenied.WithLabelValues(s.clusterLabel).Inc()
 	metrics.WebhookSARDecisions.WithLabelValues(
-		s.clusterName, "denied", "policy-error").Inc()
-	metrics.WebhookSARDuration.WithLabelValues(s.clusterName, "denied").
+		s.clusterLabel, "denied", "policy-error").Inc()
+	metrics.WebhookSARDuration.WithLabelValues(s.clusterLabel, "denied").
 		Observe(time.Since(s.startTime).Seconds())
 
 	reason := wc.finalizeReason("DenyPolicy evaluation failed; request denied fail-closed", false, s.clusterName)
@@ -540,7 +549,7 @@ func (wc *WebhookController) performRBACCheck(c *gin.Context, s *authorizeState)
 		// Emit allowed decision metric for action
 		if s.sar.Spec.ResourceAttributes != nil {
 			metrics.WebhookSARDecisions.WithLabelValues(
-				s.clusterName, "allowed", "rbac").Inc()
+				s.clusterLabel, "allowed", "rbac").Inc()
 		}
 	}
 	return true
@@ -590,7 +599,7 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 			s.reason = debugReason
 			// Emit metric for debug session authorization
 			metrics.WebhookSARDecisions.WithLabelValues(
-				s.clusterName, "allowed", "debug-session").Inc()
+				s.clusterLabel, "allowed", "debug-session").Inc()
 		}
 	}
 
@@ -705,7 +714,7 @@ func (wc *WebhookController) buildFinalReason(s *authorizeState) {
 	if !s.allowed && len(s.sessions) > 0 {
 		// If we recorded a skip for session SAR checks, add a diagnostic note to the reason
 		if s.sessionSARSkipErr != nil {
-			metrics.WebhookSessionSARSSkipped.WithLabelValues(s.clusterName).Inc()
+			metrics.WebhookSessionSARSSkipped.WithLabelValues(s.clusterLabel).Inc()
 			// Collect session names and granted groups for the diagnostic message
 			sessInfo := make([]string, 0, len(s.sessions))
 			for _, sess := range s.sessions {
@@ -783,18 +792,18 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 	username := s.sar.Spec.User
 
 	if s.allowed {
-		metrics.WebhookSARAllowed.WithLabelValues(s.clusterName).Inc()
+		metrics.WebhookSARAllowed.WithLabelValues(s.clusterLabel).Inc()
 		// Increment action-based decision metric only for session-authorized decisions.
 		// RBAC and debug-session paths are already recorded at decision time to avoid duplicate/misleading labels.
 		if s.sar.Spec.ResourceAttributes != nil && s.allowSource == "session" {
 			metrics.WebhookSARDecisions.WithLabelValues(
-				s.clusterName, "allowed", "session").Inc()
+				s.clusterLabel, "allowed", "session").Inc()
 		}
 	} else {
-		metrics.WebhookSARDenied.WithLabelValues(s.clusterName).Inc()
+		metrics.WebhookSARDenied.WithLabelValues(s.clusterLabel).Inc()
 		if s.sar.Spec.ResourceAttributes != nil {
 			metrics.WebhookSARDecisions.WithLabelValues(
-				s.clusterName, "denied", "final").Inc()
+				s.clusterLabel, "denied", "final").Inc()
 		}
 	}
 
@@ -885,7 +894,7 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 	if !s.allowed {
 		decision = "denied"
 	}
-	metrics.WebhookSARDuration.WithLabelValues(s.clusterName, decision).
+	metrics.WebhookSARDuration.WithLabelValues(s.clusterLabel, decision).
 		Observe(time.Since(s.startTime).Seconds())
 
 	// Ensure correlation ID header is present for apiserver correlation
