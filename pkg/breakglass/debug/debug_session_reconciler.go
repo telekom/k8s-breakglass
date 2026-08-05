@@ -39,6 +39,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -836,7 +837,13 @@ func (c *DebugSessionController) createImpersonatedClient(
 	// `serviceaccount` mode. So on a spoke that supports the feature this request is
 	// automatically constrained, and on an older spoke it is the same legacy
 	// impersonation it has always been — the same bytes either way.
+	// GetRESTConfig returns a POINTER INTO THE PROVIDER'S TTL CACHE, shared by every
+	// caller for this spoke — the webhook's RBAC probe and session SAR checks
+	// included. Writing Impersonate onto it would poison all of them for the rest of
+	// the cache TTL, silently running unrelated requests as the impersonated
+	// identity. Copy before mutating.
 	if impConfig != nil {
+		restCfg = rest.CopyConfig(restCfg)
 		if err := c.applyImpersonation(ctx, restCfg, clusterName, impConfig); err != nil {
 			return nil, err
 		}
