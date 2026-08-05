@@ -27,6 +27,16 @@ type NamespaceConstraintsApplyConfiguration struct {
 	// allowUserNamespace allows users to request a specific namespace.
 	// If false, only defaultNamespace is used.
 	AllowUserNamespace *bool `json:"allowUserNamespace,omitempty"`
+	// denyUserNamespace disables user-selected namespaces regardless of
+	// allowUserNamespace. It exists so that a DebugSessionClusterBinding can
+	// narrow a permissive template: allowUserNamespace cannot express that
+	// intent because its zero value is indistinguishable from "unset".
+	// Absent or false preserves existing behaviour exactly. When true, only
+	// defaultNamespace is used, even if the template sets
+	// allowUserNamespace: true.
+	// This field intentionally carries no default so that stored objects
+	// written before it existed keep behaving as before.
+	DenyUserNamespace *bool `json:"denyUserNamespace,omitempty"`
 	// createIfNotExists creates the target namespace if it doesn't exist.
 	// Requires appropriate RBAC permissions.
 	CreateIfNotExists *bool `json:"createIfNotExists,omitempty"`
@@ -70,6 +80,14 @@ func (b *NamespaceConstraintsApplyConfiguration) WithDefaultNamespace(value stri
 // If called multiple times, the AllowUserNamespace field is set to the value of the last call.
 func (b *NamespaceConstraintsApplyConfiguration) WithAllowUserNamespace(value bool) *NamespaceConstraintsApplyConfiguration {
 	b.AllowUserNamespace = &value
+	return b
+}
+
+// WithDenyUserNamespace sets the DenyUserNamespace field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DenyUserNamespace field is set to the value of the last call.
+func (b *NamespaceConstraintsApplyConfiguration) WithDenyUserNamespace(value bool) *NamespaceConstraintsApplyConfiguration {
+	b.DenyUserNamespace = &value
 	return b
 }
 

@@ -2574,6 +2574,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: deniedNamespaces
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
+    - name: denyUserNamespace
+      type:
+        scalar: boolean
     - name: namespaceLabels
       type:
         map:

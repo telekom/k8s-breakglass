@@ -933,6 +933,18 @@ type NamespaceConstraints struct {
 	// +kubebuilder:default=false
 	AllowUserNamespace bool `json:"allowUserNamespace,omitempty"`
 
+	// denyUserNamespace disables user-selected namespaces regardless of
+	// allowUserNamespace. It exists so that a DebugSessionClusterBinding can
+	// narrow a permissive template: allowUserNamespace cannot express that
+	// intent because its zero value is indistinguishable from "unset".
+	// Absent or false preserves existing behaviour exactly. When true, only
+	// defaultNamespace is used, even if the template sets
+	// allowUserNamespace: true.
+	// This field intentionally carries no default so that stored objects
+	// written before it existed keep behaving as before.
+	// +optional
+	DenyUserNamespace bool `json:"denyUserNamespace,omitempty"`
+
 	// createIfNotExists creates the target namespace if it doesn't exist.
 	// Requires appropriate RBAC permissions.
 	// +optional
