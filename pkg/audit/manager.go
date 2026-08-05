@@ -783,6 +783,33 @@ func (m *Manager) DebugSessionApprovalTimeout(ctx context.Context, sessionName, 
 	})
 }
 
+// DebugSessionBindingUnresolved emits an audit event when a DebugSession names an
+// explicit BindingRef that could not be resolved. Because the binding carries the
+// approver configuration, this leaves the approval requirement indeterminate and the
+// session is NOT activated — it is requeued until the ref resolves or the reference
+// is corrected.
+func (m *Manager) DebugSessionBindingUnresolved(ctx context.Context, sessionName, namespace, cluster, bindingName, bindingNamespace, reason string) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionBindingUnresolved,
+		Severity: SeverityWarning,
+		Actor:    Actor{User: "system"},
+		Target: Target{
+			Kind:      "DebugSession",
+			Name:      sessionName,
+			Namespace: namespace,
+		},
+		Details: map[string]interface{}{
+			"cluster":          cluster,
+			"bindingName":      bindingName,
+			"bindingNamespace": bindingNamespace,
+			"reason":           reason,
+		},
+		RequestContext: &RequestContext{
+			DebugSessionName: sessionName,
+		},
+	})
+}
+
 // DebugSessionPodFailed emits an audit event when a debug session pod fails.
 func (m *Manager) DebugSessionPodFailed(ctx context.Context, sessionName, namespace, podName, podNamespace, reason, message string) {
 	m.Emit(ctx, &Event{

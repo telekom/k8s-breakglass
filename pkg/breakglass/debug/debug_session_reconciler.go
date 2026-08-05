@@ -219,10 +219,7 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	if ds.Spec.BindingRef != nil {
 		binding, err = c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace)
 		if err != nil {
-			log.Warnw("Failed to get binding by ref, will try auto-discovery",
-				"binding", ds.Spec.BindingRef.Name,
-				"namespace", ds.Spec.BindingRef.Namespace,
-				"error", err)
+			return c.deferOnUnresolvedBinding(ctx, ds, err)
 		}
 	}
 	if binding == nil {
@@ -267,10 +264,17 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 		if err != nil {
 			return c.failSession(ctx, ds, fmt.Sprintf("template not found: %s", ds.Spec.TemplateRef))
 		}
-		// Find binding for merging allowed pod operations
+		// Find binding for merging allowed pod operations.
+		// Same indeterminate-vs-absent reasoning as handlePending: the binding can only
+		// narrow AllowedPodOperations, so activating without it would grant a strictly
+		// wider set than the approver saw. Requeue instead of guessing.
 		var binding *breakglassv1alpha1.DebugSessionClusterBinding
 		if ds.Spec.BindingRef != nil {
-			binding, _ = c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace)
+			var bErr error
+			binding, bErr = c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace)
+			if bErr != nil {
+				return c.deferOnUnresolvedBinding(ctx, ds, bErr)
+			}
 		}
 		if binding == nil {
 			binding, _ = c.findBindingForSession(ctx, template, ds.Spec.Cluster)
@@ -718,6 +722,67 @@ func (c *DebugSessionController) getBinding(ctx context.Context, name, namespace
 		return nil, err
 	}
 	return binding, nil
+}
+
+// deferOnUnresolvedBinding handles the case where a DebugSession names an explicit
+// BindingRef that cannot be resolved.
+//
+// Failure modes here are asymmetric, so the design is deliberately "indeterminate",
+// not "deny":
+//
+//   - Silently auto-discovering (the previous behaviour) fails OPEN: the binding
+//     carries the approver set, so losing it makes requiresApproval() return false and
+//     the session activates with no approval on a transient API error.
+//   - Failing the session outright would fail CLOSED but destructively: DebugSessionStateFailed
+//     is terminal and never requeues, so a two-second apiserver blip during an incident
+//     would permanently kill an operator's emergency session and force a manual re-request.
+//
+// So we do neither. The session stays in its current state (Pending / PendingApproval —
+// no access granted, nothing terminal) and we requeue. A NotFound on a mistyped ref will
+// keep requeueing and remain visible via the audit event, the Error log and the
+// breakglass_debug_session_binding_unresolved_total metric; the existing approval-timeout
+// path still bounds how long a PendingApproval session can linger. No NEW lockout path is
+// introduced: every state that previously activated either still activates or is retried.
+func (c *DebugSessionController) deferOnUnresolvedBinding(
+	ctx context.Context,
+	ds *breakglassv1alpha1.DebugSession,
+	cause error,
+) (ctrl.Result, error) {
+	bindingName, bindingNamespace := "", ""
+	if ds.Spec.BindingRef != nil {
+		bindingName = ds.Spec.BindingRef.Name
+		bindingNamespace = ds.Spec.BindingRef.Namespace
+	}
+
+	reason := "binding lookup failed"
+	if apierrors.IsNotFound(cause) {
+		reason = "binding not found"
+	}
+
+	c.log.Errorw("Refusing to evaluate debug session: explicit bindingRef is unresolvable, "+
+		"approval requirement is indeterminate; not falling back to auto-discovery",
+		"debugSession", ds.Name,
+		"namespace", ds.Namespace,
+		"cluster", ds.Spec.Cluster,
+		"state", string(ds.Status.State),
+		"binding", bindingName,
+		"bindingNamespace", bindingNamespace,
+		"reason", reason,
+		"error", cause)
+
+	metrics.DebugSessionBindingUnresolved.WithLabelValues(ds.Spec.Cluster, reason).Inc()
+
+	if c.shouldEmitAudit(ds) {
+		if auditManager := c.currentAuditManager(); auditManager != nil {
+			auditManager.DebugSessionBindingUnresolved(ctx, ds.Name, ds.Namespace,
+				ds.Spec.Cluster, bindingName, bindingNamespace, reason)
+		}
+	}
+
+	// Return the error so controller-runtime applies its exponential backoff rather
+	// than our fixed requeue interval; the session state is left untouched.
+	return ctrl.Result{}, fmt.Errorf("resolve bindingRef %s/%s for debug session %s/%s: %w",
+		bindingNamespace, bindingName, ds.Namespace, ds.Name, cause)
 }
 
 // findBindingForSession finds a DebugSessionClusterBinding that matches the session's template and cluster.

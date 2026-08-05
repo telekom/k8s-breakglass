@@ -467,6 +467,15 @@ var (
 		Name: "breakglass_debug_session_rejected_total",
 		Help: "Total debug sessions rejected",
 	}, []string{"cluster", "reason"})
+	// DebugSessionBindingUnresolved counts DebugSessions whose explicit bindingRef could
+	// not be resolved. The binding carries the approver configuration, so the approval
+	// requirement is indeterminate and activation is deferred (requeued) rather than
+	// falling back to auto-discovery. A non-zero rate means sessions are stalled waiting
+	// on a binding — alert on it.
+	DebugSessionBindingUnresolved = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_debug_session_binding_unresolved_total",
+		Help: "Total debug session reconciles where an explicit bindingRef could not be resolved",
+	}, []string{"cluster", "reason"})
 
 	// Auxiliary resource metrics
 	AuxiliaryResourceDeployments = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -715,6 +724,7 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(DebugSessionApprovalRequired)
 	ctrlmetrics.Registry.MustRegister(DebugSessionApproved)
 	ctrlmetrics.Registry.MustRegister(DebugSessionRejected)
+	ctrlmetrics.Registry.MustRegister(DebugSessionBindingUnresolved)
 
 	// Register auxiliary resource metrics
 	ctrlmetrics.Registry.MustRegister(AuxiliaryResourceDeployments)
