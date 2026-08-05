@@ -122,7 +122,7 @@ spec:
     caSecretRef:
       name: <ca-secret-name>
       namespace: <secret-namespace>
-      key: ca.crt  # Optional, defaults to "ca.crt"
+      key: ca.crt  # Optional, defaults to "ca.crt" (a CA found only under the legacy key "value" is still read and migrated)
     
     # Optional: Token audience (defaults to server URL)
     audience: https://my-cluster.example.com:6443
@@ -506,7 +506,7 @@ spec:
 
 **Requirements:**
 
-- `rotatedRefreshTokenKey` must differ from the key in `refreshTokenSecretRef`
+- `rotatedRefreshTokenKey` must differ from the key in `refreshTokenSecretRef`. When `refreshTokenSecretRef.key` is omitted, the runtime resolves it to `token`, so admission rejects `rotatedRefreshTokenKey: token` (and `value`) in that case — otherwise the rotated token would overwrite the seed token in place and spoke access would be lost once it expires. Set `refreshTokenSecretRef.key` explicitly to reserve only that one key.
 - The controller needs `update` permission on Secrets in the token's namespace (already granted by default RBAC)
 
 **Annotations added on rotation:**
