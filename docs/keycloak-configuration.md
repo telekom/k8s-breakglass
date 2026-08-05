@@ -710,7 +710,9 @@ grant_type=refresh_token
 - The client must have `offline_access` in its optional client scopes
 - The refresh token must have been obtained with `scope=offline_access`
 
-> **Note — Secret key defaults**: The `SecretKeyReference.key` field defaults to `"value"` per the CRD schema, but the `refreshTokenSecretRef` and `subjectTokenSecretRef` code paths default to `"token"` at runtime if no key is specified. This is a runtime override — always set the `key` field explicitly to avoid confusion.
+> **Note — Secret key defaults**: The `SecretKeyReference.key` field defaults to `"value"` per the CRD schema, but the `refreshTokenSecretRef` and `subjectTokenSecretRef` code paths default to `"token"` at runtime if no key is specified, and `caSecretRef` defaults to `"ca.crt"`. All defaults are defined once in `api/v1alpha1/secretref_defaults.go` and shared by every read, write and admission path. Always set the `key` field explicitly to avoid relying on a per-field default.
+>
+> Because the runtime resolves an omitted `refreshTokenSecretRef.key` to `"token"`, admission rejects `rotatedRefreshTokenKey: token` (and `rotatedRefreshTokenKey: value`) when `refreshTokenSecretRef.key` is unset — otherwise a rotated token would overwrite the seed token in place. When `refreshTokenSecretRef.key` *is* set explicitly, only that key is reserved.
 
 **Side effects**:
 - **Refresh token rotation**: Keycloak's `revokeRefreshToken` realm setting controls whether offline tokens rotate on each use (default: `false` — same token returned). When rotation is enabled, the response contains a new `refresh_token` and the previous one is revoked. The controller handles both scenarios: if `rotatedRefreshTokenKey` is configured, the returned token is always persisted to the Secret via SSA (see [Automatic Refresh Token Rotation](cluster-config.md#automatic-refresh-token-rotation)). Without `rotatedRefreshTokenKey`, the token is cached in-memory only and lost on controller restart.
@@ -1073,10 +1075,44 @@ Set `allowTOFU: true` to auto-discover CAs on first connection:
 - Hostname verification prevents connecting to the wrong server
 - Certificate fingerprint is logged for audit
 - After first use, the CA is persisted and verified on all connections
+- A CA that differs from the persisted pin is a hard failure (`TOFU CA pin mismatch`), never a silent re-pin. To intentionally rotate a spoke CA, clear the pinned key in the Secret or point `caSecretRef` at the new CA.
+
+**Secret key used for the pin**: with `caSecretRef.key` omitted the CA is written to, and read from, `ca.crt`. For backwards compatibility a CA found only under the legacy read key `value` is still honoured, logged with a warning, and migrated to `ca.crt` on the next write. An explicitly configured `caSecretRef.key` is authoritative and is never supplemented by a default key.
 
 **RBAC requirements**: TOFU requires the controller to have `create` and `patch` permissions on Secrets in the target namespace. The persisted Secret is managed via Server-Side Apply (SSA) with the label `app.kubernetes.io/managed-by: breakglass` and annotation `breakglass.t-caas.telekom.com/tofu-ca: true`.
 
-**Cache behavior on restart**: All in-memory caches are lost on controller restart — including TOFU CAs, cached tokens, refresh tokens, fallback credentials, and HTTP clients. If `caSecretRef` is configured, the TOFU CA is persisted and survives restarts. Without `caSecretRef`, a restart triggers re-TOFU on the next connection. If [`rotatedRefreshTokenKey`](cluster-config.md#automatic-refresh-token-rotation) is configured, the refresh token is persisted to the Secret and survives restarts.
+**Cache behavior on restart**: All in-memory caches are lost on controller restart — including TOFU CAs, cached tokens, refresh tokens, fallback credentials, and HTTP clients. If `caSecretRef` is configured, the TOFU CA is persisted and survives restarts; on the next connection the persisted pin is re-read and re-seeds the in-memory cache, so TOFU is not re-run. Without `caSecretRef`, a restart triggers re-TOFU on the next connection. If [`rotatedRefreshTokenKey`](cluster-config.md#automatic-refresh-token-rotation) is configured, the refresh token is persisted to the Secret and survives restarts.
+
+### Upgrade impact — TOFU CA pinning and secret key defaults
+
+Two previously-inert behaviours become active on upgrade. Both are intentional; both can surface as new
+errors or warnings on configurations that were silently broken before.
+
+| Config shape | Before | After |
+|---|---|---|
+| `allowTOFU: true` + `caSecretRef` with `key` omitted | CA written to `ca.crt`, read from `value` → pin never re-read, TOFU re-ran on **every** controller restart/reschedule, silently | CA written to and read from `ca.crt` → pin survives restarts, TOFU runs once |
+| `caSecretRef` with `key` omitted, CA already present under `value` only | Read succeeded (that was the read key) | Read still succeeds via legacy fallback, plus a `Warning` event `ClusterCASecretLegacyKey`; migrated to `ca.crt` on the next TOFU write |
+| `caSecretRef.key` set explicitly | Honoured | Honoured, byte-identically. No fallback to any default key |
+| Spoke presents a CA differing from the persisted pin | Pin silently overwritten, connection proceeded | `TOFU CA pin mismatch` error; the connection is refused and the pin is left intact |
+| `rotatedRefreshTokenKey: token` with `refreshTokenSecretRef.key` omitted | Accepted by admission; runtime resolved both to `token`, so the rotated token **overwrote the seed token** | Rejected by admission with `must differ from the key in refreshTokenSecretRef` |
+| `rotatedRefreshTokenKey: token` with `refreshTokenSecretRef.key` set to something else | Accepted | Accepted (only the explicit key is reserved) |
+
+**The configuration whose meaning changes** is `spec.oidcAuth` / `spec.oidcFromIdentityProvider` with
+`allowTOFU: true`, a `caSecretRef`, and no `caSecretRef.key`. Its documented guarantees — "TOFU is
+vulnerable to MITM on the first connection only" and "After first use, the CA is persisted and verified on
+all connections" — were **not** met before this change: the pin was write-only, so every restart was a
+fresh first connection. The documented guarantees were treated as the source of truth and the code was
+brought in line with them.
+
+**What can newly fail.** A spoke whose CA genuinely rotated while a stale pin is still stored now fails
+with `TOFU CA pin mismatch` instead of silently re-pinning. This is deliberate: an unannounced trust-anchor
+change is indistinguishable from an active MITM, and accepting it would make the pin worthless. Because
+this is an emergency-access tool, everything short of that — a CA under the legacy key, a missing key, an
+inconsistent key — is surfaced as a warning log plus a Kubernetes `Warning` event and still connects.
+Only a contradicted pin refuses.
+
+**Remediation for a legitimate CA rotation**: delete the pinned key from the referenced Secret (or write
+the new CA into it), then let the controller re-bootstrap on the next check cycle.
 
 ### 3. InsecureSkipTLSVerify
 
