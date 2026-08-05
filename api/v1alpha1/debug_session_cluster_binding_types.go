@@ -512,7 +512,9 @@ func ValidateDebugSessionClusterBinding(binding *DebugSessionClusterBinding) *Va
 
 	// Validate impersonation config if specified
 	if spec.Impersonation != nil {
-		result.Errors = append(result.Errors, validateImpersonationConfig(spec.Impersonation, specPath.Child("impersonation"))...)
+		impPath := specPath.Child("impersonation")
+		result.Errors = append(result.Errors, validateImpersonationConfig(spec.Impersonation, impPath)...)
+		result.Warnings = append(result.Warnings, warnImpersonationConfigIssues(spec.Impersonation, impPath)...)
 	}
 
 	// Validate notification config if specified

@@ -61,6 +61,11 @@ type ClusterConfigSpecApplyConfiguration struct {
 	// mailProvider specifies which MailProvider to use for email notifications for this cluster.
 	// If empty, falls back to the default MailProvider.
 	MailProvider *string `json:"mailProvider,omitempty"`
+	// constrainedImpersonation declares whether this spoke supports Kubernetes
+	// constrained impersonation (KEP-5284) and how breakglass should behave when it
+	// does not. Optional; the default is capability autodetection with a legacy
+	// fallback, which is the behaviour of releases before this field existed.
+	ConstrainedImpersonation *ConstrainedImpersonationConfigApplyConfiguration `json:"constrainedImpersonation,omitempty"`
 	// userIdentifierClaim specifies which OIDC claim is used to identify users on this cluster.
 	// This MUST match the `claimMappings.username.claim` configured on the target cluster's
 	// Kubernetes API server OIDC configuration.
@@ -196,6 +201,14 @@ func (b *ClusterConfigSpecApplyConfiguration) WithAllowedApproverDomains(values 
 // If called multiple times, the MailProvider field is set to the value of the last call.
 func (b *ClusterConfigSpecApplyConfiguration) WithMailProvider(value string) *ClusterConfigSpecApplyConfiguration {
 	b.MailProvider = &value
+	return b
+}
+
+// WithConstrainedImpersonation sets the ConstrainedImpersonation field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ConstrainedImpersonation field is set to the value of the last call.
+func (b *ClusterConfigSpecApplyConfiguration) WithConstrainedImpersonation(value *ConstrainedImpersonationConfigApplyConfiguration) *ClusterConfigSpecApplyConfiguration {
+	b.ConstrainedImpersonation = value
 	return b
 }
 

@@ -76,6 +76,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.ClusterConfigSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ClusterConfigStatus"):
 		return &apiv1alpha1.ClusterConfigStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ConstrainedImpersonationConfig"):
+		return &apiv1alpha1.ConstrainedImpersonationConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("CopiedPodRef"):
 		return &apiv1alpha1.CopiedPodRefApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugApprovalReasonConfig"):
@@ -166,6 +168,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.IdentityProviderStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ImpersonationConfig"):
 		return &apiv1alpha1.ImpersonationConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ImpersonationDenyRule"):
+		return &apiv1alpha1.ImpersonationDenyRuleApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("KafkaSASLSpec"):
 		return &apiv1alpha1.KafkaSASLSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("KafkaSinkSpec"):

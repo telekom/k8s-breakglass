@@ -945,14 +945,123 @@ type NamespaceConstraints struct {
 	NamespaceLabels map[string]string `json:"namespaceLabels,omitempty"`
 }
 
+// ImpersonationMode selects a Kubernetes constrained-impersonation mode
+// (KEP-5284). The mode is not sent as a header: the API server derives it from the
+// shape of the impersonated identity. Setting it here tells breakglass which
+// mode it must construct the identity for, so that mismatches are rejected at
+// admission instead of silently degrading to legacy impersonation at runtime.
+//
+// +kubebuilder:validation:Enum=user-info;serviceaccount;arbitrary-node;associated-node;legacy
+type ImpersonationMode string
+
+const (
+	// ImpersonationModeUserInfo impersonates a regular user identity. The only
+	// mode that supports uid, groups and extra.
+	ImpersonationModeUserInfo ImpersonationMode = "user-info"
+
+	// ImpersonationModeServiceAccount impersonates a ServiceAccount by its
+	// system:serviceaccount:<ns>:<name> username. Only the username may be set.
+	ImpersonationModeServiceAccount ImpersonationMode = "serviceaccount"
+
+	// ImpersonationModeArbitraryNode impersonates any node by its
+	// system:node:<name> username. Only the username may be set.
+	ImpersonationModeArbitraryNode ImpersonationMode = "arbitrary-node"
+
+	// ImpersonationModeAssociatedNode impersonates only the node the requesting
+	// ServiceAccount is itself scheduled on. Requires the requestor to carry the
+	// authentication.kubernetes.io/node-name extra.
+	ImpersonationModeAssociatedNode ImpersonationMode = "associated-node"
+
+	// ImpersonationModeLegacy uses the classic unconstrained `impersonate` verb in
+	// the core API group. Required for spokes older than Kubernetes 1.35 or with
+	// the ConstrainedImpersonation gate disabled. Carries no constraints — the API
+	// server does not apply the constrained restrictions to it.
+	ImpersonationModeLegacy ImpersonationMode = "legacy"
+)
+
 // ImpersonationConfig controls which identity is used to deploy debug resources.
 // This enables least-privilege deployment where the controller impersonates
 // a constrained ServiceAccount rather than using its own permissions.
+//
+// The XValidation rules below enforce the KEP-5284 header-mixing trap at
+// admission time. Sending uid, groups or extra alongside a ServiceAccount or node
+// username makes the API server skip constrained impersonation entirely and fall
+// back to legacy (unconstrained) impersonation — the request may still succeed
+// with no constraint applied and no audit record saying so. Rejecting the
+// combination is the only way to make that failure visible.
+//
+// +kubebuilder:validation:XValidation:rule="!(has(self.mode) && (self.mode == 'serviceaccount' || self.mode == 'arbitrary-node' || self.mode == 'associated-node') && (has(self.uid) || has(self.groups) || has(self.extra)))",message="modes serviceaccount, arbitrary-node and associated-node require that ONLY the username is set; setting uid, groups or extra makes the API server silently fall back to legacy unconstrained impersonation"
+// +kubebuilder:validation:XValidation:rule="!(has(self.mode) && self.mode == 'user-info' && has(self.serviceAccountRef))",message="mode user-info cannot impersonate a ServiceAccount; use mode serviceaccount"
+// +kubebuilder:validation:XValidation:rule="!(has(self.mode) && (self.mode == 'arbitrary-node' || self.mode == 'associated-node') && has(self.serviceAccountRef))",message="node impersonation modes cannot target a ServiceAccount; unset serviceAccountRef"
 type ImpersonationConfig struct {
 	// serviceAccountRef references an existing ServiceAccount to impersonate.
 	// The breakglass controller must have impersonation permissions for this SA.
 	// +optional
 	ServiceAccountRef *ServiceAccountReference `json:"serviceAccountRef,omitempty"`
+
+	// mode selects the constrained-impersonation mode (KEP-5284) to use.
+	// If unset, breakglass infers the mode from the identity: a serviceAccountRef
+	// implies "serviceaccount", a userName implies "user-info". Set it explicitly
+	// to have admission reject identities that do not fit the mode.
+	//
+	// Spokes that do not support constrained impersonation fall back to "legacy"
+	// at runtime regardless of this setting — see
+	// ClusterConfig.spec.constrainedImpersonation.
+	// +optional
+	Mode ImpersonationMode `json:"mode,omitempty"`
+
+	// userName is the identity to impersonate when mode is "user-info",
+	// "arbitrary-node" or "associated-node". Mutually exclusive with
+	// serviceAccountRef. For node modes it must be "system:node:<name>".
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	UserName string `json:"userName,omitempty"`
+
+	// uid is the impersonated identity's UID. ONLY valid in "user-info" mode.
+	// Setting it in any other constrained mode disables constrained impersonation.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	UID string `json:"uid,omitempty"`
+
+	// groups are the groups to impersonate. ONLY valid in "user-info" mode: the
+	// API server forces groups=[system:nodes] for node identities and computes
+	// them from the namespace for ServiceAccounts.
+	//
+	// system:masters is rejected. Four or more groups reach the API server's
+	// hardcoded wildcard-collapse threshold, above which grants naming individual
+	// groups stop being consulted.
+	// +optional
+	// +kubebuilder:validation:MaxItems=32
+	Groups []string `json:"groups,omitempty"`
+
+	// extra are additional identity attributes, sent as Impersonate-Extra-<key>.
+	// ONLY valid in "user-info" mode. Keys must be lowercase, valid
+	// domain-prefixed paths; value lists must be non-empty with no empty strings.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=32
+	Extra map[string][]string `json:"extra,omitempty"`
+
+	// allowedIdentities restricts which identities this configuration may
+	// impersonate, mirroring the resourceNames of the generated RBAC identity
+	// rule. Supports exact values only — the API server matches resourceNames
+	// exactly, so wildcards other than a bare "*" have no effect.
+	//
+	// If empty, no allowlist is enforced by breakglass and the spoke's RBAC is the
+	// only control.
+	// +optional
+	// +kubebuilder:validation:MaxItems=100
+	AllowedIdentities []string `json:"allowedIdentities,omitempty"`
+
+	// actionVerbs is the set of underlying request verbs this configuration may
+	// perform under impersonation. Breakglass turns each into an
+	// `impersonate-on:<mode>:<verb>` grant.
+	//
+	// Kubernetes has no prefix wildcard for these verbs: you cannot write
+	// `impersonate-on:user-info:*`. Use "*" here to mean "every verb", which
+	// breakglass renders as an RBAC `verbs: ["*"]` rule.
+	// +optional
+	// +kubebuilder:validation:MaxItems=32
+	ActionVerbs []string `json:"actionVerbs,omitempty"`
 }
 
 // ServiceAccountReference references a ServiceAccount in a specific namespace.
