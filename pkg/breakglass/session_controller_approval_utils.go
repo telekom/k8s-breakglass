@@ -16,6 +16,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
@@ -26,6 +27,71 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// unverifiedGroupsCacheSuffix marks the per-request gin context key recording
+// that the cluster-side approver group lookup already failed for this
+// (cluster, user) pair, so repeated authorization checks within one request do
+// not retry a known-failing spoke and do not silently regain "verified" status.
+const unverifiedGroupsCacheSuffix = "_unverified"
+
+// recordUnverifiedApproverGroupsDecision makes a fail-open approval decision
+// observable: it emits a dedicated audit event and increments a dedicated
+// metric whenever an approval was granted on unverified JWT-claim groups because
+// the cluster-verified group lookup failed.
+//
+// This deliberately does NOT change the decision. Breakglass is an
+// emergency-access tool with asymmetric failure modes: a wrong deny locks
+// operators out of production during an incident, which is generally worse than
+// a wrong allow that is fully attributed and alertable. So the weaker basis is
+// surfaced rather than enforced.
+func (wc *BreakglassSessionController) recordUnverifiedApproverGroupsDecision(
+	ctx context.Context,
+	session *breakglassv1alpha1.BreakglassSession,
+	approver, matchedGroup, identityProvider string,
+	reqLog *zap.SugaredLogger,
+) {
+	metrics.ApprovalUnverifiedGroupDecisions.WithLabelValues(session.Spec.Cluster).Inc()
+
+	reqLog.Warnw("Approval authorized on UNVERIFIED groups: cluster group lookup failed and the JWT-claim group fallback was load-bearing for this decision",
+		"session", session.Name,
+		"cluster", session.Spec.Cluster,
+		"approver", approver,
+		"matchedGroup", system.RedactGroupName(matchedGroup),
+		"identityProvider", identityProvider,
+		"remediation", "verify spoke cluster reachability and credentials; review this approval")
+
+	if wc.auditService == nil || !wc.auditService.IsEnabled() {
+		return
+	}
+	wc.auditService.Emit(ctx, &audit.Event{
+		Type:      audit.EventSessionApprovalUnverifiedGroups,
+		Severity:  audit.SeverityWarning,
+		Timestamp: time.Now().UTC(),
+		Actor: audit.Actor{
+			User:             approver,
+			IdentityProvider: identityProvider,
+		},
+		Target: audit.Target{
+			Kind:      "BreakglassSession",
+			Name:      session.Name,
+			Namespace: session.Namespace,
+			Cluster:   session.Spec.Cluster,
+		},
+		RequestContext: &audit.RequestContext{
+			SessionName:    session.Name,
+			EscalationName: session.Spec.GrantedGroup,
+		},
+		Details: map[string]interface{}{
+			"message":       "Approval authorization used unverified JWT-claim groups because the cluster-side group lookup failed",
+			"cluster":       session.Spec.Cluster,
+			"grantedGroup":  session.Spec.GrantedGroup,
+			"matchedGroup":  matchedGroup,
+			"groupBasis":    "unverified_request_context",
+			"loadBearing":   true,
+			"authorization": "allowed",
+		},
+	})
+}
 
 // checkApprovalAuthorization performs a detailed check of whether the current user can approve/reject a session.
 // It returns an ApprovalCheckResult with specific denial reasons instead of a simple boolean.
@@ -87,21 +153,58 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 				"cacheKey", cacheKey, "cachedType", fmt.Sprintf("%T", cached))
 		}
 	}
+	// groupsUnverified records that the cluster-side group lookup failed, so no
+	// cluster-verified groups are available for this decision. It does NOT by
+	// itself deny: see the fallback handling below.
+	groupsUnverified := false
 	if lookupApproverGroups {
-		var gerr error
-		approverGroups, gerr = wc.getUserGroupsFn(ctx, approverID)
+		if cachedUnverified, ok := c.Get(cacheKey + unverifiedGroupsCacheSuffix); ok {
+			if flag, ok := cachedUnverified.(bool); ok && flag {
+				// A previous authorization check in this same request already
+				// observed the lookup failure; do not hammer the spoke again.
+				groupsUnverified = true
+				lookupApproverGroups = false
+			}
+		}
+	}
+	if lookupApproverGroups {
+		verifiedGroups, gerr := wc.getUserGroupsFn(ctx, approverID)
 		if gerr != nil {
-			approverGroups = requestContextGroups
-			if len(approverGroups) == 0 {
-				reqLog.Errorw("Failed to retrieve approver groups", "cluster", session.Spec.Cluster, "error", gerr)
+			// FAIL-OPEN GUARD: previously the JWT-derived request-context groups
+			// were substituted into approverGroups wholesale, silently
+			// downgrading a cluster-verified group check to an unverified one on
+			// any transient spoke error. Instead, treat the lookup failure as
+			// "no verified groups" and let the pre-existing, explicitly-scoped
+			// request-context fallback below decide. That keeps the outcome
+			// identical for callers who would have been authorized anyway, while
+			// making the unverified path observable and attributable.
+			//
+			// Always log the underlying error at Error level, not only when the
+			// fallback is empty — a failing spoke lookup is an operational fault
+			// regardless of whether it changed the outcome.
+			reqLog.Errorw("Failed to retrieve cluster-verified approver groups; approval will be evaluated without verified groups",
+				"cluster", session.Spec.Cluster,
+				"approver", email,
+				"requestContextGroupCount", len(requestContextGroups),
+				"error", gerr)
+			metrics.ApprovalGroupLookupFailures.WithLabelValues(session.Spec.Cluster).Inc()
+			groupsUnverified = true
+			approverGroups = nil
+			c.Set(cacheKey+unverifiedGroupsCacheSuffix, true)
+
+			if len(requestContextGroups) == 0 {
+				// No verified groups and no unverified groups either: nothing to
+				// evaluate. This is the pre-existing deny and is unchanged.
 				return ApprovalCheckResult{
 					Allowed: false,
 					Reason:  ApprovalDenialUnauthenticated,
 					Message: "Unable to retrieve user groups",
 				}
 			}
+		} else {
+			approverGroups = verifiedGroups
+			c.Set(cacheKey, approverGroups)
 		}
-		c.Set(cacheKey, approverGroups)
 	}
 
 	escalations, err := wc.escalationManager.GetClusterBreakglassEscalations(ctx, session.Spec.Cluster)
@@ -240,6 +343,14 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 			}
 			if shouldUseRequestContextApproverGroups(approverGroups, requestContextGroups) {
 				if matchedGroup, ok := firstMatchingApproverGroup(requestContextGroups, fallbackApproverGroups); ok {
+					if groupsUnverified {
+						// The approval is load-bearing on unverified (JWT-claim)
+						// groups because the cluster-side lookup failed. Allow it
+						// — denying here would create a new lockout path during
+						// exactly the kind of spoke outage breakglass exists to
+						// resolve — but make it loudly observable.
+						wc.recordUnverifiedApproverGroupsDecision(ctx, &session, email, matchedGroup, approverIdentityProvider, reqLog)
+					}
 					reqLog.Debugw("User is session approver (request identity group fallback)",
 						"session", session.Name, "escalation", esc.Name, "group", system.RedactGroupName(matchedGroup))
 					return ApprovalCheckResult{Allowed: true}
