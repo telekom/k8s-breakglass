@@ -167,6 +167,7 @@ Override namespace restrictions:
 | `deniedPatterns` | string[] | Denied namespace patterns |
 | `defaultNamespace` | string | Default namespace for sessions |
 | `allowUserNamespace` | bool | Allow users to specify namespace |
+| `denyUserNamespace` | bool | Narrowing switch: when `true`, reject user-specified namespaces even if the template allows them. Absent or `false` keeps existing behaviour |
 
 ### schedulingConstraints
 
@@ -936,9 +937,10 @@ Namespace constraints are enforced as a restrictive combination of the template 
 | Field | Merge Behavior |
 |-------|----------------|
 | `allowUserNamespace` | Binding cannot enable user-selected namespaces when the template disables them |
+| `denyUserNamespace` | Narrowing only: if either the template or the binding sets `true`, user-selected namespaces are rejected |
 | `defaultNamespace` | Binding value is used only when it remains allowed by both template and binding filters |
-| `allowedNamespaces.patterns` | Requested namespaces must match the template boundary and any binding filter |
-| `deniedNamespaces.patterns` | Template denies are preserved; binding denies are added |
+| `allowedNamespaces` | The effective allow-list is the **intersection** of the template and binding filters. If neither side configures one, only `defaultNamespace` is allowed |
+| `deniedNamespaces` | Union: template denies are preserved and binding denies are added. `selectorTerms` are evaluated against live namespace labels on the target cluster |
 
 ```yaml
 # Template: restrictive base
@@ -969,7 +971,34 @@ namespaceConstraints:
 - Bindings can selectively narrow access per-cluster or per-team
 - Bindings cannot make templates more permissive than defined
 
-`allowUserNamespace` is a v1alpha1 boolean field, so a binding cannot distinguish an omitted value from an explicit `false`. Bindings therefore cannot disable user-selected namespaces when the template already enables them. To narrow that path, restrict the effective namespace set with `allowedNamespaces` / `deniedNamespaces`, or use a template with `allowUserNamespace: false`.
+##### Narrowing a permissive template with `denyUserNamespace`
+
+`allowUserNamespace` is a v1alpha1 boolean with `default: false`, so a binding cannot distinguish an omitted value from an explicit `false` and therefore cannot use it to disable user-selected namespaces that the template enables. Use the additive `denyUserNamespace` field for that instead:
+
+```yaml
+# Template: permissive base
+spec:
+  namespaceConstraints:
+    allowUserNamespace: true
+    defaultNamespace: "breakglass-debug"
+    allowedNamespaces:
+      patterns: ["app-*", "breakglass-debug"]
+
+---
+# Binding: locks this cluster down to the default namespace only
+spec:
+  namespaceConstraints:
+    defaultNamespace: "breakglass-debug"
+    denyUserNamespace: true          # Supported way to narrow a permissive template
+```
+
+Semantics:
+
+- Absent or `false` — behaviour is unchanged (this is why the field carries no `default`, so existing stored objects keep working byte-identically).
+- `true` — user-selected namespaces are rejected with an error naming `namespaceConstraints.denyUserNamespace` and the effective default namespace. Only `defaultNamespace` may be used, even if the template sets `allowUserNamespace: true`.
+- A binding cannot clear a template's `denyUserNamespace: true`; the merge is an OR because the field only ever narrows.
+
+`allowedNamespaces` / `deniedNamespaces` remain available for narrowing which namespaces are reachable, and are evaluated in addition to this switch.
 
 **Example: Production vs. Development Access**
 
