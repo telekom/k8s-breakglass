@@ -315,3 +315,90 @@ func TestQueuedSink_Name(t *testing.T) {
 
 	assert.Equal(t, "test-sink", qs.Name())
 }
+
+// circuitOpenSink always returns ErrCircuitOpen from Write, which drives the
+// requeue branch of processQueue.
+type circuitOpenSink struct {
+	name  string
+	calls atomic.Int64
+}
+
+func (s *circuitOpenSink) Write(_ context.Context, _ *Event) error {
+	s.calls.Add(1)
+	return ErrCircuitOpen
+}
+
+func (s *circuitOpenSink) Close() error { return nil }
+
+func (s *circuitOpenSink) Name() string { return s.name }
+
+// TestQueuedSink_CloseDuringCircuitOpenRequeue is a regression test for the
+// "send on closed channel" panic (#053). When the underlying sink returns
+// ErrCircuitOpen the worker requeues the event; that requeue used to happen in
+// an untracked goroutine, so Close() could close qs.queue while the send was
+// still pending, panicking the process unrecoverably.
+//
+// The panic surfaces as a process-level crash (not a recovered panic), so this
+// test drives many concurrent Write/requeue cycles against a Close to make the
+// window reliably reachable. Run with -race.
+func TestQueuedSink_CloseDuringCircuitOpenRequeue(t *testing.T) {
+	for iteration := 0; iteration < 50; iteration++ {
+		sink := &circuitOpenSink{name: "circuit-open"}
+		cfg := QueuedSinkConfig{
+			// Small queue so the requeue contends for space and workers keep
+			// cycling the same events.
+			QueueSize:               4,
+			WorkerCount:             4,
+			WriteTimeout:            time.Second,
+			DropOnFull:              true,
+			CircuitBreakerThreshold: 1_000_000, // never open our own breaker
+			CircuitBreakerResetTime: time.Hour,
+		}
+		qs := NewQueuedSink(sink, cfg, zap.NewNop())
+
+		var producers sync.WaitGroup
+		stop := make(chan struct{})
+		for p := 0; p < 4; p++ {
+			producers.Add(1)
+			go func() {
+				defer producers.Done()
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+					}
+					// EventSessionValidated is non-sensitive, so a full queue
+					// drops rather than writing synchronously.
+					_ = qs.Write(context.Background(), &Event{
+						ID:   "e",
+						Type: EventSessionValidated,
+					})
+				}
+			}()
+		}
+
+		// Let the workers start cycling events through the requeue branch.
+		for sink.calls.Load() < 4 {
+			time.Sleep(time.Millisecond)
+		}
+
+		// Close concurrently with in-flight requeues. Before the fix this
+		// panics with "send on closed channel".
+		require.NoError(t, qs.Close())
+		close(stop)
+		producers.Wait()
+	}
+}
+
+// TestQueuedSink_WriteAfterCloseReturnsError asserts that a Write racing with
+// Close never panics and reports the closed sink instead.
+func TestQueuedSink_WriteAfterCloseReturnsError(t *testing.T) {
+	sink := newQueuedMockSink("late-write")
+	qs := NewQueuedSink(sink, DefaultQueuedSinkConfig(), zap.NewNop())
+	require.NoError(t, qs.Close())
+
+	err := qs.Write(context.Background(), &Event{ID: "after-close", Type: EventSessionValidated})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is closed")
+}
