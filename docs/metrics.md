@@ -122,12 +122,26 @@ These metrics track the time spent in each phase of SubjectAccessReview processi
 | `breakglass_webhook_sar_phase_duration_seconds` | Histogram | `cluster`, `phase` | Duration of each SAR processing phase |
 
 > **Cluster label values are bounded.** Every webhook SAR metric derives its `cluster`
-> label from the `:cluster_name` request path, which is attacker-controllable and is
-> read before the cluster has been resolved. Values that are not valid Kubernetes
-> object names are replaced with `_invalid`, and an absent value with `_unknown`, so a
-> remote caller cannot create unbounded time series. Legitimate cluster names are
-> recorded unchanged. A rising `_invalid` series indicates traffic addressed to
-> malformed cluster paths.
+> label from the `:cluster_name` request path, which is attacker-controllable. Because
+> Prometheus never reclaims a series, emitting that value verbatim would let a remote
+> caller grow the controller's heap without bound — and validating only the *format* of
+> the name would not help, since arbitrarily many syntactically-valid names exist.
+>
+> The label is therefore only ever set to a registered cluster's name. Until the
+> request has been matched to an existing `ClusterConfig`, one of three fixed
+> placeholders is used instead:
+>
+> | Label value | Meaning |
+> |---|---|
+> | `_unknown` | No cluster name was supplied in the request path. |
+> | `_invalid` | The supplied name is not a valid Kubernetes object name, so it cannot name a cluster. Malformed traffic. |
+> | `_unresolved` | The name is well-formed but does not match any registered `ClusterConfig`. Requests for clusters that are not onboarded — including cardinality-probing traffic. |
+>
+> Total cluster-label cardinality is therefore bounded by the number of registered
+> clusters plus three. Metrics recorded after cluster resolution carry the real
+> cluster name, so per-cluster dashboards and alerts work as expected. A rising
+> `_unresolved` or `_invalid` series indicates traffic addressed to clusters that
+> Breakglass does not serve.
 
 **Processing Phases:**
 

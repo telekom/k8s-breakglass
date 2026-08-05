@@ -34,11 +34,14 @@ const (
 // SARPhaseTracker tracks timing for SAR processing phases
 type SARPhaseTracker struct {
 	clusterName string
-	// clusterLabel is clusterName reduced to a bounded set of Prometheus label
-	// values. clusterName arrives as the raw :cluster_name route parameter and is
-	// used as a label before it has been resolved against a ClusterConfig, so an
-	// unauthenticated remote caller could otherwise mint an unbounded number of
-	// histogram series (9 phases x buckets each) and grow the heap without bound.
+	// clusterLabel is the Prometheus label value for this request's cluster.
+	//
+	// clusterName arrives as the raw :cluster_name route parameter and is used as a
+	// label before it has been resolved against a ClusterConfig, so using it
+	// verbatim would let an unauthenticated remote caller mint an unbounded number
+	// of histogram series (9 phases x buckets each) and grow the heap without
+	// bound. It therefore starts as a fixed placeholder and is promoted to the real
+	// cluster name by setClusterLabel once the cluster has been resolved.
 	clusterLabel string
 	startTime    time.Time
 	phaseStart   time.Time
@@ -60,6 +63,17 @@ func NewSARPhaseTracker(clusterName string, log *zap.SugaredLogger) *SARPhaseTra
 		log:          log,
 		phases:       make(map[SARPhase]time.Duration),
 	}
+}
+
+// setClusterLabel promotes the metric label to a resolved cluster name, so that
+// phases recorded after cluster resolution are attributed to the real cluster
+// instead of the placeholder. Callers must pass a value already sanitized by
+// pkg/metrics.
+func (t *SARPhaseTracker) setClusterLabel(label string) {
+	if label == "" {
+		return
+	}
+	t.clusterLabel = label
 }
 
 // StartPhase marks the start of a phase

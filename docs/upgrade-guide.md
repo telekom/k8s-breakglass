@@ -104,6 +104,27 @@ be pruned. If a field on a live resource is intentionally set by something other
 than breakglass, confirm that the other writer uses its own field manager — fields
 owned by a different manager are not touched.
 
+#### Behaviour change: webhook SAR metrics no longer label unresolved clusters
+
+The `cluster` label on the webhook SAR metrics is derived from the attacker-controllable
+`:cluster_name` request path. It is now only set to the name of a **registered** cluster;
+until a request has been matched to an existing `ClusterConfig`, the label carries one of
+three fixed placeholders — `_unknown` (no name supplied), `_invalid` (not a valid object
+name) or `_unresolved` (well-formed but not onboarded). See `docs/metrics.md`.
+
+Effect on existing dashboards and alerts:
+
+- Metrics for **registered** clusters are unchanged: the real cluster name is still
+  recorded, so per-cluster queries continue to work.
+- Requests for clusters Breakglass does not serve previously produced one series per
+  distinct name. Those series are replaced by the placeholders. A query that grouped by
+  `cluster` will show `_unresolved`/`_invalid` buckets instead of the individual bogus
+  names.
+- `breakglass_webhook_sar_denied_total{...}` for the "cluster not registered" denial is
+  now attributed to `_unresolved` rather than to the requested name. If you alerted on a
+  specific unonboarded cluster name, switch to the placeholder.
+- Overall series count for these metrics drops, in some deployments substantially.
+
 #### Behaviour change: BreakglassEscalation reference-failure requeue cadence
 
 Escalations whose references (cluster, IdentityProvider, DenyPolicy, MailProvider)

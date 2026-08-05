@@ -30,12 +30,21 @@ type authorizeState struct {
 	// Immutable inputs
 	startTime   time.Time
 	clusterName string
-	// clusterLabel is clusterName reduced to a bounded set of Prometheus label
-	// values. clusterName is the raw :cluster_name route parameter, used as a
-	// metric label before the cluster has been resolved, so using it verbatim
-	// lets a remote caller create unbounded metric series (heap growth that is
-	// never reclaimed). Use clusterLabel for metrics, clusterName for logs and
-	// user-facing messages.
+	// clusterLabel is the Prometheus label value for this request's cluster.
+	//
+	// clusterName is the raw :cluster_name route parameter. Using it verbatim as a
+	// label lets a remote caller create a new time series per request, and
+	// Prometheus never reclaims series, so the heap grows without bound. Format
+	// validation alone does not fix that — an attacker can vary syntactically
+	// valid names indefinitely.
+	//
+	// So the label starts as a fixed placeholder (see metrics.SafeClusterLabel) and
+	// is promoted to the real cluster name only once resolveClusterConfig has
+	// matched it to a registered ClusterConfig. Cardinality is therefore bounded by
+	// the number of registered clusters plus three placeholders.
+	//
+	// Use clusterLabel for metrics; use clusterName for logs and user-facing
+	// messages, which are not cardinality-sensitive.
 	clusterLabel string
 	ctx          context.Context //nolint:containedctx // request-scoped context: authorizeState is created per HTTP request and passed to private helpers; storing ctx here avoids threading it through every helper signature while keeping it out of global state
 	reqLog       *zap.SugaredLogger
@@ -154,6 +163,12 @@ func (wc *WebhookController) resolveClusterConfig(c *gin.Context, s *authorizeSt
 			return false
 		}
 		s.clusterCfg = cfg
+
+		// The cluster is registered, so its name is operator-controlled and bounded:
+		// promote the metric label from the placeholder to the real name. Every
+		// metric emitted from here on is attributed to the actual cluster.
+		s.clusterLabel = metrics.ResolvedClusterLabel(s.clusterName)
+		s.phases.setClusterLabel(s.clusterLabel)
 	}
 	s.phases.EndPhase(PhaseClusterConfig) // End cluster_config phase
 	return true
