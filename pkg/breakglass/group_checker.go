@@ -46,6 +46,13 @@ func getConfigForClusterName(name string) (*rest.Config, error) {
 }
 
 // CanGroupsDo impersonates given groups against provided rest.Config (target cluster kubeconfig), not the hub.
+//
+// This is the ClusterConfig-unaware entry point, kept because it is the
+// CanGroupsDoFunction signature that callers and tests inject. It delegates to
+// CanGroupsDoConstrained with a nil ClusterConfig, which selects capability
+// autodetection: the constrained path is attempted first and legacy is used if the
+// spoke refuses. Callers that hold a ClusterConfig should use
+// CanGroupsDoConstrained directly so an explicit support setting is honoured.
 func CanGroupsDo(ctx context.Context,
 	rc *rest.Config,
 	groups []string,
@@ -56,47 +63,7 @@ func CanGroupsDo(ctx context.Context,
 		return false, errors.New("rest config is nil")
 	}
 	zap.S().Debugw("Checking if groups can perform SAR operation", "groupCount", len(groups), "cluster", clustername)
-	// Copy to avoid mutating shared config
-	cfg := rest.CopyConfig(rc)
-	cfg.Impersonate = rest.ImpersonationConfig{UserName: "system:auth-checker", Groups: groups}
-	client, err := kubernetes.NewForConfig(cfg)
-	if err != nil {
-		zap.S().Errorw("Failed to create client for CanGroupsDo", "error", err.Error())
-		return false, fmt.Errorf("failed to create client: %w", err)
-	}
-
-	// Build SelfSubjectAccessReview spec based on whether we have resource or non-resource attributes
-	var v1SarSpec authorizationv1.SelfSubjectAccessReviewSpec
-	if sar.Spec.ResourceAttributes != nil {
-		v1SarSpec.ResourceAttributes = &authorizationv1.ResourceAttributes{
-			Namespace:   sar.Spec.ResourceAttributes.Namespace,
-			Verb:        sar.Spec.ResourceAttributes.Verb,
-			Group:       sar.Spec.ResourceAttributes.Group,
-			Resource:    sar.Spec.ResourceAttributes.Resource,
-			Subresource: sar.Spec.ResourceAttributes.Subresource,
-			Name:        sar.Spec.ResourceAttributes.Name,
-		}
-	} else if sar.Spec.NonResourceAttributes != nil {
-		v1SarSpec.NonResourceAttributes = &authorizationv1.NonResourceAttributes{
-			Path: sar.Spec.NonResourceAttributes.Path,
-			Verb: sar.Spec.NonResourceAttributes.Verb,
-		}
-	} else {
-		return false, errors.New("sar spec must have either resourceAttributes or nonResourceAttributes")
-	}
-
-	v1Sar := authorizationv1.SelfSubjectAccessReview{Spec: v1SarSpec}
-	// NOTE: SelfSubjectAccessReview uses Create() to "submit" the review.
-	// This is not a write operation in the traditional sense - it's a readonly query
-	// to check permissions. The K8s API uses POST/Create for SubjectAccessReviews
-	// because they are ephemeral request/response resources, not stored objects.
-	response, err := client.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, &v1Sar, metav1.CreateOptions{})
-	if err != nil {
-		zap.S().Errorw("Failed to create SelfSubjectAccessReview", "error", err.Error())
-		return false, err
-	}
-	zap.S().Infow("SelfSubjectAccessReview result", "allowed", response.Status.Allowed)
-	return response.Status.Allowed, nil
+	return CanGroupsDoConstrained(ctx, rc, groups, sar, clustername, nil)
 }
 
 // Legacy wrapper kept for compatibility (uses local context); prefer CanGroupsDo with explicit rest.Config.

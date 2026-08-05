@@ -73,6 +73,209 @@ spec:
                     maxItems: 50
                     type: array
                 type: object
+              impersonationRules:
+                description: |-
+                  impersonationRules deny impersonation specifically, covering both the
+                  classic `impersonate` verb and the constrained-impersonation verbs
+                  (`impersonate:<mode>` and `impersonate-on:<mode>:<verb>`) introduced by
+                  KEP-5284.
+
+                  A plain `rules` entry cannot express these cleanly: the constrained identity
+                  checks live in the authentication.k8s.io API group while legacy impersonation
+                  lives in the core group, and the action checks carry the target request's own
+                  resource attributes rather than the impersonation target's. These rules
+                  understand that split.
+                items:
+                  description: |-
+                    ImpersonationDenyRule blocks impersonation matching the given attributes.
+
+                    An empty rule ({}) denies ALL impersonation — legacy and constrained, every
+                    mode, every identity, every action. That is the intended way to write "this
+                    cluster does not do impersonation".
+                  properties:
+                    actionVerbs:
+                      description: |-
+                        actionVerbs restricts the rule to `impersonate-on:<mode>:<verb>` action
+                        checks for the named underlying verbs (get, list, create, …). Use "*" to
+                        match any. If empty, the rule does not consider action checks at all unless
+                        no other action-specific field is set.
+
+                        Cannot be combined with identities: the API server issues the identity and
+                        action checks as two separate authorization requests, so no single request
+                        carries both an impersonation target and an underlying verb.
+                      items:
+                        type: string
+                      maxItems: 32
+                      type: array
+                    extraKeys:
+                      description: |-
+                        extraKeys restricts the rule to userextras checks for specific extra keys.
+                        Supports glob-style wildcards. Only meaningful with the userextras identity
+                        resource.
+                      items:
+                        type: string
+                      maxItems: 32
+                      type: array
+                    identities:
+                      description: |-
+                        identities restricts the rule to specific impersonation targets: usernames,
+                        group names, UIDs, node names, ServiceAccount names or extra values.
+                        Supports glob-style wildcards. If empty, the rule matches any target.
+
+                        Note that the API server collapses per-item checks into a single "*" check
+                        once a request names four or more items, so a wildcard entry here is what
+                        catches those requests.
+                      items:
+                        type: string
+                      maxItems: 100
+                      type: array
+                    identityResources:
+                      description: |-
+                        identityResources restricts the rule to specific identity resource kinds.
+                        Valid values: users, groups, uids, userextras, serviceaccounts, nodes.
+                        If empty, the rule matches every kind.
+                      items:
+                        enum:
+                        - users
+                        - groups
+                        - uids
+                        - userextras
+                        - serviceaccounts
+                        - nodes
+                        type: string
+                      maxItems: 6
+                      type: array
+                    modes:
+                      description: |-
+                        modes restricts the rule to specific impersonation modes.
+                        Valid values: user-info, serviceaccount, arbitrary-node, associated-node, legacy.
+                        If empty, the rule matches every mode.
+
+                        Include "legacy" to close the fallback escape hatch. Denying only the
+                        constrained modes accomplishes nothing on a cluster that still carries a
+                        blanket `impersonate` grant, because the API server falls back to it.
+                      items:
+                        description: |-
+                          ImpersonationMode selects a Kubernetes constrained-impersonation mode
+                          (KEP-5284). The mode is not sent as a header: the API server derives it from the
+                          shape of the impersonated identity. Setting it here tells breakglass which
+                          mode it must construct the identity for, so that mismatches are rejected at
+                          admission instead of silently degrading to legacy impersonation at runtime.
+                        enum:
+                        - user-info
+                        - serviceaccount
+                        - arbitrary-node
+                        - associated-node
+                        - legacy
+                        type: string
+                      maxItems: 5
+                      type: array
+                    namespaces:
+                      description: |-
+                        namespaces restricts the rule to ServiceAccount identity checks in matching
+                        namespaces. Only meaningful for the serviceaccounts identity resource, which
+                        is the sole namespaced identity kind.
+                      properties:
+                        patterns:
+                          description: |-
+                            patterns contains namespace name patterns (glob-style, legacy format).
+                            Supports wildcards: "app-*", "kube-*", "prod-??-*"
+                            Empty list matches no namespaces via patterns.
+                          items:
+                            type: string
+                          type: array
+                        selectorTerms:
+                          description: |-
+                            selectorTerms enables label-based namespace selection.
+                            When specified, namespaces matching ANY term are included (OR semantics).
+                            Each term's matchLabels and matchExpressions are ANDed within the term.
+                          items:
+                            description: |-
+                              NamespaceSelectorTerm represents a single selector term.
+                              All requirements within a term are ANDed together.
+                              Multiple terms are ORed (like Kubernetes node affinity).
+                            properties:
+                              matchExpressions:
+                                description: |-
+                                  matchExpressions matches namespaces using set-based requirements.
+                                  Multiple expressions are ANDed together.
+                                items:
+                                  description: |-
+                                    NamespaceSelectorRequirement is a selector requirement for namespaces.
+                                    Mirrors metav1.LabelSelectorRequirement for consistency with Kubernetes patterns.
+                                  properties:
+                                    key:
+                                      description: key is the label key the selector
+                                        applies to.
+                                      maxLength: 63
+                                      minLength: 1
+                                      type: string
+                                    operator:
+                                      description: |-
+                                        operator represents a key's relationship to a set of values.
+                                        Valid operators: In, NotIn, Exists, DoesNotExist.
+                                      enum:
+                                      - In
+                                      - NotIn
+                                      - Exists
+                                      - DoesNotExist
+                                      type: string
+                                    values:
+                                      description: |-
+                                        values is an array of string values.
+                                        Required for In and NotIn operators.
+                                        Must be empty for Exists and DoesNotExist.
+                                      items:
+                                        type: string
+                                      type: array
+                                  required:
+                                  - key
+                                  - operator
+                                  type: object
+                                type: array
+                              matchLabels:
+                                additionalProperties:
+                                  type: string
+                                description: |-
+                                  matchLabels matches namespaces with ALL specified labels (AND semantics).
+                                  Example: {"environment": "production", "team": "sre"}
+                                type: object
+                            type: object
+                          type: array
+                      type: object
+                    reason:
+                      description: |-
+                        reason is returned to the user when this rule denies. If empty, breakglass
+                        generates a description of what was denied.
+                      maxLength: 512
+                      type: string
+                    targetAPIGroups:
+                      description: |-
+                        targetAPIGroups restricts action checks to the target request's API groups.
+                        Use "" for the core group and "*" for any. Only meaningful with actionVerbs.
+                      items:
+                        type: string
+                      maxItems: 50
+                      type: array
+                    targetResources:
+                      description: |-
+                        targetResources restricts action checks to the resources being acted on
+                        under impersonation (the target request's own resources). Supports "*".
+                        Only meaningful together with actionVerbs.
+                      items:
+                        type: string
+                      maxItems: 100
+                      type: array
+                  type: object
+                  x-kubernetes-validations:
+                  - message: 'identities and actionVerbs cannot be combined in one
+                      rule: the API server evaluates identity and action checks as
+                      separate authorization requests, so a rule requiring both would
+                      never match. Write two rules.'
+                    rule: '!(has(self.actionVerbs) && size(self.actionVerbs) > 0 &&
+                      has(self.identities) && size(self.identities) > 0)'
+                maxItems: 100
+                type: array
               podSecurityRules:
                 description: |-
                   podSecurityRules evaluates pod specifications for exec/attach/portforward requests.
@@ -398,8 +601,11 @@ spec:
                 type: array
             type: object
             x-kubernetes-validations:
-            - message: at least one deny rule or podSecurityRules must be specified
+            - message: at least one deny rule, impersonationRules or podSecurityRules
+                must be specified
               rule: (has(self.rules) && size(self.rules) > 0) || has(self.podSecurityRules)
+                || (has(self.impersonationRules) && size(self.impersonationRules)
+                > 0)
           status:
             description: DenyPolicyStatus holds policy evaluation state tracked via
               conditions.

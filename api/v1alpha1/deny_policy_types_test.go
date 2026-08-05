@@ -834,7 +834,7 @@ func TestDenyPolicy_ValidateCreate_EmptyRules(t *testing.T) {
 		t.Errorf("ValidateCreate() unexpected warnings: %v", warnings)
 	}
 	errMsg := err.Error()
-	if !strings.Contains(errMsg, "at least one deny rule or podSecurityRules must be specified") {
+	if !strings.Contains(errMsg, "at least one deny rule, impersonationRules or podSecurityRules must be specified") {
 		t.Errorf("ValidateCreate() error should mention the deny rule requirement, got: %s", errMsg)
 	}
 }

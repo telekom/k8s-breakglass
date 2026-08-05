@@ -84,6 +84,65 @@ spec:
                   Defaults to metadata.name if empty.
                 maxLength: 253
                 type: string
+              constrainedImpersonation:
+                description: |-
+                  constrainedImpersonation declares whether this spoke supports Kubernetes
+                  constrained impersonation (KEP-5284) and how breakglass should behave when it
+                  does not. Optional; the default is capability autodetection with a legacy
+                  fallback, which is the behaviour of releases before this field existed.
+                properties:
+                  denyUnrecognisedVerbs:
+                    default: true
+                    description: |-
+                      denyUnrecognisedVerbs controls whether the breakglass authorization webhook
+                      denies impersonation verbs it cannot parse.
+
+                      Leave this enabled. A webhook authorizer that allows unknown verbs silently
+                      grants constrained impersonation on any cluster with the gate on, because the
+                      API server asks about `impersonate:<mode>` verbs the webhook has never heard
+                      of. Disabling it is only sensible while debugging a newer API server against
+                      an older breakglass.
+                    type: boolean
+                  legacyFallback:
+                    default: Allow
+                    description: |-
+                      legacyFallback controls whether breakglass tolerates the API server falling
+                      back to legacy unconstrained impersonation when every constrained mode
+                      denies.
+
+                      This matters more than it looks. A blanket `impersonate` grant on core
+                      users/groups with no resourceNames wins by fallback and silently defeats
+                      every constraint expressed elsewhere, and the API server does NOT apply the
+                      constrained restrictions (system:masters, group and extra validation) to the
+                      legacy path.
+                    enum:
+                    - Allow
+                    - Warn
+                    - Forbidden
+                    type: string
+                  probeMode:
+                    default: user-info
+                    description: |-
+                      probeMode is the constrained mode breakglass uses for its own RBAC probe,
+                      which impersonates a synthetic user to test what a session's groups could do.
+                      Defaults to "user-info", the only mode that can carry groups.
+                    enum:
+                    - user-info
+                    - serviceaccount
+                    - arbitrary-node
+                    - associated-node
+                    - legacy
+                    type: string
+                  support:
+                    default: Auto
+                    description: support declares whether the spoke supports constrained
+                      impersonation.
+                    enum:
+                    - Auto
+                    - Enabled
+                    - Disabled
+                    type: string
+                type: object
               environment:
                 description: environment (e.g. dev, staging, prod) override.
                 maxLength: 253

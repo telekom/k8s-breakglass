@@ -1398,6 +1398,9 @@ func validateImpersonationConfig(ic *ImpersonationConfig, fieldPath *field.Path)
 		}
 	}
 
+	// Constrained impersonation (KEP-5284) restrictions and guardrails.
+	errs = append(errs, validateImpersonationConstraints(ic, fieldPath)...)
+
 	return errs
 }
 

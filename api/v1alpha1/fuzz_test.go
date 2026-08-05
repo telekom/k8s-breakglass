@@ -1,6 +1,7 @@
 package v1alpha1
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -272,6 +273,222 @@ func FuzzParseDuration(f *testing.F) {
 				// This is technically valid but would be unreasonable for session timeouts
 				_ = hours // acceptable, no assertion needed
 			}
+		}
+	})
+}
+
+// FuzzValidateImpersonationConstraints fuzzes the constrained-impersonation
+// (KEP-5284) validation. It must never panic on arbitrary input, and it must
+// uphold two invariants that carry real security weight:
+//
+//  1. system:masters is refused in EVERY mode, including legacy. The API server
+//     hard-denies it for constrained impersonation but deliberately does NOT for
+//     legacy, so leaving it to the API server leaves the legacy path wide open.
+//  2. The header-mixing trap is always caught. Any uid/groups/extra alongside a
+//     ServiceAccount or node username must be rejected, because the API server
+//     would otherwise skip constrained impersonation and silently fall back to
+//     legacy.
+func FuzzValidateImpersonationConstraints(f *testing.F) {
+	// Seed corpus spanning every mode, the trap, and the restriction list.
+	seeds := []struct {
+		mode     string
+		userName string
+		uid      string
+		group    string
+		extraKey string
+		extraVal string
+		saName   string
+		saNS     string
+	}{
+		// Valid shapes.
+		{"user-info", "jane@example.com", "", "", "", "", "", ""},
+		{"user-info", "jane", "uid-1", "devs", "example.com/k", "v", "", ""},
+		{"serviceaccount", "", "", "", "", "", "probe", "kube-system"},
+		{"serviceaccount", "system:serviceaccount:ns:sa", "", "", "", "", "", ""},
+		{"arbitrary-node", "system:node:worker-1", "", "", "", "", "", ""},
+		{"associated-node", "system:node:worker-1", "", "", "", "", "", ""},
+		{"legacy", "system:auth-checker", "", "admins", "", "", "", ""},
+		{"", "", "", "", "", "", "", ""},
+
+		// The header-mixing trap, in all three shapes for both mode families.
+		{"serviceaccount", "", "uid-1", "", "", "", "sa", "ns"},
+		{"serviceaccount", "", "", "g", "", "", "sa", "ns"},
+		{"serviceaccount", "", "", "", "ex.io/k", "v", "sa", "ns"},
+		{"arbitrary-node", "system:node:w1", "uid-1", "", "", "", "", ""},
+		{"arbitrary-node", "system:node:w1", "", "g", "", "", "", ""},
+		{"associated-node", "system:node:w1", "", "", "ex.io/k", "v", "", ""},
+
+		// system:masters in every mode.
+		{"user-info", "jane", "", "system:masters", "", "", "", ""},
+		{"legacy", "jane", "", "system:masters", "", "", "", ""},
+		{"serviceaccount", "", "", "system:masters", "", "", "sa", "ns"},
+		{"arbitrary-node", "system:node:w1", "", "system:masters", "", "", "", ""},
+
+		// Reserved-username buckets and mode mismatches.
+		{"user-info", "system:node:w1", "", "", "", "", "", ""},
+		{"user-info", "system:serviceaccount:ns:sa", "", "", "", "", "", ""},
+		{"arbitrary-node", "jane", "", "", "", "", "", ""},
+		{"serviceaccount", "jane", "", "", "", "", "", ""},
+		{"arbitrary-node", "system:node:NOT_VALID_DNS", "", "", "", "", "", ""},
+
+		// Extra-key restrictions.
+		{"user-info", "jane", "", "", "UPPER.com/k", "v", "", ""},
+		{"user-info", "jane", "", "", "nodomain", "v", "", ""},
+		{"user-info", "jane", "", "", "example.com/k", "", "", ""},
+		{"user-info", "jane", "", "", "", "v", "", ""},
+
+		// Empty group.
+		{"user-info", "jane", "", "", "", "", "", ""},
+
+		// Adversarial values.
+		{"future-mode", "jane", "", "", "", "", "", ""},
+		{"user-info", "system:node:", "", "", "", "", "", ""},
+		{"user-info", "system:serviceaccount:", "", "", "", "", "", ""},
+		{"serviceaccount", "system:serviceaccount:::", "", "", "", "", "", ""},
+		{"user-info", strings.Repeat("a", 300), "", "", "", "", "", ""},
+		{"user-info", "unicode:日本語", "", "", "emoji:🎉", "v", "", ""},
+		{"user-info", "null\x00byte", "", "\x00", "", "", "", ""},
+	}
+
+	for _, s := range seeds {
+		f.Add(s.mode, s.userName, s.uid, s.group, s.extraKey, s.extraVal, s.saName, s.saNS)
+	}
+
+	f.Fuzz(func(t *testing.T,
+		mode, userName, uid, group, extraKey, extraVal, saName, saNS string,
+	) {
+		ic := &ImpersonationConfig{
+			Mode:     ImpersonationMode(mode),
+			UserName: userName,
+			UID:      uid,
+		}
+		if group != "" {
+			ic.Groups = []string{group}
+		}
+		if extraKey != "" || extraVal != "" {
+			ic.Extra = map[string][]string{extraKey: {extraVal}}
+		}
+		if saName != "" || saNS != "" {
+			ic.ServiceAccountRef = &ServiceAccountReference{Name: saName, Namespace: saNS}
+		}
+
+		path := field.NewPath("spec", "impersonation")
+
+		// Must never panic.
+		errs := validateImpersonationConstraints(ic, path)
+		// Warnings must never panic either.
+		_ = warnImpersonationConfigIssues(ic, path)
+		// Mode inference must never panic and must always return a value.
+		inferred := InferImpersonationMode(ic)
+		if inferred == "" {
+			t.Fatal("InferImpersonationMode returned an empty mode")
+		}
+		_ = EffectiveImpersonationUserName(ic)
+
+		// INVARIANT 1: system:masters is refused in every mode, legacy included.
+		if group == "system:masters" {
+			if len(errs) == 0 {
+				t.Fatalf("system:masters accepted in mode %q (inferred %q); combined with a "+
+					"legacy grant this is a complete cluster-admin bypass", mode, inferred)
+			}
+		}
+
+		// INVARIANT 2: the header-mixing trap is always caught. Only applies when the
+		// mode is one that requires only-username-set AND the config actually
+		// resolves to a username of the right shape, since a mode/username mismatch
+		// is reported as its own error.
+		mixingMode := inferred == ImpersonationModeServiceAccount ||
+			inferred == ImpersonationModeArbitraryNode ||
+			inferred == ImpersonationModeAssociatedNode
+		mixed := uid != "" || len(ic.Groups) > 0 || len(ic.Extra) > 0
+		if mixingMode && mixed && len(errs) == 0 {
+			t.Fatalf("mode %q (inferred from %+v) accepted with uid/groups/extra set; the API "+
+				"server would skip constrained impersonation and silently fall back to legacy", inferred, ic)
+		}
+
+		// A validated-clean config must not carry an unknown mode.
+		if len(errs) == 0 && mode != "" && !validImpersonationModes[ImpersonationMode(mode)] {
+			t.Fatalf("unknown mode %q passed validation", mode)
+		}
+	})
+}
+
+// FuzzValidateImpersonationDenyRules fuzzes DenyPolicy impersonation rule
+// validation. The invariant that matters is that a rule combining identities with
+// actionVerbs is always rejected: the API server issues identity and action checks
+// as separate authorization requests, so such a rule silently denies nothing.
+func FuzzValidateImpersonationDenyRules(f *testing.F) {
+	seeds := []struct {
+		mode, identityResource, identity, actionVerb, targetResource, extraKey string
+	}{
+		{"", "", "", "", "", ""},
+		{"legacy", "users", "jane", "", "", ""},
+		{"user-info", "groups", "system:masters", "", "", ""},
+		{"user-info", "", "", "delete", "secrets", ""},
+		{"serviceaccount", "serviceaccounts", "probe", "", "", ""},
+		{"arbitrary-node", "nodes", "worker-1", "", "", ""},
+		{"associated-node", "nodes", "*", "", "", ""},
+		{"user-info", "userextras", "v", "", "", "example.com/k"},
+		{"user-info", "uids", "uid-1", "", "", ""},
+		// Must be rejected: identity and action scoping cannot coexist.
+		{"user-info", "users", "jane", "get", "", ""},
+		// targetResource without actionVerb is ineffective.
+		{"user-info", "", "", "", "pods", ""},
+		// Invalid enum values.
+		{"future-mode", "", "", "", "", ""},
+		{"user-info", "pods", "", "", "", ""},
+		{"", "", "*", "*", "*", "*"},
+		{"LEGACY", "USERS", "", "", "", ""},
+	}
+
+	for _, s := range seeds {
+		f.Add(s.mode, s.identityResource, s.identity, s.actionVerb, s.targetResource, s.extraKey)
+	}
+
+	f.Fuzz(func(t *testing.T,
+		mode, identityResource, identity, actionVerb, targetResource, extraKey string,
+	) {
+		rule := ImpersonationDenyRule{}
+		if mode != "" {
+			rule.Modes = []ImpersonationMode{ImpersonationMode(mode)}
+		}
+		if identityResource != "" {
+			rule.IdentityResources = []string{identityResource}
+		}
+		if identity != "" {
+			rule.Identities = []string{identity}
+		}
+		if actionVerb != "" {
+			rule.ActionVerbs = []string{actionVerb}
+		}
+		if targetResource != "" {
+			rule.TargetResources = []string{targetResource}
+		}
+		if extraKey != "" {
+			rule.ExtraKeys = []string{extraKey}
+		}
+
+		rules := []ImpersonationDenyRule{rule}
+		path := field.NewPath("spec", "impersonationRules")
+
+		// Must never panic.
+		errs := validateImpersonationDenyRules(rules, path)
+		_ = warnImpersonationDenyRuleIssues(rules, path)
+
+		// INVARIANT: identities + actionVerbs is always rejected, because such a rule
+		// can never match any authorization request the API server issues.
+		if identity != "" && actionVerb != "" && len(errs) == 0 {
+			t.Fatalf("a rule combining identities=%q with actionVerbs=%q passed validation; "+
+				"it would silently deny nothing", identity, actionVerb)
+		}
+
+		// INVARIANT: unknown enum values are always rejected.
+		if mode != "" && !validImpersonationModes[ImpersonationMode(mode)] && len(errs) == 0 {
+			t.Fatalf("unknown mode %q passed validation", mode)
+		}
+		if identityResource != "" &&
+			!validImpersonationIdentityResources[identityResource] && len(errs) == 0 {
+			t.Fatalf("unknown identityResource %q passed validation", identityResource)
 		}
 	})
 }

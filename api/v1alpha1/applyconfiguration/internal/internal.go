@@ -770,6 +770,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: clusterID
       type:
         scalar: string
+    - name: constrainedImpersonation
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ConstrainedImpersonationConfig
     - name: environment
       type:
         scalar: string
@@ -820,6 +823,27 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: observedGeneration
       type:
         scalar: numeric
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ConstrainedImpersonationConfig
+  map:
+    fields:
+    - name: denyUnrecognisedVerbs
+      type:
+        scalar: boolean
+      default: true
+    - name: legacyFallback
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.LegacyImpersonationFallbackPolicy
+      default: Allow
+    - name: probeMode
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationMode
+      default: user-info
+    - name: support
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ConstrainedImpersonationSupport
+      default: Auto
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ConstrainedImpersonationSupport
+  scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.CopiedPodRef
   map:
     fields:
@@ -1926,6 +1950,12 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: appliesTo
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DenyPolicyScope
+    - name: impersonationRules
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationDenyRule
+          elementRelationship: atomic
     - name: podSecurityRules
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.PodSecurityRules
@@ -2211,9 +2241,97 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationConfig
   map:
     fields:
+    - name: actionVerbs
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: allowedIdentities
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: extra
+      type:
+        map:
+          elementType:
+            list:
+              elementType:
+                scalar: string
+              elementRelationship: atomic
+    - name: groups
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: mode
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationMode
     - name: serviceAccountRef
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ServiceAccountReference
+    - name: uid
+      type:
+        scalar: string
+    - name: userName
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationDenyRule
+  map:
+    fields:
+    - name: actionVerbs
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: extraKeys
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: identities
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: identityResources
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: modes
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationMode
+          elementRelationship: atomic
+    - name: namespaces
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
+    - name: reason
+      type:
+        scalar: string
+    - name: targetAPIGroups
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: targetResources
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationMode
+  scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.KafkaSASLSpec
   map:
     fields:
@@ -2341,6 +2459,8 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             scalar: string
           elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.LegacyImpersonationFallbackPolicy
+  scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.LogSinkSpec
   map:
     fields:

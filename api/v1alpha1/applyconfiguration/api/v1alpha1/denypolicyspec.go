@@ -18,6 +18,17 @@ type DenyPolicySpecApplyConfiguration struct {
 	AppliesTo *DenyPolicyScopeApplyConfiguration `json:"appliesTo,omitempty"`
 	// rules are evaluated in order; first matching rule denies.
 	Rules []DenyRuleApplyConfiguration `json:"rules,omitempty"`
+	// impersonationRules deny impersonation specifically, covering both the
+	// classic `impersonate` verb and the constrained-impersonation verbs
+	// (`impersonate:<mode>` and `impersonate-on:<mode>:<verb>`) introduced by
+	// KEP-5284.
+	//
+	// A plain `rules` entry cannot express these cleanly: the constrained identity
+	// checks live in the authentication.k8s.io API group while legacy impersonation
+	// lives in the core group, and the action checks carry the target request's own
+	// resource attributes rather than the impersonation target's. These rules
+	// understand that split.
+	ImpersonationRules []ImpersonationDenyRuleApplyConfiguration `json:"impersonationRules,omitempty"`
 	// podSecurityRules evaluates pod specifications for exec/attach/portforward requests.
 	// When a user attempts to exec into a pod, the pod's security context is analyzed
 	// and a risk score is calculated based on configured risk factors.
@@ -49,6 +60,19 @@ func (b *DenyPolicySpecApplyConfiguration) WithRules(values ...*DenyRuleApplyCon
 			panic("nil value passed to WithRules")
 		}
 		b.Rules = append(b.Rules, *values[i])
+	}
+	return b
+}
+
+// WithImpersonationRules adds the given value to the ImpersonationRules field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the ImpersonationRules field.
+func (b *DenyPolicySpecApplyConfiguration) WithImpersonationRules(values ...*ImpersonationDenyRuleApplyConfiguration) *DenyPolicySpecApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithImpersonationRules")
+		}
+		b.ImpersonationRules = append(b.ImpersonationRules, *values[i])
 	}
 	return b
 }

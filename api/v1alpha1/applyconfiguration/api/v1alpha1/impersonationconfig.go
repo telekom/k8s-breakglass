@@ -8,16 +8,71 @@ SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
 
+import (
+	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+)
+
 // ImpersonationConfigApplyConfiguration represents a declarative configuration of the ImpersonationConfig type for use
 // with apply.
 //
 // ImpersonationConfig controls which identity is used to deploy debug resources.
 // This enables least-privilege deployment where the controller impersonates
 // a constrained ServiceAccount rather than using its own permissions.
+//
+// The XValidation rules below enforce the KEP-5284 header-mixing trap at
+// admission time. Sending uid, groups or extra alongside a ServiceAccount or node
+// username makes the API server skip constrained impersonation entirely and fall
+// back to legacy (unconstrained) impersonation — the request may still succeed
+// with no constraint applied and no audit record saying so. Rejecting the
+// combination is the only way to make that failure visible.
 type ImpersonationConfigApplyConfiguration struct {
 	// serviceAccountRef references an existing ServiceAccount to impersonate.
 	// The breakglass controller must have impersonation permissions for this SA.
 	ServiceAccountRef *ServiceAccountReferenceApplyConfiguration `json:"serviceAccountRef,omitempty"`
+	// mode selects the constrained-impersonation mode (KEP-5284) to use.
+	// If unset, breakglass infers the mode from the identity: a serviceAccountRef
+	// implies "serviceaccount", a userName implies "user-info". Set it explicitly
+	// to have admission reject identities that do not fit the mode.
+	//
+	// Spokes that do not support constrained impersonation fall back to "legacy"
+	// at runtime regardless of this setting — see
+	// ClusterConfig.spec.constrainedImpersonation.
+	Mode *apiv1alpha1.ImpersonationMode `json:"mode,omitempty"`
+	// userName is the identity to impersonate when mode is "user-info",
+	// "arbitrary-node" or "associated-node". Mutually exclusive with
+	// serviceAccountRef. For node modes it must be "system:node:<name>".
+	UserName *string `json:"userName,omitempty"`
+	// uid is the impersonated identity's UID. ONLY valid in "user-info" mode.
+	// Setting it in any other constrained mode disables constrained impersonation.
+	UID *string `json:"uid,omitempty"`
+	// groups are the groups to impersonate. ONLY valid in "user-info" mode: the
+	// API server forces groups=[system:nodes] for node identities and computes
+	// them from the namespace for ServiceAccounts.
+	//
+	// system:masters is rejected. Four or more groups reach the API server's
+	// hardcoded wildcard-collapse threshold, above which grants naming individual
+	// groups stop being consulted.
+	Groups []string `json:"groups,omitempty"`
+	// extra are additional identity attributes, sent as Impersonate-Extra-<key>.
+	// ONLY valid in "user-info" mode. Keys must be lowercase, valid
+	// domain-prefixed paths; value lists must be non-empty with no empty strings.
+	Extra map[string][]string `json:"extra,omitempty"`
+	// allowedIdentities restricts which identities this configuration may
+	// impersonate, mirroring the resourceNames of the generated RBAC identity
+	// rule. Supports exact values only — the API server matches resourceNames
+	// exactly, so wildcards other than a bare "*" have no effect.
+	//
+	// If empty, no allowlist is enforced by breakglass and the spoke's RBAC is the
+	// only control.
+	AllowedIdentities []string `json:"allowedIdentities,omitempty"`
+	// actionVerbs is the set of underlying request verbs this configuration may
+	// perform under impersonation. Breakglass turns each into an
+	// `impersonate-on:<mode>:<verb>` grant.
+	//
+	// Kubernetes has no prefix wildcard for these verbs: you cannot write
+	// `impersonate-on:user-info:*`. Use "*" here to mean "every verb", which
+	// breakglass renders as an RBAC `verbs: ["*"]` rule.
+	ActionVerbs []string `json:"actionVerbs,omitempty"`
 }
 
 // ImpersonationConfigApplyConfiguration constructs a declarative configuration of the ImpersonationConfig type for use with
@@ -31,5 +86,73 @@ func ImpersonationConfig() *ImpersonationConfigApplyConfiguration {
 // If called multiple times, the ServiceAccountRef field is set to the value of the last call.
 func (b *ImpersonationConfigApplyConfiguration) WithServiceAccountRef(value *ServiceAccountReferenceApplyConfiguration) *ImpersonationConfigApplyConfiguration {
 	b.ServiceAccountRef = value
+	return b
+}
+
+// WithMode sets the Mode field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Mode field is set to the value of the last call.
+func (b *ImpersonationConfigApplyConfiguration) WithMode(value apiv1alpha1.ImpersonationMode) *ImpersonationConfigApplyConfiguration {
+	b.Mode = &value
+	return b
+}
+
+// WithUserName sets the UserName field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UserName field is set to the value of the last call.
+func (b *ImpersonationConfigApplyConfiguration) WithUserName(value string) *ImpersonationConfigApplyConfiguration {
+	b.UserName = &value
+	return b
+}
+
+// WithUID sets the UID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UID field is set to the value of the last call.
+func (b *ImpersonationConfigApplyConfiguration) WithUID(value string) *ImpersonationConfigApplyConfiguration {
+	b.UID = &value
+	return b
+}
+
+// WithGroups adds the given value to the Groups field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Groups field.
+func (b *ImpersonationConfigApplyConfiguration) WithGroups(values ...string) *ImpersonationConfigApplyConfiguration {
+	for i := range values {
+		b.Groups = append(b.Groups, values[i])
+	}
+	return b
+}
+
+// WithExtra puts the entries into the Extra field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, the entries provided by each call will be put on the Extra field,
+// overwriting an existing map entries in Extra field with the same key.
+func (b *ImpersonationConfigApplyConfiguration) WithExtra(entries map[string][]string) *ImpersonationConfigApplyConfiguration {
+	if b.Extra == nil && len(entries) > 0 {
+		b.Extra = make(map[string][]string, len(entries))
+	}
+	for k, v := range entries {
+		b.Extra[k] = v
+	}
+	return b
+}
+
+// WithAllowedIdentities adds the given value to the AllowedIdentities field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the AllowedIdentities field.
+func (b *ImpersonationConfigApplyConfiguration) WithAllowedIdentities(values ...string) *ImpersonationConfigApplyConfiguration {
+	for i := range values {
+		b.AllowedIdentities = append(b.AllowedIdentities, values[i])
+	}
+	return b
+}
+
+// WithActionVerbs adds the given value to the ActionVerbs field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the ActionVerbs field.
+func (b *ImpersonationConfigApplyConfiguration) WithActionVerbs(values ...string) *ImpersonationConfigApplyConfiguration {
+	for i := range values {
+		b.ActionVerbs = append(b.ActionVerbs, values[i])
+	}
 	return b
 }

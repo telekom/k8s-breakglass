@@ -476,8 +476,15 @@ func ValidateDenyPolicy(dp *DenyPolicy) *ValidationResult {
 	specPath := field.NewPath("spec")
 
 	// Validate at least one rule type is specified (mirrors CEL rule)
-	if len(dp.Spec.Rules) == 0 && dp.Spec.PodSecurityRules == nil {
-		result.Errors = append(result.Errors, field.Required(specPath, "at least one deny rule or podSecurityRules must be specified"))
+	if len(dp.Spec.Rules) == 0 && dp.Spec.PodSecurityRules == nil && len(dp.Spec.ImpersonationRules) == 0 {
+		result.Errors = append(result.Errors, field.Required(specPath, "at least one deny rule, impersonationRules or podSecurityRules must be specified"))
+	}
+
+	// Validate impersonation deny rules (constrained impersonation, KEP-5284)
+	if len(dp.Spec.ImpersonationRules) > 0 {
+		impPath := specPath.Child("impersonationRules")
+		result.Errors = append(result.Errors, validateImpersonationDenyRules(dp.Spec.ImpersonationRules, impPath)...)
+		result.Warnings = append(result.Warnings, warnImpersonationDenyRuleIssues(dp.Spec.ImpersonationRules, impPath)...)
 	}
 
 	// Validate rules
@@ -935,7 +942,9 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 
 	// Validate impersonation config if specified
 	if template.Spec.Impersonation != nil {
-		result.Errors = append(result.Errors, validateImpersonationConfig(template.Spec.Impersonation, specPath.Child("impersonation"))...)
+		impPath := specPath.Child("impersonation")
+		result.Errors = append(result.Errors, validateImpersonationConfig(template.Spec.Impersonation, impPath)...)
+		result.Warnings = append(result.Warnings, warnImpersonationConfigIssues(template.Spec.Impersonation, impPath)...)
 	}
 
 	// Validate notification config if specified

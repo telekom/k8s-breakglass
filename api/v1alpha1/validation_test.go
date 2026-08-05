@@ -800,7 +800,7 @@ func TestValidateDenyPolicy(t *testing.T) {
 		// Empty DenyPolicy with no rules and no podSecurityRules is now invalid
 		// (also rejected by CEL rule at admission time)
 		assert.False(t, result.IsValid())
-		assert.Contains(t, result.ErrorMessage(), "at least one deny rule or podSecurityRules must be specified")
+		assert.Contains(t, result.ErrorMessage(), "at least one deny rule, impersonationRules or podSecurityRules must be specified")
 	})
 }
 

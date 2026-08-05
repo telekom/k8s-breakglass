@@ -50,6 +50,27 @@ type ClusterConfigReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 	Log    *zap.SugaredLogger
+
+	// OnClusterConfigChanged is invoked with the cluster name whenever a
+	// ClusterConfig is created, updated or deleted.
+	//
+	// It exists so that per-spoke caches keyed on ClusterConfig content can be
+	// invalidated promptly instead of waiting out their TTL. In particular the
+	// constrained-impersonation capability cache is dropped here, so that flipping
+	// spec.constrainedImpersonation.support takes effect on the next request rather
+	// than up to ten minutes later.
+	//
+	// It is a function rather than a direct call to keep this package free of a
+	// dependency on pkg/breakglass, which already imports pkg/config. Optional: a
+	// nil hook is skipped.
+	OnClusterConfigChanged func(clusterName string)
+}
+
+// notifyClusterConfigChanged invokes the change hook, if one is configured.
+func (r *ClusterConfigReconciler) notifyClusterConfigChanged(clusterName string) {
+	if r.OnClusterConfigChanged != nil {
+		r.OnClusterConfigChanged(clusterName)
+	}
 }
 
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=clusterconfigs,verbs=get;list;watch;update;patch
@@ -69,7 +90,9 @@ func (r *ClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	clusterConfig := &breakglassv1alpha1.ClusterConfig{}
 	if err := r.Get(ctx, req.NamespacedName, clusterConfig); err != nil {
 		if apierrors.IsNotFound(err) {
-			// Object not found, likely already deleted - nothing to do
+			// Already gone. Still drop the spoke's derived caches so a re-created
+			// ClusterConfig of the same name cannot inherit the old verdict.
+			r.notifyClusterConfigChanged(req.Name)
 			return ctrl.Result{}, nil
 		}
 		log.Errorw("Failed to get ClusterConfig", "error", err)
@@ -77,6 +100,12 @@ func (r *ClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	clusterName := clusterConfig.Name
+
+	// Drop per-spoke caches derived from this ClusterConfig's content on every
+	// observed change, including deletion. Doing it unconditionally is deliberate:
+	// the reconciler does not diff spec, and re-detecting capability is cheap
+	// compared with honouring a stale support setting for the cache TTL.
+	r.notifyClusterConfigChanged(clusterName)
 
 	// Check if the ClusterConfig is being deleted
 	if !clusterConfig.DeletionTimestamp.IsZero() {

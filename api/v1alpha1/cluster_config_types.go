@@ -446,6 +446,13 @@ type ClusterConfigSpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	MailProvider string `json:"mailProvider,omitempty"`
 
+	// constrainedImpersonation declares whether this spoke supports Kubernetes
+	// constrained impersonation (KEP-5284) and how breakglass should behave when it
+	// does not. Optional; the default is capability autodetection with a legacy
+	// fallback, which is the behaviour of releases before this field existed.
+	// +optional
+	ConstrainedImpersonation *ConstrainedImpersonationConfig `json:"constrainedImpersonation,omitempty"`
+
 	// userIdentifierClaim specifies which OIDC claim is used to identify users on this cluster.
 	// This MUST match the `claimMappings.username.claim` configured on the target cluster's
 	// Kubernetes API server OIDC configuration.
@@ -454,6 +461,134 @@ type ClusterConfigSpec struct {
 	// +optional
 	// +kubebuilder:validation:Enum=email;preferred_username;sub
 	UserIdentifierClaim UserIdentifierClaimType `json:"userIdentifierClaim,omitempty"`
+}
+
+// ConstrainedImpersonationSupport declares a spoke's constrained-impersonation
+// capability.
+//
+// +kubebuilder:validation:Enum=Auto;Enabled;Disabled
+type ConstrainedImpersonationSupport string
+
+const (
+	// ConstrainedImpersonationAuto autodetects support from the spoke's reported
+	// Kubernetes version: 1.36+ has the ConstrainedImpersonation gate on by
+	// default, 1.35 requires explicit opt-in, and earlier releases lack the
+	// feature entirely. Detection cannot see whether an operator turned the gate
+	// off on a 1.36+ cluster, so runtime denials still fall back to legacy.
+	// This is the default.
+	ConstrainedImpersonationAuto ConstrainedImpersonationSupport = "Auto"
+
+	// ConstrainedImpersonationEnabled asserts the spoke has the gate enabled.
+	// Breakglass issues constrained identities and, when legacyFallback is
+	// Forbidden, refuses to fall back.
+	ConstrainedImpersonationEnabled ConstrainedImpersonationSupport = "Enabled"
+
+	// ConstrainedImpersonationDisabled asserts the spoke does not support
+	// constrained impersonation. Breakglass uses legacy impersonation without
+	// attempting the constrained path first, avoiding a guaranteed denial per
+	// request.
+	ConstrainedImpersonationDisabled ConstrainedImpersonationSupport = "Disabled"
+)
+
+// LegacyImpersonationFallbackPolicy controls whether breakglass may rely on the
+// API server's fallback to legacy unconstrained impersonation.
+//
+// +kubebuilder:validation:Enum=Allow;Warn;Forbidden
+type LegacyImpersonationFallbackPolicy string
+
+const (
+	// LegacyImpersonationFallbackAllow permits the fallback silently. This is the
+	// default because it preserves the behaviour of existing deployments, whose
+	// blanket `impersonate` grants depend on it.
+	LegacyImpersonationFallbackAllow LegacyImpersonationFallbackPolicy = "Allow"
+
+	// LegacyImpersonationFallbackWarn permits the fallback but records it in the
+	// audit trail, emits a Kubernetes event and counts it in
+	// breakglass_impersonation_legacy_fallback_total. Recommended while migrating.
+	LegacyImpersonationFallbackWarn LegacyImpersonationFallbackPolicy = "Warn"
+
+	// LegacyImpersonationFallbackForbidden refuses to use legacy impersonation on
+	// this spoke. Because the API server itself performs the fallback, breakglass
+	// enforces this by denying `impersonate` at its authorization webhook — which
+	// only works if breakglass is in the spoke's authorizer chain.
+	LegacyImpersonationFallbackForbidden LegacyImpersonationFallbackPolicy = "Forbidden"
+)
+
+// ConstrainedImpersonationConfig configures constrained impersonation (KEP-5284)
+// for a spoke cluster.
+type ConstrainedImpersonationConfig struct {
+	// support declares whether the spoke supports constrained impersonation.
+	// +optional
+	// +kubebuilder:default=Auto
+	Support ConstrainedImpersonationSupport `json:"support,omitempty"`
+
+	// legacyFallback controls whether breakglass tolerates the API server falling
+	// back to legacy unconstrained impersonation when every constrained mode
+	// denies.
+	//
+	// This matters more than it looks. A blanket `impersonate` grant on core
+	// users/groups with no resourceNames wins by fallback and silently defeats
+	// every constraint expressed elsewhere, and the API server does NOT apply the
+	// constrained restrictions (system:masters, group and extra validation) to the
+	// legacy path.
+	// +optional
+	// +kubebuilder:default=Allow
+	LegacyFallback LegacyImpersonationFallbackPolicy `json:"legacyFallback,omitempty"`
+
+	// denyUnrecognisedVerbs controls whether the breakglass authorization webhook
+	// denies impersonation verbs it cannot parse.
+	//
+	// Leave this enabled. A webhook authorizer that allows unknown verbs silently
+	// grants constrained impersonation on any cluster with the gate on, because the
+	// API server asks about `impersonate:<mode>` verbs the webhook has never heard
+	// of. Disabling it is only sensible while debugging a newer API server against
+	// an older breakglass.
+	// +optional
+	// +kubebuilder:default=true
+	DenyUnrecognisedVerbs *bool `json:"denyUnrecognisedVerbs,omitempty"`
+
+	// probeMode is the constrained mode breakglass uses for its own RBAC probe,
+	// which impersonates a synthetic user to test what a session's groups could do.
+	// Defaults to "user-info", the only mode that can carry groups.
+	// +optional
+	// +kubebuilder:default=user-info
+	ProbeMode ImpersonationMode `json:"probeMode,omitempty"`
+}
+
+// EffectiveSupport returns the configured support level, defaulting to Auto.
+func (c *ConstrainedImpersonationConfig) EffectiveSupport() ConstrainedImpersonationSupport {
+	if c == nil || c.Support == "" {
+		return ConstrainedImpersonationAuto
+	}
+	return c.Support
+}
+
+// EffectiveLegacyFallback returns the configured fallback policy, defaulting to Allow.
+func (c *ConstrainedImpersonationConfig) EffectiveLegacyFallback() LegacyImpersonationFallbackPolicy {
+	if c == nil || c.LegacyFallback == "" {
+		return LegacyImpersonationFallbackAllow
+	}
+	return c.LegacyFallback
+}
+
+// ShouldDenyUnrecognisedVerbs reports whether the authorization webhook must deny
+// impersonation verbs it cannot parse. Defaults to true, including when the whole
+// config block is absent, so that clusters onboarded before this field existed are
+// protected without any action by the operator.
+func (c *ConstrainedImpersonationConfig) ShouldDenyUnrecognisedVerbs() bool {
+	if c == nil || c.DenyUnrecognisedVerbs == nil {
+		return true
+	}
+	return *c.DenyUnrecognisedVerbs
+}
+
+// EffectiveProbeMode returns the mode used for the breakglass RBAC probe,
+// defaulting to user-info.
+func (c *ConstrainedImpersonationConfig) EffectiveProbeMode() ImpersonationMode {
+	if c == nil || c.ProbeMode == "" {
+		return ImpersonationModeUserInfo
+	}
+	return c.ProbeMode
 }
 
 // SecretKeyReference is a namespaced secret key reference supporting cross-namespace references.

@@ -373,6 +373,73 @@ spec:
                   impersonation configures ServiceAccount impersonation for deployment.
                   If set, overrides the template's impersonation configuration.
                 properties:
+                  actionVerbs:
+                    description: |-
+                      actionVerbs is the set of underlying request verbs this configuration may
+                      perform under impersonation. Breakglass turns each into an
+                      `impersonate-on:<mode>:<verb>` grant.
+
+                      Kubernetes has no prefix wildcard for these verbs: you cannot write
+                      `impersonate-on:user-info:*`. Use "*" here to mean "every verb", which
+                      breakglass renders as an RBAC `verbs: ["*"]` rule.
+                    items:
+                      type: string
+                    maxItems: 32
+                    type: array
+                  allowedIdentities:
+                    description: |-
+                      allowedIdentities restricts which identities this configuration may
+                      impersonate, mirroring the resourceNames of the generated RBAC identity
+                      rule. Supports exact values only — the API server matches resourceNames
+                      exactly, so wildcards other than a bare "*" have no effect.
+
+                      If empty, no allowlist is enforced by breakglass and the spoke's RBAC is the
+                      only control.
+                    items:
+                      type: string
+                    maxItems: 100
+                    type: array
+                  extra:
+                    additionalProperties:
+                      items:
+                        type: string
+                      type: array
+                    description: |-
+                      extra are additional identity attributes, sent as Impersonate-Extra-<key>.
+                      ONLY valid in "user-info" mode. Keys must be lowercase, valid
+                      domain-prefixed paths; value lists must be non-empty with no empty strings.
+                    maxProperties: 32
+                    type: object
+                  groups:
+                    description: |-
+                      groups are the groups to impersonate. ONLY valid in "user-info" mode: the
+                      API server forces groups=[system:nodes] for node identities and computes
+                      them from the namespace for ServiceAccounts.
+
+                      system:masters is rejected. Four or more groups reach the API server's
+                      hardcoded wildcard-collapse threshold, above which grants naming individual
+                      groups stop being consulted.
+                    items:
+                      type: string
+                    maxItems: 32
+                    type: array
+                  mode:
+                    description: |-
+                      mode selects the constrained-impersonation mode (KEP-5284) to use.
+                      If unset, breakglass infers the mode from the identity: a serviceAccountRef
+                      implies "serviceaccount", a userName implies "user-info". Set it explicitly
+                      to have admission reject identities that do not fit the mode.
+
+                      Spokes that do not support constrained impersonation fall back to "legacy"
+                      at runtime regardless of this setting — see
+                      ClusterConfig.spec.constrainedImpersonation.
+                    enum:
+                    - user-info
+                    - serviceaccount
+                    - arbitrary-node
+                    - associated-node
+                    - legacy
+                    type: string
                   serviceAccountRef:
                     description: |-
                       serviceAccountRef references an existing ServiceAccount to impersonate.
@@ -388,7 +455,35 @@ spec:
                     - name
                     - namespace
                     type: object
+                  uid:
+                    description: |-
+                      uid is the impersonated identity's UID. ONLY valid in "user-info" mode.
+                      Setting it in any other constrained mode disables constrained impersonation.
+                    maxLength: 253
+                    type: string
+                  userName:
+                    description: |-
+                      userName is the identity to impersonate when mode is "user-info",
+                      "arbitrary-node" or "associated-node". Mutually exclusive with
+                      serviceAccountRef. For node modes it must be "system:node:<name>".
+                    maxLength: 253
+                    type: string
                 type: object
+                x-kubernetes-validations:
+                - message: modes serviceaccount, arbitrary-node and associated-node
+                    require that ONLY the username is set; setting uid, groups or
+                    extra makes the API server silently fall back to legacy unconstrained
+                    impersonation
+                  rule: '!(has(self.mode) && (self.mode == ''serviceaccount'' || self.mode
+                    == ''arbitrary-node'' || self.mode == ''associated-node'') &&
+                    (has(self.uid) || has(self.groups) || has(self.extra)))'
+                - message: mode user-info cannot impersonate a ServiceAccount; use
+                    mode serviceaccount
+                  rule: '!(has(self.mode) && self.mode == ''user-info'' && has(self.serviceAccountRef))'
+                - message: node impersonation modes cannot target a ServiceAccount;
+                    unset serviceAccountRef
+                  rule: '!(has(self.mode) && (self.mode == ''arbitrary-node'' || self.mode
+                    == ''associated-node'') && has(self.serviceAccountRef))'
               labels:
                 additionalProperties:
                   type: string
