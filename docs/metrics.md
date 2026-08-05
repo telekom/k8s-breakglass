@@ -137,6 +137,11 @@ These metrics track the time spent in each phase of SubjectAccessReview processi
 > | `_invalid` | The supplied name is not a valid Kubernetes object name, so it cannot name a cluster. Malformed traffic. |
 > | `_unresolved` | The name is well-formed but does not match any registered `ClusterConfig`. Requests for clusters that are not onboarded — including cardinality-probing traffic. |
 >
+> `breakglass_webhook_sar_requests_total` is a Counter, so its label cannot be corrected
+> after the increment; it is therefore incremented only once the cluster label is final,
+> which means requests for registered clusters are still counted under the real cluster
+> name.
+>
 > Total cluster-label cardinality is therefore bounded by the number of registered
 > clusters plus three. Metrics recorded after cluster resolution carry the real
 > cluster name, so per-cluster dashboards and alerts work as expected. A rising

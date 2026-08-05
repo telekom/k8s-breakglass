@@ -50,6 +50,10 @@ type authorizeState struct {
 	reqLog       *zap.SugaredLogger
 	phases       *SARPhaseTracker
 
+	// requestCounted guards the WebhookSARRequests counter so it is incremented
+	// exactly once per request. See countRequest.
+	requestCounted bool
+
 	// Parsed request
 	sar authorizationv1.SubjectAccessReview
 
@@ -72,6 +76,27 @@ type authorizeState struct {
 	sessionSARSkipErr error
 }
 
+// countRequest increments the SAR request counter, at most once per request.
+//
+// WebhookSARRequests is a Counter, so unlike the duration/decision metrics its
+// label cannot be corrected after the fact: whatever value is used at increment
+// time is the value that series keeps forever. Incrementing it in
+// parseSARRequest — before resolveClusterConfig has run — would therefore count
+// every request, including those for perfectly well-known clusters, under the
+// "_unresolved" placeholder and permanently break per-cluster request counting.
+//
+// So the increment is deferred until the cluster label is final: the resolved
+// cluster name once the ClusterConfig lookup succeeds, or the appropriate
+// placeholder when the request never gets that far (malformed body, unknown
+// cluster). Cardinality is unaffected — the label value is bounded either way.
+func (s *authorizeState) countRequest() {
+	if s.requestCounted {
+		return
+	}
+	s.requestCounted = true
+	metrics.WebhookSARRequests.WithLabelValues(s.clusterLabel).Inc()
+}
+
 // parseSARRequest reads the request body, unmarshals the SubjectAccessReview, and
 // initialises the authorizeState. Returns (state, ok); writes HTTP status on failure.
 func (wc *WebhookController) parseSARRequest(c *gin.Context) (*authorizeState, bool) {
@@ -82,7 +107,6 @@ func (wc *WebhookController) parseSARRequest(c *gin.Context) (*authorizeState, b
 		clusterLabel: metrics.SafeClusterLabel(clusterName),
 		ctx:          c.Request.Context(),
 	}
-	metrics.WebhookSARRequests.WithLabelValues(s.clusterLabel).Inc()
 	wc.log.With("cluster", s.clusterName).Debug("Processing authorization request for cluster")
 
 	s.phases = NewSARPhaseTracker(s.clusterName, wc.log)
@@ -94,10 +118,12 @@ func (wc *WebhookController) parseSARRequest(c *gin.Context) (*authorizeState, b
 		var maxErr *http.MaxBytesError
 		if errors.As(rerr, &maxErr) {
 			wc.log.With("error", rerr.Error()).Warn("SubjectAccessReview body too large")
+			s.countRequest() // Never reaches cluster resolution; count under the placeholder.
 			c.Status(http.StatusRequestEntityTooLarge)
 			return nil, false
 		}
 		wc.log.With("error", rerr.Error()).Error("Failed to read request body for SubjectAccessReview")
+		s.countRequest()
 		c.Status(http.StatusUnprocessableEntity)
 		return nil, false
 	}
@@ -114,6 +140,7 @@ func (wc *WebhookController) parseSARRequest(c *gin.Context) (*authorizeState, b
 
 	if err := json.Unmarshal(bodyBytes, &s.sar); err != nil {
 		s.reqLog.With("error", err.Error()).Errorw("Failed to decode SubjectAccessReview body", "bodySize", len(bodyBytes))
+		s.countRequest()
 		c.Status(http.StatusUnprocessableEntity)
 		return nil, false
 	}
@@ -140,6 +167,7 @@ func (wc *WebhookController) resolveClusterConfig(c *gin.Context, s *authorizeSt
 						"Ask your platform administrators to onboard the cluster or choose one of the onboarded clusters.",
 					s.clusterName, actionSummary)
 				reason = wc.finalizeReason(reason, false, s.clusterName)
+				s.countRequest() // Cluster is not registered: the placeholder label is final.
 				metrics.WebhookSARDenied.WithLabelValues(s.clusterLabel).Inc()
 				metrics.WebhookSARDuration.WithLabelValues(s.clusterLabel, "denied").
 					Observe(time.Since(s.startTime).Seconds())
@@ -159,6 +187,7 @@ func (wc *WebhookController) resolveClusterConfig(c *gin.Context, s *authorizeSt
 				return false
 			}
 			s.reqLog.With("error", cfgErr.Error()).Error("Failed to load ClusterConfig for SAR validation")
+			s.countRequest()
 			c.Status(http.StatusInternalServerError)
 			return false
 		}
@@ -170,6 +199,11 @@ func (wc *WebhookController) resolveClusterConfig(c *gin.Context, s *authorizeSt
 		s.clusterLabel = metrics.ResolvedClusterLabel(s.clusterName)
 		s.phases.setClusterLabel(s.clusterLabel)
 	}
+
+	// The label is now final for the rest of the request, so the request counter
+	// can be attributed to the real cluster.
+	s.countRequest()
+
 	s.phases.EndPhase(PhaseClusterConfig) // End cluster_config phase
 	return true
 }

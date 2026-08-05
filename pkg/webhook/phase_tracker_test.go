@@ -271,3 +271,87 @@ func gatherClusterLabels(t *testing.T, reg *prometheus.Registry) map[string]stru
 	}
 	return out
 }
+
+// TestCountRequest_AttributesToFinalClusterLabel covers the WebhookSARRequests
+// counter specifically. Unlike the duration and decision metrics, a Counter's
+// label cannot be corrected after the increment: whatever value is used is the
+// value that series keeps. Incrementing in parseSARRequest — before
+// resolveClusterConfig runs — would therefore file every request, including those
+// for registered clusters, under the "_unresolved" placeholder and permanently
+// break per-cluster request counting.
+func TestCountRequest_AttributesToFinalClusterLabel(t *testing.T) {
+	newCounter := func(t *testing.T, name string) (*prometheus.CounterVec, *prometheus.Registry) {
+		t.Helper()
+		vec := prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: name,
+			Help: "Test counter",
+		}, []string{"cluster"})
+		reg := prometheus.NewRegistry()
+		require.NoError(t, reg.Register(vec))
+
+		original := metrics.WebhookSARRequests
+		metrics.WebhookSARRequests = vec
+		t.Cleanup(func() { metrics.WebhookSARRequests = original })
+		return vec, reg
+	}
+
+	counterLabels := func(t *testing.T, reg *prometheus.Registry) map[string]float64 {
+		t.Helper()
+		families, err := reg.Gather()
+		require.NoError(t, err)
+		out := map[string]float64{}
+		for _, f := range families {
+			for _, m := range f.GetMetric() {
+				for _, l := range m.GetLabel() {
+					if l.GetName() == "cluster" {
+						out[l.GetValue()] = m.GetCounter().GetValue()
+					}
+				}
+			}
+		}
+		return out
+	}
+
+	t.Run("resolved cluster is counted under its real name", func(t *testing.T) {
+		_, reg := newCounter(t, "test_sar_requests_resolved")
+
+		s := &authorizeState{
+			clusterName:  "prod-cluster-01",
+			clusterLabel: metrics.SafeClusterLabel("prod-cluster-01"),
+			phases:       NewSARPhaseTracker("prod-cluster-01", zap.NewNop().Sugar()),
+		}
+		// Simulate resolveClusterConfig succeeding, then counting.
+		s.clusterLabel = metrics.ResolvedClusterLabel(s.clusterName)
+		s.countRequest()
+
+		assert.Equal(t, map[string]float64{"prod-cluster-01": 1}, counterLabels(t, reg),
+			"a request for a registered cluster must not be counted under a placeholder")
+	})
+
+	t.Run("unresolved cluster is counted under the placeholder", func(t *testing.T) {
+		_, reg := newCounter(t, "test_sar_requests_unresolved")
+
+		s := &authorizeState{
+			clusterName:  "not-onboarded",
+			clusterLabel: metrics.SafeClusterLabel("not-onboarded"),
+		}
+		s.countRequest()
+
+		assert.Equal(t, map[string]float64{metrics.LabelValueUnresolved: 1}, counterLabels(t, reg))
+	})
+
+	t.Run("counted at most once per request", func(t *testing.T) {
+		_, reg := newCounter(t, "test_sar_requests_once")
+
+		s := &authorizeState{
+			clusterName:  "prod-cluster-01",
+			clusterLabel: metrics.ResolvedClusterLabel("prod-cluster-01"),
+		}
+		s.countRequest()
+		s.countRequest()
+		s.countRequest()
+
+		assert.Equal(t, map[string]float64{"prod-cluster-01": 1}, counterLabels(t, reg),
+			"multiple exit paths must not double-count a single request")
+	})
+}
