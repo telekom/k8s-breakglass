@@ -140,14 +140,16 @@ func (c *DebugSessionAPIController) resolveTargetNamespace(
 	// Check if user is allowed to specify a namespace. denyUserNamespace is an
 	// explicit narrowing switch and always wins over allowUserNamespace.
 	if nc.DenyUserNamespace {
+		source := denyUserNamespaceSource(template, binding)
 		c.log.Debugw("User-specified namespace explicitly denied",
 			"template", template.Name,
 			"requestedNamespace", requestedNamespace,
 			"denyUserNamespace", true,
+			"denySource", source,
 		)
 		return "", fmt.Errorf(
-			"template does not allow user-specified namespaces: namespaceConstraints.denyUserNamespace=true, only defaultNamespace '%s' may be used",
-			effectiveDefault)
+			"%s does not allow user-specified namespaces: namespaceConstraints.denyUserNamespace=true, only defaultNamespace '%s' may be used",
+			source, effectiveDefault)
 	}
 	if !nc.AllowUserNamespace {
 		c.log.Debugw("User-specified namespace not allowed by template",
@@ -155,9 +157,11 @@ func (c *DebugSessionAPIController) resolveTargetNamespace(
 			"requestedNamespace", requestedNamespace,
 			"allowUserNamespace", nc.AllowUserNamespace,
 		)
+		// allowUserNamespace is only ever taken from the template: a binding
+		// cannot enable or disable it (see mergeNamespaceConstraints).
 		return "", fmt.Errorf(
-			"template does not allow user-specified namespaces: namespaceConstraints.allowUserNamespace=false, only defaultNamespace '%s' may be used",
-			effectiveDefault)
+			"template '%s' does not allow user-specified namespaces: namespaceConstraints.allowUserNamespace=false, only defaultNamespace '%s' may be used",
+			template.Name, effectiveDefault)
 	}
 
 	if err := c.validateEffectiveNamespaceConstraintFilters(ctx, cluster, requestedNamespace, effectiveDefault, template, binding); err != nil {
@@ -170,6 +174,35 @@ func (c *DebugSessionAPIController) resolveTargetNamespace(
 	}
 
 	return requestedNamespace, nil
+}
+
+// denyUserNamespaceSource names the object(s) that set denyUserNamespace=true,
+// so a rejection attributes the denial to the responsible template, binding, or
+// both rather than blaming the template unconditionally.
+func denyUserNamespaceSource(
+	template *breakglassv1alpha1.DebugSessionTemplate,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
+) string {
+	templateDenies := template != nil &&
+		template.Spec.NamespaceConstraints != nil &&
+		template.Spec.NamespaceConstraints.DenyUserNamespace
+	bindingDenies := binding != nil &&
+		binding.Spec.NamespaceConstraints != nil &&
+		binding.Spec.NamespaceConstraints.DenyUserNamespace
+
+	switch {
+	case templateDenies && bindingDenies:
+		return fmt.Sprintf("template '%s' and binding '%s/%s'",
+			template.Name, binding.Namespace, binding.Name)
+	case bindingDenies:
+		return fmt.Sprintf("binding '%s/%s'", binding.Namespace, binding.Name)
+	case templateDenies:
+		return fmt.Sprintf("template '%s'", template.Name)
+	default:
+		// Unreachable in practice: the caller only reaches this when the merged
+		// constraints deny, which requires one of the two sides to set it.
+		return "namespace constraints"
+	}
 }
 
 // mergeNamespaceConstraints merges template and binding namespace constraints.

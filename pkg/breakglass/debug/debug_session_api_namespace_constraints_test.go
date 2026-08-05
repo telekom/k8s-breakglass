@@ -367,11 +367,14 @@ func TestResolveTargetNamespace_DenyUserNamespace(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "app-one", ns)
 
-		// With the binding it is refused, naming the responsible field.
+		// With the binding it is refused, naming the responsible object and field.
 		_, err = ctrl.resolveTargetNamespace(context.Background(), "spoke", template, "app-one", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "namespaceConstraints.denyUserNamespace=true")
 		assert.Contains(t, err.Error(), "breakglass-debug")
+		// The binding set the switch, so the binding must be blamed, not the template.
+		assert.Contains(t, err.Error(), "binding 'tenant/locked-down'")
+		assert.NotContains(t, err.Error(), "template 'permissive'")
 
 		// The default namespace still resolves.
 		ns, err = ctrl.resolveTargetNamespace(context.Background(), "spoke", template, "", binding)
@@ -391,6 +394,7 @@ func TestResolveTargetNamespace_DenyUserNamespace(t *testing.T) {
 		_, err := ctrl.resolveTargetNamespace(context.Background(), "spoke", locked, "app-one", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "namespaceConstraints.denyUserNamespace=true")
+		assert.Contains(t, err.Error(), "template 'permissive'")
 	})
 
 	t.Run("bindings cannot clear a template denyUserNamespace", func(t *testing.T) {
@@ -411,6 +415,41 @@ func TestResolveTargetNamespace_DenyUserNamespace(t *testing.T) {
 		_, err := ctrl.resolveTargetNamespace(context.Background(), "spoke", locked, "app-one", permissiveBinding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "namespaceConstraints.denyUserNamespace=true")
+		assert.Contains(t, err.Error(), "template 'permissive'")
+	})
+
+	t.Run("both sides denying names both objects", func(t *testing.T) {
+		locked := template.DeepCopy()
+		locked.Spec.NamespaceConstraints.DenyUserNamespace = true
+
+		lockedBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "also-locked", Namespace: "tenant"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					DefaultNamespace:  "breakglass-debug",
+					DenyUserNamespace: true,
+				},
+			},
+		}
+
+		_, err := ctrl.resolveTargetNamespace(context.Background(), "spoke", locked, "app-one", lockedBinding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "template 'permissive' and binding 'tenant/also-locked'")
+	})
+
+	t.Run("allowUserNamespace rejection names the template", func(t *testing.T) {
+		restrictive := template.DeepCopy()
+		restrictive.Spec.NamespaceConstraints.AllowUserNamespace = false
+
+		_, err := ctrl.resolveTargetNamespace(context.Background(), "spoke", restrictive, "app-one", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "template 'permissive'")
+		assert.Contains(t, err.Error(), "namespaceConstraints.allowUserNamespace=false")
+	})
+
+	t.Run("denyUserNamespaceSource fallback", func(t *testing.T) {
+		// Defensive branch: neither side sets the switch.
+		assert.Equal(t, "namespace constraints", denyUserNamespaceSource(nil, nil))
 	})
 
 	// Backwards-compatibility regression: existing objects that do not set the
