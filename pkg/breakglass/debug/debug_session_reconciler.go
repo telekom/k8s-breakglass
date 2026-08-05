@@ -207,7 +207,14 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	}
 
 	// Find binding early so we can check its approvers for the approval decision
-	// This ensures bindings with approvers properly trigger approval workflow
+	// This ensures bindings with approvers properly trigger approval workflow.
+	//
+	// An explicit BindingRef that cannot be resolved is INDETERMINATE, not "absent".
+	// The binding is what carries the approver configuration, so silently falling
+	// through to auto-discovery here would let requiresApproval() see no approvers
+	// and activate the session with no approval at all — a fail-OPEN on a transient
+	// API/cache error. We requeue instead: the session stays Pending (nothing is
+	// granted, nothing is denied) until the ref resolves or an operator corrects it.
 	var binding *breakglassv1alpha1.DebugSessionClusterBinding
 	if ds.Spec.BindingRef != nil {
 		binding, err = c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace)
@@ -823,11 +830,20 @@ func (c *DebugSessionController) createImpersonatedClient(
 	clusterName string,
 	impConfig *breakglassv1alpha1.ImpersonationConfig,
 ) (ctrlclient.Client, error) {
-	// Get base REST config for spoke cluster
-	restCfg, err := c.ccProvider.GetRESTConfig(ctx, clusterName)
+	// Get base REST config for spoke cluster.
+	//
+	// GetRESTConfig returns the *shared* cached *rest.Config pointer held in the
+	// ClientProvider cache for this spoke. It MUST NOT be mutated in place: every
+	// other consumer of that cluster's cached config (webhook SAR checks, cleanup,
+	// workload deployment, clientsets) would inherit whatever we wrote until the
+	// cache entry expires, and concurrent reconciles would race on the same struct.
+	// Always copy before touching any field. See group_checker.go and
+	// session_controller_approval_utils.go for the same pattern.
+	sharedCfg, err := c.ccProvider.GetRESTConfig(ctx, clusterName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get REST config for cluster %s: %w", clusterName, err)
 	}
+	restCfg := rest.CopyConfig(sharedCfg)
 
 	// If impersonation is configured, set up impersonation
 	if impConfig != nil && impConfig.ServiceAccountRef != nil {

@@ -268,6 +268,27 @@ func (p *ClientProvider) getInNamespaceLocked(ctx context.Context, namespace, na
 // without attempting any network call. When the breaker is in half-open state, a single probe
 // request is allowed through to test cluster reachability; all other callers still receive
 // ErrCircuitOpen until the probe succeeds.
+//
+// OWNERSHIP CONTRACT — the returned *rest.Config is the SHARED cached pointer.
+// Callers MUST treat it as read-only. Any caller that needs to change a field
+// (Impersonate, QPS/Burst, Timeout, WrapTransport, TLS settings, …) MUST take a
+// copy first:
+//
+//	cfg := rest.CopyConfig(shared)
+//	cfg.Impersonate = rest.ImpersonationConfig{...}
+//
+// Mutating the returned value in place poisons the cache entry for that spoke:
+// every subsequent consumer — the authorization webhook's SAR checks, session
+// cleanup, workload deployment, and any Clientset built from it — silently
+// inherits the mutation until the TTL expires, and concurrent reconciles race on
+// the same struct.
+//
+// The shared pointer is deliberately NOT copied here: the pointer-identity
+// caching contract is depended on by GetClientset (which reuses the config to
+// avoid duplicate clientsets) and by the TTL/invalidation tests, and copying on
+// every call would allocate on a hot webhook path where the overwhelming
+// majority of callers are read-only. The three call sites that do mutate all
+// copy explicitly.
 func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.Config, error) {
 	now := time.Now()
 
