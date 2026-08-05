@@ -385,6 +385,23 @@ var (
 		Help: "Number of IDPs allowed for an escalation",
 	}, []string{"escalation"})
 
+	// ApprovalGroupLookupFailures counts cluster-side approver group lookups that
+	// failed during approval authorization. Every increment means at least one
+	// approval decision lost its cluster-verified group basis. Alert on this.
+	ApprovalGroupLookupFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_approval_group_lookup_failures_total",
+		Help: "Total cluster-side approver group lookup failures during approval authorization",
+	}, []string{"cluster"})
+
+	// ApprovalUnverifiedGroupDecisions counts approvals that were GRANTED on the
+	// basis of unverified (JWT-claim) approver groups because the cluster-side
+	// lookup failed. This is the security-relevant subset of
+	// ApprovalGroupLookupFailures: the fallback was load-bearing for the outcome.
+	ApprovalUnverifiedGroupDecisions = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_approval_unverified_group_decisions_total",
+		Help: "Total approval authorizations granted using unverified JWT-claim groups after a cluster group lookup failure",
+	}, []string{"cluster"})
+
 	// Frontend API endpoint metrics
 	APIEndpointRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_api_endpoint_requests_total",
@@ -708,6 +725,8 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(SessionApprovedWithIDP)
 	ctrlmetrics.Registry.MustRegister(EscalationIDPAuthorizationChecks)
 	ctrlmetrics.Registry.MustRegister(EscalationAllowedIDPsCount)
+	ctrlmetrics.Registry.MustRegister(ApprovalGroupLookupFailures)
+	ctrlmetrics.Registry.MustRegister(ApprovalUnverifiedGroupDecisions)
 
 	// Register frontend API metrics
 	ctrlmetrics.Registry.MustRegister(APIEndpointRequests)
