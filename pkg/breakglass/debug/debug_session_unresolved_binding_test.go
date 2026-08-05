@@ -21,6 +21,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -35,6 +36,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
 const unresolvedBindingNamespace = "breakglass"
@@ -316,18 +318,36 @@ func TestDeferOnUnresolvedBinding_ClassifiesReason(t *testing.T) {
 		ccProvider: cluster.NewClientProvider(fakeClient, zap.NewNop().Sugar()),
 	}
 
-	ds := sessionWithBindingRef("classify", "tmpl", "spoke-a", "b")
+	ds := sessionWithBindingRef("classify", "tmpl", "spoke-classify", "b")
+
+	// The reason label values must be stable snake_case, matching every other
+	// label value in this codebase (e.g. "user_rejected", "policy_violation").
+	// Human phrases with spaces are awkward in PromQL and invite drift.
+	const (
+		reasonNotFound     = "binding_not_found"
+		reasonLookupFailed = "binding_lookup_failed"
+	)
+	notFoundBefore := testutil.ToFloat64(
+		metrics.DebugSessionBindingUnresolved.WithLabelValues("spoke-classify", reasonNotFound))
+	lookupFailedBefore := testutil.ToFloat64(
+		metrics.DebugSessionBindingUnresolved.WithLabelValues("spoke-classify", reasonLookupFailed))
 
 	notFound := apierrors.NewNotFound(
 		schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "debugsessionclusterbindings"}, "b")
 	_, err := c.deferOnUnresolvedBinding(context.Background(), ds, notFound)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, notFound)
+	assert.Equal(t, notFoundBefore+1, testutil.ToFloat64(
+		metrics.DebugSessionBindingUnresolved.WithLabelValues("spoke-classify", reasonNotFound)),
+		"a NotFound cause must be reported as %q", reasonNotFound)
 
 	transient := apierrors.NewServiceUnavailable("apiserver is restarting")
 	_, err = c.deferOnUnresolvedBinding(context.Background(), ds, transient)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, transient)
+	assert.Equal(t, lookupFailedBefore+1, testutil.ToFloat64(
+		metrics.DebugSessionBindingUnresolved.WithLabelValues("spoke-classify", reasonLookupFailed)),
+		"a transient cause must be reported as %q", reasonLookupFailed)
 
 	// A nil BindingRef must not panic (defensive: the helper is only called when the
 	// ref is set, but it must stay safe if that ever changes).

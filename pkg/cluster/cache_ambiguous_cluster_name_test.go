@@ -20,8 +20,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap/zaptest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -100,6 +102,88 @@ func TestGetAcrossAllNamespaces_ErrorsOnAmbiguousCacheContents(t *testing.T) {
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "multiple ClusterConfigs found")
 	assert.Contains(t, err.Error(), "in cache")
+}
+
+// TestGetAcrossAllNamespaces_AmbiguityIsVisibleInMetrics pins the observability of
+// the fail-closed path. The cache-hit ambiguity branch used to return before touching
+// either ClusterCacheHits or ClusterCacheMisses, so a lookup that failed on ambiguous
+// cached contents was invisible in cache metrics and repeated ambiguity errors could
+// only be found in logs. The lookup is now counted as a hit (it was served entirely
+// from cache) and the dedicated ambiguity counter makes the failure alertable.
+func TestGetAcrossAllNamespaces_AmbiguityIsVisibleInMetrics(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("cache-hit ambiguity counts a hit and an ambiguity", func(t *testing.T) {
+		const name = "metrics-cache-dup"
+		p := newAmbiguityTestProvider(t,
+			clusterConfig("team-a", name), clusterConfig("team-b", name))
+
+		// Prime both namespaces. Each GetInNamespace records its own miss, which is
+		// why the deltas below are measured after priming.
+		_, err := p.GetInNamespace(ctx, "team-a", name)
+		require.NoError(t, err)
+		_, err = p.GetInNamespace(ctx, "team-b", name)
+		require.NoError(t, err)
+
+		hitsBefore := testutil.ToFloat64(metrics.ClusterCacheHits.WithLabelValues(name))
+		missesBefore := testutil.ToFloat64(metrics.ClusterCacheMisses.WithLabelValues(name))
+		ambigBefore := testutil.ToFloat64(metrics.ClusterCacheAmbiguous.WithLabelValues(name, "cache"))
+
+		_, err = p.GetAcrossAllNamespaces(ctx, name)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "in cache")
+
+		assert.Equal(t, hitsBefore+1,
+			testutil.ToFloat64(metrics.ClusterCacheHits.WithLabelValues(name)),
+			"a lookup served from cache must be counted even when it fails closed")
+		assert.Equal(t, missesBefore,
+			testutil.ToFloat64(metrics.ClusterCacheMisses.WithLabelValues(name)),
+			"a cache-served lookup must not be counted as a miss")
+		assert.Equal(t, ambigBefore+1,
+			testutil.ToFloat64(metrics.ClusterCacheAmbiguous.WithLabelValues(name, "cache")),
+			"the ambiguity itself must be alertable")
+	})
+
+	t.Run("list ambiguity counts a miss and an ambiguity", func(t *testing.T) {
+		const name = "metrics-list-dup"
+		p := newAmbiguityTestProvider(t,
+			clusterConfig("team-a", name), clusterConfig("team-b", name))
+
+		hitsBefore := testutil.ToFloat64(metrics.ClusterCacheHits.WithLabelValues(name))
+		missesBefore := testutil.ToFloat64(metrics.ClusterCacheMisses.WithLabelValues(name))
+		ambigBefore := testutil.ToFloat64(metrics.ClusterCacheAmbiguous.WithLabelValues(name, "list"))
+
+		// Cache is cold, so this exercises the List path.
+		_, err := p.GetAcrossAllNamespaces(ctx, name)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "across namespaces")
+
+		assert.Equal(t, missesBefore+1,
+			testutil.ToFloat64(metrics.ClusterCacheMisses.WithLabelValues(name)))
+		assert.Equal(t, hitsBefore,
+			testutil.ToFloat64(metrics.ClusterCacheHits.WithLabelValues(name)))
+		assert.Equal(t, ambigBefore+1,
+			testutil.ToFloat64(metrics.ClusterCacheAmbiguous.WithLabelValues(name, "list")),
+			"list-path ambiguity must be alertable too")
+	})
+
+	t.Run("unambiguous lookups record no ambiguity", func(t *testing.T) {
+		const name = "metrics-unique"
+		p := newAmbiguityTestProvider(t, clusterConfig("team-a", name))
+
+		ambigCacheBefore := testutil.ToFloat64(metrics.ClusterCacheAmbiguous.WithLabelValues(name, "cache"))
+		ambigListBefore := testutil.ToFloat64(metrics.ClusterCacheAmbiguous.WithLabelValues(name, "list"))
+
+		_, err := p.GetAcrossAllNamespaces(ctx, name) // list path
+		require.NoError(t, err)
+		_, err = p.GetAcrossAllNamespaces(ctx, name) // cache path
+		require.NoError(t, err)
+
+		assert.Equal(t, ambigCacheBefore,
+			testutil.ToFloat64(metrics.ClusterCacheAmbiguous.WithLabelValues(name, "cache")))
+		assert.Equal(t, ambigListBefore,
+			testutil.ToFloat64(metrics.ClusterCacheAmbiguous.WithLabelValues(name, "list")))
+	})
 }
 
 // TestGetAcrossAllNamespaces_SingleMatchUnchanged proves the fix is behaviour-identical

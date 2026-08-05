@@ -754,9 +754,9 @@ func (c *DebugSessionController) deferOnUnresolvedBinding(
 		bindingNamespace = ds.Spec.BindingRef.Namespace
 	}
 
-	reason := "binding lookup failed"
+	reason := "binding_lookup_failed"
 	if apierrors.IsNotFound(cause) {
-		reason = "binding not found"
+		reason = "binding_not_found"
 	}
 
 	c.log.Errorw("Refusing to evaluate debug session: explicit bindingRef is unresolvable, "+

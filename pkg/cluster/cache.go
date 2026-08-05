@@ -163,6 +163,12 @@ func (p *ClientProvider) GetAcrossAllNamespaces(ctx context.Context, name string
 		if cfg != nil && cfg.Name == name {
 			if cachedFound != nil {
 				p.mu.RUnlock()
+				// The lookup was served entirely from cache, so it is a cache hit even
+				// though it fails closed. Counting it keeps hits+misses equal to the
+				// number of lookups, and the dedicated ambiguity counter makes the
+				// failure itself alertable instead of invisible.
+				metrics.ClusterCacheHits.WithLabelValues(name).Inc()
+				metrics.ClusterCacheAmbiguous.WithLabelValues(name, "cache").Inc()
 				return nil, fmt.Errorf("multiple ClusterConfigs found for name %q in cache", name)
 			}
 			cachedFound = cfg
@@ -184,6 +190,9 @@ func (p *ClientProvider) GetAcrossAllNamespaces(ctx context.Context, name string
 	for _, item := range list.Items {
 		if item.Name == name {
 			if found != nil {
+				// The miss was already counted above; record the ambiguity so the
+				// fail-closed path is visible in monitoring rather than only in logs.
+				metrics.ClusterCacheAmbiguous.WithLabelValues(name, "list").Inc()
 				return nil, fmt.Errorf("multiple ClusterConfigs found for name %q across namespaces", name)
 			}
 			// copy loop variable before taking address
@@ -234,6 +243,9 @@ func (p *ClientProvider) getAcrossAllNamespacesLocked(ctx context.Context, name 
 	for _, cfg := range p.data {
 		if cfg != nil && cfg.Name == name {
 			if found != nil {
+				// Callers of the locked variant have already accounted the
+				// hit/miss for this lookup, so only the ambiguity is recorded here.
+				metrics.ClusterCacheAmbiguous.WithLabelValues(name, "cache").Inc()
 				return nil, fmt.Errorf("multiple ClusterConfigs found for name %q in cache", name)
 			}
 			found = cfg
@@ -251,6 +263,7 @@ func (p *ClientProvider) getAcrossAllNamespacesLocked(ctx context.Context, name 
 	for _, item := range list.Items {
 		if item.Name == name {
 			if found != nil {
+				metrics.ClusterCacheAmbiguous.WithLabelValues(name, "list").Inc()
 				return nil, fmt.Errorf("multiple ClusterConfigs found for name %q across namespaces", name)
 			}
 			cp := item

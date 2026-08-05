@@ -40,7 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   spoke cluster across calls — and this path is reached from the authorization webhook. It now
   errors on ambiguity, matching the semantics its unexported `getAcrossAllNamespacesLocked` twin
   already had. Single-match and not-found behaviour are unchanged. `ensureClusterWideUniqueName`
-  admission validation already prevented duplicates, so this is defence in depth.
+  admission validation already prevented duplicates, so this is defence in depth. The fail-closed
+  path is observable: the cache-hit ambiguity branch now still counts the lookup in
+  `breakglass_cluster_cache_hits_total` and both branches increment the new
+  `breakglass_cluster_cache_ambiguous_total{cluster,source}`, so repeated ambiguity errors are
+  visible in monitoring instead of only in logs.
 - **OIDC proxy CORS header**: API CORS preflight responses now allow `X-OIDC-Authority` for browser-based multi-IDP OIDC proxy flows. (#1130)
 - **Audit Kafka requiredAcks**: Kafka audit sinks now preserve an explicit `requiredAcks: 0` no-ack configuration instead of treating it as unset and defaulting to all replicas.
 - **BreakglassSession list filters**: Session status listing now pushes exact state filters through the cache index and deduplicates multi-state results before applying cluster, user, or group filters.
@@ -71,10 +75,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`breakglass_cluster_cache_ambiguous_total{cluster,source}` metric**, incremented when a
+  cluster-name lookup is rejected because the name resolved to multiple `ClusterConfig` objects
+  (`source` is `cache` or `list`). Alert on any non-zero value: cluster-wide name uniqueness has
+  been violated and name-based lookups — including the authorization webhook path — are failing
+  closed.
 - **`debug_session.binding_unresolved` audit event** (severity `warning`, classified sensitive so it
   is never sampled or dropped) and **`breakglass_debug_session_binding_unresolved_total{cluster,reason}`
   metric**, emitted when a `DebugSession` names an explicit `spec.bindingRef` that cannot be
-  resolved. `reason` is `binding not found` or `binding lookup failed`.
+  resolved. `reason` is `binding_not_found` or `binding_lookup_failed`.
 
 ### Upgrade impact: DenyPolicy ephemeral containers
 
