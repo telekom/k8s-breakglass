@@ -25,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -1573,25 +1574,76 @@ func ReadPinnedCA(secret *corev1.Secret, secretRef *breakglassv1alpha1.SecretKey
 	return nil, breakglassv1alpha1.DefaultCASecretKey, false
 }
 
-// persistTOFUCA saves the discovered CA certificate to the referenced secret using SSA.
+// tofuCALabels and tofuCAAnnotations mark a Secret that holds a TOFU-pinned CA,
+// so operators can locate and audit pinned CAs with a label selector.
+func tofuCALabels() map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/managed-by":          "breakglass",
+		"breakglass.t-caas.telekom.com/tofu-ca": "true",
+	}
+}
+
+func tofuCAAnnotations() map[string]string {
+	return map[string]string{
+		"breakglass.t-caas.telekom.com/tofu-timestamp": time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
+// persistTOFUCA saves the discovered CA certificate to the referenced secret.
 //
 // The write key is resolved with the same defaults as [ReadPinnedCA], so a CA
 // captured by TOFU is guaranteed to be found again by the next read. When the
 // secret already holds a different CA under the canonical or legacy key the
 // write is refused with [ErrTOFUPinMismatch]: silently re-pinning would defeat
 // the entire point of Trust On First Use.
+//
+// The mismatch check and the write MUST be atomic. A plain read-compare-apply is
+// a TOCTOU race: another replica can pin a different CA in between, and a
+// server-side apply carries no resourceVersion precondition, so it would happily
+// overwrite that pin without ever reporting a mismatch. Instead the write is an
+// optimistic-concurrency Update carrying the resourceVersion the comparison was
+// made against — if anything changed the Secret in the meantime the API server
+// rejects it with a conflict, and RetryOnConflict re-runs the whole
+// read-compare-write so the mismatch is evaluated against the current state. A
+// missing Secret is created with Create, which fails with AlreadyExists if
+// another replica wins the race, and that is likewise retried.
 func (p *OIDCTokenProvider) persistTOFUCA(ctx context.Context, secretRef *breakglassv1alpha1.SecretKeyReference, caPEM []byte) error {
 	key := breakglassv1alpha1.ResolveSecretKey(secretRef, breakglassv1alpha1.DefaultCASecretKey)
+	name := types.NamespacedName{Name: secretRef.Name, Namespace: secretRef.Namespace}
 
-	var existing corev1.Secret
-	if err := p.k8s.Get(ctx, types.NamespacedName{
-		Name:      secretRef.Name,
-		Namespace: secretRef.Namespace,
-	}, &existing); err != nil {
-		if !apierrors.IsNotFound(err) {
-			return fmt.Errorf("failed to read cluster CA secret before pinning: %w", err)
+	// Treat AlreadyExists like a conflict: it means a concurrent creator won, so
+	// re-reading and re-comparing is exactly the right recovery.
+	isRetryable := func(err error) bool {
+		return apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err)
+	}
+
+	return retry.OnError(retry.DefaultRetry, isRetryable, func() error {
+		var existing corev1.Secret
+		if err := p.k8s.Get(ctx, name, &existing); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return fmt.Errorf("failed to read cluster CA secret before pinning: %w", err)
+			}
+			// No Secret yet: create it. Create fails with AlreadyExists if another
+			// replica created it first, which the retry re-evaluates.
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        secretRef.Name,
+					Namespace:   secretRef.Namespace,
+					Labels:      tofuCALabels(),
+					Annotations: tofuCAAnnotations(),
+				},
+				Type: corev1.SecretTypeOpaque,
+				Data: map[string][]byte{key: caPEM},
+			}
+			if err := p.k8s.Create(ctx, secret); err != nil {
+				if isRetryable(err) {
+					return err
+				}
+				return fmt.Errorf("failed to create cluster CA secret while pinning: %w", err)
+			}
+			return nil
 		}
-	} else {
+
 		// Compare against every key a read could resolve to, not just the write
 		// key: a pin left under the legacy key must still block a re-pin.
 		for _, pinnedKey := range caPinKeys(secretRef) {
@@ -1601,31 +1653,34 @@ func (p *OIDCTokenProvider) persistTOFUCA(ctx context.Context, secretRef *breakg
 					ErrTOFUPinMismatch, secretRef.Namespace, secretRef.Name, pinnedKey)
 			}
 		}
-	}
 
-	// Use SSA to create or update the secret - no need to check existence first
-	secret := corev1.Secret{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: corev1.SchemeGroupVersion.String(),
-			Kind:       "Secret",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretRef.Name,
-			Namespace: secretRef.Namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/managed-by":          "breakglass",
-				"breakglass.t-caas.telekom.com/tofu-ca": "true",
-			},
-			Annotations: map[string]string{
-				"breakglass.t-caas.telekom.com/tofu-timestamp": time.Now().UTC().Format(time.RFC3339),
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{
-			key: caPEM,
-		},
-	}
-	return utils.ApplyObject(ctx, p.k8s, &secret)
+		// Mutate the object we just compared, so the Update carries its
+		// resourceVersion and fails with a conflict if the Secret changed.
+		if existing.Data == nil {
+			existing.Data = map[string][]byte{}
+		}
+		existing.Data[key] = caPEM
+		if existing.Labels == nil {
+			existing.Labels = map[string]string{}
+		}
+		for k, v := range tofuCALabels() {
+			existing.Labels[k] = v
+		}
+		if existing.Annotations == nil {
+			existing.Annotations = map[string]string{}
+		}
+		for k, v := range tofuCAAnnotations() {
+			existing.Annotations[k] = v
+		}
+
+		if err := p.k8s.Update(ctx, &existing); err != nil {
+			if isRetryable(err) {
+				return err
+			}
+			return fmt.Errorf("failed to pin cluster CA to secret: %w", err)
+		}
+		return nil
+	})
 }
 
 // InvalidateTOFU removes a cached TOFU CA for the specified cluster

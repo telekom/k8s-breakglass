@@ -397,3 +397,90 @@ func TestTOFUPinMismatchNeverPopulatesCache(t *testing.T) {
 	assert.Empty(t, cfg.TLSClientConfig.CAData,
 		"a pin mismatch must not yield usable TLS credentials")
 }
+
+// TestPersistTOFUCARejectsPinRacedInAfterCompare is the regression test for the
+// TOCTOU Copilot flagged on #1210. persistTOFUCA used to read the Secret,
+// compare, and then write with server-side apply — which carries no
+// resourceVersion precondition. If another replica pinned a different CA between
+// the compare and the apply, the apply silently overwrote that pin and returned
+// nil, so the caller believed its (unverified) CA was the pinned one.
+//
+// The write is now an optimistic-concurrency Update carrying the resourceVersion
+// the comparison was made against, wrapped in retry-on-conflict. Here the
+// interceptor pins a rival CA immediately after the comparing Get, so the Update
+// must conflict, and the retry's fresh read must then observe the rival pin and
+// report ErrTOFUPinMismatch instead of clobbering it.
+func TestPersistTOFUCARejectsPinRacedInAfterCompare(t *testing.T) {
+	_, _, ours := generateTestCACert(t)
+	_, _, rival := generateTestCACert(t)
+	require.NotEqual(t, ours, rival)
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	// Start with an empty Secret so the first compare finds no pin.
+	var raced bool
+	k8s := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(caPinSecret(map[string][]byte{})).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if err := c.Get(ctx, key, obj, opts...); err != nil {
+					return err
+				}
+				// Exactly once, right after the comparing read succeeds, a
+				// competing replica pins its own CA. This bumps the
+				// resourceVersion, so our pending Update must conflict.
+				if !raced {
+					raced = true
+					var live corev1.Secret
+					if err := c.Get(ctx, key, &live); err != nil {
+						return err
+					}
+					if live.Data == nil {
+						live.Data = map[string][]byte{}
+					}
+					live.Data[breakglassv1alpha1.DefaultCASecretKey] = rival
+					if err := c.Update(ctx, &live); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		}).
+		Build()
+
+	provider := NewOIDCTokenProvider(k8s, zap.NewNop().Sugar())
+	err := provider.persistTOFUCA(context.Background(),
+		&breakglassv1alpha1.SecretKeyReference{Name: "cluster-ca", Namespace: "default"}, ours)
+
+	require.Error(t, err,
+		"a pin that appeared after the compare must not be silently overwritten")
+	assert.ErrorIs(t, err, ErrTOFUPinMismatch)
+
+	// The rival's pin must be intact — we must not have clobbered it.
+	var secret corev1.Secret
+	require.NoError(t, k8s.Get(context.Background(),
+		types.NamespacedName{Name: "cluster-ca", Namespace: "default"}, &secret))
+	assert.Equal(t, rival, secret.Data[breakglassv1alpha1.DefaultCASecretKey],
+		"the CA pinned by the competing writer must survive")
+}
+
+// TestPersistTOFUCACreatesSecretWhenAbsent covers the create path of the
+// optimistic-concurrency rewrite: with no Secret at all the CA is pinned under
+// the canonical key and the audit label is applied.
+func TestPersistTOFUCACreatesSecretWhenAbsent(t *testing.T) {
+	_, _, caPEM := generateTestCACert(t)
+	provider := caPinTestProvider(t) // no seeded Secret
+
+	require.NoError(t, provider.persistTOFUCA(context.Background(),
+		&breakglassv1alpha1.SecretKeyReference{Name: "cluster-ca", Namespace: "default"}, caPEM))
+
+	var secret corev1.Secret
+	require.NoError(t, provider.k8s.Get(context.Background(),
+		types.NamespacedName{Name: "cluster-ca", Namespace: "default"}, &secret))
+	assert.Equal(t, caPEM, secret.Data[breakglassv1alpha1.DefaultCASecretKey])
+	assert.Equal(t, "true", secret.Labels["breakglass.t-caas.telekom.com/tofu-ca"],
+		"pinned-CA Secrets must carry the audit label")
+	assert.NotEmpty(t, secret.Annotations["breakglass.t-caas.telekom.com/tofu-timestamp"])
+}
