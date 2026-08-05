@@ -25,6 +25,11 @@ const (
 	EventSessionExtended    EventType = "session.extended"
 	EventSessionValidated   EventType = "session.validated"
 	EventSessionInvalidated EventType = "session.invalidated"
+	// EventSessionApprovalUnverifiedGroups records that an approval authorization
+	// decision was made using unverified (JWT-claim) approver groups because the
+	// cluster-side group lookup failed. The approval is still granted to avoid
+	// creating a lockout during a spoke outage, but the weaker basis is audited.
+	EventSessionApprovalUnverifiedGroups EventType = "session.approval_unverified_groups"
 
 	// === Escalation events ===
 	EventEscalationCreated   EventType = "escalation.created"
@@ -325,6 +330,7 @@ func SeverityForEventType(eventType EventType) Severity {
 
 	// Warning events - should be reviewed
 	case EventAccessDenied, EventAccessDeniedPolicy, EventSessionRejected, EventSessionDenied,
+		EventSessionApprovalUnverifiedGroups,
 		EventEscalationRejected, EventPolicyViolation, EventAdmissionDenied,
 		EventSecretAccessed, EventSecretUpdated, EventResourceExec, EventResourceDelete,
 		EventPodExec, EventPodAttach, EventResourceImpersonate, EventWebhookTimeout,
@@ -462,6 +468,7 @@ func IsSensitiveEvent(eventType EventType) bool {
 	case EventSessionRequested, EventSessionApproved, EventSessionDenied,
 		EventSessionRejected, EventSessionExpired,
 		EventSessionRevoked, EventSessionWithdrawn, EventSessionDropped,
+		EventSessionApprovalUnverifiedGroups,
 		EventAccessDenied, EventAccessDeniedPolicy,
 		EventPolicyViolation, EventSecretAccessed, EventSecretCreated,
 		EventSecretUpdated, EventSecretDeleted, EventAuthFailure,
