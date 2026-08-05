@@ -1494,6 +1494,30 @@ When enabled, participants can attach to shared terminals:
 
 ## Approval Workflow
 
+### What counts as a configured approver set
+
+An approver set is *configured* only when it names at least one user or group.
+All of the following mean "no approvers configured":
+
+```yaml
+# omitted entirely
+# ---
+approvers: {}
+# ---
+approvers:
+  users: []
+  groups: []
+```
+
+When no approvers are configured, sessions using that template or binding are
+**auto-approved** — they never enter `PendingApproval`, so no approval is needed.
+Consistently with that, an unconfigured approver set makes **nobody** an approver:
+it does not mean "any authenticated user may approve". Approval and read
+authorization apply the same rule.
+
+If you want four-eyes control, you must name approvers explicitly. An empty
+approver set grants no approval rights and gates nothing.
+
 ### Automatic Approval
 
 Sessions can be auto-approved based on user groups or target clusters:

@@ -111,7 +111,15 @@ func TestIsUserAuthorizedToApprove_TemplateFetchFails(t *testing.T) {
 }
 
 func TestIsUserAuthorizedToApprove_TemplateNoApprovers(t *testing.T) {
-	// When template has no approvers configured, allow any authenticated user
+	// A template with no approvers configured means nobody is an approver.
+	//
+	// This assertion was previously inverted: it required that any authenticated
+	// user be allowed to approve, which made the whole authenticated population an
+	// approver and defeated four-eyes control. It is not a compatibility break for
+	// operators, because requiresApproval() uses the same "configured" predicate:
+	// a session with no effective approvers is auto-approved and never reaches
+	// PendingApproval, and the approve/reject endpoints only accept sessions in
+	// that state.
 
 	logger := zaptest.NewLogger(t).Sugar()
 
@@ -141,7 +149,7 @@ func TestIsUserAuthorizedToApprove_TemplateNoApprovers(t *testing.T) {
 
 	ctx := context.Background()
 	result := ctrl.isUserAuthorizedToApprove(ctx, session, "anyuser@example.com", nil)
-	assert.True(t, result, "any authenticated user should be able to approve when no approvers configured")
+	assert.False(t, result, "no approvers configured must not make every authenticated user an approver")
 }
 
 func TestCanReadDebugSession_RequesterParticipantInviteeAndApprover(t *testing.T) {
@@ -979,8 +987,16 @@ func TestIsIdentityAuthorizedToApprove_BlocksSelfApprovalByEmailCaseInsensitive(
 	assert.False(t, result, "requester email self-approval should be blocked despite casing or surrounding whitespace")
 }
 
-func TestIsUserAuthorizedToApprove_EmptyApproversAllowsAll(t *testing.T) {
-	// When approvers has empty users and groups, allow any authenticated user
+func TestIsUserAuthorizedToApprove_EmptyApproversDeniesAll(t *testing.T) {
+	// An approver set that is present but has neither users nor groups names
+	// nobody, so it must authorize nobody.
+	//
+	// This test previously asserted the opposite and so locked in the defect: it
+	// encoded "empty approver set == every authenticated user may approve". The
+	// read authorizer never agreed -- isExplicitDebugSessionApprover guards the
+	// identical check with debugSessionApproversConfigured -- so the two paths
+	// disagreed about the same approver set. The approve path now applies that same
+	// predicate.
 
 	logger := zaptest.NewLogger(t).Sugar()
 
@@ -1003,7 +1019,7 @@ func TestIsUserAuthorizedToApprove_EmptyApproversAllowsAll(t *testing.T) {
 
 	ctx := context.Background()
 	result := ctrl.isUserAuthorizedToApprove(ctx, session, "anyone@example.com", nil)
-	assert.True(t, result, "empty approvers lists should allow any authenticated user")
+	assert.False(t, result, "empty approvers lists must not make every authenticated user an approver")
 }
 
 // ============================================================================
