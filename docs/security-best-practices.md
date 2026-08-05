@@ -172,6 +172,21 @@ Subsequent JWKS refreshes (including those triggered by unknown `kid` values) ar
 
 These protections are in addition to the existing LRU cache for JWKS key sets.
 
+### OIDC Proxy Egress Controls
+
+The API exposes an **unauthenticated** OIDC proxy at `GET|POST /api/oidc/authority/*proxyPath`. It exists so the browser can fetch discovery and JWKS documents through the server origin instead of having to trust the IdP certificate directly. Because it is unauthenticated and performs server-side outbound requests, it is an SSRF-sensitive boundary and is defended in depth:
+
+- **Path allowlist** — only well-known OIDC endpoints are proxied; absolute URLs, `..`, backslashes, and encoded traversal are rejected.
+- **Authority allowlist** — the target authority must match a configured `IdentityProvider` authority by **exact string equality**. An attacker-supplied `X-OIDC-Authority` header for an unknown host is rejected with `403`.
+- **Host pinning** — the resolved target URL is rejected if its scheme or host differs from the selected authority.
+- **No redirect following** — the HTTP client refuses upstream `30x` responses. Only the *first* hop is validated against the authority allowlist, so following a redirect would let a trusted-but-redirecting IdP steer a server-side request to an arbitrary host. The `30x` status is relayed to the caller, but `Location` and `Set-Cookie` are stripped by the response-header allowlist.
+- **Response size cap** — the relayed body is capped at 1 MiB. Real discovery documents are a few KiB and even a large JWKS stays well under 256 KiB, so this leaves ample headroom while removing an unbounded-copy DoS vector. A truncated response is logged at `Error` level and counted as `response_too_large`.
+- **No credential relay** — `Authorization` and `Cookie` are never forwarded upstream.
+
+**Always configure an `https://` authority.** A plaintext `http://` authority gives the outbound first hop no CA policy and no server identity check, so DNS or on-path control of the authority hostname becomes a full SSRF primitive with *no redirect involved* — the redirect refusal cannot help. The `IdentityProvider` CRD enforces `^https://.+` for `spec.oidc.authority` and `spec.keycloak.baseURL`; only legacy file-based configuration can reach the plaintext path, and doing so logs a loud `oidc_proxy_insecure_http_authority` warning and reports `breakglass_oidc_proxy_tls_mode{mode="http"} 1`.
+
+> `server.allowOIDCProxyRedirects: true` restores redirect following for a non-conforming IdP. This re-enables the SSRF path described above and logs a warning at startup. Leave it unset unless you have verified the redirect targets are trusted.
+
 ### Audience Validation (SEC-005)
 
 Every `IdentityProvider` CRD must set `spec.oidc.expectedAudience`. The middleware validates the JWT `aud` claim against that value. This prevents token reuse from other services that share the same OIDC provider — a common cross-service token confusion attack.
@@ -446,6 +461,32 @@ This enables a single template to serve multiple personas with different capabil
 1. **Require approvers** - Always configure approver groups
 2. **Prevent self-approval** - The system automatically prevents users from approving their own requests
 3. **Multi-person approval** - Consider requiring multiple approvers for sensitive escalations
+
+### Approver Group Verification and the Unverified-Groups Fallback
+
+Approval authorization normally resolves the approver's groups **on the target spoke cluster** (via `SelfSubjectReview` under impersonation), not from the caller's JWT. Cluster-verified groups are strictly stronger evidence than JWT claims.
+
+When that spoke-side lookup fails (spoke unreachable, credentials expired, RBAC changed), breakglass does **not** hard-fail. This is deliberate and reflects an asymmetric failure model: a wrong *deny* locks operators out of production during exactly the kind of incident breakglass exists to resolve, which is generally worse than a wrong *allow* that is fully attributed and alertable. Instead the lookup failure is treated as "**no verified groups**" and the decision falls through to the pre-existing, explicitly scoped request-context (JWT-claim) group fallback:
+
+- If the caller would have been authorized on verified groups anyway, the outcome is unchanged.
+- If the caller has no matching group in either source, they are denied as before.
+- If the JWT-claim groups are **load-bearing** for an allow, the approval is granted but recorded as based on unverified evidence.
+
+Every lookup failure is observable, so the fallback is never silent:
+
+| Signal | Meaning |
+|---|---|
+| `breakglass_approval_group_lookup_failures_total{cluster}` | A spoke-side approver group lookup failed. At least one approval lost its verified basis. |
+| `breakglass_approval_unverified_group_decisions_total{cluster}` | An approval was **granted** on unverified JWT-claim groups. Security-relevant subset of the above. |
+| `session.approval_unverified_groups` audit event | Per-decision record (severity `warning`, classified as sensitive) with approver, cluster, matched group, and identity provider. |
+| `Error`-level log | The underlying lookup error with cluster context, emitted on every failure. |
+
+**Recommendations:**
+
+1. **Alert on `breakglass_approval_unverified_group_decisions_total`** — any non-zero rate means approvals are being granted on weaker evidence and warrants review of both the approvals and the spoke connectivity.
+2. **Alert on `breakglass_approval_group_lookup_failures_total`** as an availability signal — it is the leading indicator for the above.
+3. **Review the `session.approval_unverified_groups` audit trail** after any spoke outage.
+4. **Keep spoke credentials healthy** — the fallback is a safety net for incidents, not a supported steady state.
 
 ## Cross-Site Request Forgery (CSRF) Protection
 
