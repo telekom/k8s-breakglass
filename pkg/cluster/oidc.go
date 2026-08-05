@@ -48,6 +48,14 @@ var ErrDegradedAuth = errors.New("primary auth degraded, using fallback credenti
 
 var errOIDCResponseBodyTooLarge = errors.New("oidc response body too large")
 
+// ErrTOFUPinMismatch indicates the CA presented by a spoke API server differs
+// from the CA already pinned in the referenced Secret. TOFU deliberately treats
+// this as a loud failure rather than re-pinning: a changing trust anchor is
+// indistinguishable from an active MITM, and silently accepting it would make
+// the pin worthless. Operators who intentionally rotated the cluster CA clear
+// the pinned key (or point caSecretRef at the new CA) to re-bootstrap.
+var ErrTOFUPinMismatch = errors.New("TOFU CA pin mismatch")
+
 // fallbackCredentials stores IDP Keycloak SA credentials for fallback auth
 // when the primary refresh token flow fails. Stored separately from the primary
 // OIDCAuthConfig to avoid overwriting the client_id used for refresh token grants.
@@ -1035,10 +1043,7 @@ func (p *OIDCTokenProvider) getTokenFromSecret(ctx context.Context, secretRef *b
 		return "", fmt.Errorf("failed to get secret %s/%s: %w", ns, secretRef.Name, err)
 	}
 
-	key := secretRef.Key
-	if key == "" {
-		key = "token" // default key name
-	}
+	key := breakglassv1alpha1.ResolveSecretKey(secretRef, breakglassv1alpha1.DefaultRefreshTokenSecretKey)
 
 	tokenBytes, ok := secret.Data[key]
 	if !ok {
@@ -1180,10 +1185,7 @@ func (p *OIDCTokenProvider) getClientSecret(ctx context.Context, oidc *breakglas
 		return "", fmt.Errorf("failed to get client secret: %w", err)
 	}
 
-	key := oidc.ClientSecretRef.Key
-	if key == "" {
-		key = "value"
-	}
+	key := breakglassv1alpha1.ResolveSecretKey(oidc.ClientSecretRef, breakglassv1alpha1.DefaultSecretKey)
 
 	secretData, ok := secret.Data[key]
 	if !ok {
@@ -1295,18 +1297,33 @@ func (p *OIDCTokenProvider) configureTLS(ctx context.Context, cfg *rest.Config, 
 			// Secret doesn't exist yet, will try TOFU
 			p.log.Debugw("CA secret not found, will attempt TOFU", "cluster", clusterName)
 		} else {
-			key := oidc.CASecretRef.Key
-			if key == "" {
-				key = "value"
-			}
-			if ca, ok := secret.Data[key]; ok && len(ca) > 0 {
+			secretName := fmt.Sprintf("%s/%s", oidc.CASecretRef.Namespace, oidc.CASecretRef.Name)
+			ca, key, legacy := ReadPinnedCA(&secret, oidc.CASecretRef)
+			if len(ca) > 0 {
+				if legacy {
+					p.log.Warnw("Loaded pinned cluster CA from the legacy secret key; it will be migrated "+
+						"to the canonical key on the next TOFU write. Set caSecretRef.key explicitly to pin it.",
+						"cluster", clusterName, "secret", secretName,
+						"legacyKey", key, "canonicalKey", breakglassv1alpha1.DefaultCASecretKey)
+				} else {
+					p.log.Debugw("Loaded cluster CA from secret", "cluster", clusterName,
+						"secret", secretName, "key", key)
+				}
 				cfg.TLSClientConfig.CAData = ca
-				p.log.Debugw("Loaded cluster CA from secret", "cluster", clusterName,
-					"secret", fmt.Sprintf("%s/%s", oidc.CASecretRef.Namespace, oidc.CASecretRef.Name), "key", key)
+				// Seed the in-memory TOFU cache from the persisted pin so that a
+				// later reconnect compares against it instead of re-bootstrapping.
+				if oidc.AllowTOFU {
+					p.tofuMu.Lock()
+					if _, cached := p.tofuCAs[clusterName]; !cached {
+						p.tofuCAs[clusterName] = ca
+					}
+					p.tofuMu.Unlock()
+				}
 				return nil
 			}
 			p.log.Warnw("Cluster CA secret key missing or empty; will attempt TOFU", "cluster", clusterName,
-				"secret", fmt.Sprintf("%s/%s", oidc.CASecretRef.Namespace, oidc.CASecretRef.Name), "key", key)
+				"secret", secretName,
+				"key", breakglassv1alpha1.ResolveSecretKey(oidc.CASecretRef, breakglassv1alpha1.DefaultCASecretKey))
 		}
 	}
 
@@ -1345,6 +1362,20 @@ func (p *OIDCTokenProvider) configureTLS(ctx context.Context, cfg *rest.Config, 
 	// If CASecretRef is configured, persist the discovered CA
 	if oidc.CASecretRef != nil {
 		if err := p.persistTOFUCA(ctx, oidc.CASecretRef, ca); err != nil {
+			if errors.Is(err, ErrTOFUPinMismatch) {
+				// A CA that contradicts the persisted pin is treated as an
+				// active MITM, not as a rotation. Drop the just-captured CA so
+				// the next attempt re-reads the pin instead of caching the
+				// unverified one, and fail loudly.
+				p.tofuMu.Lock()
+				delete(p.tofuCAs, clusterName)
+				p.tofuMu.Unlock()
+				p.log.Errorw("TOFU CA pin mismatch: refusing to re-pin a different CA for cluster",
+					"cluster", clusterName,
+					"secret", fmt.Sprintf("%s/%s", oidc.CASecretRef.Namespace, oidc.CASecretRef.Name),
+					"error", err)
+				return fmt.Errorf("TOFU failed for cluster %s: %w", clusterName, err)
+			}
 			p.log.Warnw("Failed to persist TOFU CA to secret", "cluster", clusterName, "error", err)
 		} else {
 			p.log.Infow("Persisted TOFU CA to secret", "cluster", clusterName,
@@ -1500,11 +1531,74 @@ func (p *OIDCTokenProvider) captureTOFUCA(apiServerURL, hostname string, peerCer
 	return caPEM, nil
 }
 
-// persistTOFUCA saves the discovered CA certificate to the referenced secret using SSA
+// caPinKeys returns every data key a CA read may resolve to for secretRef.
+// An explicit key is authoritative and is the only key considered.
+func caPinKeys(secretRef *breakglassv1alpha1.SecretKeyReference) []string {
+	if secretRef != nil && secretRef.Key != "" {
+		return []string{secretRef.Key}
+	}
+	return []string{breakglassv1alpha1.DefaultCASecretKey, breakglassv1alpha1.LegacyCASecretKey}
+}
+
+// ReadPinnedCA returns the pinned CA stored in secret for secretRef, the data key
+// it was read from, and whether that key was the legacy read key.
+//
+// Resolution order:
+//  1. An explicitly configured caSecretRef.key — honoured exactly, no fallback.
+//  2. The canonical default key ("ca.crt"), which is what TOFU writes.
+//  3. The legacy default read key ("value"), for clusters provisioned while
+//     configureTLS read that key. Flagged so callers can migrate and warn.
+//
+// Returns a nil slice when no pin is present.
+func ReadPinnedCA(secret *corev1.Secret, secretRef *breakglassv1alpha1.SecretKeyReference) (ca []byte, key string, legacy bool) {
+	if secret == nil || secretRef == nil {
+		return nil, "", false
+	}
+	if secretRef.Key != "" {
+		if data := secret.Data[secretRef.Key]; len(data) > 0 {
+			return data, secretRef.Key, false
+		}
+		// An explicit key must not silently fall back to another key: doing so
+		// would trust material the operator did not point at.
+		return nil, secretRef.Key, false
+	}
+	if data := secret.Data[breakglassv1alpha1.DefaultCASecretKey]; len(data) > 0 {
+		return data, breakglassv1alpha1.DefaultCASecretKey, false
+	}
+	if data := secret.Data[breakglassv1alpha1.LegacyCASecretKey]; len(data) > 0 {
+		return data, breakglassv1alpha1.LegacyCASecretKey, true
+	}
+	return nil, breakglassv1alpha1.DefaultCASecretKey, false
+}
+
+// persistTOFUCA saves the discovered CA certificate to the referenced secret using SSA.
+//
+// The write key is resolved with the same defaults as [ReadPinnedCA], so a CA
+// captured by TOFU is guaranteed to be found again by the next read. When the
+// secret already holds a different CA under the canonical or legacy key the
+// write is refused with [ErrTOFUPinMismatch]: silently re-pinning would defeat
+// the entire point of Trust On First Use.
 func (p *OIDCTokenProvider) persistTOFUCA(ctx context.Context, secretRef *breakglassv1alpha1.SecretKeyReference, caPEM []byte) error {
-	key := secretRef.Key
-	if key == "" {
-		key = "ca.crt"
+	key := breakglassv1alpha1.ResolveSecretKey(secretRef, breakglassv1alpha1.DefaultCASecretKey)
+
+	var existing corev1.Secret
+	if err := p.k8s.Get(ctx, types.NamespacedName{
+		Name:      secretRef.Name,
+		Namespace: secretRef.Namespace,
+	}, &existing); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to read cluster CA secret before pinning: %w", err)
+		}
+	} else {
+		// Compare against every key a read could resolve to, not just the write
+		// key: a pin left under the legacy key must still block a re-pin.
+		for _, pinnedKey := range caPinKeys(secretRef) {
+			pinned := existing.Data[pinnedKey]
+			if len(pinned) > 0 && !bytes.Equal(pinned, caPEM) {
+				return fmt.Errorf("%w: secret %s/%s key %q holds a different CA than the one presented by the server",
+					ErrTOFUPinMismatch, secretRef.Namespace, secretRef.Name, pinnedKey)
+			}
+		}
 	}
 
 	// Use SSA to create or update the secret - no need to check existence first

@@ -620,7 +620,7 @@ func TestOIDCTokenProvider_PersistTOFUCA_DefaultKey(t *testing.T) {
 	secretRef := &breakglassv1alpha1.SecretKeyReference{
 		Name:      "ca-secret",
 		Namespace: "default",
-		// Key not specified - should default to "ca.crt"
+		// Key not specified - should default to breakglassv1alpha1.DefaultCASecretKey
 	}
 	caPEM := []byte("-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----")
 
@@ -924,7 +924,9 @@ func TestOIDCTokenProvider_ConfigureTLS_CASecretDefaultKey(t *testing.T) {
 
 	caSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-ca", Namespace: "default"},
-		Data:       map[string][]byte{"value": caPEM}, // Default key is "value"
+		// "value" is the LEGACY default read key. Kept here on purpose: it proves
+		// the legacy-key fallback still honours CAs pinned by older releases.
+		Data: map[string][]byte{breakglassv1alpha1.LegacyCASecretKey: caPEM},
 	}
 
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(caSecret).Build()
@@ -936,7 +938,7 @@ func TestOIDCTokenProvider_ConfigureTLS_CASecretDefaultKey(t *testing.T) {
 		Server: "https://api.example.com:6443",
 		CASecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name: "cluster-ca", Namespace: "default",
-			// Key not specified - should default to "value"
+			// Key not specified — resolves to "ca.crt", then falls back to "value".
 		},
 	}
 
