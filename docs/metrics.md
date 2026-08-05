@@ -625,6 +625,14 @@ Track debug session lifecycle and resource usage.
 | `breakglass_debug_session_approval_required_total` | Counter | `cluster`, `template` | Debug sessions requiring approval |
 | `breakglass_debug_session_approved_total` | Counter | `cluster`, `approver_type` | Debug sessions approved |
 | `breakglass_debug_session_rejected_total` | Counter | `cluster`, `reason` | Debug sessions rejected |
+| `breakglass_debug_session_binding_unresolved_total` | Counter | `cluster`, `reason` | Reconciles where an explicit `spec.bindingRef` could not be resolved (`reason`: `binding not found` or `binding lookup failed`). The session is requeued, not activated. |
+
+> Alert on `breakglass_debug_session_binding_unresolved_total`. A sustained non-zero rate means
+> debug sessions are stalled waiting on a binding: either the `bindingRef` is wrong (`binding not
+> found`) or the hub cannot read `DebugSessionClusterBinding` objects (`binding lookup failed`).
+> Because the binding carries the approver configuration, the reconciler treats an unresolvable
+> ref as *indeterminate* and refuses to activate rather than guessing that no approval is needed.
+> The matching audit event is `debug_session.binding_unresolved`.
 
 ## Field Index Metrics
 
