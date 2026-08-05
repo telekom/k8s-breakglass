@@ -19,6 +19,8 @@ const (
 	PhaseSessions SARPhase = "sessions"
 	// PhaseDebugSession is checking debug session access
 	PhaseDebugSession SARPhase = "debug_session"
+	// PhaseImpersonation is constrained-impersonation verb evaluation (KEP-5284)
+	PhaseImpersonation SARPhase = "impersonation"
 	// PhaseDenyPolicy is deny policy evaluation
 	PhaseDenyPolicy SARPhase = "deny_policy"
 	// PhaseRBAC is target cluster RBAC check

@@ -452,28 +452,42 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 		return
 	}
 
-	// Phase 6: Deny-policy evaluation (global + per-session)
+	// Phase 6: Impersonation evaluation (KEP-5284 constrained impersonation).
+	// Runs BEFORE the generic deny-policy and RBAC phases so that impersonation
+	// verbs this build does not recognise are denied explicitly rather than
+	// falling through to a path that has no notion of them.
+	s.phases.StartPhase()
+	if wc.evaluateImpersonation(c, s) {
+		return
+	}
+	s.phases.EndPhase(PhaseImpersonation)
+
+	// Phase 7: Deny-policy evaluation (global + per-session)
 	if wc.evaluateDenyPolicies(c, s) {
 		return
 	}
 
-	// Phase 7: Standard RBAC check
+	// Phase 8: Standard RBAC check
 	if !wc.performRBACCheck(c, s) {
 		return
 	}
 
-	// Phase 8: Session-based authorization + escalation discovery
+	// Phase 9: Session-based authorization + escalation discovery
 	if !s.allowed {
 		if !wc.resolveSessionAuthorization(c, s) {
 			return
 		}
 	}
 
-	// Phase 9: Build final reason with diagnostics
+	// Phase 10: Build final reason with diagnostics
 	s.phases.LogSummary()
 	wc.buildFinalReason(s)
 
-	// Phase 10: Emit metrics & send response
+	// Phase 11: Record the impersonation outcome, so that impersonation allowed via
+	// RBAC or a session is audited and counted alongside the explicit denials.
+	wc.noteImpersonationOutcome(s)
+
+	// Phase 12: Emit metrics & send response
 	wc.sendAuthorizationResponse(c, s)
 }
 

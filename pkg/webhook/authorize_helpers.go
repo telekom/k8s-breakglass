@@ -19,6 +19,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
+	"github.com/telekom/k8s-breakglass/pkg/impersonation"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
 	"github.com/telekom/k8s-breakglass/pkg/system"
@@ -46,6 +47,14 @@ type authorizeState struct {
 	sessions      []breakglassv1alpha1.BreakglassSession
 	idpMismatches []breakglassv1alpha1.BreakglassSession
 	tenant        string
+
+	// Impersonation context, non-nil only when the SAR concerns impersonation
+	// (legacy `impersonate` or a constrained `impersonate:` / `impersonate-on:`
+	// verb). Nil for every ordinary request, which is the overwhelming majority.
+	impersonation *impersonation.Request
+	// impersonationWarnedLegacy records that the spoke's legacyFallback policy is
+	// Warn and this request used the legacy path.
+	impersonationWarnedLegacy bool
 
 	// Decision state (filled progressively)
 	allowed           bool
