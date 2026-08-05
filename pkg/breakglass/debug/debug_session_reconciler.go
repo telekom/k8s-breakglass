@@ -39,7 +39,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -829,14 +828,17 @@ func (c *DebugSessionController) createImpersonatedClient(
 		return nil, fmt.Errorf("failed to get REST config for cluster %s: %w", clusterName, err)
 	}
 
-	// If impersonation is configured, set up impersonation
-	if impConfig != nil && impConfig.ServiceAccountRef != nil {
-		// Impersonate the spoke cluster's ServiceAccount
-		// Format: system:serviceaccount:<namespace>:<name>
-		restCfg.Impersonate = rest.ImpersonationConfig{
-			UserName: fmt.Sprintf("system:serviceaccount:%s:%s",
-				impConfig.ServiceAccountRef.Namespace,
-				impConfig.ServiceAccountRef.Name),
+	// If impersonation is configured, set up impersonation.
+	//
+	// Note that the resulting wire format is unchanged from before constrained
+	// impersonation existed: KEP-5284 adds no headers, and a ServiceAccount target
+	// with only the username set is exactly what the API server needs to select
+	// `serviceaccount` mode. So on a spoke that supports the feature this request is
+	// automatically constrained, and on an older spoke it is the same legacy
+	// impersonation it has always been — the same bytes either way.
+	if impConfig != nil {
+		if err := c.applyImpersonation(ctx, restCfg, clusterName, impConfig); err != nil {
+			return nil, err
 		}
 	}
 

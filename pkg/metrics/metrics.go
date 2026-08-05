@@ -108,6 +108,47 @@ var (
 		Name: "breakglass_webhook_sar_decisions_total",
 		Help: "Counts of SAR decisions (allowed/denied) grouped by cluster and source",
 	}, []string{"cluster", "decision", "deny_source"})
+	// === Constrained impersonation (KEP-5284) ===
+	// These mirror the API server's own impersonation metrics (which carry
+	// {mode, decision} labels) so that a breakglass decision can be correlated with
+	// apiserver_impersonation_authorization_attempts_total for the same request.
+	ImpersonationSARRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_impersonation_sar_requests_total",
+		Help: "SubjectAccessReviews concerning impersonation, by constrained-impersonation mode and verb kind (identity/action/legacy-impersonate/malformed)",
+	}, []string{"cluster", "mode", "verb_kind"})
+	ImpersonationSARDecisions = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_impersonation_sar_decisions_total",
+		Help: "Impersonation authorization decisions by cluster, mode, decision and source",
+	}, []string{"cluster", "mode", "decision", "source"})
+	// Unrecognised impersonation verbs are the security-critical case: a webhook
+	// that allows them silently grants constrained impersonation. Alert on the
+	// "allowed" series, and treat any "denied" series as a signal that breakglass
+	// is older than the spoke's API server.
+	ImpersonationUnrecognisedVerbs = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_impersonation_unrecognised_verbs_total",
+		Help: "Impersonation verbs the webhook could not parse, by resulting outcome",
+	}, []string{"cluster", "outcome"})
+	// Legacy fallback usage. A blanket `impersonate` grant wins by fallback and
+	// silently defeats constrained rules, so this is the migration progress metric.
+	ImpersonationLegacyFallback = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_impersonation_legacy_fallback_total",
+		Help: "Uses of legacy (unconstrained) impersonation, by the cluster's legacyFallback policy outcome (allowed/warned/denied)",
+	}, []string{"cluster", "outcome"})
+	ImpersonationDenyPolicyErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_impersonation_deny_policy_errors_total",
+		Help: "Failures evaluating DenyPolicy impersonationRules (request denied fail-closed)",
+	}, []string{"cluster"})
+	// Per-spoke capability, so operators can see which spokes are still on the
+	// legacy path. 1 for the active state, 0 otherwise.
+	ImpersonationCapability = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_impersonation_capability",
+		Help: "Per-spoke constrained-impersonation capability (1 for the active support level: supported/unsupported/unknown)",
+	}, []string{"cluster", "support"})
+	ImpersonationDowngrades = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_impersonation_downgrades_total",
+		Help: "Times a constrained impersonation request was downgraded to legacy because the spoke lacks capability",
+	}, []string{"cluster", "requested_mode"})
+
 	WebhookSessionSARsAllowed = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_webhook_session_sar_allowed_total",
 		Help: "Total number of session SAR checks that returned allowed",
@@ -617,6 +658,13 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(WebhookSARAllowed)
 	ctrlmetrics.Registry.MustRegister(WebhookSARDenied)
 	ctrlmetrics.Registry.MustRegister(WebhookSARDecisions)
+	ctrlmetrics.Registry.MustRegister(ImpersonationSARRequests)
+	ctrlmetrics.Registry.MustRegister(ImpersonationSARDecisions)
+	ctrlmetrics.Registry.MustRegister(ImpersonationUnrecognisedVerbs)
+	ctrlmetrics.Registry.MustRegister(ImpersonationLegacyFallback)
+	ctrlmetrics.Registry.MustRegister(ImpersonationDenyPolicyErrors)
+	ctrlmetrics.Registry.MustRegister(ImpersonationCapability)
+	ctrlmetrics.Registry.MustRegister(ImpersonationDowngrades)
 	ctrlmetrics.Registry.MustRegister(WebhookSessionSARsAllowed)
 	ctrlmetrics.Registry.MustRegister(WebhookSessionSARsDenied)
 	ctrlmetrics.Registry.MustRegister(WebhookSessionSARErrors)
