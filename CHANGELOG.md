@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-rc.4] - 2026-08-05
+
 ### Fixed
 
 - **TOFU CA pinning was silently ineffective** (security): the TOFU-captured spoke CA was written to Secret key `ca.crt` but read back from `value`, so with `allowTOFU: true` and `caSecretRef.key` omitted the persisted trust anchor was never re-read and TOFU re-bootstrapped trust on every controller restart or reschedule — turning the documented "MITM possible on first connect only" guarantee into "MITM possible on every restart, undetected". The pre-flight `ClusterConfig` checker saw the Secret present and stayed silent. All secret-key defaults are now defined once in `api/v1alpha1/secretref_defaults.go` and shared by every read, write and admission path; a CA found only under the legacy key `value` is still honoured, warned about via a `ClusterCASecretLegacyKey` event, and migrated on the next write; and a CA that contradicts the persisted pin is now a hard `TOFU CA pin mismatch` failure instead of a silent re-pin. See [Upgrade impact](docs/keycloak-configuration.md#upgrade-impact--tofu-ca-pinning-and-secret-key-defaults).
@@ -1170,7 +1172,8 @@ non-buggy case:
 
 ---
 
-[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-beta.0...HEAD
+[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.4...HEAD
+[0.1.0-rc.4]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.3...v0.1.0-rc.4
 
 - Fixed single resource table formatting in `bgctl` commands.
 
