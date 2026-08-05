@@ -143,20 +143,36 @@ func splitNamespacedName(value string) (string, string, bool) {
 //
 // Note: This method performs an O(n) scan of cached entries. For high-throughput scenarios
 // with many cached ClusterConfigs, consider using GetInNamespace with a known namespace.
+//
+// Ambiguity fails closed. If two namespaces hold a ClusterConfig with the same
+// metadata.name, this returns an error rather than an arbitrary one of them. Go map
+// iteration order is randomised, so returning "the first match" would resolve the same
+// cluster name to different spoke clusters across calls — and this function is reached
+// from the authorization webhook. `ClusterConfig.ValidateCreate` enforces
+// `ensureClusterWideUniqueName`, so duplicates should not exist; this is defence in depth
+// for the case where they do (pre-existing objects, webhook bypass, direct etcd writes).
+// Semantics match the unexported getAcrossAllNamespacesLocked twin.
 func (p *ClientProvider) GetAcrossAllNamespaces(ctx context.Context, name string) (*breakglassv1alpha1.ClusterConfig, error) {
 	// Try exact namespace/name lookup first if we have cached entries
 	p.mu.RLock()
 	// First, try to find a cached entry by scanning for any namespace with this name
 	// We match by the ClusterConfig's Name field to ensure exact match (avoids
 	// issues with similar cluster names like "prod" vs "my-prod").
+	var cachedFound *breakglassv1alpha1.ClusterConfig
 	for _, cfg := range p.data {
 		if cfg != nil && cfg.Name == name {
-			p.mu.RUnlock()
-			metrics.ClusterCacheHits.WithLabelValues(name).Inc()
-			return cfg, nil
+			if cachedFound != nil {
+				p.mu.RUnlock()
+				return nil, fmt.Errorf("multiple ClusterConfigs found for name %q in cache", name)
+			}
+			cachedFound = cfg
 		}
 	}
 	p.mu.RUnlock()
+	if cachedFound != nil {
+		metrics.ClusterCacheHits.WithLabelValues(name).Inc()
+		return cachedFound, nil
+	}
 	metrics.ClusterCacheMisses.WithLabelValues(name).Inc()
 
 	// Namespace not provided: preserve legacy behavior and list across namespaces
@@ -164,15 +180,22 @@ func (p *ClientProvider) GetAcrossAllNamespaces(ctx context.Context, name string
 	if err := p.k8s.List(ctx, &list); err != nil {
 		return nil, fmt.Errorf("list clusterconfigs: %w", err)
 	}
+	var found *breakglassv1alpha1.ClusterConfig
 	for _, item := range list.Items {
 		if item.Name == name {
+			if found != nil {
+				return nil, fmt.Errorf("multiple ClusterConfigs found for name %q across namespaces", name)
+			}
 			// copy loop variable before taking address
 			cp := item
-			p.mu.Lock()
-			p.data[cacheKey(cp.Namespace, cp.Name)] = &cp
-			p.mu.Unlock()
-			return &cp, nil
+			found = &cp
 		}
+	}
+	if found != nil {
+		p.mu.Lock()
+		p.data[cacheKey(found.Namespace, found.Name)] = found
+		p.mu.Unlock()
+		return found, nil
 	}
 	return nil, fmt.Errorf("%w: %s", ErrClusterConfigNotFound, name)
 }
