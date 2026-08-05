@@ -18,6 +18,7 @@ package cluster
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,7 +29,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
@@ -314,4 +317,83 @@ func TestRotatedRefreshTokenDoesNotClobberSeed(t *testing.T) {
 	got, err = provider.readBestRefreshToken(ctx, oidc, "default")
 	require.NoError(t, err)
 	assert.Equal(t, rotated, got)
+}
+
+// TestTOFUPinMismatchNeverPopulatesCache is the regression test for the race
+// Copilot flagged on #1210: configureTLS used to insert the freshly captured CA
+// into p.tofuCAs BEFORE calling persistTOFUCA, and only deleted it again if the
+// write came back ErrTOFUPinMismatch. p.tofuCAs is shared across every
+// concurrent configureTLS call, so between the insert and the delete another
+// goroutine could read the cache and happily use a CA that contradicts the
+// persisted pin — defeating the hard-fail the pin exists to provide.
+//
+// This reproduces the real trigger: a second replica pins a different CA in the
+// window between this replica's initial Secret read (which found no pin, hence
+// TOFU) and its persist attempt. A Get interceptor injects that pin on the
+// second read, which is the one persistTOFUCA performs.
+//
+// The captured CA is now validated against the pin before being published, so a
+// mismatch must leave the cache completely untouched.
+func TestTOFUPinMismatchNeverPopulatesCache(t *testing.T) {
+	// The CA another replica pins mid-flight. Unrelated to our TLS server, so
+	// the CA we capture is guaranteed to contradict it.
+	_, _, racedPin := generateTestCACert(t)
+
+	server, _ := createTLSTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	var gets int
+	k8s := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(caPinSecret(map[string][]byte{})).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if err := c.Get(ctx, key, obj, opts...); err != nil {
+					return err
+				}
+				gets++
+				// First read: no pin yet, so configureTLS proceeds to TOFU.
+				// Subsequent reads: a competing replica has pinned its own CA.
+				if gets > 1 {
+					if secret, ok := obj.(*corev1.Secret); ok {
+						if secret.Data == nil {
+							secret.Data = map[string][]byte{}
+						}
+						secret.Data[breakglassv1alpha1.DefaultCASecretKey] = racedPin
+					}
+				}
+				return nil
+			},
+		}).
+		Build()
+	provider := NewOIDCTokenProvider(k8s, zap.NewNop().Sugar())
+
+	cfg := &rest.Config{}
+	err := provider.configureTLS(context.Background(), cfg, &breakglassv1alpha1.OIDCAuthConfig{
+		Server:    server.URL,
+		AllowTOFU: true,
+		CASecretRef: &breakglassv1alpha1.SecretKeyReference{
+			Name: "cluster-ca", Namespace: "default",
+		},
+	})
+
+	require.Error(t, err, "a captured CA contradicting the pin must fail loudly")
+	assert.ErrorIs(t, err, ErrTOFUPinMismatch)
+
+	// The unverified CA must never have been published to the shared cache.
+	provider.tofuMu.RLock()
+	cached, present := provider.tofuCAs[server.URL]
+	provider.tofuMu.RUnlock()
+	assert.False(t, present,
+		"a CA that contradicts the pin must never be published to the TOFU cache, not even transiently")
+	assert.Empty(t, cached)
+
+	// And it must not have been handed to the caller's TLS config either.
+	assert.Empty(t, cfg.TLSClientConfig.CAData,
+		"a pin mismatch must not yield usable TLS credentials")
 }

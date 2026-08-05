@@ -1350,7 +1350,33 @@ func (p *OIDCTokenProvider) configureTLS(ctx context.Context, cfg *rest.Config, 
 		return fmt.Errorf("TOFU failed for cluster %s: %w", clusterName, err)
 	}
 
-	// Cache the CA
+	// Validate the captured CA against the persisted pin BEFORE publishing it to
+	// the shared cache. p.tofuCAs is read by every concurrent configureTLS call,
+	// so caching first and deleting on mismatch would leave a window in which
+	// another goroutine could observe and use a CA that contradicts the pin —
+	// exactly the MITM the pin exists to detect.
+	if oidc.CASecretRef != nil {
+		if err := p.persistTOFUCA(ctx, oidc.CASecretRef, ca); err != nil {
+			if errors.Is(err, ErrTOFUPinMismatch) {
+				// A CA that contradicts the persisted pin is treated as an
+				// active MITM, not as a rotation. The CA was never cached, so
+				// the next attempt re-reads the pin. Fail loudly.
+				p.log.Errorw("TOFU CA pin mismatch: refusing to re-pin a different CA for cluster",
+					"cluster", clusterName,
+					"secret", fmt.Sprintf("%s/%s", oidc.CASecretRef.Namespace, oidc.CASecretRef.Name),
+					"error", err)
+				return fmt.Errorf("TOFU failed for cluster %s: %w", clusterName, err)
+			}
+			// Any other failure (API error, conflict, RBAC) is transient and does
+			// not contradict the pin, so the captured CA is still usable.
+			p.log.Warnw("Failed to persist TOFU CA to secret", "cluster", clusterName, "error", err)
+		} else {
+			p.log.Infow("Persisted TOFU CA to secret", "cluster", clusterName,
+				"secret", fmt.Sprintf("%s/%s", oidc.CASecretRef.Namespace, oidc.CASecretRef.Name))
+		}
+	}
+
+	// The CA is now known not to contradict the pin: publish it.
 	p.tofuMu.Lock()
 	p.tofuCAs[clusterName] = ca
 	p.tofuMu.Unlock()
@@ -1358,30 +1384,6 @@ func (p *OIDCTokenProvider) configureTLS(ctx context.Context, cfg *rest.Config, 
 	// Set the CA for this connection
 	cfg.TLSClientConfig.CAData = ca
 	p.log.Infow("TOFU: captured CA for cluster", "cluster", clusterName)
-
-	// If CASecretRef is configured, persist the discovered CA
-	if oidc.CASecretRef != nil {
-		if err := p.persistTOFUCA(ctx, oidc.CASecretRef, ca); err != nil {
-			if errors.Is(err, ErrTOFUPinMismatch) {
-				// A CA that contradicts the persisted pin is treated as an
-				// active MITM, not as a rotation. Drop the just-captured CA so
-				// the next attempt re-reads the pin instead of caching the
-				// unverified one, and fail loudly.
-				p.tofuMu.Lock()
-				delete(p.tofuCAs, clusterName)
-				p.tofuMu.Unlock()
-				p.log.Errorw("TOFU CA pin mismatch: refusing to re-pin a different CA for cluster",
-					"cluster", clusterName,
-					"secret", fmt.Sprintf("%s/%s", oidc.CASecretRef.Namespace, oidc.CASecretRef.Name),
-					"error", err)
-				return fmt.Errorf("TOFU failed for cluster %s: %w", clusterName, err)
-			}
-			p.log.Warnw("Failed to persist TOFU CA to secret", "cluster", clusterName, "error", err)
-		} else {
-			p.log.Infow("Persisted TOFU CA to secret", "cluster", clusterName,
-				"secret", fmt.Sprintf("%s/%s", oidc.CASecretRef.Namespace, oidc.CASecretRef.Name))
-		}
-	}
 
 	return nil
 }
