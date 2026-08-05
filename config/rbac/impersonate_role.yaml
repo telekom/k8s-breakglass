@@ -1,11 +1,47 @@
+# SPDX-FileCopyrightText: 2025 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# LEGACY (unconstrained) impersonation for the breakglass RBAC probe.
+#
+# This grant is intentionally left as-is and is applied to every spoke. Removing
+# it is NOT safe by default, and the reason is worth stating plainly:
+#
+#   On a spoke below Kubernetes 1.35, or with the ConstrainedImpersonation feature
+#   gate disabled, the constrained rules in impersonate_constrained_role.yaml are
+#   ACCEPTED by the API server but completely INERT. RBAC verbs and resources are
+#   free-form strings, so nothing errors — the grant simply confers nothing. If this
+#   legacy grant were stripped on such a spoke, the group-checker probe would stop
+#   working and breakglass would silently stop authorizing anyone. A total outage,
+#   reported as a successful rollout.
+#
+# So: keep this file on every spoke, and add impersonate_constrained_role.yaml
+# alongside it. Breakglass detects per-spoke capability at runtime and prefers the
+# constrained path where it works.
+#
+# The trade-off, and it is a real one: while this grant exists, a spoke that DOES
+# support constrained impersonation can still fall back to it, because the API
+# server falls back to legacy whenever every constrained mode denies. That makes
+# the constraint decorative on that spoke. Once you have confirmed via
+# `breakglass_impersonation_capability{support="supported"} == 1` and
+# `breakglass_impersonation_legacy_fallback_total` flatlining at zero that a spoke
+# no longer needs it, remove this ClusterRole from that spoke and set
+# `spec.constrainedImpersonation.legacyFallback: Forbidden` on its ClusterConfig so
+# any regression is denied loudly instead of silently downgraded.
+#
+# See docs/security-best-practices.md#constrained-impersonation-migration.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   annotations:
     rbac.authorization.kubernetes.io/autoupdate: "true"
+    breakglass.t-caas.telekom.com/impersonation-mode: "legacy"
   labels:
+    breakglass.t-caas.telekom.com/impersonation-mode: "legacy"
   name: impersonate-auth-manager-role
 rules:
+# Blanket impersonation in the CORE api group with no resourceNames. This is what
+# constrained impersonation is designed to replace.
 - apiGroups:
   - ""
   resources:
