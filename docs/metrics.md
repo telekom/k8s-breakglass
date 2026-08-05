@@ -121,6 +121,14 @@ These metrics track the time spent in each phase of SubjectAccessReview processi
 |--------|------|--------|-------------|
 | `breakglass_webhook_sar_phase_duration_seconds` | Histogram | `cluster`, `phase` | Duration of each SAR processing phase |
 
+> **Cluster label values are bounded.** Every webhook SAR metric derives its `cluster`
+> label from the `:cluster_name` request path, which is attacker-controllable and is
+> read before the cluster has been resolved. Values that are not valid Kubernetes
+> object names are replaced with `_invalid`, and an absent value with `_unknown`, so a
+> remote caller cannot create unbounded time series. Legitimate cluster names are
+> recorded unchanged. A rising `_invalid` series indicates traffic addressed to
+> malformed cluster paths.
+
 **Processing Phases:**
 
 | Phase | Description |
