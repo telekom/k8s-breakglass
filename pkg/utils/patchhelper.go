@@ -243,10 +243,9 @@ func unstructuredSpecEqual(desired, current *unstructured.Unstructured) bool {
 // desiredCoversOwnedFields reports whether every field currently owned by
 // [FieldOwnerController] on current is still declared by desired.
 //
-// It returns false (i.e. "must apply") whenever ownership cannot be established:
-// no managedFields entry for our field owner, an unparseable FieldsV1, or an
-// entry that is not an Apply operation. Guessing "equal" in those cases is what
-// makes field removals invisible.
+// It returns false (i.e. "must apply") whenever ownership cannot be established —
+// see [ownedFieldSet] for exactly which managedFields entries qualify. Guessing
+// "equal" in those cases is what makes field removals invisible.
 func desiredCoversOwnedFields(desired, current *unstructured.Unstructured) bool {
 	owned := ownedFieldSet(current)
 	if owned == nil {
@@ -255,8 +254,35 @@ func desiredCoversOwnedFields(desired, current *unstructured.Unstructured) bool 
 	return desiredCoversFieldSet(desired.Object, owned, "")
 }
 
-// ownedFieldSet returns the decoded FieldsV1 tree of this operator's Apply entry
-// in current's managedFields, or nil when it is absent or undecodable.
+// ownedFieldSet returns the decoded FieldsV1 tree describing the spec/metadata
+// fields this operator owns on current, or nil when that cannot be established.
+//
+// Contract — only entries matching ALL of the following are considered:
+//   - Manager == [FieldOwnerController]: other field managers' ownership is none
+//     of our business.
+//   - Operation == Apply: Update entries describe imperative writes, whose field
+//     set carries no SSA pruning semantics.
+//   - Subresource == "": this is the load-bearing filter. This operator applies to
+//     the status subresource with the SAME field manager (see [ApplyStatus] and
+//     UpdateStatusWithRetry), so an object routinely carries TWO Apply entries for
+//     [FieldOwnerController] — one for the main resource and one with
+//     Subresource: "status". The status entry's field set describes status fields
+//     only, which [unstructuredSpecEqual] never compares. Accepting it would make
+//     the caller conclude we own no spec fields, so a spec key removal would still
+//     look "equal", the apply would be skipped, and the SSA drift this helper
+//     exists to detect would silently return. The apiserver sorts managedFields by
+//     operation, then timestamp, then manager, then apiVersion, and only then by
+//     subresource, so the status entry can and does sort first whenever it carries
+//     the older timestamp — the order must not be relied upon.
+//
+// A matching entry whose FieldsV1 is missing, empty, unparseable, or decodes to an
+// empty set is skipped rather than treated as authoritative, so one unusable entry
+// cannot suppress a valid main-resource entry later in the list. (Note that
+// unstructured.SetManagedFields rejects the whole list when any FieldsV1 is invalid
+// JSON, so in practice only the empty/absent forms are reachable here; the
+// unmarshal guard is kept for typed callers and defence in depth.) When no entry
+// qualifies the result is nil, which callers must read as "ownership unknown, send
+// the apply".
 func ownedFieldSet(current *unstructured.Unstructured) map[string]interface{} {
 	for _, entry := range current.GetManagedFields() {
 		if entry.Manager != FieldOwnerController {
@@ -265,16 +291,22 @@ func ownedFieldSet(current *unstructured.Unstructured) map[string]interface{} {
 		if entry.Operation != metav1.ManagedFieldsOperationApply {
 			continue
 		}
+		if entry.Subresource != "" {
+			continue // Subresource field sets (e.g. status) are not compared here.
+		}
 		if entry.FieldsV1 == nil {
-			return nil
+			continue
 		}
 		raw := entry.FieldsV1.GetRawBytes()
 		if len(raw) == 0 {
-			return nil
+			continue
 		}
 		var fields map[string]interface{}
 		if err := json.Unmarshal(raw, &fields); err != nil {
-			return nil
+			continue
+		}
+		if len(fields) == 0 {
+			continue // "null"/"{}" carry no ownership information.
 		}
 		return fields
 	}

@@ -522,6 +522,170 @@ func TestUnstructuredSpecEqual_ExtraLabelsInCurrent(t *testing.T) {
 	assert.True(t, unstructuredSpecEqual(desired, current))
 }
 
+// statusEntry is an Apply managedFields entry for FieldOwnerController scoped to
+// the status subresource. This operator really does apply to status with the same
+// field manager (utils.ApplyStatus, UpdateStatusWithRetry), so real objects carry
+// one of these alongside the main-resource entry.
+func statusEntry() metav1.ManagedFieldsEntry {
+	return metav1.ManagedFieldsEntry{
+		Manager:     FieldOwnerController,
+		Operation:   metav1.ManagedFieldsOperationApply,
+		Subresource: "status",
+		FieldsType:  "FieldsV1",
+		FieldsV1:    metav1.NewFieldsV1(`{"f:status":{"f:phase":{}}}`),
+	}
+}
+
+func mainEntry(fieldsV1 string) metav1.ManagedFieldsEntry {
+	return metav1.ManagedFieldsEntry{
+		Manager:    FieldOwnerController,
+		Operation:  metav1.ManagedFieldsOperationApply,
+		FieldsType: "FieldsV1",
+		FieldsV1:   metav1.NewFieldsV1(fieldsV1),
+	}
+}
+
+// TestUnstructuredSpecEqual_StatusSubresourceEntryIgnored pins the bug where
+// ownedFieldSet returned the FIRST Apply entry for FieldOwnerController without
+// filtering on Subresource. When the status entry sorts first its field set
+// ({"f:status":...}) contains no spec fields, so a spec key dropped from the
+// desired manifest still compared "equal", the SSA apply was skipped, and the
+// pruning drift this helper exists to detect came back silently.
+//
+// Both orderings are asserted so the test cannot pass by accident on slice order.
+func TestUnstructuredSpecEqual_StatusSubresourceEntryIgnored(t *testing.T) {
+	// Desired has dropped spec.oldKey, which the operator still owns.
+	desired := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "example.com/v1",
+		"kind":       "Widget",
+		"metadata":   map[string]interface{}{"name": "w"},
+		"spec":       map[string]interface{}{"replicas": float64(3)},
+	}}
+	newCurrent := func(entries ...metav1.ManagedFieldsEntry) *unstructured.Unstructured {
+		cur := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "example.com/v1",
+			"kind":       "Widget",
+			"metadata":   map[string]interface{}{"name": "w", "resourceVersion": "7"},
+			"spec": map[string]interface{}{
+				"replicas": float64(3),
+				"oldKey":   "stale", // Owned by us, no longer declared by desired.
+			},
+			"status": map[string]interface{}{"phase": "Ready"},
+		}}
+		cur.SetManagedFields(entries)
+		return cur
+	}
+	const ownedSpec = `{"f:spec":{"f:replicas":{},"f:oldKey":{}},"f:metadata":{"f:name":{}}}`
+
+	t.Run("status entry first", func(t *testing.T) {
+		current := newCurrent(statusEntry(), mainEntry(ownedSpec))
+		assert.False(t, unstructuredSpecEqual(desired, current),
+			"dropping an owned spec key must not be reported equal when the status "+
+				"subresource managedFields entry is iterated first")
+	})
+
+	t.Run("main entry first", func(t *testing.T) {
+		current := newCurrent(mainEntry(ownedSpec), statusEntry())
+		assert.False(t, unstructuredSpecEqual(desired, current),
+			"dropping an owned spec key must not be reported equal regardless of entry order")
+	})
+
+	// Sanity check: with spec.oldKey still declared, both orderings agree it is equal.
+	// Without this, the test above would also pass for the wrong reason (always false).
+	desiredFull := desired.DeepCopy()
+	desiredFull.Object["spec"] = map[string]interface{}{"replicas": float64(3), "oldKey": "stale"}
+	assert.True(t, unstructuredSpecEqual(desiredFull, newCurrent(statusEntry(), mainEntry(ownedSpec))),
+		"status entry first, nothing dropped: should be equal")
+	assert.True(t, unstructuredSpecEqual(desiredFull, newCurrent(mainEntry(ownedSpec), statusEntry())),
+		"main entry first, nothing dropped: should be equal")
+}
+
+// TestOwnedFieldSet_SkipsUnusableEntries verifies that a malformed or
+// subresource-scoped entry does not suppress a valid main-resource entry that
+// appears later in managedFields (the early `return nil` paths became `continue`).
+func TestOwnedFieldSet_SkipsUnusableEntries(t *testing.T) {
+	const ownedSpec = `{"f:spec":{"f:replicas":{}}}`
+
+	tests := []struct {
+		name    string
+		entries []metav1.ManagedFieldsEntry
+		want    map[string]interface{}
+	}{
+		{
+			name:    "only a status entry yields no ownership",
+			entries: []metav1.ManagedFieldsEntry{statusEntry()},
+			want:    nil,
+		},
+		{
+			name: "nil FieldsV1 does not shadow a later valid entry",
+			entries: []metav1.ManagedFieldsEntry{
+				{Manager: FieldOwnerController, Operation: metav1.ManagedFieldsOperationApply},
+				mainEntry(ownedSpec),
+			},
+			want: map[string]interface{}{"f:spec": map[string]interface{}{"f:replicas": map[string]interface{}{}}},
+		},
+		{
+			// Note: an entry with syntactically invalid FieldsV1 cannot be tested via
+			// unstructured — unstructured.SetManagedFields rejects the entire list if
+			// any entry fails to decode. Empty raw is the reachable equivalent.
+			name: "empty FieldsV1 does not shadow a later valid entry",
+			entries: []metav1.ManagedFieldsEntry{
+				{
+					Manager:   FieldOwnerController,
+					Operation: metav1.ManagedFieldsOperationApply,
+					FieldsV1:  metav1.NewFieldsV1(""),
+				},
+				mainEntry(ownedSpec),
+			},
+			want: map[string]interface{}{"f:spec": map[string]interface{}{"f:replicas": map[string]interface{}{}}},
+		},
+		{
+			name: "FieldsV1 decoding to an empty set does not shadow a later valid entry",
+			entries: []metav1.ManagedFieldsEntry{
+				{
+					Manager:   FieldOwnerController,
+					Operation: metav1.ManagedFieldsOperationApply,
+					FieldsV1:  metav1.NewFieldsV1("{}"),
+				},
+				mainEntry(ownedSpec),
+			},
+			want: map[string]interface{}{"f:spec": map[string]interface{}{"f:replicas": map[string]interface{}{}}},
+		},
+		{
+			name: "Update operation entries are ignored",
+			entries: []metav1.ManagedFieldsEntry{
+				{
+					Manager:   FieldOwnerController,
+					Operation: metav1.ManagedFieldsOperationUpdate,
+					FieldsV1:  metav1.NewFieldsV1(`{"f:spec":{"f:other":{}}}`),
+				},
+				mainEntry(ownedSpec),
+			},
+			want: map[string]interface{}{"f:spec": map[string]interface{}{"f:replicas": map[string]interface{}{}}},
+		},
+		{
+			name: "other field managers are ignored",
+			entries: []metav1.ManagedFieldsEntry{
+				{
+					Manager:   "kubectl",
+					Operation: metav1.ManagedFieldsOperationApply,
+					FieldsV1:  metav1.NewFieldsV1(`{"f:spec":{"f:other":{}}}`),
+				},
+				mainEntry(ownedSpec),
+			},
+			want: map[string]interface{}{"f:spec": map[string]interface{}{"f:replicas": map[string]interface{}{}}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obj := &unstructured.Unstructured{Object: map[string]interface{}{}}
+			obj.SetManagedFields(tt.entries)
+			assert.Equal(t, tt.want, ownedFieldSet(obj))
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // mapSubsetMatch
 // ---------------------------------------------------------------------------
