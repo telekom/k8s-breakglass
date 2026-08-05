@@ -125,6 +125,34 @@ type QueuedSink struct {
 	// Lifecycle
 	wg     sync.WaitGroup
 	closed atomic.Bool
+
+	// sendMu serialises sends on queue against the close in Close.
+	// Every send goes through [QueuedSink.enqueue], which holds the read lock
+	// and re-checks closed; Close takes the write lock before closing the
+	// channel, so no send can be in flight when the channel is closed.
+	sendMu sync.RWMutex
+}
+
+// enqueue performs a non-blocking send on the event queue that is safe against a
+// concurrent Close. It returns false when the sink is already closed or the
+// queue is full; callers distinguish the two via qs.closed.
+func (qs *QueuedSink) enqueue(event *Event) bool {
+	qs.sendMu.RLock()
+	defer qs.sendMu.RUnlock()
+
+	// Re-check under the lock: Close sets closed before taking the write lock,
+	// so observing closed==false here guarantees the channel is still open for
+	// as long as we hold the read lock.
+	if qs.closed.Load() {
+		return false
+	}
+
+	select {
+	case qs.queue <- event:
+		return true
+	default:
+		return false
+	}
 }
 
 // NewQueuedSink creates a new QueuedSink wrapper around an existing sink.
@@ -215,32 +243,33 @@ func (qs *QueuedSink) Write(_ context.Context, event *Event) error {
 		}
 	}
 
-	// Non-blocking send to queue
-	select {
-	case qs.queue <- event:
-		return nil
-	default:
-		// Queue is full
-		if IsSensitiveEvent(event.Type) {
-			// Synchronous fallback for sensitive events
-			qs.logger.Warn("queue full but event is sensitive, attempting synchronous write",
-				zap.String("sink", qs.sink.Name()),
-				zap.String("event_type", string(event.Type)))
-			ctx, cancel := context.WithTimeout(context.Background(), qs.config.WriteTimeout)
-			defer cancel()
-			return qs.sink.Write(ctx, event)
-		}
-		// Non-sensitive event: drop
-		qs.droppedEvents.Add(1)
-		metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "queue_full").Inc()
-		if !qs.config.DropOnFull {
-			qs.logger.Warn("audit queue full, dropping event",
-				zap.String("sink", qs.sink.Name()),
-				zap.String("event_type", string(event.Type)),
-				zap.String("event_id", event.ID))
-		}
+	// Non-blocking send to queue (safe against a concurrent Close).
+	if qs.enqueue(event) {
 		return nil
 	}
+	if qs.closed.Load() {
+		return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
+	}
+	// Queue is full
+	if IsSensitiveEvent(event.Type) {
+		// Synchronous fallback for sensitive events
+		qs.logger.Warn("queue full but event is sensitive, attempting synchronous write",
+			zap.String("sink", qs.sink.Name()),
+			zap.String("event_type", string(event.Type)))
+		ctx, cancel := context.WithTimeout(context.Background(), qs.config.WriteTimeout)
+		defer cancel()
+		return qs.sink.Write(ctx, event)
+	}
+	// Non-sensitive event: drop
+	qs.droppedEvents.Add(1)
+	metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "queue_full").Inc()
+	if !qs.config.DropOnFull {
+		qs.logger.Warn("audit queue full, dropping event",
+			zap.String("sink", qs.sink.Name()),
+			zap.String("event_type", string(event.Type)),
+			zap.String("event_id", event.ID))
+	}
+	return nil
 }
 
 // processQueue is the worker goroutine that processes events from the queue.
@@ -273,13 +302,16 @@ func (qs *QueuedSink) processQueue(workerID int) {
 
 		if err != nil {
 			if errors.Is(err, ErrCircuitOpen) {
-				// Try to push it back into the queue if circuit opened during Write
-				go func(e *Event) {
-					select {
-					case qs.queue <- e:
-					default:
-					}
-				}(event)
+				// Try to push it back into the queue if the circuit opened during Write.
+				// This must NOT be done from an untracked goroutine: Close() closes
+				// qs.queue once the tracked workers are accounted for, and a detached
+				// send would then panic with "send on closed channel" — precisely when
+				// the backend is down during shutdown. enqueue() is non-blocking and
+				// serialised against Close, so requeue inline instead.
+				if !qs.enqueue(event) {
+					qs.droppedEvents.Add(1)
+					metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "circuit_open_requeue").Inc()
+				}
 				continue
 			}
 
@@ -363,7 +395,13 @@ func (qs *QueuedSink) Close() error {
 		return nil // Already closed
 	}
 
+	// Take the write lock so no enqueue() is in flight, then close. Every send
+	// site re-checks qs.closed under the read lock, so after this point no
+	// goroutine can send on qs.queue.
+	qs.sendMu.Lock()
 	close(qs.queue)
+	qs.sendMu.Unlock()
+
 	qs.wg.Wait()
 
 	// Close underlying sink

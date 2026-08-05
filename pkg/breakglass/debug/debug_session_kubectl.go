@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,6 +41,46 @@ type KubectlDebugHandler struct {
 	client     ctrlclient.Client
 	ccProvider ClientProviderInterface
 }
+
+// deleteOrphanedPod removes a pod that was created on the spoke cluster but could
+// not be recorded in the DebugSession status.
+//
+// This is required for correctness, not tidiness: cleanup
+// (CleanupKubectlDebugResources / cleanupResources) iterates the status lists, so
+// a pod that never made it into the status is invisible to every cleanup path and
+// outlives its session indefinitely. For the node-debug pod that orphan is a
+// privileged pod with hostPath "/" mounted read-write.
+//
+// Failures are logged and swallowed: the caller is already returning the original
+// status-patch error, which is the actionable one.
+func (h *KubectlDebugHandler) deleteOrphanedPod(ctx context.Context, targetClient ctrlclient.Client, pod *corev1.Pod, cause error) {
+	log := zap.S().Named("kubectl-debug")
+
+	// Use a context detached from the caller's: when the status patch failed
+	// because the request context was cancelled, a cancelled context would also
+	// prevent the compensating delete and leave the orphan behind anyway.
+	deleteCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), orphanCleanupTimeout)
+	defer cancel()
+
+	if err := targetClient.Delete(deleteCtx, pod); err != nil && !apierrors.IsNotFound(err) {
+		log.Errorw("Failed to delete orphaned debug pod after status update failure; "+
+			"the pod is not tracked in the session status and will not be cleaned up automatically",
+			"pod", pod.Name,
+			"podNamespace", pod.Namespace,
+			"statusError", cause,
+			"deleteError", err)
+		return
+	}
+
+	log.Warnw("Deleted orphaned debug pod after status update failure",
+		"pod", pod.Name,
+		"podNamespace", pod.Namespace,
+		"statusError", cause)
+}
+
+// orphanCleanupTimeout bounds the compensating delete for a pod that could not be
+// recorded in the session status.
+const orphanCleanupTimeout = 30 * time.Second
 
 // ClientProviderInterface abstracts the cluster.ClientProvider for testing
 type ClientProviderInterface interface {
@@ -496,6 +537,10 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 
 		addAllowedPodIfMissing(status, allowedPod)
 	}); err != nil {
+		// The pod exists on the spoke but is absent from the status lists that
+		// cleanup iterates, so it would never be reclaimed. Delete it so
+		// create+track is atomic-or-cleaned-up.
+		h.deleteOrphanedPod(ctx, targetClient, copyPod, err)
 		return nil, fmt.Errorf("failed to update session status: %w", err)
 	}
 
@@ -655,6 +700,10 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 		addAllowedPodIfMissing(status, allowedPod)
 		addDeployedResourceIfMissing(status, deployedResource)
 	}); err != nil {
+		// This pod is privileged with hostPath "/" mounted read-write. Leaving it
+		// untracked means it outlives its session with no cleanup path at all, so
+		// the create must be rolled back.
+		h.deleteOrphanedPod(ctx, targetClient, debugPod, err)
 		return nil, fmt.Errorf("failed to update session status: %w", err)
 	}
 

@@ -36,22 +36,46 @@ const (
 // SARPhaseTracker tracks timing for SAR processing phases
 type SARPhaseTracker struct {
 	clusterName string
-	startTime   time.Time
-	phaseStart  time.Time
-	log         *zap.SugaredLogger
-	phases      map[SARPhase]time.Duration
+	// clusterLabel is the Prometheus label value for this request's cluster.
+	//
+	// clusterName arrives as the raw :cluster_name route parameter and is used as a
+	// label before it has been resolved against a ClusterConfig, so using it
+	// verbatim would let an unauthenticated remote caller mint an unbounded number
+	// of histogram series (9 phases x buckets each) and grow the heap without
+	// bound. It therefore starts as a fixed placeholder and is promoted to the real
+	// cluster name by setClusterLabel once the cluster has been resolved.
+	clusterLabel string
+	startTime    time.Time
+	phaseStart   time.Time
+	log          *zap.SugaredLogger
+	phases       map[SARPhase]time.Duration
 }
 
-// NewSARPhaseTracker creates a new phase tracker for SAR processing
+// NewSARPhaseTracker creates a new phase tracker for SAR processing.
+//
+// clusterName may be untrusted request input; it is preserved verbatim for logs
+// and sanitized for metric labels.
 func NewSARPhaseTracker(clusterName string, log *zap.SugaredLogger) *SARPhaseTracker {
 	now := time.Now()
 	return &SARPhaseTracker{
-		clusterName: clusterName,
-		startTime:   now,
-		phaseStart:  now,
-		log:         log,
-		phases:      make(map[SARPhase]time.Duration),
+		clusterName:  clusterName,
+		clusterLabel: metrics.SafeClusterLabel(clusterName),
+		startTime:    now,
+		phaseStart:   now,
+		log:          log,
+		phases:       make(map[SARPhase]time.Duration),
 	}
+}
+
+// setClusterLabel promotes the metric label to a resolved cluster name, so that
+// phases recorded after cluster resolution are attributed to the real cluster
+// instead of the placeholder. Callers must pass a value already sanitized by
+// pkg/metrics.
+func (t *SARPhaseTracker) setClusterLabel(label string) {
+	if label == "" {
+		return
+	}
+	t.clusterLabel = label
 }
 
 // StartPhase marks the start of a phase
@@ -65,7 +89,7 @@ func (t *SARPhaseTracker) EndPhase(phase SARPhase) time.Duration {
 	t.phases[phase] = elapsed
 
 	// Record to Prometheus metric
-	metrics.WebhookSARPhaseDuration.WithLabelValues(t.clusterName, string(phase)).Observe(elapsed.Seconds())
+	metrics.WebhookSARPhaseDuration.WithLabelValues(t.clusterLabel, string(phase)).Observe(elapsed.Seconds())
 
 	// Debug log with phase timing
 	if t.log != nil {
@@ -84,7 +108,7 @@ func (t *SARPhaseTracker) TrackPhase(phase SARPhase) func() {
 	return func() {
 		elapsed := time.Since(start)
 		t.phases[phase] = elapsed
-		metrics.WebhookSARPhaseDuration.WithLabelValues(t.clusterName, string(phase)).Observe(elapsed.Seconds())
+		metrics.WebhookSARPhaseDuration.WithLabelValues(t.clusterLabel, string(phase)).Observe(elapsed.Seconds())
 		if t.log != nil {
 			t.log.Debugw("SAR phase completed", "phase", phase, "duration_ms", elapsed.Milliseconds())
 		}

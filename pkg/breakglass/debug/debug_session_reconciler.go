@@ -145,11 +145,7 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		if apierrors.IsNotFound(err) {
 			log.Debug("DebugSession not found, ignoring")
 
-			if metrics.DebugSessionParticipants != nil {
-				metrics.DebugSessionParticipants.DeletePartialMatch(map[string]string{"session": req.Name})
-				metrics.DebugSessionPodRestarts.DeletePartialMatch(map[string]string{"session": req.Name})
-				metrics.DebugSessionPodFailures.DeletePartialMatch(map[string]string{"session": req.Name})
-			}
+			releaseSessionMetricSeries(req.Name)
 
 			return ctrl.Result{}, nil
 		}
@@ -187,8 +183,11 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 	case breakglassv1alpha1.DebugSessionStateExpired, breakglassv1alpha1.DebugSessionStateTerminated:
 		return c.handleCleanup(ctx, ds)
 	case breakglassv1alpha1.DebugSessionStateFailed:
-		// Terminal state, no action needed
-		return ctrl.Result{}, nil
+		// Terminal state — but only once the spoke cluster is actually clean.
+		// failSession does best-effort cleanup, logs any failure and then sets
+		// Failed, which never requeues; a cleanup error there therefore leaked the
+		// spoke resources permanently. Retry while anything is still tracked.
+		return c.handleFailedCleanup(ctx, ds)
 	default:
 		log.Warnw("Unknown debug session state", "state", ds.Status.State)
 		return ctrl.Result{}, nil
@@ -392,6 +391,54 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 	return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
 }
 
+// handleFailedCleanup finishes cleanup for a session already in the terminal
+// Failed state.
+//
+// failSession performs a best-effort cleanup, logs any error and then sets Failed.
+// Failed used to return an empty Result, which never requeues, so a cleanup error
+// on that path leaked the spoke-cluster resources permanently (#237). Failed
+// remains terminal for state-machine purposes — the state is never changed here —
+// but reconciliation keeps retrying the delete until the status lists are empty.
+func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
+	if !hasTrackedSpokeResources(ds) {
+		releaseSessionMetricSeries(ds.Name)
+		return ctrl.Result{}, nil // Nothing left on the spoke: genuinely terminal.
+	}
+
+	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
+
+	if err := c.cleanupResources(ctx, ds); err != nil {
+		log.Warnw("Retrying cleanup of spoke resources for a failed debug session",
+			"error", err)
+		// Requeue rather than returning the error: the reason for the failure is
+		// already recorded in status and a hard error would only add log noise on a
+		// path that is expected to retry.
+		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	}
+
+	// cleanupResources clears the status lists as it succeeds. If anything is still
+	// tracked, the cleanup was incomplete even though it reported no error, so the
+	// session is not yet safe to abandon.
+	if hasTrackedSpokeResources(ds) {
+		log.Warnw("Cleanup reported success but spoke resources are still tracked; will retry")
+		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	}
+
+	log.Infow("Cleanup of spoke resources completed for failed debug session")
+	releaseSessionMetricSeries(ds.Name)
+	return ctrl.Result{}, nil
+}
+
+// hasTrackedSpokeResources reports whether the session status still references
+// anything that was deployed to the spoke cluster.
+func hasTrackedSpokeResources(ds *breakglassv1alpha1.DebugSession) bool {
+	return len(ds.Status.DeployedResources) > 0 ||
+		len(ds.Status.AuxiliaryResourceStatuses) > 0 ||
+		len(ds.Status.PodTemplateResourceStatuses) > 0 ||
+		len(ds.Status.AllowedPods) > 0 ||
+		ds.Status.KubectlDebugStatus != nil
+}
+
 // handleCleanup removes deployed resources for expired/terminated sessions
 func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
@@ -425,8 +472,35 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 		}
 	}
 
+	// Release the per-session metric series. The "session" label is unique per
+	// DebugSession, so without an explicit release these series accumulate for the
+	// lifetime of the process and the heap grows monotonically with the number of
+	// sessions ever created. The DeletePartialMatch on NotFound in Reconcile only
+	// fires if a delete event is actually observed, which is not guaranteed (missed
+	// watch event, restart, or a session that is never deleted at all).
+	releaseSessionMetricSeries(ds.Name)
+
 	log.Info("Debug session cleanup complete")
 	return ctrl.Result{}, nil
+}
+
+// releaseSessionMetricSeries drops every metric series labelled with a specific
+// DebugSession name. Safe to call more than once and safe before metric
+// registration.
+func releaseSessionMetricSeries(sessionName string) {
+	if sessionName == "" {
+		return
+	}
+	labels := map[string]string{"session": sessionName}
+	if metrics.DebugSessionParticipants != nil {
+		metrics.DebugSessionParticipants.DeletePartialMatch(labels)
+	}
+	if metrics.DebugSessionPodRestarts != nil {
+		metrics.DebugSessionPodRestarts.DeletePartialMatch(labels)
+	}
+	if metrics.DebugSessionPodFailures != nil {
+		metrics.DebugSessionPodFailures.DeletePartialMatch(labels)
+	}
 }
 
 // activateSession deploys debug resources and marks session as active
@@ -506,13 +580,15 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglass
 
 	// Best-effort cleanup of any partially deployed resources on the target cluster.
 	// Short-circuit if the session never deployed anything to avoid noisy cross-cluster calls.
-	hasDeployedResources := len(ds.Status.DeployedResources) > 0 ||
-		len(ds.Status.AuxiliaryResourceStatuses) > 0 ||
-		len(ds.Status.PodTemplateResourceStatuses) > 0 ||
-		len(ds.Status.AllowedPods) > 0
-	if hasDeployedResources {
+	//
+	// A failure here is not fatal: the session still transitions to Failed, and the
+	// Failed branch of Reconcile retries the cleanup for as long as the status
+	// still tracks spoke resources (see handleFailedCleanup), so a transient spoke
+	// outage no longer leaks resources permanently.
+	if hasTrackedSpokeResources(ds) {
 		if cleanupErr := c.cleanupResources(ctx, ds); cleanupErr != nil {
-			log.Warnw("Best-effort cleanup of partially deployed resources failed during session failure",
+			log.Warnw("Best-effort cleanup of partially deployed resources failed during session failure; "+
+				"cleanup will be retried on subsequent reconciles",
 				"cleanupError", cleanupErr)
 		}
 	}
@@ -551,6 +627,9 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglass
 
 	// Increment failure metric
 	metrics.DebugSessionsFailed.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()
+
+	// Failed is terminal and never requeues, so release the per-session series now.
+	releaseSessionMetricSeries(ds.Name)
 
 	return ctrl.Result{}, breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
 }
