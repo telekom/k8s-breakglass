@@ -499,9 +499,10 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 			NamespacedName: types.NamespacedName{Name: "test-escalation", Namespace: "default"},
 		})
 
-		// Reference validation errors requeue to handle transient missing resources
-		require.NoError(t, err)
-		assert.Equal(t, reconcile.Result{RequeueAfter: 3 * time.Second}, result)
+		// Reference validation errors are returned as errors so controller-runtime
+		// applies exponential backoff instead of a flat 3s hot loop (#254).
+		require.Error(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
 
 		// Verify the status condition was set
 		var updated breakglassv1alpha1.BreakglassEscalation
@@ -545,9 +546,10 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 			NamespacedName: types.NamespacedName{Name: "test-escalation", Namespace: "default"},
 		})
 
-		// Reference validation errors requeue to handle transient missing resources
-		require.NoError(t, err)
-		assert.Equal(t, reconcile.Result{RequeueAfter: 3 * time.Second}, result)
+		// Reference validation errors are returned as errors so controller-runtime
+		// applies exponential backoff instead of a flat 3s hot loop (#254).
+		require.Error(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
 
 		// Verify the status condition was set
 		var updated breakglassv1alpha1.BreakglassEscalation
@@ -603,9 +605,10 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 			NamespacedName: types.NamespacedName{Name: "test-escalation", Namespace: "default"},
 		})
 
-		// Reference validation errors requeue to handle transient missing resources
-		require.NoError(t, err)
-		assert.Equal(t, reconcile.Result{RequeueAfter: 3 * time.Second}, result)
+		// Reference validation errors are returned as errors so controller-runtime
+		// applies exponential backoff instead of a flat 3s hot loop (#254).
+		require.Error(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
 
 		// Verify the status condition was set
 		var updated breakglassv1alpha1.BreakglassEscalation
@@ -649,9 +652,10 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 			NamespacedName: types.NamespacedName{Name: "test-escalation", Namespace: "default"},
 		})
 
-		// Reference validation errors requeue to handle transient missing resources
-		require.NoError(t, err)
-		assert.Equal(t, reconcile.Result{RequeueAfter: 3 * time.Second}, result)
+		// Reference validation errors are returned as errors so controller-runtime
+		// applies exponential backoff instead of a flat 3s hot loop (#254).
+		require.Error(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
 
 		// Verify the status condition was set
 		var updated breakglassv1alpha1.BreakglassEscalation
@@ -1234,4 +1238,92 @@ func TestEscalationReconciler_GetEscalationIDPMapping(t *testing.T) {
 		assert.Len(t, mapping, 1)
 		assert.Equal(t, []string{"idp1"}, mapping["esc1"])
 	})
+}
+
+// TestEscalationReconciler_RefErrorUsesBackoffNotHotLoop is the regression test
+// for #254. A reference-validation failure previously returned
+// reconcile.Result{RequeueAfter: 3s} with a nil error, unconditionally and with no
+// backoff, so a permanently-unresolvable reference produced ~20 reconciles per
+// minute forever — each one running full validation, writing status and emitting a
+// Warning event. Returning an error instead lets controller-runtime's rate limiter
+// back off exponentially.
+func TestEscalationReconciler_RefErrorUsesBackoffNotHotLoop(t *testing.T) {
+	scheme := newTestEscalationReconcilerScheme()
+	logger := zap.NewNop().Sugar()
+
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "hot-loop", Namespace: "default", Generation: 1},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			EscalatedGroup:    "test-group",
+			MaxValidFor:       "1h",
+			ClusterConfigRefs: []string{"will-never-exist"},
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+				Users: []string{"approver@example.com"},
+			},
+		},
+	}
+
+	recorder := &escalationFakeEventRecorder{}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(escalation).
+		WithStatusSubresource(escalation).
+		Build()
+
+	r := NewEscalationReconciler(fakeClient, logger, recorder, nil, nil, 0)
+
+	result, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "hot-loop", Namespace: "default"},
+	})
+
+	// An error return is what makes controller-runtime apply exponential backoff.
+	require.Error(t, err, "reference validation failure must return an error so the workqueue backs off")
+	assert.Contains(t, err.Error(), "reference validation failed")
+
+	// A fixed RequeueAfter would bypass the rate limiter entirely.
+	assert.Zero(t, result.RequeueAfter,
+		"must not set a fixed RequeueAfter: that bypasses backoff and re-creates the hot loop")
+	assert.Equal(t, reconcile.Result{}, result)
+
+	// The status condition is still written, so observability is unchanged.
+	var updated breakglassv1alpha1.BreakglassEscalation
+	require.NoError(t, fakeClient.Get(context.Background(),
+		types.NamespacedName{Name: "hot-loop", Namespace: "default"}, &updated))
+	cond := apimeta.FindStatusCondition(updated.Status.Conditions,
+		string(breakglassv1alpha1.BreakglassEscalationConditionClusterRefsValid))
+	require.NotNil(t, cond)
+	assert.Equal(t, metav1.ConditionFalse, cond.Status)
+}
+
+// TestEscalationReconciler_StructuralErrorDoesNotRetry asserts the other half of
+// the fix: a purely structural (ConfigValidated) failure will not fix itself, so
+// it must neither requeue nor return an error.
+func TestEscalationReconciler_StructuralErrorDoesNotRetry(t *testing.T) {
+	scheme := newTestEscalationReconcilerScheme()
+	logger := zap.NewNop().Sugar()
+
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "structural", Namespace: "default", Generation: 1},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			// Missing escalatedGroup and an unparseable duration: structural only,
+			// with no references to resolve.
+			MaxValidFor: "not-a-duration",
+		},
+	}
+
+	recorder := &escalationFakeEventRecorder{}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(escalation).
+		WithStatusSubresource(escalation).
+		Build()
+
+	r := NewEscalationReconciler(fakeClient, logger, recorder, nil, nil, 0)
+
+	result, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "structural", Namespace: "default"},
+	})
+
+	require.NoError(t, err, "a structural error will not fix itself; retrying is pure waste")
+	assert.Equal(t, reconcile.Result{}, result)
 }

@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -234,16 +235,28 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 		}
 
 		// Reference validation errors (cluster, IDP, deny policy, mail provider) may be
-		// transient if the referenced resource hasn't been created yet. Requeue to retry.
-		hasRefError := false
+		// transient if the referenced resource hasn't been created yet, so retry.
+		//
+		// Return the error rather than a fixed RequeueAfter: controller-runtime then
+		// applies its exponential backoff rate limiter. A flat 3s requeue never backs
+		// off, so a permanently-broken reference (a typo'd ref that will never
+		// resolve) drove ~20 reconciles per minute forever, each performing full
+		// reference validation, a status write and a Warning event — indefinitely, per
+		// bad object.
+		var refErrors []error
 		for _, ve := range validationErrors {
-			if ve.conditionType != string(breakglassv1alpha1.BreakglassEscalationConditionConfigValidated) {
-				hasRefError = true
-				break
+			if ve.conditionType == string(breakglassv1alpha1.BreakglassEscalationConditionConfigValidated) {
+				continue // Structural error: the object will not fix itself, do not retry.
 			}
+			if ve.error != nil {
+				refErrors = append(refErrors, ve.error)
+				continue
+			}
+			refErrors = append(refErrors, errors.New(ve.message))
 		}
-		if hasRefError {
-			return reconcile.Result{RequeueAfter: 3 * time.Second}, nil
+		if len(refErrors) > 0 {
+			return reconcile.Result{}, fmt.Errorf("escalation %s reference validation failed: %w",
+				escalation.Name, errors.Join(refErrors...))
 		}
 		return reconcile.Result{}, nil
 	}
