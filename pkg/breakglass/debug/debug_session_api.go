@@ -51,16 +51,20 @@ const debugSessionNamePrefix = "debug"
 
 // DebugSessionAPIController provides REST API endpoints for debug sessions
 type DebugSessionAPIController struct {
-	log          *zap.SugaredLogger
-	client       ctrlclient.Client
-	apiReader    ctrlclient.Reader // Uncached reader for consistent reads
-	ccProvider   *cluster.ClientProvider
-	middleware   gin.HandlerFunc
-	mailService  breakglass.MailEnqueuer
-	auditService breakglass.AuditEmitter
-	disableEmail bool
-	brandingName string
-	baseURL      string
+	log        *zap.SugaredLogger
+	client     ctrlclient.Client
+	apiReader  ctrlclient.Reader // Uncached reader for consistent reads
+	ccProvider *cluster.ClientProvider
+	// clusterClients optionally overrides how target-cluster clients are
+	// obtained. When nil, ccProvider is used. Tests set this to evaluate
+	// namespace selectorTerms without a live spoke cluster.
+	clusterClients ClientProviderInterface
+	middleware     gin.HandlerFunc
+	mailService    breakglass.MailEnqueuer
+	auditService   breakglass.AuditEmitter
+	disableEmail   bool
+	brandingName   string
+	baseURL        string
 }
 
 // NewDebugSessionAPIController creates a new debug session API controller
@@ -90,6 +94,14 @@ func (c *DebugSessionAPIController) WithAuditService(auditService breakglass.Aud
 // WithDisableEmail disables email notifications
 func (c *DebugSessionAPIController) WithDisableEmail(disable bool) *DebugSessionAPIController {
 	c.disableEmail = disable
+	return c
+}
+
+// WithClusterClients overrides how target-cluster clients are resolved when
+// evaluating namespace selectorTerms. When unset, the configured
+// cluster.ClientProvider is used.
+func (c *DebugSessionAPIController) WithClusterClients(provider ClientProviderInterface) *DebugSessionAPIController {
+	c.clusterClients = provider
 	return c
 }
 
@@ -1085,7 +1097,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	var warnings []string
 
 	// Validate and resolve target namespace (pass binding for constraint override)
-	targetNamespace, err := c.resolveTargetNamespace(template, req.TargetNamespace, resolvedBinding)
+	targetNamespace, err := c.resolveTargetNamespace(apiCtx, req.Cluster, template, req.TargetNamespace, resolvedBinding)
 	if err != nil {
 		// Provide more context about namespace constraints when validation fails
 		var effectiveAllowUserNs bool

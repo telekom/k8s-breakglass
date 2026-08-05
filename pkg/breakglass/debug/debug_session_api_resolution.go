@@ -114,8 +114,10 @@ func (c *DebugSessionAPIController) resolveNamespaceConstraints(template *breakg
 	}
 
 	response := &NamespaceConstraintsResponse{
-		DefaultNamespace:   nc.DefaultNamespace,
-		AllowUserNamespace: nc.AllowUserNamespace,
+		DefaultNamespace: nc.DefaultNamespace,
+		// denyUserNamespace narrows, so it wins over allowUserNamespace in the
+		// hint surfaced to clients.
+		AllowUserNamespace: nc.AllowUserNamespace && !nc.DenyUserNamespace,
 	}
 
 	if nc.AllowedNamespaces != nil {

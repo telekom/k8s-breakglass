@@ -3752,6 +3752,11 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		templateWithUserNamespace.Spec.NamespaceConstraints = &breakglassv1alpha1.NamespaceConstraints{
 			AllowUserNamespace: true,
 			DefaultNamespace:   "default-debug",
+			// An allow-list is required to permit user-selected namespaces:
+			// an empty allowedNamespaces means defaultNamespace only.
+			AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+				Patterns: []string{"debug-*"},
+			},
 		}
 		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass-control"},

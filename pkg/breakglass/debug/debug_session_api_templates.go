@@ -348,8 +348,9 @@ func (c *DebugSessionAPIController) buildTemplateResponse(
 
 	if template.Spec.NamespaceConstraints != nil {
 		resp.NamespaceConstraints = &NamespaceConstraintsResponse{
-			DefaultNamespace:   template.Spec.NamespaceConstraints.DefaultNamespace,
-			AllowUserNamespace: template.Spec.NamespaceConstraints.AllowUserNamespace,
+			DefaultNamespace: template.Spec.NamespaceConstraints.DefaultNamespace,
+			AllowUserNamespace: template.Spec.NamespaceConstraints.AllowUserNamespace &&
+				!template.Spec.NamespaceConstraints.DenyUserNamespace,
 		}
 		if template.Spec.NamespaceConstraints.AllowedNamespaces != nil {
 			resp.NamespaceConstraints.AllowedPatterns = template.Spec.NamespaceConstraints.AllowedNamespaces.Patterns
