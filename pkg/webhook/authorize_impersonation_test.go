@@ -24,6 +24,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/impersonation"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
 )
 
@@ -271,6 +272,83 @@ func TestEvaluateImpersonation_SystemMastersAlwaysDenied(t *testing.T) {
 			assert.Contains(t, resp.Status.Reason, "system:masters")
 		})
 	}
+}
+
+// TestEvaluateImpersonation_SystemMastersWildcardCollapseDenied is the regression
+// test for the guardrail's evasion path.
+//
+// The named system:masters check above is not enough on its own. The API server
+// collapses per-group identity checks into a SINGLE check with Name="*" once a
+// request impersonates four or more groups
+// (impersonation.ManyAuthorizationChecksInLoop). A request for system:masters plus
+// three filler groups therefore never presents Name=="system:masters" — it presents
+// "*" — so a guardrail that only compares the literal name is bypassed by adding
+// padding groups.
+//
+// Both shapes are asserted deliberately: the 3-group shape proves the per-group
+// checks still arrive by name (and are denied by name), and the 4-group shape proves
+// the collapsed wildcard is denied too.
+func TestEvaluateImpersonation_SystemMastersWildcardCollapseDenied(t *testing.T) {
+	// Pin the assumption this test is built on. If upstream ever changes the
+	// threshold, the shapes below stop modelling the apiserver and this fails loudly
+	// rather than silently testing nothing.
+	require.Equal(t, 4, impersonation.ManyAuthorizationChecksInLoop,
+		"the apiserver's wildcard-collapse threshold changed; the group shapes below must follow")
+
+	// Verbs that carry an identity target. Legacy is included because it is the
+	// exposure the guardrail exists to close: the apiserver does not hard-deny
+	// system:masters for legacy impersonation.
+	verbs := []string{"impersonate", "impersonate:user-info"}
+
+	t.Run("below the collapse threshold each group arrives by name", func(t *testing.T) {
+		// 3 groups: no collapse, so the apiserver issues one check per group and the
+		// system:masters one is caught by name.
+		for _, verb := range verbs {
+			t.Run(verb, func(t *testing.T) {
+				f := newImpersonationFixture(t, nil).
+					withSAR(verb, "authentication.k8s.io", "groups", "", "system:masters", "")
+
+				require.True(t, f.wc.evaluateImpersonation(f.c, f.s),
+					"the named system:masters check was not denied for %q", verb)
+
+				resp := f.response(t)
+				assert.False(t, resp.Status.Allowed)
+				assert.Contains(t, resp.Status.Reason, "system:masters")
+			})
+		}
+	})
+
+	t.Run("at or above the collapse threshold the wildcard check is denied", func(t *testing.T) {
+		// 4+ groups including system:masters: the apiserver collapses to Name="*",
+		// which cannot be proven not to include system:masters.
+		for _, verb := range verbs {
+			t.Run(verb, func(t *testing.T) {
+				f := newImpersonationFixture(t, nil).
+					withSAR(verb, "authentication.k8s.io", "groups", "", "*", "")
+
+				require.True(t, f.wc.evaluateImpersonation(f.c, f.s),
+					"a collapsed wildcard group check evaded the system:masters guardrail for %q; "+
+						"impersonating system:masters plus three filler groups is a cluster-admin bypass",
+					verb)
+
+				resp := f.response(t)
+				assert.False(t, resp.Status.Allowed)
+				assert.Contains(t, resp.Status.Reason, "wildcard",
+					"the denial should explain why a wildcard group check is refused")
+			})
+		}
+	})
+
+	// The guardrail must stay narrow: a wildcard on a resource OTHER than groups is
+	// not a system:masters risk and must not be swept up by this denial.
+	t.Run("a wildcard on a non-group identity resource is not denied here", func(t *testing.T) {
+		f := newImpersonationFixture(t, nil).
+			withSAR("impersonate:associated-node", "authentication.k8s.io", "nodes", "", "*", "")
+
+		assert.False(t, f.wc.evaluateImpersonation(f.c, f.s),
+			"the system:masters guardrail denied a nodes wildcard; associated-node identity "+
+				"checks legitimately use Name=\"*\" and must fall through to the normal path")
+	})
 }
 
 // TestEvaluateImpersonation_LegacyFallbackPolicy covers the three fallback policies.

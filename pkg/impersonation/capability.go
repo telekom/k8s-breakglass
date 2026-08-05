@@ -192,16 +192,24 @@ const firstGateVersionMinor = 35
 const defaultOnVersionMinor = 36
 
 // VersionHint is the ONLY place breakglass compares Kubernetes versions for this
-// feature, and its result is advisory: it decides which path to try FIRST, never
-// whether a path is permitted.
+// feature. It is one of the two signals capability detection combines, and it can
+// only ever RULE OUT support, never establish it.
 //
-// It is a hint rather than a decision for two reasons. A 1.36+ cluster can have
-// the gate explicitly disabled, and a 1.35 cluster can have it explicitly
-// enabled; neither is visible in the version string. Only a real attempt settles
-// it, which is what CapabilityCache.RecordProbe captures.
+// The asymmetry is deliberate and is what makes it safe to consult a version at all:
+//
+//   - SupportNo is authoritative. Constrained impersonation cannot exist before
+//     1.35, so a spoke below that is settled without any probe.
+//   - SupportYes and SupportUnknown are NOT conclusions. A 1.36+ cluster can have
+//     the gate explicitly disabled, a 1.35 cluster can have it explicitly enabled,
+//     and in either case the constrained RBAC may not be applied. None of that is
+//     visible in the version string, so a probe must confirm before support is
+//     claimed.
 //
 // Unparseable or empty input yields SupportNo — assume not supported — so that a
 // spoke whose version cannot be read keeps the legacy behaviour it has today.
+//
+// Callers must never treat a non-SupportNo result as permission to report a spoke
+// supported; see breakglass.detectProbeCapability for the required second signal.
 func VersionHint(major, minor string) Support {
 	majorNum, ok := parseVersionComponent(major)
 	if !ok || majorNum != 1 {

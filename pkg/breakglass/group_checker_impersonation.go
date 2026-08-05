@@ -81,26 +81,42 @@ func CanGroupsDoConstrained(
 	capability := resolveProbeCapability(clustername, impCfg)
 	probeMode := probeModeFor(impCfg)
 
+	// Capability that is neither configured nor cached is DETECTED here, using a
+	// probe the retained legacy grant provably cannot authorize. Inferring support
+	// from the success of the functional probe below is impossible: KEP-5284 adds no
+	// headers, so a constrained and a legacy request are byte-identical on the wire,
+	// and the legacy fallback authorizes both. See detectProbeCapability.
+	if capability.Support == impersonation.SupportUnknown && probeMode.IsConstrained() {
+		capability = detectProbeCapability(ctx, rc, clustername)
+	}
+	setCapabilityMetric(clustername, capability.Support)
+
 	identity := impersonation.Identity{
 		UserName: AuthCheckerUsername,
 		Groups:   groups,
 	}
 
-	// Try the constrained path when the spoke may support it.
+	// Try the constrained path when the spoke is known or believed to support it.
 	if capability.UsesConstrained() && probeMode.IsConstrained() {
 		allowed, attemptErr := runProbe(ctx, rc, identity, probeMode, capability, ssarSpec)
 		switch {
 		case attemptErr == nil:
-			probeCapabilities.RecordProbe(clustername, probeMode, true, capability.ServerVersion)
-			setCapabilityMetric(clustername, impersonation.SupportYes)
+			// Deliberately does NOT record SupportYes. Success here is not evidence
+			// of constrained support: the legacy grant satisfies the identical
+			// request. Only detectProbeCapability may conclude "supported".
 			return allowed, nil
 
 		case impersonation.IsConstrainedImpersonationDenial(attemptErr):
-			// The spoke refused the constrained impersonation. This is exactly what a
-			// pre-1.35 cluster does, and also what a 1.36 cluster with the gate off or
-			// without the constrained RBAC grants does. All three want the same
-			// remedy, so record unsupported and fall through to legacy.
-			probeCapabilities.RecordProbe(clustername, probeMode, false, capability.ServerVersion)
+			// The constrained attempt was refused even though detection believed it
+			// would work — e.g. the gate was turned off, or the RBAC was removed,
+			// since the capability record was written. Downgrade the spoke and serve
+			// the request over legacy.
+			probeCapabilities.Set(clustername, impersonation.Capability{
+				Support:       impersonation.SupportNo,
+				Mode:          impersonation.ModeLegacy,
+				DetectedVia:   "probe-denied",
+				ServerVersion: capability.ServerVersion,
+			})
 			setCapabilityMetric(clustername, impersonation.SupportNo)
 			metrics.ImpersonationDowngrades.WithLabelValues(clustername, string(probeMode)).Inc()
 			zap.S().Infow(
@@ -117,14 +133,7 @@ func CanGroupsDoConstrained(
 	}
 
 	// Legacy path: the blanket impersonation breakglass has always used.
-	allowed, err := runProbe(ctx, rc, identity, impersonation.ModeLegacy, capability, ssarSpec)
-	if err != nil {
-		return false, err
-	}
-	if capability.Support == impersonation.SupportNo {
-		setCapabilityMetric(clustername, impersonation.SupportNo)
-	}
-	return allowed, nil
+	return runProbe(ctx, rc, identity, impersonation.ModeLegacy, capability, ssarSpec)
 }
 
 // runProbe performs one impersonated SelfSubjectAccessReview attempt.
@@ -172,25 +181,39 @@ func runProbe(
 
 // resolveProbeCapability determines the capability to use for a spoke, letting an
 // explicit ClusterConfig setting override detection.
+//
+// An explicit setting is also written into the cache via RecordConfigured, so that
+// other readers of the cache (the debug reconciler, the capability metric) see the
+// operator's assertion rather than a stale detected value.
 func resolveProbeCapability(
 	clustername string,
 	impCfg *breakglassv1alpha1.ConstrainedImpersonationConfig,
 ) impersonation.Capability {
 	switch impCfg.EffectiveSupport() {
 	case breakglassv1alpha1.ConstrainedImpersonationEnabled:
-		return impersonation.Capability{
-			Support:     impersonation.SupportYes,
-			DetectedVia: "configured",
-		}
+		return probeCapabilities.RecordConfigured(
+			clustername, impersonation.SupportYes, impersonation.ModeUserInfo)
 	case breakglassv1alpha1.ConstrainedImpersonationDisabled:
-		return impersonation.Capability{
-			Support:     impersonation.SupportNo,
-			DetectedVia: "configured",
-		}
+		return probeCapabilities.RecordConfigured(
+			clustername, impersonation.SupportNo, impersonation.ModeLegacy)
 	case breakglassv1alpha1.ConstrainedImpersonationAuto:
 		return probeCapabilities.Get(clustername)
 	default:
 		return probeCapabilities.Get(clustername)
+	}
+}
+
+// ForgetProbeCapability drops a spoke's cached capability record so the next
+// request re-detects it.
+//
+// This is what makes a ClusterConfig change take effect promptly instead of after
+// the cache TTL: call it when a spoke's ClusterConfig is updated or removed.
+func ForgetProbeCapability(clustername string) {
+	probeCapabilities.Forget(clustername)
+	for _, s := range []impersonation.Support{
+		impersonation.SupportYes, impersonation.SupportNo, impersonation.SupportUnknown,
+	} {
+		metrics.ImpersonationCapability.DeleteLabelValues(clustername, s.String())
 	}
 }
 

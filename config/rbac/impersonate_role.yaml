@@ -22,14 +22,28 @@
 # The trade-off, and it is a real one: while this grant exists, a spoke that DOES
 # support constrained impersonation can still fall back to it, because the API
 # server falls back to legacy whenever every constrained mode denies. That makes
-# the constraint decorative on that spoke. Once you have confirmed via
-# `breakglass_impersonation_capability{support="supported"} == 1` and
-# `breakglass_impersonation_legacy_fallback_total` flatlining at zero that a spoke
-# no longer needs it, remove this ClusterRole from that spoke and set
-# `spec.constrainedImpersonation.legacyFallback: Forbidden` on its ClusterConfig so
-# any regression is denied loudly instead of silently downgraded.
+# the constraint decorative on that spoke.
 #
-# See docs/security-best-practices.md#constrained-impersonation-migration.
+# Retiring this grant on a spoke is a DELIBERATE, MANUALLY VERIFIED operation. There
+# is no metric combination that is sufficient on its own to authorize it:
+#
+#   * `breakglass_impersonation_capability{support="supported"}` can be a false
+#     positive where breakglass holds an over-broad grant on the spoke.
+#   * `breakglass_impersonation_legacy_fallback_total` only counts what the webhook
+#     saw, and the webhook sits AFTER RBAC in the authorizer chain — a legacy
+#     impersonation that RBAC already allowed never reaches breakglass and is never
+#     counted. A flat counter does not prove the legacy path is unused.
+#
+# Follow "Retiring the legacy grant on a spoke" in docs/constrained-impersonation.md,
+# which verifies the gate from the spoke's own metrics, verifies the constrained RBAC
+# with a SubjectAccessReview, and confirms via spoke audit that every impersonated
+# request carries an `impersonationConstraint`. Then set
+# `spec.constrainedImpersonation.support: Enabled` and
+# `legacyFallback: Forbidden` on its ClusterConfig, remove this ClusterRole from that
+# spoke only, and keep a rollback to hand.
+#
+# See docs/constrained-impersonation.md, sections "RBAC migration" and
+# "Retiring the legacy grant on a spoke".
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

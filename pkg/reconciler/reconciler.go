@@ -11,6 +11,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/api"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
 	"github.com/telekom/k8s-breakglass/pkg/cli"
@@ -290,6 +291,11 @@ func Setup(
 			Client: mgr.GetClient(),
 			Scheme: mgr.GetScheme(),
 			Log:    log,
+			// Invalidate the spoke's constrained-impersonation capability record
+			// when its ClusterConfig changes, so an operator flipping
+			// spec.constrainedImpersonation.support sees it honoured on the next
+			// request instead of after the 10-minute cache TTL.
+			OnClusterConfigChanged: breakglass.ForgetProbeCapability,
 		}
 		if err := clusterConfigReconciler.SetupWithManager(mgr); err != nil {
 			return fmt.Errorf("failed to setup ClusterConfig reconciler with manager: %w", err)

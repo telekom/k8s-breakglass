@@ -46,6 +46,32 @@ rules:
   - "system:auth-checker"
   verbs:
   - "impersonate:user-info"
+# Identity rule for the capability-detection UID. This rule is what makes runtime
+# capability detection possible at all, so it is load-bearing rather than incidental.
+#
+# KEP-5284 adds no new headers, so a constrained and a legacy impersonated request
+# are byte-identical on the wire, and the apiserver falls back to legacy whenever
+# every constrained mode denies. An ordinary impersonated request therefore cannot
+# tell you whether constrained impersonation works — the retained blanket grant in
+# impersonate_role.yaml authorizes it either way.
+#
+# A UID can. The legacy grant covers `users` and `groups` in the CORE API group and
+# nothing else, so it provably cannot authorize a `uids` check in
+# authentication.k8s.io. Breakglass therefore impersonates a synthetic probe UID and
+# treats success as positive proof that a constrained mode genuinely ran: on a spoke
+# below 1.35, or with the gate off, or without this ClusterRole applied, the check is
+# denied and breakglass correctly keeps using legacy impersonation.
+#
+# The UID is pinned with resourceNames and is not a real UID of anything, so this
+# grants no ability to become any actual principal.
+- apiGroups:
+  - "authentication.k8s.io"
+  resources:
+  - uids
+  resourceNames:
+  - "breakglass-capability-probe"
+  verbs:
+  - "impersonate:user-info"
 # Identity rule for groups. The probe impersonates whichever groups a breakglass
 # session granted, and those are not known ahead of time, so this cannot be pinned
 # with resourceNames the way the username is.

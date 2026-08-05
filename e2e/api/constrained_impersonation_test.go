@@ -215,6 +215,49 @@ func TestConstrainedImpersonation_SystemMastersDenied(t *testing.T) {
 	}
 }
 
+// TestConstrainedImpersonation_SystemMastersWildcardCollapseDenied covers the
+// evasion path for the guardrail above, over the real HTTP webhook.
+//
+// The named check is not sufficient on its own: the apiserver collapses per-group
+// identity checks into a single Name="*" check once four or more groups are
+// impersonated, so system:masters plus three filler groups never presents the
+// literal name. Both shapes are asserted so a regression in either is caught.
+func TestConstrainedImpersonation_SystemMastersWildcardCollapseDenied(t *testing.T) {
+	if !helpers.IsWebhookTestEnabled() {
+		t.Skip("webhook tests disabled")
+	}
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	clusterName := helpers.GetTestClusterName()
+
+	verbs := []struct {
+		name  string
+		verb  string
+		group string
+	}{
+		{"constrained", impersonation.IdentityVerb(impersonation.ModeUserInfo), impersonation.APIGroupAuthentication},
+		{"legacy", impersonation.VerbLegacyImpersonate, ""},
+	}
+
+	for _, tc := range verbs {
+		t.Run(tc.name+"/wildcard collapse", func(t *testing.T) {
+			// The shape a 4+ group request actually arrives as.
+			sar := impersonationSAR(tc.verb, tc.group, "groups", "", "*", "")
+
+			decision := postSARToWebhook(t, ctx, clusterName, sar)
+
+			require.False(t, decision.Status.Allowed,
+				"the webhook allowed a collapsed wildcard group impersonation via %q; "+
+					"system:masters plus three filler groups is a cluster-admin bypass", tc.verb)
+			assert.Contains(t, decision.Status.Reason, "wildcard",
+				"the denial should explain that a wildcard group check is refused")
+		})
+	}
+}
+
 // TestConstrainedImpersonation_DenyPolicyGrantAndDeny proves the allow/deny pair
 // the task calls for: an impersonation check is denied when a DenyPolicy targets it
 // and permitted through when none does.

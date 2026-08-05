@@ -88,12 +88,50 @@ func (wc *WebhookController) evaluateImpersonation(c *gin.Context, s *authorizeS
 	// The API server hard-denies it in constrained mode but deliberately does NOT
 	// for legacy impersonation, so without this check a blanket legacy grant plus a
 	// system:masters target is a complete cluster-admin bypass.
-	if req.Target.Resource == impersonation.ResourceGroups &&
-		req.Target.Name == impersonation.GroupSystemMasters {
-		wc.writeImpersonationDenial(c, s,
-			"Denied: impersonating the system:masters group is never permitted through breakglass.",
-			"system-masters")
-		return true
+	//
+	// The named check alone is not sufficient, because it is not always the group
+	// name that arrives. In constrained mode the API server collapses per-group
+	// identity checks into a single check with Name="*" once a request names four or
+	// more groups (ManyAuthorizationChecksInLoop). A wildcard group check cannot be
+	// proven NOT to include system:masters, so it must be refused as well.
+	//
+	// Note what the wildcard case really is. In constrained mode the API server
+	// hard-denies system:masters BEFORE it ever tries the wildcard collapse
+	// (mode.go authorizeGroups), so a collapsed "*" check reaching us provably does
+	// not contain system:masters and the apiserver is the backstop. Legacy
+	// impersonation performs no collapse at all — it checks each group by name — so
+	// a legacy "*" is not something the API server generates for a multi-group
+	// request either. A wildcard therefore always means "something asked for
+	// authority over every group", which is a superset of system:masters and is
+	// never a grant breakglass should hand out.
+	//
+	// The deny-side cost is understood and accepted. This is an emergency-access
+	// tool and a wrong deny is expensive, but the denial is narrowly scoped: it fires
+	// only on impersonation identity checks against the `groups` resource, only for
+	// the literal name "*", and it never affects a request naming its groups
+	// explicitly, however many there are. A legitimate session impersonating four or
+	// more named groups is unaffected in legacy mode, and in constrained mode is
+	// still served by the per-group checks the API server falls back to when the
+	// wildcard check is refused. Weighed against a silent cluster-admin bypass, that
+	// is the right trade.
+	if req.Target.Resource == impersonation.ResourceGroups {
+		switch {
+		case req.Target.Name == impersonation.GroupSystemMasters:
+			wc.writeImpersonationDenial(c, s,
+				"Denied: impersonating the system:masters group is never permitted through breakglass.",
+				"system-masters")
+			return true
+
+		case req.Target.Wildcard:
+			wc.writeImpersonationDenial(c, s,
+				"Denied: breakglass refuses a wildcard (\"*\") group impersonation check, because "+
+					"authority over every group cannot be distinguished from authority over "+
+					"system:masters. The API server collapses per-group checks into a single "+
+					"wildcard check once four or more groups are impersonated; grant and request "+
+					"the specific groups instead.",
+				"system-masters-wildcard")
+			return true
+		}
 	}
 
 	// 3. Legacy-fallback policy.
