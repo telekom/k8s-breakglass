@@ -49,6 +49,23 @@ MAILHOG_UI_PORT=${MAILHOG_UI_PORT:-8025}
 # --- Kind node image ---
 KIND_NODE_IMAGE=${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}
 
+# --- Constrained impersonation (KEP-5284) feature gate ---
+# The ConstrainedImpersonation gate is beta and ON BY DEFAULT from Kubernetes 1.36,
+# which is the version of the node image above, so the default here matches what a
+# real 1.36 cluster does without any configuration.
+#
+# Set CONSTRAINED_IMPERSONATION=false to run the cluster with the gate explicitly
+# disabled. That reproduces two production situations that must both keep working:
+# a spoke on Kubernetes below 1.35 where the feature does not exist, and a 1.36+
+# spoke where an operator turned it off. The e2e suite runs both.
+CONSTRAINED_IMPERSONATION=${CONSTRAINED_IMPERSONATION:-true}
+if [ "$CONSTRAINED_IMPERSONATION" = "true" ]; then
+  APISERVER_FEATURE_GATES=${APISERVER_FEATURE_GATES:-ConstrainedImpersonation=true}
+else
+  APISERVER_FEATURE_GATES=${APISERVER_FEATURE_GATES:-ConstrainedImpersonation=false}
+fi
+echo "Constrained impersonation (KEP-5284): $CONSTRAINED_IMPERSONATION (apiserver feature-gates=$APISERVER_FEATURE_GATES)"
+
 # --- TLS / temp directories (kept as before, but configurable) ---
 TDIR=${TDIR:-}
 TLS_DIR=${TLS_DIR:-}
@@ -952,6 +969,10 @@ nodes:
         audit-log-maxsize: "100"
         # Verbosity for debugging OIDC issues
         v: "6"
+        # Constrained impersonation (KEP-5284). Beta and on by default in 1.36, so
+        # this is normally a no-op; it is set explicitly so the e2e suite can also
+        # run with the gate OFF and prove the legacy fallback path still authorizes.
+        feature-gates: "${APISERVER_FEATURE_GATES}"
       extraVolumes:
         - name: authorization-config
           hostPath: /etc/kubernetes/authorization-config.yaml
