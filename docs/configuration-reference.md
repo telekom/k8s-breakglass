@@ -212,6 +212,37 @@ server:
 
 ---
 
+#### `allowOIDCProxyRedirects` (Optional)
+
+Controls whether the unauthenticated OIDC proxy (`/api/oidc/authority/*`) follows upstream `30x` responses.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `*bool` |
+| **Default** | unset (equivalent to `false` — redirects are refused) |
+| **Secure Setting** | unset / `false` |
+
+```yaml
+server:
+  # Leave unset. Only enable for a non-conforming identity provider.
+  allowOIDCProxyRedirects: true
+```
+
+**Behavior:**
+
+- unset or `false` (default, secure): The proxy never follows redirects. The upstream `30x` status is relayed to the caller with `Location` and `Set-Cookie` stripped by the response-header allowlist.
+- `true`: Go's default redirect handling is restored (up to 10 hops) and a warning is logged at startup.
+
+**Security Considerations:**
+
+- The OIDC proxy validates only the **first** hop against the configured-authority allowlist. Redirect targets are never re-checked, so enabling this lets a trusted-but-redirecting identity provider drive server-side requests to arbitrary hosts — server-side request forgery (CWE-918).
+- The endpoints the proxy is permitted to reach (discovery, JWKS, token, userinfo, introspection, revocation) are specified to be served directly and have no legitimate need to redirect. Keycloak, Entra ID, and Okta all serve discovery and JWKS without redirecting.
+- Existing deployments are unaffected by the default: the field is optional and its zero value reproduces the secure behaviour.
+
+See [OIDC Proxy Egress Controls](security-best-practices.md#oidc-proxy-egress-controls) for the full defence-in-depth description.
+
+---
+
 #### `timeouts` (Optional)
 
 HTTP server timeout configuration. All duration values are Go duration strings (e.g. `"30s"`, `"2m"`, `"1h"`). When omitted, sensible production defaults are applied automatically.
