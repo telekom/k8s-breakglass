@@ -1872,3 +1872,132 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 			"error should wrap ErrClusterConfigNotFound for reconciler to handle gracefully")
 	})
 }
+
+// TestCreateNodeDebugPod_StatusFailureDeletesOrphan is the regression test for
+// #096. CreateNodeDebugPod creates a PRIVILEGED pod with hostPath "/" mounted
+// read-write on the spoke cluster and then records it in the DebugSession status.
+// If the status patch fails, the pod is absent from the very status lists that
+// CleanupKubectlDebugResources / cleanupResources iterate, so nothing ever deletes
+// it and it outlives its session indefinitely.
+func TestCreateNodeDebugPod_StatusFailureDeletesOrphan(t *testing.T) {
+	scheme := testScheme()
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "orphan-node-session", Namespace: "default"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:         "test-cluster",
+			RequestedBy:     "user@example.com",
+			TargetNamespace: "breakglass-debug",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					NodeDebug: &breakglassv1alpha1.NodeDebugConfig{
+						Enabled:       true,
+						AllowedImages: []string{"busybox:stable"},
+					},
+				},
+			},
+		},
+	}
+
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	// Hub client whose status patch always fails, simulating a lost lease, a
+	// conflict storm, or a transient apiserver error at exactly the wrong moment.
+	statusErr := errors.New("simulated status patch failure")
+	hubClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(_ context.Context, _ ctrlclient.Client, _ string, _ ctrlclient.Object, _ ctrlclient.Patch, _ ...ctrlclient.SubResourcePatchOption) error {
+				return statusErr
+			},
+		}).
+		Build()
+
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+		clients: map[string]ctrlclient.Client{"test-cluster": targetClient},
+	})
+
+	pod, err := handler.CreateNodeDebugPod(context.Background(), session, "node-1", "user@example.com")
+	require.Error(t, err, "the status failure must be reported to the caller")
+	assert.Nil(t, pod)
+
+	// No privileged hostPath pod may be left behind on the spoke cluster.
+	var pods corev1.PodList
+	require.NoError(t, targetClient.List(context.Background(), &pods))
+	assert.Empty(t, pods.Items,
+		"a privileged hostPath:/ pod was orphaned on the spoke cluster: it is untracked "+
+			"in the session status, so no cleanup path will ever delete it")
+}
+
+// TestCreatePodCopy_StatusFailureDeletesOrphan is the regression test for #095:
+// the same create-then-status-patch ordering in the pod-copy path.
+func TestCreatePodCopy_StatusFailureDeletesOrphan(t *testing.T) {
+	scheme := testScheme()
+
+	originalPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "app-pod", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "app", Image: "nginx:latest"}},
+		},
+	}
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "orphan-copy-session", Namespace: "default"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "user@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					PodCopy: &breakglassv1alpha1.PodCopyConfig{
+						Enabled: true,
+						TTL:     "1h",
+					},
+				},
+			},
+		},
+	}
+
+	// The pod-copy path resolves namespace labels and requires the target
+	// namespace to exist, so both namespaces must be seeded for the test to reach
+	// the create at all.
+	sourceNS := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
+	copiesNS := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug-copies"}}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(originalPod, sourceNS, copiesNS).Build()
+
+	statusErr := errors.New("simulated status patch failure")
+	hubClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(_ context.Context, _ ctrlclient.Client, _ string, _ ctrlclient.Object, _ ctrlclient.Patch, _ ...ctrlclient.SubResourcePatchOption) error {
+				return statusErr
+			},
+		}).
+		Build()
+
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+		clients: map[string]ctrlclient.Client{"test-cluster": targetClient},
+	})
+
+	copyPod, err := handler.CreatePodCopy(context.Background(), session, "default", "app-pod", "busybox:latest", "user@example.com")
+	require.Error(t, err)
+	assert.Nil(t, copyPod)
+
+	var pods corev1.PodList
+	require.NoError(t, targetClient.List(context.Background(), &pods))
+	// Only the original pod may remain.
+	require.Len(t, pods.Items, 1, "the pod copy must not be orphaned on the spoke cluster")
+	assert.Equal(t, "app-pod", pods.Items[0].Name)
+}

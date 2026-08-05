@@ -5628,3 +5628,76 @@ func TestDebugSessionController_FailSession_PartialDeployScenarios(t *testing.T)
 		assert.Contains(t, updated.Status.Message, "failed to apply workload")
 	})
 }
+
+// TestDebugSessionController_FailedStateRetriesCleanup is the regression test for
+// #237. failSession does best-effort cleanup, logs any error, then sets the
+// terminal Failed state. The Failed branch of Reconcile returned an empty
+// ctrl.Result, which never requeues, so spoke-cluster resources that the
+// best-effort cleanup could not delete leaked permanently.
+func TestDebugSessionController_FailedStateRetriesCleanup(t *testing.T) {
+	scheme := testScheme()
+
+	t.Run("failed_with_tracked_resources_requeues_for_cleanup", func(t *testing.T) {
+		session := newTestDebugSession("failed-leak", "test-template", "test-cluster", "user@example.com")
+		session.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+		session.Status.Message = "cleanup previously failed"
+		// Resources are still tracked in status: the spoke was not cleaned up.
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{Kind: "DaemonSet", Name: "debug-ds-failed-leak", Namespace: "breakglass-debug", Source: "debug-pod"},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+
+		controller := &DebugSessionController{
+			log:    zap.NewNop().Sugar(),
+			client: fakeClient,
+			// nil ccProvider makes cleanupResources a no-op that cannot reach the
+			// spoke, standing in for an unreachable spoke cluster.
+		}
+
+		result, err := controller.Reconcile(context.Background(), reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: session.Name, Namespace: session.Namespace},
+		})
+		require.NoError(t, err)
+
+		// The state must remain terminal...
+		var updated breakglassv1alpha1.DebugSession
+		require.NoError(t, fakeClient.Get(context.Background(),
+			types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated))
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, updated.Status.State,
+			"Failed must stay terminal; only cleanup is retried")
+
+		// ...but reconciliation must not give up while spoke resources are tracked.
+		assert.NotEqual(t, reconcile.Result{}, result,
+			"a failed session with untracked-cleanup spoke resources must be revisited, "+
+				"otherwise the spoke resources leak permanently")
+	})
+
+	t.Run("failed_with_no_tracked_resources_is_terminal", func(t *testing.T) {
+		session := newTestDebugSession("failed-clean", "test-template", "test-cluster", "user@example.com")
+		session.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+		session.Status.Message = "template not found"
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+
+		controller := &DebugSessionController{
+			log:    zap.NewNop().Sugar(),
+			client: fakeClient,
+		}
+
+		result, err := controller.Reconcile(context.Background(), reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: session.Name, Namespace: session.Namespace},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, reconcile.Result{}, result,
+			"nothing was deployed, so there is nothing to retry")
+	})
+}
