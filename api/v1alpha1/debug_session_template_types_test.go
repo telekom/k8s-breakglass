@@ -18,8 +18,11 @@ package v1alpha1
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -2145,4 +2148,46 @@ spec:
 			t.Errorf("expected error for mutually exclusive fields, got %v", errs)
 		}
 	})
+}
+
+// TestNamespaceConstraints_DenyUserNamespaceIsAdditive is the backwards-
+// compatibility regression required by the project compat contract: an object
+// stored before denyUserNamespace existed must round-trip byte-identically and
+// must not gain the field on serialization.
+func TestNamespaceConstraints_DenyUserNamespaceIsAdditive(t *testing.T) {
+	// Exactly what an already-stored v1alpha1 object looks like: allowUserNamespace
+	// and defaultNamespace were defaulted at admission, denyUserNamespace absent.
+	stored := []byte(`{"defaultNamespace":"breakglass-debug","allowUserNamespace":true}`)
+
+	var nc NamespaceConstraints
+	require.NoError(t, json.Unmarshal(stored, &nc))
+
+	// Absent means false, i.e. today's behaviour.
+	assert.False(t, nc.DenyUserNamespace)
+
+	// Re-serializing must not add the new field.
+	roundTripped, err := json.Marshal(&nc)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(stored), string(roundTripped))
+	assert.NotContains(t, string(roundTripped), "denyUserNamespace")
+
+	// DeepCopy preserves the zero value.
+	assert.False(t, nc.DeepCopy().DenyUserNamespace)
+
+	// Only an explicit true is serialized.
+	nc.DenyUserNamespace = true
+	explicit, err := json.Marshal(&nc)
+	require.NoError(t, err)
+	assert.Contains(t, string(explicit), `"denyUserNamespace":true`)
+
+	// An explicit false from the wire is also inert and is not re-serialized,
+	// so no stored object can change meaning on upgrade.
+	var explicitFalse NamespaceConstraints
+	require.NoError(t, json.Unmarshal(
+		[]byte(`{"defaultNamespace":"breakglass-debug","allowUserNamespace":true,"denyUserNamespace":false}`),
+		&explicitFalse))
+	assert.False(t, explicitFalse.DenyUserNamespace)
+	out, err := json.Marshal(&explicitFalse)
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), "denyUserNamespace")
 }

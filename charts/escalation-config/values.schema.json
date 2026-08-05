@@ -449,6 +449,9 @@
               },
               "defaultNamespace": {
                 "type": "string"
+              },
+              "denyUserNamespace": {
+                "type": "boolean"
               }
             },
             "type": "object"

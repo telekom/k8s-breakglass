@@ -492,3 +492,81 @@ func FuzzValidateImpersonationDenyRules(f *testing.F) {
 		}
 	})
 }
+
+// FuzzNamespaceConstraintsDenyUserNamespace fuzzes the namespace-constraint
+// validation and warning helpers around the additive denyUserNamespace field.
+// Invariants:
+//   - validation must never panic for any combination of switches;
+//   - denyUserNamespace never adds a hard validation error, because it is an
+//     optional narrowing switch;
+//   - a constraint set with denyUserNamespace unset must produce exactly the
+//     same errors and warnings as before the field existed.
+func FuzzNamespaceConstraintsDenyUserNamespace(f *testing.F) {
+	seeds := []struct {
+		allowUser        bool
+		denyUser         bool
+		defaultNamespace string
+		allowedPattern   string
+		deniedPattern    string
+	}{
+		{false, false, "breakglass-debug", "", ""},
+		{true, false, "breakglass-debug", "debug-*", ""},
+		{false, true, "breakglass-debug", "", ""},
+		{true, true, "breakglass-debug", "debug-*", "kube-*"},
+		{true, true, "", "", ""},
+		{false, true, "", "*", "*"},
+		{true, false, "prod", "prod", "prod"},
+		{true, true, "unicode-日本語", "*", ""},
+		{false, false, string(make([]byte, 300)), "", ""},
+	}
+
+	for _, seed := range seeds {
+		f.Add(seed.allowUser, seed.denyUser, seed.defaultNamespace, seed.allowedPattern, seed.deniedPattern)
+	}
+
+	f.Fuzz(func(t *testing.T, allowUser, denyUser bool, defaultNamespace, allowedPattern, deniedPattern string) {
+		build := func(deny bool) *NamespaceConstraints {
+			nc := &NamespaceConstraints{
+				AllowUserNamespace: allowUser,
+				DenyUserNamespace:  deny,
+				DefaultNamespace:   defaultNamespace,
+			}
+			if allowedPattern != "" {
+				nc.AllowedNamespaces = &NamespaceFilter{Patterns: []string{allowedPattern}}
+			}
+			if deniedPattern != "" {
+				nc.DeniedNamespaces = &NamespaceFilter{Patterns: []string{deniedPattern}}
+			}
+			return nc
+		}
+
+		path := field.NewPath("spec", "namespaceConstraints")
+
+		// Must never panic.
+		withDeny := validateNamespaceConstraints(build(true), path)
+		withoutDeny := validateNamespaceConstraints(build(false), path)
+
+		// denyUserNamespace must not introduce hard validation errors.
+		if len(withDeny) != len(withoutDeny) {
+			t.Errorf("denyUserNamespace changed validation errors: %v vs %v", withDeny, withoutDeny)
+		}
+
+		// Warnings must never panic either.
+		warnOff := warnNamespaceConstraintIssues(build(false), "")
+		warnOn := warnNamespaceConstraintIssues(build(true), "")
+
+		// With the field unset, warnings must match the pre-field behaviour:
+		// the only denyUserNamespace warning fires when both switches are set.
+		for _, w := range warnOff {
+			if w == "" {
+				t.Errorf("empty warning produced")
+			}
+		}
+		if !allowUser && len(warnOn) != len(warnOff) {
+			t.Errorf("denyUserNamespace warning fired without allowUserNamespace: %v vs %v", warnOn, warnOff)
+		}
+		if allowUser && len(warnOn) != len(warnOff)+1 {
+			t.Errorf("expected exactly one extra warning when both switches are set: %v vs %v", warnOn, warnOff)
+		}
+	})
+}

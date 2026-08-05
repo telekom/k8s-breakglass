@@ -1,14 +1,22 @@
 package debug
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/validation"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// defaultDebugNamespace is the fallback namespace used when neither the
+// template nor the binding defines a default namespace.
+const defaultDebugNamespace = "breakglass-debug"
 
 const maxRequiredNodeSelectorTerms = 128
 
@@ -26,7 +34,13 @@ func (e *schedulingOptionAccessError) Error() string {
 	return fmt.Sprintf("user is not allowed to select scheduling option '%s'", e.optionName)
 }
 
-func (c *DebugSessionAPIController) resolveTargetNamespace(template *breakglassv1alpha1.DebugSessionTemplate, requestedNamespace string, binding *breakglassv1alpha1.DebugSessionClusterBinding) (string, error) {
+func (c *DebugSessionAPIController) resolveTargetNamespace(
+	ctx context.Context,
+	cluster string,
+	template *breakglassv1alpha1.DebugSessionTemplate,
+	requestedNamespace string,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
+) (string, error) {
 	// Start with template's namespace constraints
 	nc := template.Spec.NamespaceConstraints
 
@@ -64,58 +78,49 @@ func (c *DebugSessionAPIController) resolveTargetNamespace(template *breakglassv
 		}
 		c.log.Debugw("No namespace constraints, using default",
 			"template", template.Name,
-			"resolvedNamespace", "breakglass-debug",
+			"resolvedNamespace", defaultDebugNamespace,
 		)
-		return "breakglass-debug", nil // Default namespace
+		return defaultDebugNamespace, nil // Default namespace
 	}
 
 	c.log.Debugw("Namespace constraints found",
 		"template", template.Name,
 		"allowUserNamespace", nc.AllowUserNamespace,
+		"denyUserNamespace", nc.DenyUserNamespace,
 		"defaultNamespace", nc.DefaultNamespace,
 		"hasAllowedNamespaces", nc.AllowedNamespaces != nil && !nc.AllowedNamespaces.IsEmpty(),
 		"hasDeniedNamespaces", nc.DeniedNamespaces != nil && !nc.DeniedNamespaces.IsEmpty(),
 	)
 
+	effectiveDefault := nc.DefaultNamespace
+	if effectiveDefault == "" {
+		effectiveDefault = defaultDebugNamespace
+	}
+
 	// If user didn't request a specific namespace, use the default
 	if requestedNamespace == "" {
-		if nc.DefaultNamespace != "" {
-			if err := validateEffectiveNamespaceConstraintFilters(nc.DefaultNamespace, template, binding); err != nil {
-				c.log.Debugw("Default namespace rejected by namespace constraints",
-					"template", template.Name,
-					"defaultNamespace", nc.DefaultNamespace,
-					"bindingUsed", binding != nil,
-					"error", err,
-				)
-				return "", err
-			}
-			c.log.Debugw("No namespace requested, using effective default namespace",
+		if err := c.validateEffectiveNamespaceConstraintFilters(ctx, cluster, effectiveDefault, effectiveDefault, template, binding); err != nil {
+			c.log.Debugw("Default namespace rejected by namespace constraints",
 				"template", template.Name,
-				"resolvedNamespace", nc.DefaultNamespace,
-				"bindingUsed", binding != nil,
-			)
-			return nc.DefaultNamespace, nil
-		}
-		if err := validateEffectiveNamespaceConstraintFilters("breakglass-debug", template, binding); err != nil {
-			c.log.Debugw("Fallback namespace rejected by namespace constraints",
-				"template", template.Name,
-				"fallbackNamespace", "breakglass-debug",
+				"defaultNamespace", effectiveDefault,
+				"templateDefaultSet", nc.DefaultNamespace != "",
 				"bindingUsed", binding != nil,
 				"error", err,
 			)
 			return "", err
 		}
-		c.log.Debugw("No namespace requested and no template default, using fallback",
+		c.log.Debugw("No namespace requested, using effective default namespace",
 			"template", template.Name,
-			"resolvedNamespace", "breakglass-debug",
+			"resolvedNamespace", effectiveDefault,
+			"bindingUsed", binding != nil,
 		)
-		return "breakglass-debug", nil
+		return effectiveDefault, nil
 	}
 
 	// If the requested namespace matches the default, allow it even when user namespace selection is disabled.
 	// This handles the case where the frontend sends the default namespace value in the request.
 	if nc.DefaultNamespace != "" && requestedNamespace == nc.DefaultNamespace {
-		if err := validateEffectiveNamespaceConstraintFilters(nc.DefaultNamespace, template, binding); err != nil {
+		if err := c.validateEffectiveNamespaceConstraintFilters(ctx, cluster, nc.DefaultNamespace, effectiveDefault, template, binding); err != nil {
 			c.log.Debugw("Requested default namespace rejected by namespace constraints",
 				"template", template.Name,
 				"defaultNamespace", nc.DefaultNamespace,
@@ -132,17 +137,34 @@ func (c *DebugSessionAPIController) resolveTargetNamespace(template *breakglassv
 		return nc.DefaultNamespace, nil
 	}
 
-	// Check if user is allowed to specify a namespace
+	// Check if user is allowed to specify a namespace. denyUserNamespace is an
+	// explicit narrowing switch and always wins over allowUserNamespace.
+	if nc.DenyUserNamespace {
+		source := denyUserNamespaceSource(template, binding)
+		c.log.Debugw("User-specified namespace explicitly denied",
+			"template", template.Name,
+			"requestedNamespace", requestedNamespace,
+			"denyUserNamespace", true,
+			"denySource", source,
+		)
+		return "", fmt.Errorf(
+			"%s does not allow user-specified namespaces: namespaceConstraints.denyUserNamespace=true, only defaultNamespace '%s' may be used",
+			source, effectiveDefault)
+	}
 	if !nc.AllowUserNamespace {
 		c.log.Debugw("User-specified namespace not allowed by template",
 			"template", template.Name,
 			"requestedNamespace", requestedNamespace,
 			"allowUserNamespace", nc.AllowUserNamespace,
 		)
-		return "", fmt.Errorf("template does not allow user-specified namespaces")
+		// allowUserNamespace is only ever taken from the template: a binding
+		// cannot enable or disable it (see mergeNamespaceConstraints).
+		return "", fmt.Errorf(
+			"template '%s' does not allow user-specified namespaces: namespaceConstraints.allowUserNamespace=false, only defaultNamespace '%s' may be used",
+			template.Name, effectiveDefault)
 	}
 
-	if err := validateEffectiveNamespaceConstraintFilters(requestedNamespace, template, binding); err != nil {
+	if err := c.validateEffectiveNamespaceConstraintFilters(ctx, cluster, requestedNamespace, effectiveDefault, template, binding); err != nil {
 		c.log.Debugw("Namespace rejected by effective namespace constraints",
 			"template", template.Name,
 			"requestedNamespace", requestedNamespace,
@@ -152,6 +174,35 @@ func (c *DebugSessionAPIController) resolveTargetNamespace(template *breakglassv
 	}
 
 	return requestedNamespace, nil
+}
+
+// denyUserNamespaceSource names the object(s) that set denyUserNamespace=true,
+// so a rejection attributes the denial to the responsible template, binding, or
+// both rather than blaming the template unconditionally.
+func denyUserNamespaceSource(
+	template *breakglassv1alpha1.DebugSessionTemplate,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
+) string {
+	templateDenies := template != nil &&
+		template.Spec.NamespaceConstraints != nil &&
+		template.Spec.NamespaceConstraints.DenyUserNamespace
+	bindingDenies := binding != nil &&
+		binding.Spec.NamespaceConstraints != nil &&
+		binding.Spec.NamespaceConstraints.DenyUserNamespace
+
+	switch {
+	case templateDenies && bindingDenies:
+		return fmt.Sprintf("template '%s' and binding '%s/%s'",
+			template.Name, binding.Namespace, binding.Name)
+	case bindingDenies:
+		return fmt.Sprintf("binding '%s/%s'", binding.Namespace, binding.Name)
+	case templateDenies:
+		return fmt.Sprintf("template '%s'", template.Name)
+	default:
+		// Unreachable in practice: the caller only reaches this when the merged
+		// constraints deny, which requires one of the two sides to set it.
+		return "namespace constraints"
+	}
 }
 
 // mergeNamespaceConstraints merges template and binding namespace constraints.
@@ -179,13 +230,18 @@ func (c *DebugSessionAPIController) mergeNamespaceConstraints(
 	// AllowUserNamespace: binding cannot enable user-selected namespaces when
 	// the template disabled them. A false binding value is ambiguous because it
 	// is also the zero value, so it is not treated as an override here.
+	// Bindings that need to narrow a permissive template set the additive
+	// denyUserNamespace field instead.
 	merged.AllowUserNamespace = templateNC.AllowUserNamespace
+
+	// DenyUserNamespace: narrowing only, so either side setting it wins.
+	merged.DenyUserNamespace = templateNC.DenyUserNamespace || bindingNC.DenyUserNamespace
 
 	// DefaultNamespace: binding can change the default only to a namespace that
 	// remains allowed by both template and binding filters.
 	if bindingNC.DefaultNamespace != "" &&
-		namespaceAllowedByConstraintFilters(bindingNC.DefaultNamespace, templateNC) &&
-		namespaceAllowedByConstraintFilters(bindingNC.DefaultNamespace, bindingNC) {
+		namespaceAllowedByNameFilters(bindingNC.DefaultNamespace, templateNC) &&
+		namespaceAllowedByNameFilters(bindingNC.DefaultNamespace, bindingNC) {
 		merged.DefaultNamespace = bindingNC.DefaultNamespace
 	}
 
@@ -268,41 +324,254 @@ func namespaceTrailingStarPrefix(pattern string) (string, bool) {
 	return prefix, true
 }
 
-func namespaceAllowedByConstraintFilters(namespace string, constraints *breakglassv1alpha1.NamespaceConstraints) bool {
-	return validateNamespaceConstraintFilters(namespace, constraints) == nil
+// namespaceAllowedByNameFilters reports whether a namespace passes a single
+// constraint set using namespace names only. It is a pre-check used while
+// merging constraints (for example to decide whether a binding may move the
+// default namespace); the resolved namespace is always validated again by
+// validateEffectiveNamespaceConstraintFilters, which additionally evaluates
+// selectorTerms against live namespace labels and enforces the
+// "empty allowedNamespaces means defaultNamespace only" contract.
+func namespaceAllowedByNameFilters(namespace string, constraints *breakglassv1alpha1.NamespaceConstraints) bool {
+	if constraints == nil {
+		return true
+	}
+	if !constraints.AllowedNamespaces.IsEmpty() &&
+		!matchNamespaceFilter(namespace, constraints.AllowedNamespaces) {
+		return false
+	}
+	if !constraints.DeniedNamespaces.IsEmpty() &&
+		matchNamespaceFilter(namespace, constraints.DeniedNamespaces) {
+		return false
+	}
+	return true
 }
 
-func validateEffectiveNamespaceConstraintFilters(
+// namespaceConstraintSource pairs a constraint set with a human-readable field
+// path so that rejections can name the offending field and value.
+type namespaceConstraintSource struct {
+	fieldPath   string
+	constraints *breakglassv1alpha1.NamespaceConstraints
+}
+
+// validateEffectiveNamespaceConstraintFilters enforces the effective namespace
+// boundary of a template and (optionally) a binding.
+//
+// The allow side is evaluated ONCE against the effective allow-list, which is
+// the intersection of every configured allowedNamespaces filter. When no side
+// configures an allow-list at all, only defaultNamespace is allowed, as
+// documented on NamespaceConstraints.allowedNamespaces. Evaluating each side
+// independently would be wrong: DefaultNamespace carries a kubebuilder default,
+// so a deny-only binding has an empty allow-list plus a defaulted namespace and
+// would reject every namespace on the binding leg.
+//
+// The deny side is a union: a namespace matching any deniedNamespaces filter is
+// rejected. selectorTerms on either side are evaluated against live namespace
+// labels fetched from the target cluster; a namespace whose labels cannot be
+// resolved is rejected with an error naming the namespace and the selector,
+// because silently skipping a selector-based deny is a fail-open on a security
+// control.
+func (c *DebugSessionAPIController) validateEffectiveNamespaceConstraintFilters(
+	ctx context.Context,
+	cluster string,
 	namespace string,
+	defaultNamespace string,
 	template *breakglassv1alpha1.DebugSessionTemplate,
 	binding *breakglassv1alpha1.DebugSessionClusterBinding,
 ) error {
-	if template != nil {
-		if err := validateNamespaceConstraintFilters(namespace, template.Spec.NamespaceConstraints); err != nil {
-			return err
+	sources := make([]namespaceConstraintSource, 0, 2)
+	if template != nil && template.Spec.NamespaceConstraints != nil {
+		sources = append(sources, namespaceConstraintSource{
+			fieldPath:   fmt.Sprintf("template '%s' spec.namespaceConstraints", template.Name),
+			constraints: template.Spec.NamespaceConstraints,
+		})
+	}
+	if binding != nil && binding.Spec.NamespaceConstraints != nil {
+		sources = append(sources, namespaceConstraintSource{
+			fieldPath:   fmt.Sprintf("binding '%s/%s' spec.namespaceConstraints", binding.Namespace, binding.Name),
+			constraints: binding.Spec.NamespaceConstraints,
+		})
+	}
+	if len(sources) == 0 {
+		return nil
+	}
+
+	labels := c.newNamespaceLabelLookup(cluster, namespace)
+
+	if err := c.validateNamespaceAgainstEffectiveAllowList(ctx, namespace, defaultNamespace, sources, labels); err != nil {
+		return err
+	}
+	return c.validateNamespaceAgainstDenyUnion(ctx, namespace, sources, labels)
+}
+
+// validateNamespaceAgainstEffectiveAllowList applies the intersection of all
+// configured allowedNamespaces filters.
+func (c *DebugSessionAPIController) validateNamespaceAgainstEffectiveAllowList(
+	ctx context.Context,
+	namespace string,
+	defaultNamespace string,
+	sources []namespaceConstraintSource,
+	labels *namespaceLabelLookup,
+) error {
+	allowSources := make([]namespaceConstraintSource, 0, len(sources))
+	for _, source := range sources {
+		if !source.constraints.AllowedNamespaces.IsEmpty() {
+			allowSources = append(allowSources, source)
 		}
 	}
-	if binding != nil {
-		if err := validateNamespaceConstraintFilters(namespace, binding.Spec.NamespaceConstraints); err != nil {
-			return err
+
+	if len(allowSources) == 0 {
+		if namespace == defaultNamespace {
+			return nil
+		}
+		return fmt.Errorf(
+			"namespace '%s' is not in the allowed namespaces: no namespaceConstraints.allowedNamespaces is configured, so only defaultNamespace '%s' is allowed",
+			namespace, defaultNamespace)
+	}
+
+	for _, source := range allowSources {
+		matched, err := matchNamespaceFilterWithLabels(ctx, namespace, source.constraints.AllowedNamespaces, labels)
+		if err != nil {
+			return fmt.Errorf("namespace '%s' is not in the allowed namespaces: %s.allowedNamespaces (%s) requires namespace labels: %w",
+				namespace, source.fieldPath, describeNamespaceFilter(source.constraints.AllowedNamespaces), err)
+		}
+		if !matched {
+			return fmt.Errorf("namespace '%s' is not in the allowed namespaces: %s.allowedNamespaces (%s) does not match",
+				namespace, source.fieldPath, describeNamespaceFilter(source.constraints.AllowedNamespaces))
 		}
 	}
 	return nil
 }
 
-func validateNamespaceConstraintFilters(namespace string, constraints *breakglassv1alpha1.NamespaceConstraints) error {
-	if constraints == nil {
-		return nil
-	}
-	if constraints.AllowedNamespaces != nil && !constraints.AllowedNamespaces.IsEmpty() &&
-		!matchNamespaceFilter(namespace, constraints.AllowedNamespaces) {
-		return fmt.Errorf("namespace '%s' is not in the allowed namespaces", namespace)
-	}
-	if constraints.DeniedNamespaces != nil && !constraints.DeniedNamespaces.IsEmpty() &&
-		matchNamespaceFilter(namespace, constraints.DeniedNamespaces) {
-		return fmt.Errorf("namespace '%s' is explicitly denied", namespace)
+// validateNamespaceAgainstDenyUnion rejects the namespace if any configured
+// deniedNamespaces filter matches it.
+func (c *DebugSessionAPIController) validateNamespaceAgainstDenyUnion(
+	ctx context.Context,
+	namespace string,
+	sources []namespaceConstraintSource,
+	labels *namespaceLabelLookup,
+) error {
+	for _, source := range sources {
+		if source.constraints.DeniedNamespaces.IsEmpty() {
+			continue
+		}
+		matched, err := matchNamespaceFilterWithLabels(ctx, namespace, source.constraints.DeniedNamespaces, labels)
+		if err != nil {
+			return fmt.Errorf("namespace '%s' cannot be validated: %s.deniedNamespaces (%s) requires namespace labels: %w",
+				namespace, source.fieldPath, describeNamespaceFilter(source.constraints.DeniedNamespaces), err)
+		}
+		if matched {
+			return fmt.Errorf("namespace '%s' is explicitly denied by %s.deniedNamespaces (%s)",
+				namespace, source.fieldPath, describeNamespaceFilter(source.constraints.DeniedNamespaces))
+		}
 	}
 	return nil
+}
+
+// describeNamespaceFilter renders a filter for operator-facing error messages.
+func describeNamespaceFilter(filter *breakglassv1alpha1.NamespaceFilter) string {
+	if filter == nil {
+		return "empty"
+	}
+	parts := make([]string, 0, 2)
+	if len(filter.Patterns) > 0 {
+		parts = append(parts, fmt.Sprintf("patterns=%v", filter.Patterns))
+	}
+	if len(filter.SelectorTerms) > 0 {
+		parts = append(parts, fmt.Sprintf("selectorTerms=%d", len(filter.SelectorTerms)))
+	}
+	if len(parts) == 0 {
+		return "empty"
+	}
+	return strings.Join(parts, ", ")
+}
+
+// matchNamespaceFilterWithLabels evaluates patterns first and only fetches live
+// namespace labels when the filter carries selectorTerms that could still match.
+func matchNamespaceFilterWithLabels(
+	ctx context.Context,
+	namespace string,
+	filter *breakglassv1alpha1.NamespaceFilter,
+	labels *namespaceLabelLookup,
+) (bool, error) {
+	if filter.IsEmpty() {
+		return false, nil
+	}
+	matcher := utils.NewNamespaceMatcher(filter)
+	if matcher.Matches(namespace) {
+		return true, nil
+	}
+	if !filter.HasSelectorTerms() {
+		return false, nil
+	}
+	if labels == nil {
+		return false, fmt.Errorf("namespace label lookup is not available")
+	}
+	nsLabels, err := labels.get(ctx)
+	if err != nil {
+		return false, err
+	}
+	return matcher.MatchesWithLabels(namespace, nsLabels), nil
+}
+
+// namespaceLabelLookup fetches namespace labels from the target cluster at most
+// once per validation pass, memoizing both the labels and any failure.
+type namespaceLabelLookup struct {
+	fetch  func(ctx context.Context) (map[string]string, error)
+	done   bool
+	labels map[string]string
+	err    error
+}
+
+func (l *namespaceLabelLookup) get(ctx context.Context) (map[string]string, error) {
+	if !l.done {
+		l.labels, l.err = l.fetch(ctx)
+		l.done = true
+	}
+	return l.labels, l.err
+}
+
+func (c *DebugSessionAPIController) newNamespaceLabelLookup(cluster, namespace string) *namespaceLabelLookup {
+	return &namespaceLabelLookup{
+		fetch: func(ctx context.Context) (map[string]string, error) {
+			return c.fetchTargetNamespaceLabels(ctx, cluster, namespace)
+		},
+	}
+}
+
+// fetchTargetNamespaceLabels reads the namespace from the target (spoke) cluster
+// so that selectorTerms can be evaluated. Errors are returned to the caller and
+// never treated as "no labels", which would silently disable selector denies.
+func (c *DebugSessionAPIController) fetchTargetNamespaceLabels(ctx context.Context, cluster, namespace string) (map[string]string, error) {
+	if cluster == "" {
+		return nil, fmt.Errorf("target cluster is unknown")
+	}
+	targetClient, err := c.targetClusterClient(ctx, cluster)
+	if err != nil {
+		return nil, fmt.Errorf("get client for cluster '%s': %w", cluster, err)
+	}
+	if targetClient == nil {
+		return nil, fmt.Errorf("no kubernetes client is configured for cluster '%s'", cluster)
+	}
+	ns := &corev1.Namespace{}
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: namespace}, ns); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("namespace '%s' does not exist on cluster '%s'", namespace, cluster)
+		}
+		return nil, fmt.Errorf("get namespace '%s' on cluster '%s': %w", namespace, cluster, err)
+	}
+	return ns.Labels, nil
+}
+
+// targetClusterClient resolves a client for the target cluster, reusing the same
+// ClientProviderInterface machinery as the kubectl-debug handlers.
+func (c *DebugSessionAPIController) targetClusterClient(ctx context.Context, cluster string) (ctrlclient.Client, error) {
+	if c.clusterClients != nil {
+		return c.clusterClients.GetClient(ctx, cluster)
+	}
+	if c.ccProvider == nil {
+		return nil, fmt.Errorf("cluster client provider is not configured")
+	}
+	return (&clusterClientAdapter{ccProvider: c.ccProvider}).GetClient(ctx, cluster)
 }
 
 func mergeNamespaceFilters(
@@ -332,9 +601,9 @@ func mergeNamespaceFilters(
 	return merged
 }
 
-// matchNamespaceFilter checks if a namespace name matches a NamespaceFilter.
-// Selector terms require namespace labels and are ignored by this name-only
-// validation path.
+// matchNamespaceFilter checks if a namespace name matches a NamespaceFilter
+// using patterns only. Selector terms require namespace labels; callers that
+// must honour them use matchNamespaceFilterWithLabels instead.
 func matchNamespaceFilter(namespace string, filter *breakglassv1alpha1.NamespaceFilter) bool {
 	if filter == nil || filter.IsEmpty() {
 		return false

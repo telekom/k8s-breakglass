@@ -943,11 +943,12 @@ selectorTerms:
 
 When a user creates a debug session:
 
-1. **No namespace specified**: Uses `defaultNamespace` from constraints
-2. **Namespace specified + `allowUserNamespace: false`**: Request rejected
-3. **Namespace specified + `allowUserNamespace: true`**: 
-   - Validated against `allowedNamespaces` name patterns. Selector terms may be returned to clients when they can be represented safely, but a create request that only supplies a namespace name is not accepted by selector-only allow rules unless an allowed name pattern also matches.
-   - Validated against `deniedNamespaces` name patterns (deny takes precedence). Selector terms are not treated as global name matches in the name-only validation path.
+1. **No namespace specified**: Uses `defaultNamespace` from constraints (falling back to `breakglass-debug`), still validated against the allow/deny filters
+2. **Namespace specified + `allowUserNamespace: false`** or **`denyUserNamespace: true`**: Request rejected. `denyUserNamespace` always wins over `allowUserNamespace`
+3. **Namespace specified + `allowUserNamespace: true`**:
+   - Validated against the **effective allow-list**, which is the intersection of every configured `allowedNamespaces` filter. If no `allowedNamespaces` is configured at all, **only `defaultNamespace` is allowed** — an empty allow-list is not "allow any".
+   - Validated against the union of every configured `deniedNamespaces` filter (deny takes precedence).
+   - `selectorTerms` on either the allow or the deny side are evaluated against **live namespace labels** read from the target cluster. If those labels cannot be read (spoke API error, namespace missing, no client configured), the request is **rejected** with an error naming the namespace and the offending filter — a selector-based policy is never silently skipped.
    - If a `DebugSessionClusterBinding` is selected, the namespace must satisfy both the template constraints and the binding constraints
 4. **Namespace doesn't exist**: 
    - `createIfNotExists: true`: Creates namespace with `namespaceLabels`

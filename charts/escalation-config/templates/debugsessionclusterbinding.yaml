@@ -162,6 +162,9 @@ spec:
     {{- if hasKey $binding.namespaceConstraints "allowUserNamespace" }}
     allowUserNamespace: {{ $binding.namespaceConstraints.allowUserNamespace }}
     {{- end }}
+    {{- if hasKey $binding.namespaceConstraints "denyUserNamespace" }}
+    denyUserNamespace: {{ $binding.namespaceConstraints.denyUserNamespace }}
+    {{- end }}
     {{- if hasKey $binding.namespaceConstraints "createIfNotExists" }}
     createIfNotExists: {{ $binding.namespaceConstraints.createIfNotExists }}
     {{- end }}

@@ -1345,6 +1345,14 @@ func warnNamespaceConstraintIssues(nc *NamespaceConstraints, targetNamespace str
 				"the patterns will be ignored since users cannot specify namespaces.")
 	}
 
+	// Warn when both switches are set: denyUserNamespace narrows and wins,
+	// which makes allowUserNamespace inert.
+	if nc.DenyUserNamespace && nc.AllowUserNamespace {
+		warnings = append(warnings,
+			"namespaceConstraints.denyUserNamespace is true and overrides allowUserNamespace; "+
+				"user-selected namespaces are rejected and only defaultNamespace is used.")
+	}
+
 	// Warn if allowUserNamespace is true but no defaultNamespace is set
 	// If a user doesn't specify a namespace, what happens?
 	if nc.AllowUserNamespace && nc.DefaultNamespace == "" {

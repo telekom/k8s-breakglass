@@ -18,6 +18,7 @@ package debug
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -2621,7 +2622,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{},
 		}
-		ns, err := ctrl.resolveTargetNamespace(template, "", nil)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "breakglass-debug", ns)
 	})
@@ -2630,7 +2631,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{},
 		}
-		ns, err := ctrl.resolveTargetNamespace(template, "custom-ns", nil)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "custom-ns", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "custom-ns", ns)
 	})
@@ -2643,7 +2644,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 				},
 			},
 		}
-		ns, err := ctrl.resolveTargetNamespace(template, "", nil)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "my-debug-ns", ns)
 	})
@@ -2657,7 +2658,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 				},
 			},
 		}
-		_, err := ctrl.resolveTargetNamespace(template, "custom-ns", nil)
+		_, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "custom-ns", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 	})
@@ -2673,7 +2674,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 				},
 			},
 		}
-		ns, err := ctrl.resolveTargetNamespace(template, "breakglass-debug", nil)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "breakglass-debug", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "breakglass-debug", ns)
 	})
@@ -2691,12 +2692,12 @@ func TestResolveTargetNamespace(t *testing.T) {
 		}
 
 		// Allowed namespace
-		ns, err := ctrl.resolveTargetNamespace(template, "debug-my-session", nil)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "debug-my-session", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "debug-my-session", ns)
 
 		// Not allowed namespace
-		_, err = ctrl.resolveTargetNamespace(template, "prod-ns", nil)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "prod-ns", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not in the allowed namespaces")
 	})
@@ -2705,6 +2706,12 @@ func TestResolveTargetNamespace(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					// An explicit "*" allow-list is required to opt into
+					// "any namespace except the denied ones"; an empty
+					// allowedNamespaces means defaultNamespace only.
+					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"*"},
+					},
 					DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{
 						Patterns: []string{"kube-*", "default"},
 					},
@@ -2714,12 +2721,12 @@ func TestResolveTargetNamespace(t *testing.T) {
 		}
 
 		// Allowed namespace
-		ns, err := ctrl.resolveTargetNamespace(template, "debug-ns", nil)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "debug-ns", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "debug-ns", ns)
 
 		// Denied namespace
-		_, err = ctrl.resolveTargetNamespace(template, "kube-system", nil)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "kube-system", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "explicitly denied")
 	})
@@ -2738,7 +2745,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 			},
 		}
 
-		_, err := ctrl.resolveTargetNamespace(template, "debug-ns", nil)
+		_, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "debug-ns", nil)
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not in the allowed namespaces")
@@ -2748,6 +2755,9 @@ func TestResolveTargetNamespace(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"*"},
+					},
 					DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{
 						Patterns: []string{"kube-*"},
 						SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
@@ -2759,12 +2769,19 @@ func TestResolveTargetNamespace(t *testing.T) {
 			},
 		}
 
-		ns, err := ctrl.resolveTargetNamespace(template, "debug-ns", nil)
+		labelledCtrl := NewDebugSessionAPIController(logger, nil, nil, nil).
+			WithClusterClients(newNamespaceLabelProvider(t, "spoke", map[string]map[string]string{
+				"debug-ns":    {"environment": "staging"},
+				"kube-system": {"environment": "production"},
+			}))
+
+		// A namespace whose labels do not match the selector is still allowed.
+		ns, err := labelledCtrl.resolveTargetNamespace(context.Background(), "spoke", template, "debug-ns", nil)
 
 		require.NoError(t, err)
 		assert.Equal(t, "debug-ns", ns)
 
-		_, err = ctrl.resolveTargetNamespace(template, "kube-system", nil)
+		_, err = labelledCtrl.resolveTargetNamespace(context.Background(), "spoke", template, "kube-system", nil)
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "explicitly denied")
@@ -2795,11 +2812,11 @@ func TestResolveTargetNamespace(t *testing.T) {
 			},
 		}
 
-		_, err := ctrl.resolveTargetNamespace(template, "custom-ns", nil)
+		_, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "custom-ns", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 
-		_, err = ctrl.resolveTargetNamespace(template, "custom-ns", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "custom-ns", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 	})
@@ -2834,24 +2851,24 @@ func TestResolveTargetNamespace(t *testing.T) {
 		}
 
 		// Without binding - only debug-* is allowed
-		ns, err := ctrl.resolveTargetNamespace(template, "debug-app", nil)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "debug-app", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "debug-app", ns)
 
-		_, err = ctrl.resolveTargetNamespace(template, "tenant-app", nil)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "tenant-app", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not in the allowed namespaces")
 
 		// With binding - only namespaces matching both template and binding filters are allowed.
-		ns, err = ctrl.resolveTargetNamespace(template, "debug-team-app", binding)
+		ns, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "debug-team-app", binding)
 		require.NoError(t, err)
 		assert.Equal(t, "debug-team-app", ns)
 
-		_, err = ctrl.resolveTargetNamespace(template, "debug-app", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "debug-app", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not in the allowed namespaces")
 
-		_, err = ctrl.resolveTargetNamespace(template, "tenant-app", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "tenant-app", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not in the allowed namespaces")
 	})
@@ -2920,7 +2937,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 
 		require.NotNil(t, response)
 		assert.Empty(t, response.AllowedPatterns)
-		_, err := ctrl.resolveTargetNamespace(template, "team-app", binding)
+		_, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "team-app", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not in the allowed namespaces")
 	})
@@ -2953,12 +2970,12 @@ func TestResolveTargetNamespace(t *testing.T) {
 		}
 
 		// Without binding - uses template default
-		ns, err := ctrl.resolveTargetNamespace(template, "", nil)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "template-default", ns)
 
 		// With binding - uses binding default
-		ns, err = ctrl.resolveTargetNamespace(template, "", binding)
+		ns, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "", binding)
 		require.NoError(t, err)
 		assert.Equal(t, "binding-default", ns)
 	})
@@ -2987,11 +3004,11 @@ func TestResolveTargetNamespace(t *testing.T) {
 			},
 		}
 
-		ns, err := ctrl.resolveTargetNamespace(template, "", nil)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "template-default", ns)
 
-		_, err = ctrl.resolveTargetNamespace(template, "", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "explicitly denied")
 	})
@@ -3018,11 +3035,11 @@ func TestResolveTargetNamespace(t *testing.T) {
 			},
 		}
 
-		ns, err := ctrl.resolveTargetNamespace(template, "", nil)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "breakglass-debug", ns)
 
-		_, err = ctrl.resolveTargetNamespace(template, "", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "explicitly denied")
 	})
@@ -3033,6 +3050,12 @@ func TestResolveTargetNamespace(t *testing.T) {
 			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
 					AllowUserNamespace: true,
+					// Explicit "*" allow-list: an empty allowedNamespaces means
+					// defaultNamespace only, so the deny patterns below would
+					// otherwise never be the reason for a rejection.
+					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"*"},
+					},
 					DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{
 						Patterns: []string{"kube-*", "system-*"}, // Template denies kube-* and system-*
 					},
@@ -3057,27 +3080,27 @@ func TestResolveTargetNamespace(t *testing.T) {
 		}
 
 		// Without binding - kube-system denied
-		_, err := ctrl.resolveTargetNamespace(template, "kube-system", nil)
+		_, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "kube-system", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "explicitly denied")
 
 		// Without binding - system-test also denied
-		_, err = ctrl.resolveTargetNamespace(template, "system-test", nil)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "system-test", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "explicitly denied")
 
 		// With binding - kube-system still denied
-		_, err = ctrl.resolveTargetNamespace(template, "kube-system", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "kube-system", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "explicitly denied")
 
 		// With binding - system-test remains denied by the template.
-		_, err = ctrl.resolveTargetNamespace(template, "system-test", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "system-test", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "explicitly denied")
 
 		// With binding - tenant namespaces are additionally denied by the binding.
-		_, err = ctrl.resolveTargetNamespace(template, "tenant-app", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "tenant-app", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "explicitly denied")
 	})
@@ -3105,12 +3128,12 @@ func TestResolveTargetNamespace(t *testing.T) {
 		}
 
 		// With binding that has no constraints - uses template's default
-		ns, err := ctrl.resolveTargetNamespace(template, "", binding)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "", binding)
 		require.NoError(t, err)
 		assert.Equal(t, "template-ns", ns)
 
 		// User namespace still blocked because binding didn't override
-		_, err = ctrl.resolveTargetNamespace(template, "custom-ns", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "custom-ns", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 	})
@@ -3166,24 +3189,24 @@ func TestResolveTargetNamespace(t *testing.T) {
 		}
 
 		// Without binding - user namespace blocked by template
-		_, err := ctrl.resolveTargetNamespace(template, "debug-my-session", nil)
+		_, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "debug-my-session", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 
-		_, err = ctrl.resolveTargetNamespace(template, "debug-my-session", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "debug-my-session", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 
-		_, err = ctrl.resolveTargetNamespace(template, "breakglass-test", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "breakglass-test", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 
-		_, err = ctrl.resolveTargetNamespace(template, "production-ns", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "production-ns", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 
 		// With binding - empty namespace uses default
-		ns, err := ctrl.resolveTargetNamespace(template, "", binding)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "", binding)
 		require.NoError(t, err)
 		assert.Equal(t, "breakglass-debug", ns)
 	})
@@ -3219,22 +3242,22 @@ func TestResolveTargetNamespace(t *testing.T) {
 		}
 
 		// With binding - safe-team-* matches both the template and binding filters.
-		ns, err := ctrl.resolveTargetNamespace(template, "safe-team-ns", binding)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "safe-team-ns", binding)
 		require.NoError(t, err)
 		assert.Equal(t, "safe-team-ns", ns)
 
 		// With binding - safe-* alone no longer satisfies the binding filter.
-		_, err = ctrl.resolveTargetNamespace(template, "safe-ns", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "safe-ns", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not in the allowed namespaces")
 
 		// With binding - binding-only patterns cannot widen the template boundary.
-		_, err = ctrl.resolveTargetNamespace(template, "extra-ns", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "extra-ns", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not in the allowed namespaces")
 
 		// With binding - random namespace still blocked
-		_, err = ctrl.resolveTargetNamespace(template, "random-ns", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "random-ns", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not in the allowed namespaces")
 	})

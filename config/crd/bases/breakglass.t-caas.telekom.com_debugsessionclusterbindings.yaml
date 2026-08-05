@@ -671,6 +671,18 @@ spec:
                           type: object
                         type: array
                     type: object
+                  denyUserNamespace:
+                    description: |-
+                      denyUserNamespace disables user-selected namespaces regardless of
+                      allowUserNamespace. It exists so that a DebugSessionClusterBinding can
+                      narrow a permissive template: allowUserNamespace cannot express that
+                      intent because its zero value is indistinguishable from "unset".
+                      Absent or false preserves existing behaviour exactly. When true, only
+                      defaultNamespace is used, even if the template sets
+                      allowUserNamespace: true.
+                      This field intentionally carries no default so that stored objects
+                      written before it existed keep behaving as before.
+                    type: boolean
                   namespaceLabels:
                     additionalProperties:
                       type: string
