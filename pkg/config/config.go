@@ -196,6 +196,23 @@ type Server struct {
 	// systems are broadly accessible.
 	// +optional
 	RedactLogs bool `yaml:"redactLogs,omitempty"`
+
+	// AllowOIDCProxyRedirects permits the OIDC proxy's HTTP client to follow
+	// 30x responses from a configured identity provider authority.
+	//
+	// SECURITY: leave this unset. The OIDC proxy only validates the FIRST hop
+	// against the configured-authority allowlist, so following a redirect lets a
+	// trusted-but-redirecting IdP steer a server-side request to an arbitrary
+	// host (SSRF, CWE-918). The endpoints the proxy is permitted to reach
+	// (discovery, JWKS, token, userinfo, introspection, revocation) are
+	// specified to be served directly and have no legitimate need to redirect.
+	//
+	// Unset or false (the secure default) means redirects are never followed;
+	// the 30x status is relayed to the caller with Location and Set-Cookie
+	// stripped. Set to true only as a temporary escape hatch for a
+	// non-conforming IdP, and only when the redirect targets are trusted.
+	// +optional
+	AllowOIDCProxyRedirects *bool `yaml:"allowOIDCProxyRedirects,omitempty"`
 }
 
 // ServerTimeouts configures HTTP server timeouts.
@@ -380,6 +397,15 @@ func (c Config) HardenedIDPHintsEnabled() bool {
 		return true
 	}
 	return *c.Server.HardenedIDPHints
+}
+
+// OIDCProxyRedirectsAllowed reports whether the OIDC proxy may follow upstream
+// 30x responses. Unset defaults to false (secure default: refuse redirects).
+func (c Config) OIDCProxyRedirectsAllowed() bool {
+	if c.Server.AllowOIDCProxyRedirects == nil {
+		return false
+	}
+	return *c.Server.AllowOIDCProxyRedirects
 }
 
 // Load loads the breakglass configuration from a file path.
