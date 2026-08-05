@@ -10,8 +10,10 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 	"go.uber.org/zap/zaptest/observer"
@@ -261,6 +263,87 @@ func TestOIDCProxyCapsResponseBody(t *testing.T) {
 
 	require.Equal(t, maxOIDCProxyResponseBytes, int64(w.Body.Len()),
 		fmt.Sprintf("relayed body must be capped at %d bytes", maxOIDCProxyResponseBytes))
+}
+
+// serveFixedSizeBody returns an authority that writes exactly size bytes.
+func serveFixedSizeBody(t *testing.T, size int64) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		chunk := []byte(strings.Repeat("A", 32<<10))
+		for written := int64(0); written < size; {
+			remaining := size - written
+			if remaining < int64(len(chunk)) {
+				chunk = chunk[:remaining]
+			}
+			n, err := w.Write(chunk)
+			written += int64(n)
+			if err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestOIDCProxyExactlyMaxSizedBodyIsNotTruncated pins the off-by-one in the
+// truncation check. io.LimitReader yields exactly maxOIDCProxyResponseBytes both
+// when it truncated a larger document and when the document is exactly that
+// size, so keying truncation off `copied == max` alone misreports a fully
+// relayed exactly-1-MiB body as truncated: it logs oidc_proxy_response_truncated,
+// increments the response_too_large failure counter, and skips the success
+// counter. Reverting the oidcProxyBodyHasMore probe fails this test.
+func TestOIDCProxyExactlyMaxSizedBodyIsNotTruncated(t *testing.T) {
+	authority := serveFixedSizeBody(t, maxOIDCProxyResponseBytes)
+
+	logger, logs := observedLoggerForTest()
+	server := newSSRFTestServer(t, authority.URL, config.Config{})
+	server.log = logger
+
+	successBefore := testutil.ToFloat64(metrics.OIDCProxySuccess.WithLabelValues("authority"))
+	tooLargeBefore := testutil.ToFloat64(metrics.OIDCProxyFailure.WithLabelValues("authority", "response_too_large"))
+
+	w := proxyGet(t, server, "/.well-known/jwks.json")
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, maxOIDCProxyResponseBytes, int64(w.Body.Len()),
+		"a body of exactly the cap must be relayed in full")
+	require.Empty(t, logs.FilterMessage("oidc_proxy_response_truncated").All(),
+		"an exactly-cap-sized body is complete and must not be logged as truncated")
+	require.Equal(t, tooLargeBefore,
+		testutil.ToFloat64(metrics.OIDCProxyFailure.WithLabelValues("authority", "response_too_large")),
+		"response_too_large must not fire for a fully relayed body")
+	require.Equal(t, successBefore+1,
+		testutil.ToFloat64(metrics.OIDCProxySuccess.WithLabelValues("authority")),
+		"a fully relayed body must be recorded as a success")
+}
+
+// TestOIDCProxyOneByteOverMaxIsTruncated is the other half of the boundary: a
+// body one byte above the cap is genuinely truncated and must be reported as
+// such, so the exactly-max fix must not silence real truncation.
+func TestOIDCProxyOneByteOverMaxIsTruncated(t *testing.T) {
+	authority := serveFixedSizeBody(t, maxOIDCProxyResponseBytes+1)
+
+	logger, logs := observedLoggerForTest()
+	server := newSSRFTestServer(t, authority.URL, config.Config{})
+	server.log = logger
+
+	successBefore := testutil.ToFloat64(metrics.OIDCProxySuccess.WithLabelValues("authority"))
+	tooLargeBefore := testutil.ToFloat64(metrics.OIDCProxyFailure.WithLabelValues("authority", "response_too_large"))
+
+	w := proxyGet(t, server, "/.well-known/jwks.json")
+
+	require.Equal(t, maxOIDCProxyResponseBytes, int64(w.Body.Len()),
+		"the relayed body must still be capped")
+	require.NotEmpty(t, logs.FilterMessage("oidc_proxy_response_truncated").All(),
+		"a body above the cap must be logged as truncated")
+	require.Equal(t, tooLargeBefore+1,
+		testutil.ToFloat64(metrics.OIDCProxyFailure.WithLabelValues("authority", "response_too_large")),
+		"real truncation must increment response_too_large")
+	require.Equal(t, successBefore,
+		testutil.ToFloat64(metrics.OIDCProxySuccess.WithLabelValues("authority")),
+		"a truncated relay must not be recorded as a success")
 }
 
 // TestOIDCProxyDoesNotTruncateNormalSizedDocuments confirms the cap leaves ample

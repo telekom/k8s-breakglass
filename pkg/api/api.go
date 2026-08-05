@@ -1088,10 +1088,10 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 		RespondBadGateway(c, "failed to stream response from authority")
 		return
 	}
-	if copied == maxOIDCProxyResponseBytes {
-		// The upstream document reached the cap, so the relayed body is very
-		// likely truncated. Status and headers are already committed and cannot
-		// be replaced, so surface this loudly instead of reporting success.
+	if copied == maxOIDCProxyResponseBytes && oidcProxyBodyHasMore(resp.Body) {
+		// The upstream body did not end at the cap, so the relayed body really is
+		// truncated. Status and headers are already committed and cannot be
+		// replaced, so surface this loudly instead of reporting success.
 		s.log.Sugar().Errorw("oidc_proxy_response_truncated",
 			"target", target,
 			"limitBytes", maxOIDCProxyResponseBytes,
@@ -1168,6 +1168,22 @@ const (
 // inbound request-body cap already applied by the global middleware in
 // NewServer, keeping both directions symmetric.
 const maxOIDCProxyResponseBytes int64 = 1 << 20
+
+// oidcProxyBodyHasMore reports whether the upstream body still holds data after
+// the capped copy consumed exactly maxOIDCProxyResponseBytes. Copying exactly
+// the cap is ambiguous on its own: io.LimitReader yields that byte count both
+// when it truncated a larger document and when the document was exactly the cap
+// and was relayed in full. Probing a single further byte disambiguates the two
+// without ever relaying more than the cap to the caller. A read error (rather
+// than a byte) means the upstream ended at the cap as far as we can tell, so the
+// relayed body was not truncated by us.
+func oidcProxyBodyHasMore(body io.Reader) bool {
+	var probe [1]byte
+	// io.ReadFull rather than a bare Read: a Reader is allowed to return (0, nil)
+	// and ReadFull retries until it has a byte, an error, or EOF.
+	n, _ := io.ReadFull(body, probe[:])
+	return n > 0
+}
 
 // refuseOIDCProxyRedirects prevents the OIDC proxy's HTTP client from following
 // 30x responses.
