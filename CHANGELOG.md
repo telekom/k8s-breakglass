@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Impersonation no longer leaks onto the shared cached spoke REST config**: `createImpersonatedClient`
+  wrote `Impersonate` directly onto the `*rest.Config` returned by `ClientProvider.GetRESTConfig`,
+  which is the shared cached pointer for that spoke. The impersonated ServiceAccount identity
+  persisted on the cache entry, so subsequent unrelated consumers of the same spoke config (the
+  authorization webhook's SAR checks, session cleanup, workload deployment, cached clientsets)
+  silently acted as that ServiceAccount until the TTL expired, and concurrent reconciles raced on
+  one struct. The config is now copied with `rest.CopyConfig` before any mutation, matching the
+  existing pattern in `group_checker.go` and `session_controller_approval_utils.go`. `GetRESTConfig`
+  now documents the read-only ownership contract for its return value.
+- **DebugSession no longer activates without approval when an explicit `bindingRef` is unresolvable**:
+  a failed `DebugSessionClusterBinding` lookup was only logged as a warning before falling through
+  to auto-discovery. Since the binding carries the approver configuration, a transient API error
+  made `requiresApproval` see no approvers and the session activated with no approval at all. An
+  unresolvable explicit `spec.bindingRef` is now treated as *indeterminate*: the session state is
+  left untouched (no access granted, nothing terminally failed), the reconcile is requeued with
+  backoff, and the condition is surfaced via an Error log, the new
+  `debug_session.binding_unresolved` audit event and the new
+  `breakglass_debug_session_binding_unresolved_total` metric. Sessions without a `bindingRef` still
+  auto-discover exactly as before.
+- **DenyPolicy risk scoring now inspects ephemeral containers**: `detectRiskFactors`,
+  `calculateRiskScore` and `isHostPathWritable` each built their container list from
+  `spec.containers` plus `spec.initContainers` only, so `spec.ephemeralContainers` — the primary
+  debug primitive this operator injects — was exempt from the guardrail meant to police it. All
+  three now evaluate ephemeral containers as well. **This tightens enforcement:** see
+  [Upgrade impact](#upgrade-impact-denypolicy-ephemeral-containers) below.
+- **`ClientProvider.GetAcrossAllNamespaces` is deterministic and fails closed on ambiguity**: it
+  returned the first Go map-iteration / list match on cluster name, so when two namespaces held a
+  `ClusterConfig` with the same `metadata.name` the same cluster name could resolve to a different
+  spoke cluster across calls — and this path is reached from the authorization webhook. It now
+  errors on ambiguity, matching the semantics its unexported `getAcrossAllNamespacesLocked` twin
+  already had. Single-match and not-found behaviour are unchanged. `ensureClusterWideUniqueName`
+  admission validation already prevented duplicates, so this is defence in depth. The fail-closed
+  path is observable: the cache-hit ambiguity branch now still counts the lookup in
+  `breakglass_cluster_cache_hits_total` and both branches increment the new
+  `breakglass_cluster_cache_ambiguous_total{cluster,source}`, so repeated ambiguity errors are
+  visible in monitoring instead of only in logs.
 - **OIDC proxy CORS header**: API CORS preflight responses now allow `X-OIDC-Authority` for browser-based multi-IDP OIDC proxy flows. (#1130)
 - **Audit Kafka requiredAcks**: Kafka audit sinks now preserve an explicit `requiredAcks: 0` no-ack configuration instead of treating it as unset and defaulting to all replicas.
 - **BreakglassSession list filters**: Session status listing now pushes exact state filters through the cache index and deduplicates multi-state results before applying cluster, user, or group filters.
@@ -36,6 +72,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed single resource table formatting in `bgctl` commands.
 
 - Fixed duplicate session error when status initialization fails.
+
+### Added
+
+- **`breakglass_cluster_cache_ambiguous_total{cluster,source}` metric**, incremented when a
+  cluster-name lookup is rejected because the name resolved to multiple `ClusterConfig` objects
+  (`source` is `cache` or `list`). Alert on any non-zero value: cluster-wide name uniqueness has
+  been violated and name-based lookups — including the authorization webhook path — are failing
+  closed.
+- **`debug_session.binding_unresolved` audit event** (severity `warning`, classified sensitive so it
+  is never sampled or dropped) and **`breakglass_debug_session_binding_unresolved_total{cluster,reason}`
+  metric**, emitted when a `DebugSession` names an explicit `spec.bindingRef` that cannot be
+  resolved. `reason` is `binding_not_found` or `binding_lookup_failed`.
+
+### Upgrade impact: DenyPolicy ephemeral containers
+
+<a id="upgrade-impact-denypolicy-ephemeral-containers"></a>
+
+DenyPolicy risk scoring now evaluates `spec.ephemeralContainers` in addition to `spec.containers`
+and `spec.initContainers`. This **tightens** enforcement and is a behaviour change.
+
+**Config shape whose meaning changes** — any `DenyPolicy` with `spec.podSecurityRules`:
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+spec:
+  podSecurityRules:
+    riskFactors:            # <- these weights now also apply to ephemeral containers
+      privilegedContainer: 50
+      runAsRoot: 20
+      hostPathWritable: 25
+      capabilities:
+        SYS_ADMIN: 40
+    thresholds:             # <- an unchanged threshold may now be crossed
+      - maxScore: 40
+        action: allow
+      - maxScore: 100
+        action: deny
+```
+
+No field was added, removed or renamed, and no field's syntax changed. What changes is the computed
+`score`: a pod whose only risky container is an *ephemeral* one previously scored 0 for that
+container and could fall in an `allow` band; it now scores the configured weights and may cross a
+`warn` or `deny` threshold.
+
+- **Who is affected:** clusters that run a `DenyPolicy` with `podSecurityRules` **and** whose debug
+  sessions inject privileged / root / capability-granting / writable-`hostPath` ephemeral containers.
+  If your DenyPolicy has no `podSecurityRules`, or your debug templates inject only unprivileged
+  ephemeral containers, nothing changes.
+- **Direction of change:** allow → warn/deny only. Nothing that was previously denied becomes
+  allowed.
+- **Before upgrading:** review `breakglass_pod_security_risk_score` and your `thresholds`. If you
+  had (unknowingly) relied on the under-scoring, raise the relevant `maxScore` bands, or add the
+  affected factors to `podSecurityOverrides.exemptFactors` for the escalations that legitimately
+  need them.
+- **Detection after upgrade:** a step change in `breakglass_pod_security_denied_total` or
+  `breakglass_pod_security_warnings_total` for a given `policy` label.
+
+The other three fixes in this release are pure correctness fixes with no behaviour change in the
+non-buggy case:
+
+- The impersonation copy and the `GetAcrossAllNamespaces` determinism fix are behaviour-identical
+  whenever the buggy condition is absent (no impersonation configured; exactly one `ClusterConfig`
+  per cluster name — which admission validation already enforces).
+- The `bindingRef` fix is scoped strictly to "explicit `spec.bindingRef` that failed to resolve".
+  Sessions without a `bindingRef`, and sessions whose `bindingRef` resolves, behave exactly as
+  before. It introduces **no new lockout path**: the session state is left untouched rather than
+  being set to the terminal `Failed` state, so a transient error resolves on the next reconcile and
+  no operator is locked out mid-incident.
 
 ### Security
 

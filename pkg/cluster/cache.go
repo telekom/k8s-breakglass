@@ -143,20 +143,42 @@ func splitNamespacedName(value string) (string, string, bool) {
 //
 // Note: This method performs an O(n) scan of cached entries. For high-throughput scenarios
 // with many cached ClusterConfigs, consider using GetInNamespace with a known namespace.
+//
+// Ambiguity fails closed. If two namespaces hold a ClusterConfig with the same
+// metadata.name, this returns an error rather than an arbitrary one of them. Go map
+// iteration order is randomised, so returning "the first match" would resolve the same
+// cluster name to different spoke clusters across calls — and this function is reached
+// from the authorization webhook. `ClusterConfig.ValidateCreate` enforces
+// `ensureClusterWideUniqueName`, so duplicates should not exist; this is defence in depth
+// for the case where they do (pre-existing objects, webhook bypass, direct etcd writes).
+// Semantics match the unexported getAcrossAllNamespacesLocked twin.
 func (p *ClientProvider) GetAcrossAllNamespaces(ctx context.Context, name string) (*breakglassv1alpha1.ClusterConfig, error) {
 	// Try exact namespace/name lookup first if we have cached entries
 	p.mu.RLock()
 	// First, try to find a cached entry by scanning for any namespace with this name
 	// We match by the ClusterConfig's Name field to ensure exact match (avoids
 	// issues with similar cluster names like "prod" vs "my-prod").
+	var cachedFound *breakglassv1alpha1.ClusterConfig
 	for _, cfg := range p.data {
 		if cfg != nil && cfg.Name == name {
-			p.mu.RUnlock()
-			metrics.ClusterCacheHits.WithLabelValues(name).Inc()
-			return cfg, nil
+			if cachedFound != nil {
+				p.mu.RUnlock()
+				// The lookup was served entirely from cache, so it is a cache hit even
+				// though it fails closed. Counting it keeps hits+misses equal to the
+				// number of lookups, and the dedicated ambiguity counter makes the
+				// failure itself alertable instead of invisible.
+				metrics.ClusterCacheHits.WithLabelValues(name).Inc()
+				metrics.ClusterCacheAmbiguous.WithLabelValues(name, "cache").Inc()
+				return nil, fmt.Errorf("multiple ClusterConfigs found for name %q in cache", name)
+			}
+			cachedFound = cfg
 		}
 	}
 	p.mu.RUnlock()
+	if cachedFound != nil {
+		metrics.ClusterCacheHits.WithLabelValues(name).Inc()
+		return cachedFound, nil
+	}
 	metrics.ClusterCacheMisses.WithLabelValues(name).Inc()
 
 	// Namespace not provided: preserve legacy behavior and list across namespaces
@@ -164,15 +186,25 @@ func (p *ClientProvider) GetAcrossAllNamespaces(ctx context.Context, name string
 	if err := p.k8s.List(ctx, &list); err != nil {
 		return nil, fmt.Errorf("list clusterconfigs: %w", err)
 	}
+	var found *breakglassv1alpha1.ClusterConfig
 	for _, item := range list.Items {
 		if item.Name == name {
+			if found != nil {
+				// The miss was already counted above; record the ambiguity so the
+				// fail-closed path is visible in monitoring rather than only in logs.
+				metrics.ClusterCacheAmbiguous.WithLabelValues(name, "list").Inc()
+				return nil, fmt.Errorf("multiple ClusterConfigs found for name %q across namespaces", name)
+			}
 			// copy loop variable before taking address
 			cp := item
-			p.mu.Lock()
-			p.data[cacheKey(cp.Namespace, cp.Name)] = &cp
-			p.mu.Unlock()
-			return &cp, nil
+			found = &cp
 		}
+	}
+	if found != nil {
+		p.mu.Lock()
+		p.data[cacheKey(found.Namespace, found.Name)] = found
+		p.mu.Unlock()
+		return found, nil
 	}
 	return nil, fmt.Errorf("%w: %s", ErrClusterConfigNotFound, name)
 }
@@ -211,6 +243,9 @@ func (p *ClientProvider) getAcrossAllNamespacesLocked(ctx context.Context, name 
 	for _, cfg := range p.data {
 		if cfg != nil && cfg.Name == name {
 			if found != nil {
+				// Callers of the locked variant have already accounted the
+				// hit/miss for this lookup, so only the ambiguity is recorded here.
+				metrics.ClusterCacheAmbiguous.WithLabelValues(name, "cache").Inc()
 				return nil, fmt.Errorf("multiple ClusterConfigs found for name %q in cache", name)
 			}
 			found = cfg
@@ -228,6 +263,7 @@ func (p *ClientProvider) getAcrossAllNamespacesLocked(ctx context.Context, name 
 	for _, item := range list.Items {
 		if item.Name == name {
 			if found != nil {
+				metrics.ClusterCacheAmbiguous.WithLabelValues(name, "list").Inc()
 				return nil, fmt.Errorf("multiple ClusterConfigs found for name %q across namespaces", name)
 			}
 			cp := item
@@ -268,6 +304,27 @@ func (p *ClientProvider) getInNamespaceLocked(ctx context.Context, namespace, na
 // without attempting any network call. When the breaker is in half-open state, a single probe
 // request is allowed through to test cluster reachability; all other callers still receive
 // ErrCircuitOpen until the probe succeeds.
+//
+// OWNERSHIP CONTRACT — the returned *rest.Config is the SHARED cached pointer.
+// Callers MUST treat it as read-only. Any caller that needs to change a field
+// (Impersonate, QPS/Burst, Timeout, WrapTransport, TLS settings, …) MUST take a
+// copy first:
+//
+//	cfg := rest.CopyConfig(shared)
+//	cfg.Impersonate = rest.ImpersonationConfig{...}
+//
+// Mutating the returned value in place poisons the cache entry for that spoke:
+// every subsequent consumer — the authorization webhook's SAR checks, session
+// cleanup, workload deployment, and any Clientset built from it — silently
+// inherits the mutation until the TTL expires, and concurrent reconciles race on
+// the same struct.
+//
+// The shared pointer is deliberately NOT copied here: the pointer-identity
+// caching contract is depended on by GetClientset (which reuses the config to
+// avoid duplicate clientsets) and by the TTL/invalidation tests, and copying on
+// every call would allocate on a hot webhook path where the overwhelming
+// majority of callers are read-only. The three call sites that do mutate all
+// copy explicitly.
 func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.Config, error) {
 	now := time.Now()
 

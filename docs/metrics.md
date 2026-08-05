@@ -625,6 +625,15 @@ Track debug session lifecycle and resource usage.
 | `breakglass_debug_session_approval_required_total` | Counter | `cluster`, `template` | Debug sessions requiring approval |
 | `breakglass_debug_session_approved_total` | Counter | `cluster`, `approver_type` | Debug sessions approved |
 | `breakglass_debug_session_rejected_total` | Counter | `cluster`, `reason` | Debug sessions rejected |
+| `breakglass_debug_session_binding_unresolved_total` | Counter | `cluster`, `reason` | Reconciles where an explicit `spec.bindingRef` could not be resolved (`reason`: `binding_not_found` or `binding_lookup_failed`). The session is requeued, not activated. |
+
+> Alert on `breakglass_debug_session_binding_unresolved_total`. A sustained non-zero rate means
+> debug sessions are stalled waiting on a binding: either the `bindingRef` is wrong
+> (`binding_not_found`) or the hub cannot read `DebugSessionClusterBinding` objects
+> (`binding_lookup_failed`).
+> Because the binding carries the approver configuration, the reconciler treats an unresolvable
+> ref as *indeterminate* and refuses to activate rather than guessing that no approval is needed.
+> The matching audit event is `debug_session.binding_unresolved`.
 
 ## Field Index Metrics
 
@@ -642,6 +651,7 @@ Track cluster client caching and rest config loading.
 |--------|------|--------|-------------|
 | `breakglass_cluster_cache_hits_total` | Counter | `cluster` | Cluster client cache hits |
 | `breakglass_cluster_cache_misses_total` | Counter | `cluster` | Cluster client cache misses |
+| `breakglass_cluster_cache_ambiguous_total` | Counter | `cluster`, `source` | Cluster-name lookups rejected because the name resolved to multiple `ClusterConfig` objects (`source`: `cache` or `list`). Any non-zero value means cluster-wide name uniqueness was violated and name-based lookups are failing closed. |
 | `breakglass_cluster_rest_config_loaded_total` | Counter | `cluster` | REST configs loaded |
 | `breakglass_cluster_rest_config_errors_total` | Counter | `cluster` | REST config load errors |
 | `breakglass_cluster_cache_invalidations_total` | Counter | `cluster` | Cache invalidations |

@@ -410,6 +410,31 @@ func (e *Evaluator) isPodExempt(pod *corev1.Pod, exemptions *breakglassv1alpha1.
 	return false
 }
 
+// allPodContainers flattens every container the pod runs into a single slice:
+// regular containers, init containers AND ephemeral containers.
+//
+// Ephemeral containers matter specifically here: injecting one is the primary
+// debug primitive this operator exposes, so a DenyPolicy that ignored them
+// would exempt exactly the workload it is meant to guard. corev1.EphemeralContainer
+// wraps an EphemeralContainerCommon with a field-for-field identical layout to
+// corev1.Container (it exists only to forbid a few fields at the API level), so
+// the risk-relevant fields — SecurityContext, VolumeMounts, Name — can be
+// projected onto corev1.Container for uniform evaluation.
+func allPodContainers(pod *corev1.Pod) []corev1.Container {
+	if pod == nil {
+		return nil
+	}
+	spec := pod.Spec
+	out := make([]corev1.Container, 0,
+		len(spec.Containers)+len(spec.InitContainers)+len(spec.EphemeralContainers))
+	out = append(out, spec.Containers...)
+	out = append(out, spec.InitContainers...)
+	for _, ec := range spec.EphemeralContainers {
+		out = append(out, corev1.Container(ec.EphemeralContainerCommon))
+	}
+	return out
+}
+
 // detectRiskFactors returns a list of detected risk factor names.
 func (e *Evaluator) detectRiskFactors(pod *corev1.Pod, rf breakglassv1alpha1.RiskFactors) []string {
 	factors := []string{}
@@ -424,9 +449,8 @@ func (e *Evaluator) detectRiskFactors(pod *corev1.Pod, rf breakglassv1alpha1.Ris
 		factors = append(factors, "hostIPC")
 	}
 
-	// Check all containers (including init containers)
-	allContainers := append([]corev1.Container{}, pod.Spec.Containers...)
-	allContainers = append(allContainers, pod.Spec.InitContainers...)
+	// Check all containers (regular, init AND ephemeral)
+	allContainers := allPodContainers(pod)
 
 	for _, c := range allContainers {
 		if c.SecurityContext != nil {
@@ -475,9 +499,8 @@ func (e *Evaluator) calculateRiskScore(pod *corev1.Pod, rf breakglassv1alpha1.Ri
 		score += rf.HostIPC
 	}
 
-	// Check all containers
-	allContainers := append([]corev1.Container{}, pod.Spec.Containers...)
-	allContainers = append(allContainers, pod.Spec.InitContainers...)
+	// Check all containers (regular, init AND ephemeral)
+	allContainers := allPodContainers(pod)
 
 	privilegedCount := 0
 	rootCount := 0
@@ -525,8 +548,9 @@ func (e *Evaluator) calculateRiskScore(pod *corev1.Pod, rf breakglassv1alpha1.Ri
 
 // isHostPathWritable checks if a hostPath volume is mounted as writable by any container.
 func (e *Evaluator) isHostPathWritable(pod *corev1.Pod, volumeName string) bool {
-	allContainers := append([]corev1.Container{}, pod.Spec.Containers...)
-	allContainers = append(allContainers, pod.Spec.InitContainers...)
+	// Regular, init AND ephemeral containers: a writable hostPath mount in an
+	// injected ephemeral container is as dangerous as one in a regular container.
+	allContainers := allPodContainers(pod)
 
 	for _, c := range allContainers {
 		for _, vm := range c.VolumeMounts {

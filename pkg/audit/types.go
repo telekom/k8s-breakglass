@@ -120,6 +120,11 @@ const (
 	EventDebugSessionPodRestarted    EventType = "debug_session.pod_restarted"
 	EventDebugSessionResourceDeploy  EventType = "debug_session.resource_deployed"
 	EventDebugSessionResourceCleanup EventType = "debug_session.resource_cleanup"
+	// EventDebugSessionBindingUnresolved is emitted when a DebugSession names an
+	// explicit BindingRef that cannot be resolved. The binding carries the approver
+	// configuration, so an unresolvable ref means the approval requirement is
+	// INDETERMINATE and the session must not be activated on a guess.
+	EventDebugSessionBindingUnresolved EventType = "debug_session.binding_unresolved"
 
 	// === Pod and container events ===
 	EventPodCreated     EventType = "pod.created"
@@ -328,7 +333,8 @@ func SeverityForEventType(eventType EventType) Severity {
 		EventEscalationRejected, EventPolicyViolation, EventAdmissionDenied,
 		EventSecretAccessed, EventSecretUpdated, EventResourceExec, EventResourceDelete,
 		EventPodExec, EventPodAttach, EventResourceImpersonate, EventWebhookTimeout,
-		EventDebugSessionCommand, EventAuditBackpressure, EventPodSecurityWarning:
+		EventDebugSessionCommand, EventAuditBackpressure, EventPodSecurityWarning,
+		EventDebugSessionBindingUnresolved:
 		return SeverityWarning
 
 	// Info events - normal operation
@@ -468,6 +474,7 @@ func IsSensitiveEvent(eventType EventType) bool {
 		EventDebugSessionCreated, EventDebugSessionStarted,
 		EventDebugSessionTerminated, EventDebugSessionFailed,
 		EventDebugSessionExpired, EventDebugSessionApprovalTimeout,
+		EventDebugSessionBindingUnresolved,
 		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
 		EventResourceImpersonate, EventPolicyBypassed,
 		EventPodSecurityDenied, EventPodSecurityWarning, EventPodSecurityOverride:

@@ -659,6 +659,27 @@ for _, binding := range allBindings {
 }
 ```
 
+### Explicit `bindingRef` failures are indeterminate, not "no binding"
+
+Auto-discovery above only runs when the `DebugSession` does **not** carry an explicit
+`spec.bindingRef`. When a session *does* name a `bindingRef` and that object cannot be read, the
+reconciler does **not** fall back to auto-discovery. The binding carries the approver
+configuration, so treating an unreadable ref as "no binding" would let a session that was meant to
+require approval activate with none.
+
+Instead the reconciler:
+
+1. logs at **Error** with the session, cluster, state and binding coordinates,
+2. emits the `debug_session.binding_unresolved` audit event,
+3. increments `breakglass_debug_session_binding_unresolved_total{cluster,reason}`, and
+4. returns the error so the session is **requeued with exponential backoff**.
+
+The session's state is left untouched — it stays `Pending` or `PendingApproval`, so no access is
+granted and nothing is terminally failed. A transient apiserver error resolves itself on the next
+reconcile; a mistyped or deleted `bindingRef` keeps requeueing and stays visible in the log, the
+audit trail and the metric until an operator corrects it. Sessions without a `bindingRef` are
+unaffected and still auto-discover exactly as documented above.
+
 ### Template Matching Options
 
 Bindings can match templates using two methods. At least one must be specified:

@@ -501,9 +501,26 @@ kubectl get pod <pod-name> -o yaml | grep -A20 securityContext
 
 #### Score Calculation Seems Wrong
 
-1. **Check all containers**: Both init containers and regular containers are evaluated.
+1. **Check all containers**: Regular containers, init containers **and ephemeral containers** are
+   all evaluated.
 2. **Capabilities are cumulative**: Multiple capabilities in one container add up.
 3. **Privileged counted once**: Multiple privileged containers only add the score once.
+
+#### Ephemeral containers are in scope
+
+Risk scoring inspects `spec.ephemeralContainers` alongside `spec.containers` and
+`spec.initContainers`. This matters because injecting an ephemeral container is the primary
+debug primitive this operator exposes: a privileged, root, capability-carrying or
+writable-`hostPath`-mounting ephemeral container contributes to the risk score exactly as the
+equivalent regular container would.
+
+> **Upgrade note.** Releases before this fix scored only `containers` and `initContainers`.
+> A `DenyPolicy` with `podSecurityRules` whose thresholds previously *allowed* a pod because the
+> risk lived exclusively in an ephemeral container will now score higher and may cross a `deny`
+> threshold. No configuration field changed meaning; the same policy is simply enforced against
+> the containers it always intended to cover. Review your thresholds if you relied on the
+> previous under-scoring — `breakglass_pod_security_risk_score` and
+> `breakglass_pod_security_denied_total` will show the shift.
 
 #### Override Not Working
 
