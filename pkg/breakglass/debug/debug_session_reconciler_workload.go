@@ -772,6 +772,15 @@ func (c *DebugSessionController) buildVarsFromSession(
 		vars[name] = extractJSONValueForPod(jsonVal.Raw)
 	}
 
+	// Escape at the boundary: these values are end-user controlled and are
+	// substituted into YAML documents, so they must not be able to inject
+	// sibling keys. See template_vars_sanitize.go.
+	vars, changed := sanitizeTemplateVarsReportingChanges(vars)
+	if len(changed) > 0 {
+		c.log.Warnw("Sanitized YAML-unsafe characters in extraDeployValues before pod template rendering",
+			"session", ds.Name, "variables", changed)
+	}
+
 	return vars
 }
 
