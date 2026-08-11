@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-rc.7] - 2026-08-12
+
+### Changed
+
+- Updated the frontend minifier to Terser 5.50.0 after completing the dependency audit.
+
+### Fixed
+
+- Bumped `escalation-config` to chart version `0.3.4` so the release can publish a unique OCI chart artifact.
+
 ## [0.1.0-rc.6] - 2026-08-11
 
 ### Fixed
