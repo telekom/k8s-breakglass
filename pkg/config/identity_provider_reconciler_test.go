@@ -107,7 +107,8 @@ func TestIdentityProviderReconciler_ReconcileSuccess(t *testing.T) {
 		return nil
 	}
 
-	reconciler := NewIdentityProviderReconciler(client, log, reloadFn)
+	recorder := &fakeEventRecorder{}
+	reconciler := NewIdentityProviderReconciler(client, log, reloadFn).WithEventRecorder(recorder)
 
 	req := reconcile.Request{
 		NamespacedName: types.NamespacedName{
@@ -120,6 +121,8 @@ func TestIdentityProviderReconciler_ReconcileSuccess(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 10*time.Minute, result.RequeueAfter)
 	assert.True(t, reloadCalled)
+	require.Len(t, recorder.events, 1)
+	assert.Contains(t, recorder.events[0], "ConfigReloadSuccess")
 }
 
 func TestIdentityProviderReconciler_ReconcileDisabledProviderReportsUnavailable(t *testing.T) {
