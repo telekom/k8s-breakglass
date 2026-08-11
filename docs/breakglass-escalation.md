@@ -224,6 +224,7 @@ notificationExclusions:
 
 - Excluded users will NOT receive emails when sessions are requested/approved/rejected
 - Excluded groups' members will NOT receive emails
+- Request notifications reuse the approver memberships already resolved for the session request, so excluded approver groups remain excluded if a follow-up identity-provider lookup is unavailable
 - All other approvers will receive emails as normal
 - Takes precedence over individual approver lists
 
@@ -266,6 +267,7 @@ approvers:
 
 - Hidden users/groups are NOT shown in the UI's approver list
 - Hidden users/groups do NOT receive email notifications
+- Request notifications reuse the memberships already resolved for the session request, including multi-identity-provider status, so a missing follow-up resolver cannot expose hidden approvers
 - Hidden users/groups CAN still approve sessions if they know about them
 - Hidden users/groups are still counted as valid approvers for approval requirements
 - Useful for "on-call" or "last resort" approver groups

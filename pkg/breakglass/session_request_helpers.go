@@ -856,12 +856,12 @@ func (wc *BreakglassSessionController) sendSessionNotifications(
 		"escalationName", matchedEsc.Name,
 		"preFilterApproverCount", len(allApprovers))
 
-	filteredApprovers := wc.filterExcludedNotificationRecipients(reqLog, allApprovers, matchedEsc)
+	filteredApprovers := wc.filterExcludedNotificationRecipients(reqLog, allApprovers, approversByGroup, matchedEsc)
 	reqLog.Debugw("After filterExcludedNotificationRecipients",
 		"postExcludeApproverCount", len(filteredApprovers),
 		"excludedCount", len(allApprovers)-len(filteredApprovers))
 
-	filteredApprovers = wc.filterHiddenFromUIRecipients(reqLog, filteredApprovers, matchedEsc)
+	filteredApprovers = wc.filterHiddenFromUIRecipients(reqLog, filteredApprovers, approversByGroup, matchedEsc)
 	reqLog.Debugw("After filterHiddenFromUIRecipients",
 		"postHiddenFilterApproverCount", len(filteredApprovers),
 		"hiddenFilteredOutCount", len(allApprovers)-len(filteredApprovers))

@@ -6463,7 +6463,7 @@ func TestFilterExcludedNotificationRecipients(t *testing.T) {
 		}
 
 		ctrl := &BreakglassSessionController{}
-		result := ctrl.filterExcludedNotificationRecipients(log, tc.approvers, escalation)
+		result := ctrl.filterExcludedNotificationRecipients(log, tc.approvers, nil, escalation)
 
 		if len(result) != len(tc.expect) {
 			t.Fatalf("case %s: expected %d recipients, got %d: %v", tc.name, len(tc.expect), len(result), result)
@@ -6483,13 +6483,84 @@ func TestFilterExcludedNotificationRecipients(t *testing.T) {
 	}
 }
 
+func TestFilterExcludedNotificationRecipientsUsesRequestResolvedMembers(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			NotificationExclusions: &breakglassv1alpha1.NotificationExclusions{
+				Groups: []string{"silent-approvers"},
+			},
+		},
+	}
+	approvers := []string{"visible@example.com", "silent@example.com"}
+	approversByGroup := map[string][]string{
+		"visible-approvers": {"visible@example.com"},
+		"silent-approvers":  {"silent@example.com"},
+	}
+
+	for _, tc := range []struct {
+		name      string
+		ctrl      *BreakglassSessionController
+		approvers []string
+		expected  []string
+	}{
+		{
+			name: "resolver unavailable",
+			ctrl: &BreakglassSessionController{},
+		},
+		{
+			name: "resolver lookup fails",
+			ctrl: &BreakglassSessionController{
+				escalationManager: &testEscalationLookup{
+					resolver: &MockGroupResolver{members: map[string][]string{}},
+				},
+			},
+		},
+		{
+			name: "resolver returns empty result",
+			ctrl: &BreakglassSessionController{
+				escalationManager: &testEscalationLookup{
+					resolver: &MockGroupResolver{
+						members: map[string][]string{"silent-approvers": nil},
+					},
+				},
+			},
+		},
+		{
+			name: "resolver augments request resolved members",
+			ctrl: &BreakglassSessionController{
+				escalationManager: &testEscalationLookup{
+					resolver: &MockGroupResolver{
+						members: map[string][]string{"silent-approvers": {"additional@example.com"}},
+					},
+				},
+			},
+			approvers: []string{"visible@example.com", "silent@example.com", "additional@example.com"},
+			expected:  []string{"visible@example.com"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testApprovers := approvers
+			if tc.approvers != nil {
+				testApprovers = tc.approvers
+			}
+			expected := []string{"visible@example.com"}
+			if tc.expected != nil {
+				expected = tc.expected
+			}
+			result := tc.ctrl.filterExcludedNotificationRecipients(log, testApprovers, approversByGroup, escalation)
+			assert.Equal(t, expected, result)
+		})
+	}
+}
+
 // TestDisableNotificationsFlag tests that disableNotifications prevents emails
 func TestDisableNotificationsFlag(t *testing.T) {
 	log := zap.NewNop().Sugar()
 
 	// Test with nil escalation
 	ctrl := &BreakglassSessionController{}
-	result := ctrl.filterExcludedNotificationRecipients(log, []string{"user@example.com"}, nil)
+	result := ctrl.filterExcludedNotificationRecipients(log, []string{"user@example.com"}, nil, nil)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 recipient with nil escalation, got %d", len(result))
 	}
@@ -6500,7 +6571,7 @@ func TestDisableNotificationsFlag(t *testing.T) {
 			NotificationExclusions: nil,
 		},
 	}
-	result = ctrl.filterExcludedNotificationRecipients(log, []string{"user@example.com"}, escalation)
+	result = ctrl.filterExcludedNotificationRecipients(log, []string{"user@example.com"}, nil, escalation)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 recipient with no exclusions, got %d", len(result))
 	}
@@ -6511,7 +6582,7 @@ func TestDisableNotificationsFlag(t *testing.T) {
 			NotificationExclusions: &breakglassv1alpha1.NotificationExclusions{},
 		},
 	}
-	result = ctrl.filterExcludedNotificationRecipients(log, []string{"user@example.com"}, escalation)
+	result = ctrl.filterExcludedNotificationRecipients(log, []string{"user@example.com"}, nil, escalation)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 recipient with empty exclusions, got %d", len(result))
 	}
@@ -6569,7 +6640,7 @@ func TestFilterHiddenFromUIRecipients(t *testing.T) {
 					},
 				},
 			}
-			result := ctrl.filterHiddenFromUIRecipients(log, tt.approvers, escalation)
+			result := ctrl.filterHiddenFromUIRecipients(log, tt.approvers, nil, escalation)
 			if len(result) != tt.expected {
 				t.Fatalf("expected %d recipients, got %d; result: %v", tt.expected, len(result), result)
 			}
@@ -6577,7 +6648,7 @@ func TestFilterHiddenFromUIRecipients(t *testing.T) {
 	}
 
 	// Test with nil escalation
-	result := ctrl.filterHiddenFromUIRecipients(log, []string{"user@example.com"}, nil)
+	result := ctrl.filterHiddenFromUIRecipients(log, []string{"user@example.com"}, nil, nil)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 recipient with nil escalation, got %d", len(result))
 	}
@@ -6590,9 +6661,125 @@ func TestFilterHiddenFromUIRecipients(t *testing.T) {
 			},
 		},
 	}
-	result = ctrl.filterHiddenFromUIRecipients(log, []string{"user@example.com"}, escalation)
+	result = ctrl.filterHiddenFromUIRecipients(log, []string{"user@example.com"}, nil, escalation)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 recipient with empty hidden list, got %d", len(result))
+	}
+}
+
+func TestFilterHiddenFromUIRecipientsUsesRequestResolvedMembers(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+				HiddenFromUI: []string{"fallback-approvers"},
+			},
+		},
+	}
+	approvers := []string{"visible@example.com", "fallback@example.com"}
+	approversByGroup := map[string][]string{
+		"visible-approvers":  {"visible@example.com"},
+		"fallback-approvers": {"fallback@example.com"},
+	}
+
+	for _, tc := range []struct {
+		name string
+		ctrl *BreakglassSessionController
+	}{
+		{
+			name: "resolver unavailable",
+			ctrl: &BreakglassSessionController{},
+		},
+		{
+			name: "resolver lookup fails",
+			ctrl: &BreakglassSessionController{
+				escalationManager: &testEscalationLookup{
+					resolver: &MockGroupResolver{members: map[string][]string{}},
+				},
+			},
+		},
+		{
+			name: "resolver returns empty result",
+			ctrl: &BreakglassSessionController{
+				escalationManager: &testEscalationLookup{
+					resolver: &MockGroupResolver{
+						members: map[string][]string{"fallback-approvers": nil},
+					},
+				},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := tc.ctrl.filterHiddenFromUIRecipients(log, approvers, approversByGroup, escalation)
+			assert.Equal(t, []string{"visible@example.com"}, result)
+		})
+	}
+}
+
+func TestSendSessionNotificationsUsesRequestResolvedGroupMembers(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	session := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "request-resolved-members"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User:         "requester@example.com",
+			Cluster:      "test-cluster",
+			GrantedGroup: "cluster-admin",
+		},
+	}
+	allApprovers := []string{"visible@example.com", "silent@example.com"}
+	approversByGroup := map[string][]string{
+		"visible-approvers": {"visible@example.com"},
+		"silent-approvers":  {"silent@example.com"},
+	}
+
+	for _, tc := range []struct {
+		name      string
+		configure func(*breakglassv1alpha1.BreakglassEscalation)
+	}{
+		{
+			name: "notification exclusion",
+			configure: func(escalation *breakglassv1alpha1.BreakglassEscalation) {
+				escalation.Spec.NotificationExclusions = &breakglassv1alpha1.NotificationExclusions{
+					Groups: []string{"silent-approvers"},
+				}
+			},
+		},
+		{
+			name: "hidden approver",
+			configure: func(escalation *breakglassv1alpha1.BreakglassEscalation) {
+				escalation.Spec.Approvers.HiddenFromUI = []string{"silent-approvers"}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			escalation := &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-escalation"},
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+						Groups: []string{"visible-approvers", "silent-approvers"},
+					},
+				},
+			}
+			tc.configure(escalation)
+
+			mailSender := &FakeMailSender{}
+			ctrl := &BreakglassSessionController{
+				log:  log,
+				mail: mailSender,
+			}
+			ctrl.sendSessionNotifications(
+				session,
+				escalation,
+				allApprovers,
+				approversByGroup,
+				"requester@example.com",
+				"Requester",
+				log,
+			)
+
+			require.Equal(t, 1, mailSender.SendCallCount)
+			assert.Equal(t, []string{"visible@example.com"}, mailSender.LastRecivers)
+		})
 	}
 }
 
@@ -6616,14 +6803,14 @@ func TestHiddenFromUIAndNotificationExclusionsCombined(t *testing.T) {
 	}
 
 	// First filter: notification exclusions
-	filtered := ctrl.filterExcludedNotificationRecipients(log, approvers, escalation)
+	filtered := ctrl.filterExcludedNotificationRecipients(log, approvers, nil, escalation)
 	// Should have: alice, bob, charlie (dave excluded)
 	if len(filtered) != 3 {
 		t.Fatalf("after notificationExclusions filter: expected 3, got %d; result: %v", len(filtered), filtered)
 	}
 
 	// Second filter: hidden from UI
-	filtered = ctrl.filterHiddenFromUIRecipients(log, filtered, escalation)
+	filtered = ctrl.filterHiddenFromUIRecipients(log, filtered, nil, escalation)
 	// Should have: alice, bob (charlie hidden, dave already excluded)
 	if len(filtered) != 2 {
 		t.Fatalf("after hiddenFromUI filter: expected 2, got %d; result: %v", len(filtered), filtered)
@@ -7361,7 +7548,7 @@ func TestUseCaseM2MAutomation(t *testing.T) {
 
 		// Test the notification filter logic
 		recipients := []string{"user1@example.com", "user2@example.com"}
-		result := ctrl.filterExcludedNotificationRecipients(log, recipients, escalation)
+		result := ctrl.filterExcludedNotificationRecipients(log, recipients, nil, escalation)
 
 		// With DisableNotifications, filterExcludedNotificationRecipients doesn't filter
 		// The actual email suppression happens at send time based on DisableNotifications flag
