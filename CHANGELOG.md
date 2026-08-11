@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Disabled IdentityProviders now report `Ready=False` with reason `Disabled`, clear stale group-sync health, and emit an unavailable event instead of claiming a successful configuration reload.
+
 ## [0.1.0-rc.4] - 2026-08-05
 
 ### Fixed
