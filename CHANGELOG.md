@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-rc.6] - 2026-08-11
+
 ### Fixed
 
 - **Helm chart release version**: Bumped `escalation-config` to chart version `0.3.3` so the next release can be published without colliding with the existing GHCR package version `0.3.2`.
@@ -1186,7 +1188,8 @@ non-buggy case:
 
 ---
 
-[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.5...HEAD
+[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.6...HEAD
+[0.1.0-rc.6]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.5...v0.1.0-rc.6
 [0.1.0-rc.5]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.4...v0.1.0-rc.5
 [0.1.0-rc.4]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.3...v0.1.0-rc.4
 
