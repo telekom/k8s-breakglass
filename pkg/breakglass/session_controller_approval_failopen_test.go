@@ -196,6 +196,26 @@ func TestApprovalGroupLookupFailureIsObservable(t *testing.T) {
 	}
 }
 
+func TestEmptyResolvedApproverGroupDoesNotFallBackToTokenGroup(t *testing.T) {
+	escalation := failOpenEscalation()
+	escalation.Status.ApproverGroupMembers = map[string][]string{
+		"cluster-approvers": {},
+	}
+
+	ctrl := newApprovalAuthorizationTestController(t, failOpenSession(), escalation)
+	ctrl.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) {
+		return []string{"cluster-approvers"}, nil
+	}
+
+	c := newApprovalAuthorizationTestContext("approver@example.com", "")
+	c.Set("groups", []string{"cluster-approvers"})
+
+	result := ctrl.checkApprovalAuthorization(c, *failOpenSession())
+
+	require.False(t, result.Allowed)
+	require.Equal(t, ApprovalDenialNotAnApprover, result.Reason)
+}
+
 // TestApprovalUnverifiedGroupsAuditSurvivesDisabledAuditService ensures the
 // observability path degrades safely: with audit disabled the metric still
 // increments and the decision is unchanged (no panic, no lockout).
