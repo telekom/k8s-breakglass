@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **AD/Keycloak approver group reporting**: Existing empty groups are reported as `GroupMembersEmpty`, while missing groups return an explicit sync failure, remove stale cached approvers, and emit a `GroupNotFound` warning instead of being treated as successful empty groups. (#1224)
+
 ## [0.1.0-rc.4] - 2026-08-05
 
 ### Fixed

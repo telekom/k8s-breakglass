@@ -623,6 +623,16 @@ Check related `BreakglassEscalation` and `IdentityProvider` events for the speci
 failing group or provider. Escalations with no approver groups report
 `NoApproverGroupsConfigured` because no group member lookup is required.
 
+An existing identity-provider group with no resolvable members is reported
+separately with `status: "True"` and reason `GroupMembersEmpty`. This is a
+successful lookup, but no approver can approve from that group, so pending
+sessions can reach `ApprovalTimeout`. A group that is not present in the
+identity provider is a sync failure: when it is the only sync failure, the
+condition is `False` with reason `GroupNotFound`; mixed failures retain
+`GroupSyncPartialFailure` or `GroupSyncFailed` and name the missing group in
+the condition message. In all cases, stale cached members are removed and a
+warning event identifies the missing group.
+
 #### Condition Reasons
 
 | Reason | Status | Description |
@@ -633,7 +643,9 @@ failing group or provider. Escalations with no approver groups report
 | `DenyPolicyReferenceInvalid` | False | Referenced deny policy doesn't exist |
 | `MailProviderValidationFailed` | False | Referenced MailProvider is missing or disabled |
 | `GroupMembersResolved` | True | Approver group members were resolved |
+| `GroupMembersEmpty` | True | The configured group exists but has no resolvable members; sessions relying on it may time out |
 | `NoApproverGroupsConfigured` | True | No approver groups require member resolution |
+| `GroupNotFound` | False | A configured approver group does not exist in an identity provider |
 | `GroupSyncPartialFailure` | False | Some approver groups or IDPs failed during group sync |
 | `GroupSyncFailed` | False | All approver group resolution failed |
 | `ValidationInProgress` | Unknown | Configuration being validated |
