@@ -2,6 +2,8 @@ package breakglass
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -378,4 +380,79 @@ func TestResolveUserGroupsRedactsRawTokenGroupsWhenEnabled(t *testing.T) {
 				"rawTokenGroups must be redacted when log redaction is enabled (found in: %q)", entry.Message)
 		}
 	}
+}
+
+// TestResolveUserGroupsRespectsEmptyTokenGroupsClaim ensures that when the JWT
+// asserts the user belongs to zero groups (the "groups" context key is
+// present but holds an empty slice, as set by the auth middleware for a
+// present-but-empty groups/realm_access claim), resolveUserGroups does not
+// fall back to cluster-based group resolution. Falling back in this case
+// would silently replace the token's explicit "no groups" assertion with
+// whatever groups the cluster happens to report for the user, which can
+// grant unintended escalation access.
+func TestResolveUserGroupsRespectsEmptyTokenGroupsClaim(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	wc := newTestSessionController(t)
+	wc.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) {
+		t.Fatal("cluster-based group lookup must not be called when the token asserts empty groups")
+		return nil, nil
+	}
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("groups", []string{}) // token carried a groups claim that resolved to zero groups
+
+	cug := ClusterUserGroup{Username: "alice@example.com", Clustername: "prod"}
+	groups, ok := wc.resolveUserGroups(ctx, context.Background(), cug, nil, zaptest.NewLogger(t).Sugar())
+
+	require.True(t, ok, "resolveUserGroups should succeed when the token asserts empty groups")
+	require.Empty(t, groups, "resolveUserGroups must respect the token's empty groups assertion")
+}
+
+// TestResolveUserGroupsFallsBackWhenNoTokenGroupsClaim ensures that
+// resolveUserGroups still falls back to cluster-based group resolution when
+// the token carries no group information at all (the "groups" context key is
+// absent), preserving backward-compatible behavior for IDPs without a groups
+// claim.
+func TestResolveUserGroupsFallsBackWhenNoTokenGroupsClaim(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	wc := newTestSessionController(t)
+	wc.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) {
+		return []string{"cluster-admin"}, nil
+	}
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	// No "groups" key set at all, simulating a token without a groups claim.
+
+	cug := ClusterUserGroup{Username: "alice@example.com", Clustername: "prod"}
+	groups, ok := wc.resolveUserGroups(ctx, context.Background(), cug, nil, zaptest.NewLogger(t).Sugar())
+
+	require.True(t, ok)
+	require.ElementsMatch(t, []string{"cluster-admin"}, groups)
+}
+
+// TestResolveUserGroupsFallbackPropagatesClusterLookupError ensures that when
+// resolveUserGroups falls back to cluster-based group resolution (because the
+// token carried no group claim) and the cluster lookup fails, the error is
+// surfaced as a failed HTTP response rather than silently ignored.
+func TestResolveUserGroupsFallbackPropagatesClusterLookupError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	wc := newTestSessionController(t)
+	lookupErr := errors.New("cluster unreachable")
+	wc.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) {
+		return nil, lookupErr
+	}
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	// No "groups" key set at all, simulating a token without a groups claim.
+
+	cug := ClusterUserGroup{Username: "alice@example.com", Clustername: "prod"}
+	groups, ok := wc.resolveUserGroups(ctx, context.Background(), cug, nil, zaptest.NewLogger(t).Sugar())
+
+	require.False(t, ok, "resolveUserGroups must fail when the cluster-based fallback lookup errors")
+	require.Nil(t, groups)
+	require.Equal(t, http.StatusInternalServerError, w.Code)
 }
