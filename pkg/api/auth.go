@@ -811,12 +811,12 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	// (key present, empty slice) from "token carries no group information at
 	// all" (key absent), so a legitimately group-less token is not silently
 	// treated the same as a token without a groups/realm_access claim.
+	// groupsClaimPresent is the only way `groups` is ever populated above, so
+	// this is the single, exhaustive condition for setting the context key.
 	if groupsClaimPresent {
 		if groups == nil {
 			groups = []string{}
 		}
-		c.Set("groups", groups)
-	} else if len(groups) > 0 {
 		c.Set("groups", groups)
 	}
 

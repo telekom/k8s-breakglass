@@ -2,6 +2,8 @@ package breakglass
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -428,4 +430,29 @@ func TestResolveUserGroupsFallsBackWhenNoTokenGroupsClaim(t *testing.T) {
 
 	require.True(t, ok)
 	require.ElementsMatch(t, []string{"cluster-admin"}, groups)
+}
+
+// TestResolveUserGroupsFallbackPropagatesClusterLookupError ensures that when
+// resolveUserGroups falls back to cluster-based group resolution (because the
+// token carried no group claim) and the cluster lookup fails, the error is
+// surfaced as a failed HTTP response rather than silently ignored.
+func TestResolveUserGroupsFallbackPropagatesClusterLookupError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	wc := newTestSessionController(t)
+	lookupErr := errors.New("cluster unreachable")
+	wc.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) {
+		return nil, lookupErr
+	}
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	// No "groups" key set at all, simulating a token without a groups claim.
+
+	cug := ClusterUserGroup{Username: "alice@example.com", Clustername: "prod"}
+	groups, ok := wc.resolveUserGroups(ctx, context.Background(), cug, nil, zaptest.NewLogger(t).Sugar())
+
+	require.False(t, ok, "resolveUserGroups must fail when the cluster-based fallback lookup errors")
+	require.Nil(t, groups)
+	require.Equal(t, http.StatusInternalServerError, w.Code)
 }
