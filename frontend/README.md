@@ -120,6 +120,13 @@ Express server automatically after each save.
 
 ### Type-Check, Compile and Minify for Production
 
+TypeScript 7 does not yet expose the stable programmatic API required by
+`vue-tsc` and `typescript-eslint`. The frontend therefore installs the native
+TypeScript 7 compiler as `@typescript/native` while the `typescript` package
+name points to the supported `@typescript/typescript6` compatibility package.
+`npm run typecheck` checks Vue source with TypeScript 6 and the Node-based Vite
+and Vitest configuration with TypeScript 7.
+
 ## UI E2E tests
 
 UI E2E tests (`frontend/tests/e2e/`) run against a shared kind cluster (Keycloak, MailHog, backend API).
