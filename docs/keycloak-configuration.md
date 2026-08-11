@@ -135,7 +135,7 @@ The E2E realm JSON is at [`config/dev/resources/breakglass-e2e-realm.json`](../c
 docker run -e KEYCLOAK_ADMIN=admin \
   -e KEYCLOAK_ADMIN_PASSWORD=admin \
   -v ./breakglass-e2e-realm.json:/opt/keycloak/data/import/realm.json \
-  quay.io/keycloak/keycloak:26.5.0 start-dev --import-realm
+  quay.io/keycloak/keycloak:26.7.1 start-dev --import-realm
 ```
 
 The E2E realm JSON is at [`config/dev/resources/breakglass-e2e-realm.json`](../config/dev/resources/breakglass-e2e-realm.json).

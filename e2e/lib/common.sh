@@ -292,7 +292,7 @@ e2e_load_image_into_kind() {
 e2e_load_standard_images() {
   local cluster_name="$1"
   local breakglass_image="${2:-breakglass:e2e}"
-  local keycloak_image="${3:-quay.io/keycloak/keycloak:26.5.0}"
+  local keycloak_image="${3:-quay.io/keycloak/keycloak:26.7.1}"
   
   log "Loading standard images into cluster $cluster_name..."
   
@@ -991,7 +991,7 @@ cleanup_e2e() {
 
 # Default Keycloak settings
 KEYCLOAK_CONTAINER_NAME=${KEYCLOAK_CONTAINER_NAME:-e2e-keycloak}
-KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.5.0}
+KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.7.1}
 KEYCLOAK_ADMIN_USER=${KEYCLOAK_ADMIN_USER:-admin}
 KEYCLOAK_ADMIN_PASS=${KEYCLOAK_ADMIN_PASS:-admin}
 KEYCLOAK_HTTP_PORT=${KEYCLOAK_HTTP_PORT:-8080}
