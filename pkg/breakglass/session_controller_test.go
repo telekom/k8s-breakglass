@@ -6499,8 +6499,10 @@ func TestFilterExcludedNotificationRecipientsUsesRequestResolvedMembers(t *testi
 	}
 
 	for _, tc := range []struct {
-		name string
-		ctrl *BreakglassSessionController
+		name      string
+		ctrl      *BreakglassSessionController
+		approvers []string
+		expected  []string
 	}{
 		{
 			name: "resolver unavailable",
@@ -6524,10 +6526,30 @@ func TestFilterExcludedNotificationRecipientsUsesRequestResolvedMembers(t *testi
 				},
 			},
 		},
+		{
+			name: "resolver augments request resolved members",
+			ctrl: &BreakglassSessionController{
+				escalationManager: &testEscalationLookup{
+					resolver: &MockGroupResolver{
+						members: map[string][]string{"silent-approvers": {"additional@example.com"}},
+					},
+				},
+			},
+			approvers: []string{"visible@example.com", "silent@example.com", "additional@example.com"},
+			expected:  []string{"visible@example.com"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			result := tc.ctrl.filterExcludedNotificationRecipients(log, approvers, approversByGroup, escalation)
-			assert.Equal(t, []string{"visible@example.com"}, result)
+			testApprovers := approvers
+			if tc.approvers != nil {
+				testApprovers = tc.approvers
+			}
+			expected := []string{"visible@example.com"}
+			if tc.expected != nil {
+				expected = tc.expected
+			}
+			result := tc.ctrl.filterExcludedNotificationRecipients(log, testApprovers, approversByGroup, escalation)
+			assert.Equal(t, expected, result)
 		})
 	}
 }
@@ -6690,6 +6712,73 @@ func TestFilterHiddenFromUIRecipientsUsesRequestResolvedMembers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			result := tc.ctrl.filterHiddenFromUIRecipients(log, approvers, approversByGroup, escalation)
 			assert.Equal(t, []string{"visible@example.com"}, result)
+		})
+	}
+}
+
+func TestSendSessionNotificationsUsesRequestResolvedGroupMembers(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	session := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "request-resolved-members"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User:         "requester@example.com",
+			Cluster:      "test-cluster",
+			GrantedGroup: "cluster-admin",
+		},
+	}
+	allApprovers := []string{"visible@example.com", "silent@example.com"}
+	approversByGroup := map[string][]string{
+		"visible-approvers": {"visible@example.com"},
+		"silent-approvers":  {"silent@example.com"},
+	}
+
+	for _, tc := range []struct {
+		name      string
+		configure func(*breakglassv1alpha1.BreakglassEscalation)
+	}{
+		{
+			name: "notification exclusion",
+			configure: func(escalation *breakglassv1alpha1.BreakglassEscalation) {
+				escalation.Spec.NotificationExclusions = &breakglassv1alpha1.NotificationExclusions{
+					Groups: []string{"silent-approvers"},
+				}
+			},
+		},
+		{
+			name: "hidden approver",
+			configure: func(escalation *breakglassv1alpha1.BreakglassEscalation) {
+				escalation.Spec.Approvers.HiddenFromUI = []string{"silent-approvers"}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			escalation := &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-escalation"},
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+						Groups: []string{"visible-approvers", "silent-approvers"},
+					},
+				},
+			}
+			tc.configure(escalation)
+
+			mailSender := &FakeMailSender{}
+			ctrl := &BreakglassSessionController{
+				log:  log,
+				mail: mailSender,
+			}
+			ctrl.sendSessionNotifications(
+				session,
+				escalation,
+				allApprovers,
+				approversByGroup,
+				"requester@example.com",
+				"Requester",
+				log,
+			)
+
+			require.Equal(t, 1, mailSender.SendCallCount)
+			assert.Equal(t, []string{"visible@example.com"}, mailSender.LastRecivers)
 		})
 	}
 }
