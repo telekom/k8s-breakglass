@@ -133,6 +133,7 @@ updates:
 #   - KUSTOMIZE_VERSION: https://github.com/kubernetes-sigs/kustomize/releases
 #   - GOLANGCI_LINT_VERSION: https://github.com/golangci/golangci-lint/releases
 #   - ENVTEST_VERSION: https://github.com/kubernetes-sigs/controller-runtime/releases
+#   - GOVULNCHECK_VERSION: https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck
 #
 # .github/workflows/e2e.yml:
 #   - KIND_VERSION: https://github.com/kubernetes-sigs/kind/releases
