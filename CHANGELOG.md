@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-rc.5] - 2026-08-11
+
 ### Fixed
 
 - Disabled IdentityProviders now report `Ready=False` with reason `Disabled`, clear stale group-sync health, and emit an unavailable event instead of claiming a successful configuration reload.
@@ -1179,7 +1181,8 @@ non-buggy case:
 
 ---
 
-[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.4...HEAD
+[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.5...HEAD
+[0.1.0-rc.5]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.4...v0.1.0-rc.5
 [0.1.0-rc.4]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.3...v0.1.0-rc.4
 
 - Fixed single resource table formatting in `bgctl` commands.
