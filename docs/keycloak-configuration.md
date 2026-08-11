@@ -906,9 +906,17 @@ Authorization: Bearer {token}
 
 **Required Keycloak role**: `query-groups` on `realm-management`
 
-**Behavior**: Returns groups whose name contains the search string. The resolver then does a case-insensitive exact match (`strings.EqualFold`) on `group.Name` to find the specific group.
+**Behavior**: Requests an exact Keycloak search for the configured name and
+still applies a case-insensitive exact match (`strings.EqualFold`) on
+`group.Name` before accepting the result.
 
-**Side effect**: If no matching group is found, caches an empty member list to avoid repeated queries.
+**Missing versus empty**: If no exact matching group is found, the resolver returns
+a classified `group not found` error and does not cache the result. If the exact
+group exists but has no direct or subgroup members with a usable email/username,
+the resolver returns an empty list without an error and caches that empty result
+for the configured `cacheTTL`. This distinction is reflected in the
+`BreakglassEscalation` `ApprovalGroupMembersResolved` condition and warning
+events, so an absent AD/Keycloak group cannot be mistaken for a valid empty group.
 
 ### API Call 3: GetGroupMembers (Direct Members)
 

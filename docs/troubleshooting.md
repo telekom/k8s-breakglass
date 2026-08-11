@@ -718,6 +718,39 @@ kubectl get secret <secret-name> -o yaml
 # Verify it has the right clientID and clientSecret
 ```
 
+### ApprovalGroupMembersResolved Condition: True (GroupMembersEmpty)
+
+**Cause:** The configured identity-provider group exists, but it currently has
+no members with a usable email or username. The lookup succeeded, but sessions
+depending only on that group cannot be approved and may transition to
+`ApprovalTimeout`.
+
+**Diagnosis:**
+
+```bash
+kubectl get breakglassescalation <name> -o jsonpath='{.status.conditions[?(@.type=="ApprovalGroupMembersResolved")]}'
+kubectl get events --field-selector involvedObject.name=<name>
+```
+
+**Solution:** Add the intended approver to the AD/Keycloak group, or configure
+an approver user/group that is populated in the selected identity provider.
+
+### ApprovalGroupMembersResolved Condition: False (GroupNotFound)
+
+**Cause:** A configured approver group does not exist in the selected identity
+provider. Breakglass removes stale cached members for that group and does not
+use the missing group as a successful empty lookup.
+
+**Diagnosis:**
+
+```bash
+kubectl get breakglassescalation <name> -o jsonpath='{.status.conditions[?(@.type=="ApprovalGroupMembersResolved")]}'
+kubectl get events --field-selector involvedObject.name=<name>
+```
+
+**Solution:** Verify the exact group name and the selected IdentityProvider,
+then create/rename the AD/Keycloak group or update the escalation configuration.
+
 ## General Debug Commands
 
 View all resources:

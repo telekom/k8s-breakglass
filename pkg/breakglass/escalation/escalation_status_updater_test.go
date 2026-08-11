@@ -21,10 +21,13 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -605,6 +608,101 @@ func TestNewKeycloakGroupMemberResolver_CustomCacheTTL(t *testing.T) {
 	assert.NotNil(t, resolver.cache)
 	// Cache TTL should be 30 minutes
 	assert.Equal(t, "30m", resolver.cfg.CacheTTL)
+}
+
+func TestKeycloakGroupMemberResolver_MissingGroupReturnsClassifiedError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/admin/realms/test-realm/groups", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`[]`))
+		assert.NoError(t, err)
+	}))
+	defer server.Close()
+
+	group := "missing-group"
+	resolver := NewKeycloakGroupMemberResolver(zap.NewNop().Sugar(), cfgpkg.KeycloakRuntimeConfig{
+		BaseURL:             server.URL,
+		Realm:               "test-realm",
+		ClientID:            "test-client",
+		ServiceAccountToken: "test-token",
+	})
+
+	members, err := resolver.Members(context.Background(), group)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, breakglass.ErrGroupNotFound)
+	assert.Nil(t, members)
+	_, cached := resolver.cache.get(group)
+	assert.False(t, cached, "missing groups must not be cached as empty groups")
+}
+
+func TestKeycloakGroupMemberResolver_GroupDeletedDuringLookupReturnsClassifiedError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/admin/realms/test-realm/groups":
+			_, err := w.Write([]byte(`[{"id":"deleted-group-id","name":"deleted-group"}]`))
+			assert.NoError(t, err)
+		case "/admin/realms/test-realm/groups/deleted-group-id/members":
+			http.Error(w, "group deleted", http.StatusNotFound)
+		default:
+			t.Errorf("unexpected Keycloak path %q", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	group := "deleted-group"
+	resolver := NewKeycloakGroupMemberResolver(zap.NewNop().Sugar(), cfgpkg.KeycloakRuntimeConfig{
+		BaseURL:             server.URL,
+		Realm:               "test-realm",
+		ClientID:            "test-client",
+		ServiceAccountToken: "test-token",
+	})
+
+	members, err := resolver.Members(context.Background(), group)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, breakglass.ErrGroupNotFound)
+	assert.Nil(t, members)
+}
+
+func TestKeycloakGroupMemberResolver_ExistingEmptyGroupReturnsSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body string
+		switch r.URL.Path {
+		case "/admin/realms/test-realm/groups":
+			body = `[{"id":"empty-group-id","name":"empty-group"}]`
+		case "/admin/realms/test-realm/groups/empty-group-id/members":
+			body = `[]`
+		case "/admin/realms/test-realm/groups/empty-group-id":
+			body = `{"id":"empty-group-id","name":"empty-group","subGroups":[]}`
+		default:
+			t.Errorf("unexpected Keycloak path %q", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		_, err := w.Write([]byte(body))
+		assert.NoError(t, err)
+	}))
+	defer server.Close()
+
+	group := "empty-group"
+	resolver := NewKeycloakGroupMemberResolver(zap.NewNop().Sugar(), cfgpkg.KeycloakRuntimeConfig{
+		BaseURL:             server.URL,
+		Realm:               "test-realm",
+		ClientID:            "test-client",
+		ServiceAccountToken: "test-token",
+	})
+
+	members, err := resolver.Members(context.Background(), group)
+
+	require.NoError(t, err)
+	assert.Empty(t, members)
+	cachedMembers, cached := resolver.cache.get(group)
+	require.True(t, cached)
+	assert.Empty(t, cachedMembers)
 }
 
 func TestSetupResolverReturnsQuietNoopWhenGroupSyncDisabled(t *testing.T) {
