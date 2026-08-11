@@ -718,9 +718,18 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	// Note: this is only used for debug logs and should not be exposed to end users.
 	c.Set("raw_claims", claims)
 
-	// Attempt to extract groups from common Keycloak / OIDC claims
+	// Attempt to extract groups from common Keycloak / OIDC claims.
+	// groupsClaimPresent tracks whether the token itself carried group
+	// information (the "groups" claim or Keycloak's "realm_access" claim),
+	// as distinct from `groups` being empty because the user genuinely
+	// belongs to zero groups. Downstream consumers rely on this distinction
+	// to avoid mistaking "token asserts no groups" for "token carries no
+	// group information at all" (which would otherwise trigger an
+	// unintended fallback to cluster-based group resolution).
 	var groups []string
+	groupsClaimPresent := false
 	if rawGroups, ok := claims["groups"]; ok {
+		groupsClaimPresent = true
 		switch g := rawGroups.(type) {
 		case []interface{}:
 			for _, v := range g {
@@ -734,6 +743,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	} else if rawRealm, ok := claims["realm_access"]; ok { // Keycloak specific structure
 		if m, ok := rawRealm.(map[string]interface{}); ok {
 			if rolesRaw, ok := m["roles"]; ok {
+				groupsClaimPresent = true
 				switch roles := rolesRaw.(type) {
 				case []interface{}:
 					for _, v := range roles {
@@ -769,10 +779,15 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	}
 
 	// If groups are empty, log claims at debug so we can diagnose missing group mappers
+	// or confirm that the user legitimately belongs to no groups.
 	if len(groups) == 0 {
 		// avoid logging tokens at info level; use debug for development troubleshooting
 		if a.log != nil {
-			a.log.Debugw("JWT parsed but no groups claim found", "sub", userID, "username", username, "claims_keys", func() []string {
+			msg := "JWT parsed but no groups claim found"
+			if groupsClaimPresent {
+				msg = "JWT groups claim present but resolved to zero groups"
+			}
+			a.log.Debugw(msg, "sub", userID, "username", username, "claims_keys", func() []string {
 				keys := make([]string, 0, len(claims))
 				for k := range claims {
 					keys = append(keys, k)
@@ -790,7 +805,18 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	if displayName, ok := claims["name"]; ok {
 		c.Set("displayName", displayName)
 	}
-	if len(groups) > 0 {
+	// Set the "groups" context key whenever the token carried group
+	// information, even if it resolved to zero groups. This lets downstream
+	// consumers distinguish "token asserts the user belongs to no groups"
+	// (key present, empty slice) from "token carries no group information at
+	// all" (key absent), so a legitimately group-less token is not silently
+	// treated the same as a token without a groups/realm_access claim.
+	if groupsClaimPresent {
+		if groups == nil {
+			groups = []string{}
+		}
+		c.Set("groups", groups)
+	} else if len(groups) > 0 {
 		c.Set("groups", groups)
 	}
 

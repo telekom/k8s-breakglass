@@ -276,6 +276,12 @@ Authorization: Bearer <token>
 - `reason` must be at most 500 characters after trimming.
 - `user` must match the authenticated identity in the request token; mismatches are rejected.
 
+**User group resolution:** As with the escalations list endpoint, the
+requester's groups are resolved from the JWT `groups`/`realm_access` claim
+when present, falling back to a live cluster-based group lookup only when
+the token carries no group claim at all. A token whose group claim resolves
+to zero groups is honored as-is and does not trigger the cluster fallback.
+
 **Status Code:** `201 Created`
 
 **Rate limiting:** Session creation is rate-limited per authenticated user (10 requests/minute, burst of 1). When the limit is exceeded, the server responds with `429 Too Many Requests` and a `Retry-After` header (integer seconds) indicating when to retry. A valid `email` claim in the JWT is required; requests without one are rejected before session creation proceeds.
@@ -642,6 +648,15 @@ Authorization: Bearer <token>
 |-----------|------|-------------|
 | `activeOnly` | boolean | Only return ready escalations for ready clusters (default: `true`). With a concrete or glob `cluster` filter, escalations are hidden when every matching registered `ClusterConfig` is `Ready=False` or has an ambiguous duplicate name. Unfiltered multi-cluster/global escalations can still be returned when they match at least one ready registered cluster. |
 | `cluster` | string | Filter by target cluster name. Supports exact matching and glob patterns. |
+
+**User group resolution:** The user's groups are resolved from the JWT
+`groups` claim (or Keycloak's `realm_access.roles`) when present, falling
+back to a live cluster-based group lookup only when the token carries **no**
+group claim at all. A token that carries a `groups`/`realm_access` claim
+resolving to zero groups is treated as an explicit "user belongs to no
+groups" assertion and does **not** trigger the cluster-based fallback; this
+avoids replacing the token's group assertion with unrelated cluster RBAC
+group bindings.
 
 **Response:** Array of `BreakglassEscalation` resources filtered by user's groups and readiness:
 

@@ -98,17 +98,19 @@ func (wc *BreakglassSessionController) resolveUserGroups(
 	globalCfg *config.Config, reqLog *zap.SugaredLogger,
 ) ([]string, bool) {
 	var userGroups []string
-	if raw, exists := c.Get("groups"); exists { // trace raw token groups before any normalization
+	// tokenGroupsPresent distinguishes "the JWT carried a groups/realm_access
+	// claim" (even if it resolved to zero groups) from "the JWT carried no
+	// group information at all". Only the latter should fall back to
+	// cluster-based group resolution; a token that legitimately asserts zero
+	// groups must not be treated the same as one with no group claim.
+	raw, tokenGroupsPresent := c.Get("groups")
+	if tokenGroupsPresent { // trace raw token groups before any normalization
 		if arr, ok := raw.([]string); ok {
 			reqLog.With("rawTokenGroups", system.RedactSlice(arr), "rawTokenGroupCount", len(arr)).Debug("Extracted raw token groups from JWT claims")
-		}
-	}
-	if tg, exists := c.Get("groups"); exists {
-		if arr, ok := tg.([]string); ok {
 			userGroups = append(userGroups, arr...)
 		}
 	}
-	if len(userGroups) == 0 { // fallback to cluster lookup
+	if !tokenGroupsPresent { // fallback to cluster lookup only when the token carried no group information
 		var gerr error
 		userGroups, gerr = wc.getUserGroupsFn(ctx, cug)
 		if gerr != nil {

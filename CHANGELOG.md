@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Group-less JWT tokens could trigger an unintended cluster-based group lookup fallback** (security): the JWT auth middleware only set the request `groups` context key when the token's `groups`/`realm_access` claim resolved to a non-empty list, so a token that legitimately asserted "user belongs to zero groups" was indistinguishable from a token that carried no group claim at all. `GET /api/breakglassEscalations` and `POST /api/breakglassSessions` used this ambiguous empty state as their trigger to fall back to a live cluster-based group lookup (impersonated `SelfSubjectReview`), silently replacing the token's explicit "no groups" assertion with whatever groups the cluster happened to report for the user, which could surface or authorize escalations the token itself did not grant. The middleware now always sets the `groups` context key (with an empty slice) whenever the token carries a `groups`/`realm_access` claim, and both consumers now key their cluster fallback on context-key presence rather than list length, so an empty-but-present token claim is honored as-is.
+
 ## [0.1.0-rc.4] - 2026-08-05
 
 ### Fixed
