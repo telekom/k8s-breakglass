@@ -228,7 +228,7 @@ test.describe.serial("My Requests - Error Handling", () => {
     await expect.poll(() => pendingRequestsIntercepted).toBe(true);
 
     const errorState = page.locator('[data-testid="my-requests-error"]');
-    await expect(errorState).toBeVisible();
+    await expect(errorState.getByRole("alert")).toBeVisible();
     await expect(errorState.getByRole("button", { name: "Retry" })).toBeVisible();
   });
 });

@@ -32,6 +32,11 @@ describe("ErrorBanner", () => {
       expect(wrapper.find("scale-notification").attributes()).toHaveProperty("opened");
     });
 
+    it("places body content in the notification text slot", () => {
+      const wrapper = mountBanner({ showRetry: true });
+      expect(wrapper.find(".error-banner__content").attributes("slot")).toBe("text");
+    });
+
     it("renders details paragraph when details prop is provided", () => {
       const wrapper = mountBanner({ details: "Check your connection" });
       expect(wrapper.find(".error-banner__details").exists()).toBe(true);
