@@ -224,6 +224,7 @@ notificationExclusions:
 
 - Excluded users will NOT receive emails when sessions are requested/approved/rejected
 - Excluded groups' members will NOT receive emails
+- Request notifications reuse the approver memberships already resolved for the session request, so excluded approver groups remain excluded if a follow-up identity-provider lookup is unavailable
 - All other approvers will receive emails as normal
 - Takes precedence over individual approver lists
 
@@ -266,6 +267,7 @@ approvers:
 
 - Hidden users/groups are NOT shown in the UI's approver list
 - Hidden users/groups do NOT receive email notifications
+- Request notifications reuse the memberships already resolved for the session request, including multi-identity-provider status, so a missing follow-up resolver cannot expose hidden approvers
 - Hidden users/groups CAN still approve sessions if they know about them
 - Hidden users/groups are still counted as valid approvers for approval requirements
 - Useful for "on-call" or "last resort" approver groups
@@ -623,6 +625,16 @@ Check related `BreakglassEscalation` and `IdentityProvider` events for the speci
 failing group or provider. Escalations with no approver groups report
 `NoApproverGroupsConfigured` because no group member lookup is required.
 
+An existing identity-provider group with no resolvable members is reported
+separately with `status: "True"` and reason `GroupMembersEmpty`. This is a
+successful lookup, but no approver can approve from that group, so pending
+sessions can reach `ApprovalTimeout`. A group that is not present in the
+identity provider is a sync failure: when it is the only sync failure, the
+condition is `False` with reason `GroupNotFound`; mixed failures retain
+`GroupSyncPartialFailure` or `GroupSyncFailed` and name the missing group in
+the condition message. In all cases, stale cached members are removed and a
+warning event identifies the missing group.
+
 #### Condition Reasons
 
 | Reason | Status | Description |
@@ -633,7 +645,9 @@ failing group or provider. Escalations with no approver groups report
 | `DenyPolicyReferenceInvalid` | False | Referenced deny policy doesn't exist |
 | `MailProviderValidationFailed` | False | Referenced MailProvider is missing or disabled |
 | `GroupMembersResolved` | True | Approver group members were resolved |
+| `GroupMembersEmpty` | True | The configured group exists but has no resolvable members; sessions relying on it may time out |
 | `NoApproverGroupsConfigured` | True | No approver groups require member resolution |
+| `GroupNotFound` | False | A configured approver group does not exist in an identity provider |
 | `GroupSyncPartialFailure` | False | Some approver groups or IDPs failed during group sync |
 | `GroupSyncFailed` | False | All approver group resolution failed |
 | `ValidationInProgress` | Unknown | Configuration being validated |

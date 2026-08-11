@@ -398,6 +398,126 @@ func TestEscalationStatusUpdaterSetsApprovalGroupMembersResolvedPartialFailure(t
 	}
 }
 
+func TestEscalationStatusUpdaterReportsExistingEmptyApproverGroup(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	defer func() {
+		_ = logger.Sync()
+	}()
+
+	cli := fake.NewClientBuilder().
+		WithScheme(breakglass.Scheme).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassEscalation{}).
+		Build()
+
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "empty-approver-group",
+			Namespace:  "default",
+			Generation: 3,
+		},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			EscalatedGroup: "admin-group",
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"my-cluster"},
+			},
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+				Groups: []string{"empty-group"},
+			},
+		},
+	}
+	assert.NoError(t, cli.Create(context.Background(), escalation))
+
+	recorder := fakeEventRecorder{Events: make(chan string, 2)}
+	updater := EscalationStatusUpdater{
+		Log:           logger.Sugar(),
+		K8sClient:     cli,
+		EventRecorder: recorder,
+		Resolver: &MockResolver{
+			members: map[string][]string{"empty-group": {}},
+			errors:  map[string]error{},
+		},
+	}
+
+	updater.runOnce(context.Background(), logger.Sugar())
+
+	updated := &breakglassv1alpha1.BreakglassEscalation{}
+	assert.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated))
+	assert.NotNil(t, updated.Status.ApproverGroupMembers)
+	assert.Empty(t, updated.Status.ApproverGroupMembers["empty-group"])
+
+	condition := updated.GetCondition(string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved))
+	if assert.NotNil(t, condition) {
+		assert.Equal(t, metav1.ConditionTrue, condition.Status)
+		assert.Equal(t, "GroupMembersEmpty", condition.Reason)
+		assert.Contains(t, condition.Message, "empty-group")
+	}
+	assert.True(t, recordedEventContains(drainRecordedEvents(recorder.Events), "Warning GroupMembersEmpty", "empty-group"))
+}
+
+func TestEscalationStatusUpdaterReportsMissingApproverGroupAndClearsStaleMembers(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	defer func() {
+		_ = logger.Sync()
+	}()
+
+	cli := fake.NewClientBuilder().
+		WithScheme(breakglass.Scheme).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassEscalation{}).
+		Build()
+
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "missing-approver-group",
+			Namespace:  "default",
+			Generation: 4,
+		},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			EscalatedGroup: "admin-group",
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"my-cluster"},
+			},
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+				Groups: []string{"missing-group"},
+			},
+		},
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{
+			ApproverGroupMembers: map[string][]string{
+				"missing-group": {"stale@example.com"},
+			},
+		},
+	}
+	assert.NoError(t, cli.Create(context.Background(), escalation))
+	assert.NoError(t, cli.Status().Update(context.Background(), escalation))
+
+	recorder := fakeEventRecorder{Events: make(chan string, 2)}
+	updater := EscalationStatusUpdater{
+		Log:           logger.Sugar(),
+		K8sClient:     cli,
+		EventRecorder: recorder,
+		Resolver: &MockResolver{
+			members: map[string][]string{},
+			errors: map[string]error{
+				"missing-group": breakglass.NewGroupNotFoundError("missing-group"),
+			},
+		},
+	}
+
+	updater.runOnce(context.Background(), logger.Sugar())
+
+	updated := &breakglassv1alpha1.BreakglassEscalation{}
+	assert.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated))
+	assert.NotNil(t, updated.Status.ApproverGroupMembers)
+	assert.Empty(t, updated.Status.ApproverGroupMembers["missing-group"])
+
+	condition := updated.GetCondition(string(breakglassv1alpha1.BreakglassEscalationConditionApprovalGroupMembersResolved))
+	if assert.NotNil(t, condition) {
+		assert.Equal(t, metav1.ConditionFalse, condition.Status)
+		assert.Equal(t, "GroupNotFound", condition.Reason)
+		assert.Contains(t, condition.Message, "missing-group")
+	}
+	assert.True(t, recordedEventContains(drainRecordedEvents(recorder.Events), "Warning GroupNotFound", "missing-group"))
+}
+
 func TestUpdateApprovalGroupMembersResolvedConditionIncludesIDPContextOnFailures(t *testing.T) {
 	tests := []struct {
 		name       string

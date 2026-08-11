@@ -74,15 +74,21 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 	}
 	reqLog.Debugw("Successfully extracted user email from token", "email", email)
 
-	// Attempt to resolve groups from token first (preferred) then fallback to cluster-based resolution
+	// Attempt to resolve groups from token first (preferred) then fallback to cluster-based resolution.
+	// tokenGroupsPresent distinguishes "the JWT carried a groups/realm_access
+	// claim" (even if it resolved to zero groups) from "the JWT carried no
+	// group information at all". Only the latter should fall back to
+	// cluster-based resolution; a token that legitimately asserts zero groups
+	// must not be treated the same as one with no group claim.
 	var userGroups []string
-	if raw, exists := c.Get("groups"); exists {
+	raw, tokenGroupsPresent := c.Get("groups")
+	if tokenGroupsPresent {
 		if arr, ok := raw.([]string); ok {
 			reqLog.Debugw("Extracted raw token groups from JWT claims", "rawTokenGroupCount", len(arr))
 			userGroups = append(userGroups, arr...)
 		}
 	}
-	if len(userGroups) == 0 { // fallback
+	if !tokenGroupsPresent { // fallback only when the token carried no group information
 		userContext := breakglass.ClusterUserGroup{Username: email}
 		var gerr error
 		userGroups, gerr = ec.getUserGroupsFn(c.Request.Context(), userContext)
