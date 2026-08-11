@@ -53,6 +53,7 @@ function handleRetry() {
     :variant="variant"
     :heading="message"
     :dismissible="dismissible"
+    opened
     @scale-close="handleDismiss"
   >
     <p v-if="details" class="error-banner__details">{{ details }}</p>

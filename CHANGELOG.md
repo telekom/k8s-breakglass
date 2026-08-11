@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Helm chart release version**: Bumped `escalation-config` to chart version `0.3.3` so the next release can be published without colliding with the existing GHCR package version `0.3.2`.
+- Frontend error banners now explicitly open their Scale notification so messages and retry actions remain visible in current browsers.
 
 ## [0.1.0-rc.5] - 2026-08-11
 
