@@ -107,7 +107,8 @@ func TestIdentityProviderReconciler_ReconcileSuccess(t *testing.T) {
 		return nil
 	}
 
-	reconciler := NewIdentityProviderReconciler(client, log, reloadFn)
+	recorder := &fakeEventRecorder{}
+	reconciler := NewIdentityProviderReconciler(client, log, reloadFn).WithEventRecorder(recorder)
 
 	req := reconcile.Request{
 		NamespacedName: types.NamespacedName{
@@ -120,6 +121,87 @@ func TestIdentityProviderReconciler_ReconcileSuccess(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 10*time.Minute, result.RequeueAfter)
 	assert.True(t, reloadCalled)
+	require.Len(t, recorder.events, 1)
+	assert.Contains(t, recorder.events[0], "ConfigReloadSuccess")
+}
+
+func TestIdentityProviderReconciler_ReconcileDisabledProviderReportsUnavailable(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	scheme := newTestScheme(t)
+	idp := &breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "disabled-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			Disabled: true,
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority:        "https://auth.example.com",
+				ClientID:         "test-client",
+				ExpectedAudience: "test-client",
+			},
+		},
+	}
+	client := ctrltest.NewClientBuilder().WithScheme(scheme).WithObjects(idp).WithStatusSubresource(idp).Build()
+	recorder := &fakeEventRecorder{}
+	reloadCalled := false
+	reconciler := NewIdentityProviderReconciler(client, log, func(ctx context.Context) error {
+		reloadCalled = true
+		return nil
+	}).WithEventRecorder(recorder)
+	idp.SetCondition(metav1.Condition{
+		Type:   string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy),
+		Status: metav1.ConditionTrue,
+		Reason: "GroupSyncOperational",
+	})
+	require.NoError(t, reconciler.applyStatus(context.Background(), idp))
+
+	_, err := reconciler.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: idp.Name},
+	})
+	require.NoError(t, err)
+	assert.True(t, reloadCalled, "the runtime configuration must drop disabled providers")
+
+	var updated breakglassv1alpha1.IdentityProvider
+	require.NoError(t, client.Get(context.Background(), types.NamespacedName{Name: idp.Name}, &updated))
+	ready := updated.GetCondition(string(breakglassv1alpha1.IdentityProviderConditionReady))
+	require.NotNil(t, ready)
+	assert.Equal(t, metav1.ConditionFalse, ready.Status)
+	assert.Equal(t, "Disabled", ready.Reason)
+	assert.Nil(t, updated.GetCondition(string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy)))
+	require.Len(t, recorder.events, 1)
+	assert.Contains(t, recorder.events[0], "IdentityProviderDisabled")
+	assert.NotContains(t, recorder.events[0], "ConfigReloadSuccess")
+}
+
+func TestIdentityProviderReconciler_ReconcileWithoutGroupSyncClearsStaleHealth(t *testing.T) {
+	scheme := newTestScheme(t)
+	idp := &breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "oidc-only-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority:        "https://auth.example.com",
+				ClientID:         "test-client",
+				ExpectedAudience: "test-client",
+			},
+		},
+	}
+	client := ctrltest.NewClientBuilder().WithScheme(scheme).WithObjects(idp).WithStatusSubresource(idp).Build()
+	reconciler := NewIdentityProviderReconciler(client, zap.NewNop().Sugar(), func(ctx context.Context) error {
+		return nil
+	})
+	idp.SetCondition(metav1.Condition{
+		Type:   string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy),
+		Status: metav1.ConditionTrue,
+		Reason: "GroupSyncOperational",
+	})
+	require.NoError(t, reconciler.applyStatus(context.Background(), idp))
+
+	_, err := reconciler.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: idp.Name},
+	})
+	require.NoError(t, err)
+
+	var updated breakglassv1alpha1.IdentityProvider
+	require.NoError(t, client.Get(context.Background(), types.NamespacedName{Name: idp.Name}, &updated))
+	assert.Nil(t, updated.GetCondition(string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy)))
 }
 
 // TestIdentityProviderReconciler_ReconcileNotFound tests reconciliation when IDP doesn't exist

@@ -248,6 +248,11 @@ spec:
   disabled: true
 ```
 
+The controller still reloads its runtime configuration so that every replica excludes the
+provider. The disabled resource reports `Ready=False` with reason `Disabled`, removes any
+previous `GroupSyncHealthy` condition, and emits an `IdentityProviderDisabled` event; it does not
+report a successful reload for the disabled provider. Enable it again by setting `disabled: false`.
+
 ## Session Limits
 
 You can configure session limits at the IdentityProvider level to control how many concurrent sessions users can have. These limits apply to all users authenticating through this IDP, with optional group-based overrides for more flexibility.

@@ -24,7 +24,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
 
@@ -231,6 +230,11 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 	// needs to reload its own local config (onReload updates in-memory state).
 	// Status update skipping is handled separately after the work is done.
 
+	previousReadyCondition := idp.GetCondition(string(breakglassv1alpha1.IdentityProviderConditionReady))
+	wasDisabled := previousReadyCondition != nil &&
+		previousReadyCondition.Status == metav1.ConditionFalse &&
+		previousReadyCondition.Reason == "Disabled"
+
 	// Reload configuration when IdentityProvider changes
 	if err := r.onReload(ctx); err != nil {
 		r.logger.Errorw("failed to reload identity provider", "error", err, "name", req.Name)
@@ -268,20 +272,34 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 
 	r.logger.Infow("identity provider configuration reloaded successfully", "name", req.Name)
 
-	// Set Ready condition to True on successful reload
-	readyCondition := metav1.Condition{
-		Type:               string(breakglassv1alpha1.IdentityProviderConditionReady),
-		Status:             metav1.ConditionTrue,
-		ObservedGeneration: idp.Generation,
-		LastTransitionTime: metav1.Now(),
-		Reason:             "ConfigReloadSuccess",
-		Message:            "Identity provider configuration loaded successfully",
-	}
-	idp.SetCondition(readyCondition)
-	idp.Status.ObservedGeneration = idp.Generation
+	if idp.Spec.Disabled {
+		// Reloading remains necessary to remove this provider from each replica's
+		// runtime configuration, but a disabled provider must not report itself as ready.
+		idp.SetCondition(metav1.Condition{
+			Type:               string(breakglassv1alpha1.IdentityProviderConditionReady),
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: idp.Generation,
+			LastTransitionTime: metav1.Now(),
+			Reason:             "Disabled",
+			Message:            "Identity provider is disabled and excluded from runtime configuration",
+		})
+		removeIdentityProviderCondition(idp, breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy)
+	} else {
+		// Set Ready condition to True on successful reload
+		readyCondition := metav1.Condition{
+			Type:               string(breakglassv1alpha1.IdentityProviderConditionReady),
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: idp.Generation,
+			LastTransitionTime: metav1.Now(),
+			Reason:             "ConfigReloadSuccess",
+			Message:            "Identity provider configuration loaded successfully",
+		}
+		idp.SetCondition(readyCondition)
 
-	// Check group sync provider health if configured
-	r.updateGroupSyncHealth(ctx, idp)
+		// Check group sync provider health if configured
+		r.updateGroupSyncHealth(ctx, idp)
+	}
+	idp.Status.ObservedGeneration = idp.Generation
 
 	// Re-fetch to get the latest status before checking if we should skip
 	var latest breakglassv1alpha1.IdentityProvider
@@ -325,6 +343,9 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 	// This preserves any updates from other controllers while applying our changes
 	for _, condition := range idp.Status.Conditions {
 		latest.SetCondition(condition)
+	}
+	if idp.Spec.Disabled || idp.Spec.GroupSyncProvider == "" {
+		removeIdentityProviderCondition(&latest, breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy)
 	}
 	latest.Status.ObservedGeneration = idp.Status.ObservedGeneration
 
@@ -376,9 +397,13 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 		return reconcile.Result{}, err
 	}
 
-	// Emit event on the IdentityProvider CR
-	// Note: Empty namespace for cluster-scoped resources to prevent event reconciliation issues
-	if r.recorder != nil {
+	// Note: Empty namespace for cluster-scoped resources to prevent event reconciliation issues.
+	if r.recorder != nil && idp.Spec.Disabled && !wasDisabled {
+		eventIdp := latest.DeepCopy()
+		eventIdp.SetNamespace("")
+		r.recorder.Eventf(eventIdp, nil, corev1.EventTypeNormal, "IdentityProviderDisabled", "IdentityProviderDisabled",
+			"Identity provider is disabled and excluded from runtime configuration")
+	} else if r.recorder != nil && !idp.Spec.Disabled {
 		eventIdp := latest.DeepCopy()
 		eventIdp.SetNamespace("")
 		r.recorder.Eventf(eventIdp, nil, corev1.EventTypeNormal, "ConfigReloadSuccess", "ConfigReloadSuccess",
@@ -391,7 +416,17 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 }
 
 func (r *IdentityProviderReconciler) applyStatus(ctx context.Context, idp *breakglassv1alpha1.IdentityProvider) error {
-	return ssa.ApplyIdentityProviderStatus(ctx, r.client, idp)
+	return r.client.Status().Update(ctx, idp)
+}
+
+func removeIdentityProviderCondition(idp *breakglassv1alpha1.IdentityProvider, conditionType breakglassv1alpha1.IdentityProviderConditionType) {
+	conditions := idp.Status.Conditions[:0]
+	for _, condition := range idp.Status.Conditions {
+		if condition.Type != string(conditionType) {
+			conditions = append(conditions, condition)
+		}
+	}
+	idp.Status.Conditions = conditions
 }
 
 func checkKeycloakGroupSyncHealth(ctx context.Context, keycloak *breakglassv1alpha1.KeycloakGroupSync, clientSecret string) error {
@@ -474,13 +509,7 @@ func (r *IdentityProviderReconciler) updateGroupSyncHealth(ctx context.Context, 
 	if idp.Spec.GroupSyncProvider == "" {
 		// GroupSync not configured - remove condition if it exists
 		if oldCondition != nil {
-			newConditions := make([]metav1.Condition, 0)
-			for _, c := range idp.Status.Conditions {
-				if c.Type != string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy) {
-					newConditions = append(newConditions, c)
-				}
-			}
-			idp.Status.Conditions = newConditions
+			removeIdentityProviderCondition(idp, breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy)
 		}
 		return
 	}
