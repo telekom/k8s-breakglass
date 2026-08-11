@@ -37,6 +37,7 @@ const emit = defineEmits<{
 
 const slots = useSlots();
 const hasActions = computed(() => Boolean(slots.actions) || props.showRetry);
+const hasContent = computed(() => Boolean(slots.default) || Boolean(props.details) || hasActions.value);
 
 function handleDismiss() {
   emit("dismiss");
@@ -53,16 +54,19 @@ function handleRetry() {
     :variant="variant"
     :heading="message"
     :dismissible="dismissible"
+    opened
     @scale-close="handleDismiss"
   >
-    <p v-if="details" class="error-banner__details">{{ details }}</p>
-    <slot></slot>
+    <div v-if="hasContent" slot="text" class="error-banner__content">
+      <p v-if="details" class="error-banner__details">{{ details }}</p>
+      <slot></slot>
 
-    <div v-if="hasActions" class="error-banner__actions">
-      <scale-button v-if="showRetry" variant="secondary" size="small" @click="handleRetry">
-        {{ retryLabel }}
-      </scale-button>
-      <slot name="actions"></slot>
+      <div v-if="hasActions" class="error-banner__actions">
+        <scale-button v-if="showRetry" variant="secondary" size="small" @click="handleRetry">
+          {{ retryLabel }}
+        </scale-button>
+        <slot name="actions"></slot>
+      </div>
     </div>
   </scale-notification>
 </template>

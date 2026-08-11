@@ -206,60 +206,30 @@ test.describe.serial("My Requests - Error Handling", () => {
 
     // Set up route interception BEFORE navigating to the error-triggering page
     // This ensures the first API call is intercepted
-    await page.route("**/api/breakglassSessions*", (route) => {
+    let pendingRequestsIntercepted = false;
+    await page.route("**/api/breakglassSessions*", async (route) => {
       const url = route.request().url();
       // Intercept GET requests fetching "my" pending sessions
       if (route.request().method() === "GET" && url.includes("mine=true")) {
-        route.fulfill({
+        pendingRequestsIntercepted = true;
+        await route.fulfill({
           status: 500,
           contentType: "application/json",
           body: JSON.stringify({ error: "Internal Server Error" }),
         });
       } else {
-        route.continue();
+        await route.continue();
       }
     });
 
     // Now navigate - the API call will be intercepted and return 500
     await page.goto("/requests/mine");
 
-    // Wait for DOM to be ready
-    await page.waitForLoadState("domcontentloaded");
+    await expect.poll(() => pendingRequestsIntercepted).toBe(true);
 
-    // Scale notification components use CSS visibility transitions.
-    // We need to wait for the component to be both in DOM and CSS-visible.
     const errorState = page.locator('[data-testid="my-requests-error"]');
-
-    // First wait for the element to exist in DOM
-    await errorState.waitFor({ state: "attached", timeout: 15000 });
-
-    // Then wait for CSS visibility to become "visible" (Scale animation)
-    await page.waitForFunction(
-      () => {
-        const el = document.querySelector('[data-testid="my-requests-error"]');
-        if (!el) return false;
-        const style = window.getComputedStyle(el);
-        // Scale notification uses visibility transition - wait for it to complete
-        return style.visibility === "visible" && style.display !== "none";
-      },
-      { timeout: 15000 },
-    );
-
-    // Verify retry button is present inside the error banner.
-    // Scale-button elements inside scale-notification can have visibility:hidden
-    // during their own CSS animation. We need to wait for the button's CSS visibility.
-    await page.waitForFunction(
-      () => {
-        const errorBanner = document.querySelector('[data-testid="my-requests-error"]');
-        if (!errorBanner) return false;
-        // Find any button element inside
-        const button = errorBanner.querySelector("scale-button, button, [role='button']");
-        if (!button) return false;
-        const style = window.getComputedStyle(button);
-        return style.visibility === "visible" && style.display !== "none";
-      },
-      { timeout: 10000 },
-    );
+    await expect(errorState.getByRole("alert")).toBeVisible();
+    await expect(errorState.getByRole("button", { name: "Retry" })).toBeVisible();
   });
 });
 
