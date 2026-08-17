@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 E2E_ENV_FILE="${ROOT_DIR}/e2e/kind-setup-single-tdir/e2e-env.sh"
 PLAY_SCRIPT="${ROOT_DIR}/e2e/record-breakglass-demo.sh"
-RECORDING_FILE="${BREAKGLASS_DEMO_RECORDING:-${ROOT_DIR}/docs/demos/breakglass-user-flow.cast}"
+RECORDING_FILE="${BREAKGLASS_DEMO_RECORDING:-${ROOT_DIR}/docs/demos/breakglass-api-flow.cast}"
 
 KUBECTL_CONTEXT="${KUBECTL_CONTEXT:-kind-breakglass-hub}"
 CLUSTER_NAME="${BREAKGLASS_DEMO_CLUSTER:-tenant-a}"

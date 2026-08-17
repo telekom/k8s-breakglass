@@ -6,7 +6,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 PLAY_SCRIPT="${ROOT_DIR}/e2e/record-breakglass-cli-demo.sh"
-RECORDING_FILE="${BREAKGLASS_CLI_DEMO_RECORDING:-${ROOT_DIR}/docs/demos/breakglass-cli-flow.cast}"
+RECORDING_FILE="${BREAKGLASS_CLI_DEMO_RECORDING:-${ROOT_DIR}/docs/demos/breakglass-user-flow.cast}"
 BGCTL_BIN="${BGCTL_BIN:-${ROOT_DIR}/bin/bgctl}"
 
 API_BASE="${BREAKGLASS_API_URL:-http://localhost:8080}"
@@ -179,7 +179,8 @@ run_demo() {
       approvers: .spec.approvers
     }]' <<<"$escalations"
 
-  printf '\n%s\n' '3. kubectl shows requester identity and access before approval'
+  printf '\n%s\n' '3. kubectl shows the requester identity and access before approval'
+  printf '%s\n' 'The Kubernetes identity is still ops-gamma@example.com; Breakglass changes authorization only after approval.'
   printf '%s\n' '$ kubectl auth whoami --as=ops-gamma@example.com --as-group=ops'
   run_kubectl auth whoami \
     --as=ops-gamma@example.com \
@@ -230,6 +231,7 @@ run_demo() {
       '[.[] | select(.metadata.name == $name) | {name: .metadata.name, state: .status.state}]'
 
   printf '\n%s\n' '7. kubectl sees the newly granted API access'
+  printf '%s\n' 'The same identity now uses the approved Breakglass group for a Kubernetes API request.'
   printf '%s\n' '$ kubectl auth can-i get configmaps --as=ops-gamma@example.com --as-group=breakglass-emergency-admin'
   run_kubectl auth can-i get configmaps \
     --namespace default \
@@ -282,7 +284,7 @@ run_demo() {
     expiresAt: .status.expiresAt
   }' <<<"$debug_output"
 
-  printf '\n%s\n' '10. kubectl uses the spawned debug pod for tcpdump diagnostics'
+  printf '\n%s\n' '10. kubectl finds the spawned debug pod'
   debug_pod_name=
   for _ in $(seq 1 90); do
     debug_pod_name="$(
@@ -298,15 +300,35 @@ run_demo() {
     sleep 2
   done
   [[ -n "$debug_pod_name" ]] || die "debug pod did not reach Running state"
+  printf '%s\n' "\$ kubectl get pods -n ${DEBUG_NAMESPACE} -l breakglass.telekom.com/debug-session=${DEBUG_SESSION_NAME}"
+  run_kubectl get pods \
+    --namespace "$DEBUG_NAMESPACE" \
+    --selector "breakglass.telekom.com/debug-session=${DEBUG_SESSION_NAME}" \
+    --field-selector=status.phase=Running \
+    --as=ops-gamma@example.com \
+    --as-group=ops \
+    --as-group="$GROUP_NAME" \
+    --as-group=system:authenticated \
+    -o custom-columns='NAME:.metadata.name,READY:.status.containerStatuses[0].ready,STATUS:.status.phase'
+  printf '\n%s\n' '11. kubectl uses the spawned debug pod for tcpdump diagnostics'
+  printf '%s\n' 'The debug pod is a controlled netshoot workload created by DebugSession.'
   printf '%s\n' "\$ kubectl exec -n ${DEBUG_NAMESPACE} ${debug_pod_name} -- tcpdump --version"
   run_kubectl exec \
     --namespace "$DEBUG_NAMESPACE" \
     "$debug_pod_name" \
+    --as=ops-gamma@example.com \
+    --as-group=ops \
+    --as-group="$GROUP_NAME" \
+    --as-group=system:authenticated \
     -- tcpdump --version | head -n 2
   printf '%s\n' "\$ kubectl exec -n ${DEBUG_NAMESPACE} ${debug_pod_name} -- tcpdump -D"
   run_kubectl exec \
     --namespace "$DEBUG_NAMESPACE" \
     "$debug_pod_name" \
+    --as=ops-gamma@example.com \
+    --as-group=ops \
+    --as-group="$GROUP_NAME" \
+    --as-group=system:authenticated \
     -- tcpdump -D | head -n 8
 
   printf '\n%s\n' 'CLI demo complete. Temporary sessions are cleaned up after recording.'

@@ -4,9 +4,9 @@ The demo set contains three user-facing E2E recordings:
 
 | Recording | Format | Focus |
 | --- | --- | --- |
-| [`breakglass-cli-flow.cast`](./breakglass-cli-flow.cast) | asciinema | `bgctl`, `kubectl auth whoami`, API access, and `tcpdump` in the spawned debug pod |
+| [`breakglass-user-flow.cast`](./breakglass-user-flow.cast) | asciinema | `bgctl`, `kubectl auth whoami`, API access, and `tcpdump` in the spawned debug pod |
 | [`breakglass-ui-flow.webm`](./breakglass-ui-flow.webm) | WebM | Browser request, approval, approved-session view, and DebugSession workflow |
-| [`breakglass-user-flow.cast`](./breakglass-user-flow.cast) | asciinema | REST API, authorization webhook, and DenyPolicy behavior |
+| [`breakglass-api-flow.cast`](./breakglass-api-flow.cast) | asciinema | REST API, authorization webhook, and DenyPolicy behavior |
 
 The API/webhook recording covers:
 
@@ -26,8 +26,8 @@ and bearer tokens are kept out of terminal output and are not captured.
 ## Play the CLI/API recordings
 
 ```bash
-asciinema play docs/demos/breakglass-cli-flow.cast
 asciinema play docs/demos/breakglass-user-flow.cast
+asciinema play docs/demos/breakglass-api-flow.cast
 ```
 
 ## Re-record the CLI/API recordings
