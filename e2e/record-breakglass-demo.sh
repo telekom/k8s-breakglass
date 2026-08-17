@@ -24,6 +24,7 @@ APPROVER_PASSWORD=complete-flow-approver-password
 APPROVER_EMAIL=complete-flow-approver@example.com
 DEBUG_USERNAME=test-user
 DEBUG_PASSWORD=test-password
+DEMO_PAUSE="${BREAKGLASS_DEMO_PAUSE:-2}"
 
 API_BASE=
 WEBHOOK_BASE=
@@ -38,6 +39,12 @@ DEBUG_SESSION_NAME=
 die() {
   printf 'demo: %s\n' "$*" >&2
   exit 1
+}
+
+step() {
+  printf '\n%s\n' "$1"
+  printf 'What this proves: %s\n' "$2"
+  sleep "$DEMO_PAUSE"
 }
 
 load_e2e_environment() {
@@ -275,15 +282,21 @@ run_demo() {
   printf '%s\n' 'Breakglass user journey'
   printf '%s\n' 'E2E cluster: tenant-a | API: http://localhost:8080'
   printf '%s\n' 'Credentials are held in memory and are not printed.'
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '1. A protected request is denied before approval'
+  step \
+    '1. A protected request is denied before approval' \
+    'The authorization webhook fails closed until the requester has an approved session.'
   printf '%s\n' '$ POST /api/breakglass/webhook/authorize/tenant-a (get configmaps)'
   webhook_request get configmaps
   expect_status 200
   printf 'HTTP %s\n' "$LAST_STATUS"
   jq '{allowed: .status.allowed, reason: .status.reason}' <<<"$LAST_BODY"
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '2. The requester discovers an available escalation'
+  step \
+    '2. The requester discovers an available escalation' \
+    'The REST API lists only ready escalations matching the requester and target cluster.'
   printf '%s\n' '$ GET /api/breakglassEscalations?activeOnly=true&cluster=tenant-a'
   api_request "$REQUESTER_TOKEN" GET \
     "/api/breakglassEscalations?activeOnly=true&cluster=${CLUSTER_NAME}"
@@ -296,8 +309,11 @@ run_demo() {
       maxValidFor: .spec.maxValidFor,
       approvalTimeout: .spec.approvalTimeout
     }]}' <<<"$LAST_BODY"
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '3. The requester creates a temporary access request'
+  step \
+    '3. The requester creates a temporary access request' \
+    'The API records the target, requested group, incident reason, and pending state.'
   printf '%s\n' '$ POST /api/breakglassSessions'
   session_payload="$(jq -n \
     --arg cluster "$CLUSTER_NAME" \
@@ -316,8 +332,11 @@ run_demo() {
     <<<"$LAST_BODY"
   SESSION_NAME="$(jq -er '.metadata.name' <<<"$LAST_BODY")"
   wait_for_breakglass_state Pending
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '4. An authorized approver approves the request'
+  step \
+    '4. An authorized approver approves the request' \
+    'The approver API call transitions the session to Approved and records the approver.'
   printf '%s\n' '$ POST /api/breakglassSessions/{name}/approve'
   approval_payload='{"reason":"INC-DEMO-001 verified; temporary access approved"}'
   api_request "$APPROVER_TOKEN" POST \
@@ -328,22 +347,31 @@ run_demo() {
   jq '{name: .metadata.name, state: .status.state, approver: .status.approver}' \
     <<<"$LAST_BODY"
   wait_for_breakglass_state Approved
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '5. The same protected request is now allowed'
+  step \
+    '5. The same protected request is now allowed' \
+    'The webhook recognizes the approved temporary group and allows the Kubernetes request.'
   printf '%s\n' '$ POST /api/breakglass/webhook/authorize/tenant-a (get configmaps)'
   webhook_request get configmaps
   expect_status 200
   printf 'HTTP %s\n' "$LAST_STATUS"
   jq '{allowed: .status.allowed, reason: .status.reason}' <<<"$LAST_BODY"
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '6. Explicit deny policy still overrides an active session'
+  step \
+    '6. Explicit deny policy still overrides an active session' \
+    'DenyPolicy precedence remains enforced even when the BreakglassSession is active.'
   printf '%s\n' '$ POST /api/breakglass/webhook/authorize/tenant-a (get secrets)'
   webhook_request get secrets
   expect_status 200
   printf 'HTTP %s\n' "$LAST_STATUS"
   jq '{allowed: .status.allowed, reason: .status.reason}' <<<"$LAST_BODY"
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '7. The requester reads the approved session through the REST API'
+  step \
+    '7. The requester reads the approved session through the REST API' \
+    'The session detail API exposes state, requester, granted group, and expiry for auditability.'
   printf '%s\n' '$ GET /api/breakglassSessions/{name}'
   api_request "$REQUESTER_TOKEN" GET \
     "/api/breakglassSessions/${SESSION_NAME}?namespace=${NAMESPACE}"
@@ -356,8 +384,11 @@ run_demo() {
     grantedGroup: .spec.grantedGroup,
     expiresAt: .status.expiresAt
   }' <<<"$LAST_BODY"
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '8. A developer discovers debug-session templates'
+  step \
+    '8. A developer discovers debug-session templates' \
+    'The template API exposes the permitted debug mode, namespace, and duration constraints.'
   printf '%s\n' '$ GET /api/debugSessions/templates'
   api_request "$DEBUG_TOKEN" GET /api/debugSessions/templates
   expect_status 200
@@ -368,8 +399,11 @@ run_demo() {
     requiresApproval,
     targetNamespace
   }]}' <<<"$LAST_BODY"
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '9. The developer creates a temporary DebugSession'
+  step \
+    '9. The developer creates a temporary DebugSession' \
+    'The API creates a controlled debug workload request with a bounded duration.'
   printf '%s\n' '$ POST /api/debugSessions'
   debug_payload="$(jq -n \
     '{
@@ -391,8 +425,11 @@ run_demo() {
   }' <<<"$LAST_BODY"
   DEBUG_SESSION_NAME="$(jq -er '.metadata.name' <<<"$LAST_BODY")"
   wait_for_debug_state Active
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '10. The active DebugSession is available through the REST API'
+  step \
+    '10. The active DebugSession is available through the REST API' \
+    'The detail API reports the active state, target cluster, namespace, and expiry.'
   printf '%s\n' '$ GET /api/debugSessions/{name}'
   printf 'HTTP %s\n' "$LAST_STATUS"
   jq '{
@@ -404,6 +441,7 @@ run_demo() {
     targetNamespace: .spec.targetNamespace,
     expiresAt: .status.expiresAt
   }' <<<"$LAST_BODY"
+  sleep "$DEMO_PAUSE"
 
   printf '\n%s\n' 'Demo complete. Temporary sessions are cleaned up after recording.'
 }
@@ -429,7 +467,7 @@ main() {
     --return \
     --overwrite \
     --window-size 110x34 \
-    --idle-time-limit 1 \
+    --idle-time-limit 3 \
     --title "Breakglass user journey: deny, approve, API access, DebugSession" \
     --command "$PLAY_SCRIPT --play" \
     "$RECORDING_FILE"

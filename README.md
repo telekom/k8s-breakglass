@@ -31,11 +31,11 @@ The repository includes real E2E recordings of the Breakglass user journey:
 | Perspective | Recording |
 | --- | --- |
 | CLI, `kubectl` identity/API access, and debug-pod `tcpdump` | [Play/download asciinema cast](./docs/demos/breakglass-user-flow.cast) |
-| Browser UI request, approval, and DebugSession workflow | [Watch/download WebM](./docs/demos/breakglass-ui-flow.webm) |
+| Browser UI plus narrated `kubectl` console for request, approval, and DebugSession workflow | [Watch/download WebM](./docs/demos/breakglass-ui-flow.webm) |
 | REST API and authorization webhook details | [Play/download asciinema cast](./docs/demos/breakglass-api-flow.cast) |
 
 <video controls width="960" src="./docs/demos/breakglass-ui-flow.webm">
-  Browser UI request, approval, and DebugSession recording.
+  Browser UI plus narrated kubectl console recording.
 </video>
 
 ```bash

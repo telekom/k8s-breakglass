@@ -34,6 +34,41 @@ interface DebugSessionListResponse {
 
 const videoDir = resolve(process.env.BREAKGLASS_UI_VIDEO_DIR || "test-results/ui-recording-segments");
 const segmentsFile = resolve(process.env.BREAKGLASS_UI_SEGMENTS_FILE || `${videoDir}/segments.txt`);
+const recordingPauseMs = Number(process.env.BREAKGLASS_RECORD_UI_PAUSE_MS || 2000);
+
+async function showExplainer(page: Page, title: string, explanation: string): Promise<void> {
+  await page.evaluate(
+    ({ title: bannerTitle, explanation: bannerExplanation }) => {
+      const id = "breakglass-recording-explainer";
+      let banner = document.getElementById(id);
+      if (!banner) {
+        banner = document.createElement("div");
+        banner.id = id;
+        Object.assign(banner.style, {
+          position: "fixed",
+          right: "24px",
+          bottom: "24px",
+          left: "24px",
+          zIndex: "2147483647",
+          padding: "14px 18px",
+          border: "2px solid #e20074",
+          borderRadius: "8px",
+          background: "#171717",
+          color: "#ffffff",
+          fontFamily: "system-ui, sans-serif",
+          fontSize: "16px",
+          lineHeight: "1.35",
+          boxShadow: "0 4px 18px rgba(0, 0, 0, 0.35)",
+          pointerEvents: "none",
+        });
+        document.body.appendChild(banner);
+      }
+      banner.textContent = `${bannerTitle}: ${bannerExplanation}`;
+    },
+    { title, explanation },
+  );
+  await page.waitForTimeout(recordingPauseMs);
+}
 
 async function loginViaUi(page: Page, user: TestUser): Promise<void> {
   await page.goto("/");
@@ -157,6 +192,11 @@ test.describe("Breakglass UI recording", () => {
       });
       expect(escalationCard).not.toBeNull();
       if (!escalationCard) return;
+      await showExplainer(
+        requesterPage,
+        "Step 1 - Requester",
+        "Choose the escalation and submit a reason for temporary access.",
+      );
       await escalationCard.locator('[data-testid="request-access-button"]').click();
       await waitForScaleModal(requesterPage, '[data-testid="request-modal"]');
       await fillScaleTextarea(
@@ -171,7 +211,11 @@ test.describe("Breakglass UI recording", () => {
       await expect(requesterPage.locator('[data-testid-generic="pending-request-card"]').first()).toBeVisible({
         timeout: 30_000,
       });
-      await requesterPage.waitForTimeout(1000);
+      await showExplainer(
+        requesterPage,
+        "Step 1 - Pending",
+        "The request is recorded and waits for an authorized approver.",
+      );
       await closeSegment(requesterContext, requesterPage, "requester-pending");
       requesterContext = undefined;
       requesterPage = undefined;
@@ -185,6 +229,11 @@ test.describe("Breakglass UI recording", () => {
       await loginViaUi(approverPage, TEST_USERS.uiE2eApprover);
       await approverPage.goto("/approvals/pending");
       await approverPage.waitForLoadState("networkidle");
+      await showExplainer(
+        approverPage,
+        "Step 2 - Approver",
+        "Review the requester, reason, target cluster, and expiry before approving.",
+      );
       const targetCard = approverPage
         .locator('[data-testid^="pending-session-card-"]')
         .filter({ hasText: TEST_USERS.uiE2eReqSession.email })
@@ -202,7 +251,7 @@ test.describe("Breakglass UI recording", () => {
       }
       await approverPage.locator('[data-testid="approve-button"]').click();
       await waitForScaleToast(approverPage, "success-toast");
-      await approverPage.waitForTimeout(1000);
+      await showExplainer(approverPage, "Step 2 - Approved", "The approver action changes the session to Approved.");
       await closeSegment(approverContext, approverPage, "approver-approval");
       approverContext = undefined;
       approverPage = undefined;
@@ -221,7 +270,11 @@ test.describe("Breakglass UI recording", () => {
         .filter({ hasText: TEST_USERS.uiE2eReqSession.email })
         .first();
       await expect(approvedRow).toContainText(/approved/i, { timeout: 30_000 });
-      await finalRequesterPage.waitForTimeout(1000);
+      await showExplainer(
+        finalRequesterPage,
+        "Step 3 - Granted",
+        "The requester can now see the approved, time-bounded access session.",
+      );
       await cleanupOwnBreakglassSessions(finalRequesterPage);
       await closeSegment(finalRequesterContext, finalRequesterPage, "requester-approved");
       finalRequesterContext = undefined;
@@ -238,6 +291,11 @@ test.describe("Breakglass UI recording", () => {
       await debugPage.goto("/debug-sessions/create");
       await debugPage.waitForLoadState("networkidle");
       await expect(debugPage.locator('[data-testid="template-select"]')).toBeVisible({ timeout: 20_000 });
+      await showExplainer(
+        debugPage,
+        "Step 4 - DebugSession",
+        "Select a controlled debug template, cluster, namespace, and reason.",
+      );
       const templateSelect = debugPage.locator('[data-testid="template-select"]');
       await templateSelect.click();
       await templateSelect.press("ArrowDown");
@@ -257,7 +315,11 @@ test.describe("Breakglass UI recording", () => {
         .filter({ hasText: /Active/ })
         .first();
       await expect(activeCard).toBeVisible({ timeout: 90_000 });
-      await debugPage.waitForTimeout(1000);
+      await showExplainer(
+        debugPage,
+        "Step 4 - Active",
+        "The DebugSession pod is active and ready for controlled diagnostics.",
+      );
       const terminateButton = activeCard.locator('[data-testid="terminate-button"]');
       if (await terminateButton.isVisible().catch(() => false)) {
         await terminateButton.click();

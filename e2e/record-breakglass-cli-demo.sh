@@ -23,6 +23,7 @@ APPROVER_PASSWORD=approver-security-password
 CLUSTER_NAME=breakglass-hub
 GROUP_NAME=breakglass-emergency-admin
 DEBUG_TEMPLATE=breakglass-dev-debug-template
+DEMO_PAUSE="${BREAKGLASS_DEMO_PAUSE:-2}"
 
 REQUESTER_TOKEN=
 APPROVER_TOKEN=
@@ -32,6 +33,12 @@ DEBUG_SESSION_NAME=
 die() {
   printf 'cli-demo: %s\n' "$*" >&2
   exit 1
+}
+
+step() {
+  printf '\n%s\n' "$1"
+  printf 'What this proves: %s\n' "$2"
+  sleep "$DEMO_PAUSE"
 }
 
 require_commands() {
@@ -154,8 +161,11 @@ run_demo() {
   printf '%s\n' 'Breakglass CLI user journey'
   printf '%s\n' 'CLI: bgctl | API: http://localhost:8080 | Cluster: breakglass-hub'
   printf '%s\n' 'Credentials are held in memory and are not printed.'
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '1. CLI rejects an unauthorized escalation request'
+  step \
+    '1. CLI rejects an unauthorized escalation request' \
+    'The API refuses a group that this requester is not allowed to request.'
   printf '%s\n' '$ bgctl session request --cluster breakglass-hub --group cluster-admin-access'
   if denied_output="$(
     run_as_requester session request \
@@ -167,8 +177,11 @@ run_demo() {
   else
     printf '%s\n' "$denied_output" | sed -n '1p'
   fi
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '2. Requester lists available escalation policies'
+  step \
+    '2. Requester lists available escalation policies' \
+    'The requester can discover the approved escalation, target clusters, and approver groups.'
   printf '%s\n' '$ bgctl escalation list -o json'
   escalations="$(run_as_requester escalation list -o json)"
   jq --arg group "$GROUP_NAME" \
@@ -178,8 +191,11 @@ run_demo() {
       clusters: .spec.allowed.clusters,
       approvers: .spec.approvers
     }]' <<<"$escalations"
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '3. kubectl shows the requester identity and access before approval'
+  step \
+    '3. kubectl shows the requester identity and access before approval' \
+    'The Kubernetes identity is ops-gamma@example.com, but temporary access is not active yet.'
   printf '%s\n' 'The Kubernetes identity is still ops-gamma@example.com; Breakglass changes authorization only after approval.'
   printf '%s\n' '$ kubectl auth whoami --as=ops-gamma@example.com --as-group=ops'
   run_kubectl auth whoami \
@@ -193,8 +209,11 @@ run_demo() {
     --as=ops-gamma@example.com \
     --as-group=ops \
     --as-group=system:authenticated 2>/dev/null || true
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '4. Requester creates a temporary session'
+  step \
+    '4. Requester creates a temporary session' \
+    'bgctl submits a time-bounded BreakglassSession request with an incident reason.'
   printf '%s\n' '$ bgctl session request --cluster breakglass-hub --group breakglass-emergency-admin'
   session_output="$(
     run_as_requester session request \
@@ -207,15 +226,21 @@ run_demo() {
   jq '{name: .metadata.name, state: .status.state, cluster: .spec.cluster, group: .spec.grantedGroup}' \
     <<<"$session_output"
   wait_for_session_state Pending
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '5. Approver approves the session'
+  step \
+    '5. Approver approves the session' \
+    'A separate approver confirms the incident and activates the temporary grant.'
   printf '%s\n' '$ bgctl session approve SESSION_NAME --reason "Approved for incident response"'
   run_as_approver session approve "$SESSION_NAME" \
     --reason "INC-CLI-DEMO-001 verified; approved for incident response" >/dev/null
   wait_for_session_state Approved
   printf '%s\n' 'Approval command completed: state=Approved'
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '6. Requester reads the active session and lists it'
+  step \
+    '6. Requester reads the active session and lists it' \
+    'The requester can inspect the approver, expiry, granted group, and active session list.'
   printf '%s\n' '$ bgctl session get SESSION_NAME -o json'
   session_output="$(run_as_requester session get "$SESSION_NAME" -o json)"
   jq '{
@@ -229,9 +254,11 @@ run_demo() {
   run_as_requester session list --mine -o json |
     jq --arg name "$SESSION_NAME" \
       '[.[] | select(.metadata.name == $name) | {name: .metadata.name, state: .status.state}]'
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '7. kubectl sees the newly granted API access'
-  printf '%s\n' 'The same identity now uses the approved Breakglass group for a Kubernetes API request.'
+  step \
+    '7. kubectl sees the newly granted API access' \
+    'The same identity now uses the approved Breakglass group for a Kubernetes API request.'
   printf '%s\n' '$ kubectl auth can-i get configmaps --as=ops-gamma@example.com --as-group=breakglass-emergency-admin'
   run_kubectl auth can-i get configmaps \
     --namespace default \
@@ -248,14 +275,20 @@ run_demo() {
     --as-group=system:authenticated \
     --ignore-not-found \
     -o name | head -10
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '8. Requester discovers debug templates'
+  step \
+    '8. Requester discovers debug templates' \
+    'The developer can see the permitted DebugSession template, clusters, and constraints.'
   printf '%s\n' '$ bgctl debug template list -o json'
   run_as_requester debug template list -o json |
     jq --arg template "$DEBUG_TEMPLATE" \
       '[.[] | select(.name == $template) | {name, displayName, requiresApproval, allowedClusters, allowedGroups}]'
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '9. Requester creates and observes a DebugSession'
+  step \
+    '9. Requester creates and observes a DebugSession' \
+    'bgctl requests a controlled debug workload in the breakglass-debug namespace.'
   printf '%s\n' '$ bgctl debug session create --template breakglass-dev-debug-template --cluster breakglass-hub'
   debug_output="$(
     run_as_requester debug session create \
@@ -283,8 +316,11 @@ run_demo() {
     cluster: .spec.cluster,
     expiresAt: .status.expiresAt
   }' <<<"$debug_output"
+  sleep "$DEMO_PAUSE"
 
-  printf '\n%s\n' '10. kubectl finds the spawned debug pod'
+  step \
+    '10. kubectl finds the spawned debug pod' \
+    'The DebugSession controller creates a running pod that can be inspected through the Kubernetes API.'
   debug_pod_name=
   for _ in $(seq 1 90); do
     debug_pod_name="$(
@@ -310,8 +346,11 @@ run_demo() {
     --as-group="$GROUP_NAME" \
     --as-group=system:authenticated \
     -o custom-columns='NAME:.metadata.name,READY:.status.containerStatuses[0].ready,STATUS:.status.phase'
-  printf '\n%s\n' '11. kubectl uses the spawned debug pod for tcpdump diagnostics'
-  printf '%s\n' 'The debug pod is a controlled netshoot workload created by DebugSession.'
+  sleep "$DEMO_PAUSE"
+
+  step \
+    '11. kubectl uses the spawned debug pod for tcpdump diagnostics' \
+    'The controlled netshoot pod provides tcpdump for network troubleshooting without host access.'
   printf '%s\n' "\$ kubectl exec -n ${DEBUG_NAMESPACE} ${debug_pod_name} -- tcpdump --version"
   run_kubectl exec \
     --namespace "$DEBUG_NAMESPACE" \
@@ -330,6 +369,7 @@ run_demo() {
     --as-group="$GROUP_NAME" \
     --as-group=system:authenticated \
     -- tcpdump -D | head -n 8
+  sleep "$DEMO_PAUSE"
 
   printf '\n%s\n' 'CLI demo complete. Temporary sessions are cleaned up after recording.'
 }
@@ -351,7 +391,7 @@ main() {
     --return \
     --overwrite \
     --window-size 110x34 \
-    --idle-time-limit 1 \
+    --idle-time-limit 3 \
     --title "Breakglass CLI user journey" \
     --command "$PLAY_SCRIPT --play" \
     "$RECORDING_FILE"

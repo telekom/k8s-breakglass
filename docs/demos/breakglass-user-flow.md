@@ -5,7 +5,7 @@ The demo set contains three user-facing E2E recordings:
 | Recording | Format | Focus |
 | --- | --- | --- |
 | [`breakglass-user-flow.cast`](./breakglass-user-flow.cast) | asciinema | `bgctl`, `kubectl auth whoami`, API access, and `tcpdump` in the spawned debug pod |
-| [`breakglass-ui-flow.webm`](./breakglass-ui-flow.webm) | WebM | Browser request, approval, approved-session view, and DebugSession workflow |
+| [`breakglass-ui-flow.webm`](./breakglass-ui-flow.webm) | WebM | Browser request/approval/DebugSession workflow beside a narrated `kubectl` console |
 | [`breakglass-api-flow.cast`](./breakglass-api-flow.cast) | asciinema | REST API, authorization webhook, and DenyPolicy behavior |
 
 The API/webhook recording covers:
@@ -52,9 +52,10 @@ OIDC token.
 ./e2e/record-breakglass-ui-demo.sh
 ```
 
-The UI runner uses the real Keycloak-backed Playwright E2E flow and concatenates
-the requester, approver, approved-session, and DebugSession browser segments
-into `docs/demos/breakglass-ui-flow.webm`.
+The UI runner uses the real Keycloak-backed Playwright E2E flow, adds visible
+step explainers to the browser segments, slows playback to 0.5x, and places the
+narrated primary asciinema console beside the browser in
+`docs/demos/breakglass-ui-flow.webm`.
 
 If the forwards are not already running, select the E2E Kind context and start
 the repository helper first:
@@ -65,4 +66,6 @@ kubectl config use-context kind-breakglass-hub
 ```
 
 Set `KUBECTL_CONTEXT`, `BREAKGLASS_DEMO_RECORDING`, `BREAKGLASS_CLI_DEMO_RECORDING`,
-or `BREAKGLASS_UI_DEMO_RECORDING` to override the defaults.
+`BREAKGLASS_UI_DEMO_RECORDING`, `BREAKGLASS_DEMO_PAUSE`,
+`BREAKGLASS_RECORD_UI_PAUSE_MS`, or `BREAKGLASS_UI_SLOWDOWN` to override the
+defaults.
