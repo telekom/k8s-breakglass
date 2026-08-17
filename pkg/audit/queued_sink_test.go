@@ -181,27 +181,20 @@ func TestQueuedSink_CircuitBreaker(t *testing.T) {
 		_ = qs.Write(ctx, event)
 	}
 
-	// Wait for processing and circuit to open
-	time.Sleep(200 * time.Millisecond)
-
-	// Circuit should be open
-	health := qs.Health()
-	assert.True(t, health.CircuitOpen, "Circuit breaker should be open after failures")
-	assert.GreaterOrEqual(t, health.ConsecutiveFails, 3)
-
-	// Wait for reset time and send another event
-	time.Sleep(150 * time.Millisecond)
+	// Wait for processing and circuit to open.
+	require.Eventually(t, func() bool {
+		health := qs.Health()
+		return health.CircuitOpen && health.ConsecutiveFails >= 3
+	}, 5*time.Second, 10*time.Millisecond, "circuit breaker should open after failures")
 
 	// Now allow writes to succeed
 	mock.failAfter = 1000 // Won't fail anymore
 
-	// Write should attempt to close circuit
-	_ = qs.Write(ctx, &Event{ID: "retry", Type: EventSessionRequested})
-	time.Sleep(100 * time.Millisecond)
-
-	health = qs.Health()
-	// Circuit should be attempting to close or closed
-	// (may vary based on timing)
+	// Keep attempting the write until the reset closes the circuit.
+	require.Eventually(t, func() bool {
+		_ = qs.Write(ctx, &Event{ID: "retry", Type: EventSessionRequested})
+		return !qs.Health().CircuitOpen
+	}, 5*time.Second, 10*time.Millisecond, "circuit breaker should reset")
 }
 
 func TestIsolatedMultiSink_Independence(t *testing.T) {
