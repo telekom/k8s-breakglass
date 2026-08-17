@@ -178,8 +178,8 @@ test.describe("Breakglass UI recording", () => {
     try {
       requesterContext = await browser.newContext({
         ignoreHTTPSErrors: true,
-        viewport: { width: 1280, height: 720 },
-        recordVideo: { dir: videoDir, size: { width: 1280, height: 720 } },
+        viewport: { width: 1024, height: 768 },
+        recordVideo: { dir: videoDir, size: { width: 1024, height: 768 } },
       });
       requesterPage = await requesterContext.newPage();
       await loginViaUi(requesterPage, TEST_USERS.uiE2eReqSession);
@@ -222,8 +222,8 @@ test.describe("Breakglass UI recording", () => {
 
       approverContext = await browser.newContext({
         ignoreHTTPSErrors: true,
-        viewport: { width: 1280, height: 720 },
-        recordVideo: { dir: videoDir, size: { width: 1280, height: 720 } },
+        viewport: { width: 1024, height: 768 },
+        recordVideo: { dir: videoDir, size: { width: 1024, height: 768 } },
       });
       approverPage = await approverContext.newPage();
       await loginViaUi(approverPage, TEST_USERS.uiE2eApprover);
@@ -258,8 +258,8 @@ test.describe("Breakglass UI recording", () => {
 
       finalRequesterContext = await browser.newContext({
         ignoreHTTPSErrors: true,
-        viewport: { width: 1280, height: 720 },
-        recordVideo: { dir: videoDir, size: { width: 1280, height: 720 } },
+        viewport: { width: 1024, height: 768 },
+        recordVideo: { dir: videoDir, size: { width: 1024, height: 768 } },
       });
       finalRequesterPage = await finalRequesterContext.newPage();
       await loginViaUi(finalRequesterPage, TEST_USERS.uiE2eReqSession);
@@ -282,8 +282,8 @@ test.describe("Breakglass UI recording", () => {
 
       debugContext = await browser.newContext({
         ignoreHTTPSErrors: true,
-        viewport: { width: 1280, height: 720 },
-        recordVideo: { dir: videoDir, size: { width: 1280, height: 720 } },
+        viewport: { width: 1024, height: 768 },
+        recordVideo: { dir: videoDir, size: { width: 1024, height: 768 } },
       });
       debugPage = await debugContext.newPage();
       await loginViaUi(debugPage, TEST_USERS.requester);

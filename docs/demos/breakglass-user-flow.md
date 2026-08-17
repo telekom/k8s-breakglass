@@ -5,7 +5,10 @@ The demo set contains three user-facing E2E recordings:
 | Recording | Format | Focus |
 | --- | --- | --- |
 | [`breakglass-user-flow.cast`](./breakglass-user-flow.cast) | asciinema | `bgctl`, `kubectl auth whoami`, API access, and `tcpdump` in the spawned debug pod |
-| [`breakglass-ui-flow.webm`](./breakglass-ui-flow.webm) | WebM | Browser request/approval/DebugSession workflow beside a narrated `kubectl` console |
+| [`breakglass-ui-browser-flow.webm`](./breakglass-ui-browser-flow.webm) | WebM | Standalone 4:3 browser request/approval/DebugSession workflow |
+| [`breakglass-console-flow.cast`](./breakglass-console-flow.cast) | asciinema | Synchronized four-chapter `bgctl`/`kubectl` console track |
+| [`breakglass-console-flow.webm`](./breakglass-console-flow.webm) | WebM | Standalone console screen recording |
+| [`breakglass-ui-flow.webm`](./breakglass-ui-flow.webm) | WebM | 4:3 browser workflow synchronized beside the console track |
 | [`breakglass-api-flow.cast`](./breakglass-api-flow.cast) | asciinema | REST API, authorization webhook, and DenyPolicy behavior |
 
 The API/webhook recording covers:
@@ -52,10 +55,10 @@ OIDC token.
 ./e2e/record-breakglass-ui-demo.sh
 ```
 
-The UI runner uses the real Keycloak-backed Playwright E2E flow, adds visible
-step explainers to the browser segments, slows playback to 0.5x, and places the
-narrated primary asciinema console beside the browser in
-`docs/demos/breakglass-ui-flow.webm`.
+The UI runner uses the real Keycloak-backed Playwright E2E flow at a 4:3
+viewport, adds visible step explainers to the browser segments, slows playback
+to 0.5x, and produces standalone browser and console recordings plus a
+chapter-synchronized composite without letterboxing.
 
 If the forwards are not already running, select the E2E Kind context and start
 the repository helper first:
@@ -67,5 +70,7 @@ kubectl config use-context kind-breakglass-hub
 
 Set `KUBECTL_CONTEXT`, `BREAKGLASS_DEMO_RECORDING`, `BREAKGLASS_CLI_DEMO_RECORDING`,
 `BREAKGLASS_UI_DEMO_RECORDING`, `BREAKGLASS_DEMO_PAUSE`,
-`BREAKGLASS_RECORD_UI_PAUSE_MS`, or `BREAKGLASS_UI_SLOWDOWN` to override the
-defaults.
+`BREAKGLASS_RECORD_UI_PAUSE_MS`, `BREAKGLASS_UI_SLOWDOWN`,
+`BREAKGLASS_UI_BROWSER_RECORDING`, `BREAKGLASS_CONSOLE_DEMO_RECORDING`, or
+`BREAKGLASS_CONSOLE_VIDEO_RECORDING`, or `BREAKGLASS_TERMINAL_SPEED` to
+override the defaults.

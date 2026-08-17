@@ -292,6 +292,7 @@ run_demo() {
   expect_status 200
   printf 'HTTP %s\n' "$LAST_STATUS"
   jq '{allowed: .status.allowed, reason: .status.reason}' <<<"$LAST_BODY"
+  printf '%s\n' 'Before state: no approved session -> webhook denied the request.'
   sleep "$DEMO_PAUSE"
 
   step \
@@ -357,6 +358,7 @@ run_demo() {
   expect_status 200
   printf 'HTTP %s\n' "$LAST_STATUS"
   jq '{allowed: .status.allowed, reason: .status.reason}' <<<"$LAST_BODY"
+  printf '%s\n' 'After state: the same request is now allowed by the approved session.'
   sleep "$DEMO_PAUSE"
 
   step \
@@ -367,6 +369,7 @@ run_demo() {
   expect_status 200
   printf 'HTTP %s\n' "$LAST_STATUS"
   jq '{allowed: .status.allowed, reason: .status.reason}' <<<"$LAST_BODY"
+  printf '%s\n' 'Approved session + matching DenyPolicy -> explicit policy denial still wins.'
   sleep "$DEMO_PAUSE"
 
   step \
@@ -384,6 +387,7 @@ run_demo() {
     grantedGroup: .spec.grantedGroup,
     expiresAt: .status.expiresAt
   }' <<<"$LAST_BODY"
+  printf '%s\n' 'DebugSession transition: created as Pending, then observed as Active.'
   sleep "$DEMO_PAUSE"
 
   step \

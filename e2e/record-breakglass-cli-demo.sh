@@ -203,12 +203,18 @@ run_demo() {
     --as-group=ops \
     --as-group=system:authenticated \
     -o yaml
+  printf '%s\n' '$ kubectl get --raw /version'
+  run_kubectl get --raw /version | jq '{gitVersion, major, minor}'
   printf '%s\n' '$ kubectl auth can-i get configmaps --as=ops-gamma@example.com --as-group=ops'
-  run_kubectl auth can-i get configmaps \
-    --namespace default \
-    --as=ops-gamma@example.com \
-    --as-group=ops \
-    --as-group=system:authenticated 2>/dev/null || true
+  before_access="$(
+    run_kubectl auth can-i get configmaps \
+      --namespace default \
+      --as=ops-gamma@example.com \
+      --as-group=ops \
+      --as-group=system:authenticated 2>/dev/null || true
+  )"
+  printf '%s\n' "$before_access" | awk '{print $1}'
+  printf '%s\n' 'Explanation: no; the requester has no approved temporary grant yet.'
   sleep "$DEMO_PAUSE"
 
   step \
@@ -225,6 +231,7 @@ run_demo() {
   SESSION_NAME="$(jq -er '.metadata.name' <<<"$session_output")"
   jq '{name: .metadata.name, state: .status.state, cluster: .spec.cluster, group: .spec.grantedGroup}' \
     <<<"$session_output"
+  printf '%s\n' 'Before approval: state=Pending, Kubernetes access=not granted.'
   wait_for_session_state Pending
   sleep "$DEMO_PAUSE"
 
@@ -235,6 +242,7 @@ run_demo() {
   run_as_approver session approve "$SESSION_NAME" \
     --reason "INC-CLI-DEMO-001 verified; approved for incident response" >/dev/null
   wait_for_session_state Approved
+  printf '%s\n' 'After approval: state=Approved, Kubernetes access=temporarily granted.'
   printf '%s\n' 'Approval command completed: state=Approved'
   sleep "$DEMO_PAUSE"
 
@@ -275,6 +283,7 @@ run_demo() {
     --as-group=system:authenticated \
     --ignore-not-found \
     -o name | head -10
+  printf '%s\n' 'Authorization transition: can-i no before approval -> can-i yes after approval.'
   sleep "$DEMO_PAUSE"
 
   step \
@@ -316,6 +325,7 @@ run_demo() {
     cluster: .spec.cluster,
     expiresAt: .status.expiresAt
   }' <<<"$debug_output"
+  printf '%s\n' 'DebugSession transition: state=Pending -> state=Active; pod access is now available.'
   sleep "$DEMO_PAUSE"
 
   step \

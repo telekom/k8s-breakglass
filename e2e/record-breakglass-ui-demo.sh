@@ -6,10 +6,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 RECORDING_FILE="${BREAKGLASS_UI_DEMO_RECORDING:-${ROOT_DIR}/docs/demos/breakglass-ui-flow.webm}"
+UI_BROWSER_RECORDING="${BREAKGLASS_UI_BROWSER_RECORDING:-${ROOT_DIR}/docs/demos/breakglass-ui-browser-flow.webm}"
+CONSOLE_CAST="${BREAKGLASS_CONSOLE_DEMO_RECORDING:-${ROOT_DIR}/docs/demos/breakglass-console-flow.cast}"
+CONSOLE_WEBM="${BREAKGLASS_CONSOLE_VIDEO_RECORDING:-${ROOT_DIR}/docs/demos/breakglass-console-flow.webm}"
 TEMP_DIR="$(mktemp -d)"
 VIDEO_DIR="${TEMP_DIR}/segments"
 SEGMENTS_FILE="${TEMP_DIR}/segments.txt"
 UI_SLOWDOWN="${BREAKGLASS_UI_SLOWDOWN:-2}"
+TERMINAL_SPEED="${BREAKGLASS_TERMINAL_SPEED:-0.425}"
 
 cleanup() {
   rm -rf "$TEMP_DIR"
@@ -31,7 +35,7 @@ curl -fsS "${BREAKGLASS_API_URL:-http://localhost:8080}/api/config" >/dev/null |
 }
 
 mkdir -p "$(dirname "$RECORDING_FILE")"
-"$ROOT_DIR/e2e/record-breakglass-cli-demo.sh"
+mkdir -p "$(dirname "$UI_BROWSER_RECORDING")" "$(dirname "$CONSOLE_CAST")" "$(dirname "$CONSOLE_WEBM")"
 (
   cd "$ROOT_DIR/frontend"
   BREAKGLASS_RECORD_UI=true \
@@ -62,9 +66,12 @@ while IFS=$'\t' read -r name path; do
 done <"$SEGMENTS_FILE"
 
 UI_RAW="${TEMP_DIR}/ui-raw.webm"
-UI_SLOW="${TEMP_DIR}/ui-slow.webm"
 TERMINAL_GIF="${TEMP_DIR}/terminal.gif"
-TERMINAL_WEBM="${TEMP_DIR}/terminal.webm"
+
+BREAKGLASS_UI_SEGMENTS_FILE="$SEGMENTS_FILE" \
+  BREAKGLASS_UI_SLOWDOWN="$UI_SLOWDOWN" \
+  BREAKGLASS_SYNC_CONSOLE_CAST="$CONSOLE_CAST" \
+  "$ROOT_DIR/e2e/record-breakglass-sync-console.sh"
 
 ffmpeg -hide_banner -loglevel error -y \
   -f concat \
@@ -80,7 +87,7 @@ ffmpeg -hide_banner -loglevel error -y \
   -c:v libvpx-vp9 \
   -crf 30 \
   -b:v 0 \
-  "$UI_SLOW"
+  "$UI_BROWSER_RECORDING"
 
 agg \
   --quiet \
@@ -89,23 +96,24 @@ agg \
   --rows 32 \
   --font-size 13 \
   --idle-time-limit 5 \
-  "${ROOT_DIR}/docs/demos/breakglass-user-flow.cast" \
+  --speed "$TERMINAL_SPEED" \
+  "$CONSOLE_CAST" \
   "$TERMINAL_GIF"
 
 ffmpeg -hide_banner -loglevel error -y \
   -i "$TERMINAL_GIF" \
-  -vf "fps=20,scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p" \
+  -vf "fps=20,scale=640:480:force_original_aspect_ratio=increase,crop=640:480,setsar=1,format=yuv420p" \
   -an \
   -c:v libvpx-vp9 \
   -crf 30 \
   -b:v 0 \
-  "$TERMINAL_WEBM"
+  "$CONSOLE_WEBM"
 
 ffmpeg -hide_banner -loglevel error -y \
-  -i "$UI_SLOW" \
+  -i "$UI_BROWSER_RECORDING" \
   -stream_loop -1 \
-  -i "$TERMINAL_WEBM" \
-  -filter_complex "[0:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p[ui];[1:v]scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p[terminal];[ui][terminal]hstack=inputs=2:shortest=1,format=yuv420p[video]" \
+  -i "$CONSOLE_WEBM" \
+  -filter_complex "[0:v]scale=640:480:force_original_aspect_ratio=increase,crop=640:480,setsar=1,format=yuv420p[ui];[1:v]scale=640:480:force_original_aspect_ratio=increase,crop=640:480,setsar=1,format=yuv420p[terminal];[ui][terminal]hstack=inputs=2:shortest=1,format=yuv420p[video]" \
   -map "[video]" \
   -an \
   -c:v libvpx-vp9 \
@@ -114,3 +122,6 @@ ffmpeg -hide_banner -loglevel error -y \
   "$RECORDING_FILE"
 
 printf 'Recording written to %s\n' "$RECORDING_FILE"
+printf 'Browser recording written to %s\n' "$UI_BROWSER_RECORDING"
+printf 'Console cast written to %s\n' "$CONSOLE_CAST"
+printf 'Console video written to %s\n' "$CONSOLE_WEBM"
