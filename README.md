@@ -24,6 +24,31 @@
 - **Automatic Cluster Cache Invalidation** - Watches ClusterConfig and kubeconfig Secret changes to refresh connectivity instantly
 - **Rich Prometheus Signals** - API endpoints expose dedicated request/error/duration metrics for fine-grained SLOs
 
+## 🎬 User-flow recordings
+
+The repository includes real E2E recordings of the Breakglass user journey:
+
+| Perspective | Recording |
+| --- | --- |
+| CLI, `kubectl` identity/API access, and debug-pod `tcpdump` | [Play/download asciinema cast](./docs/demos/breakglass-user-flow.cast) |
+| 4:3 browser UI only | [Watch/download WebM](./docs/demos/breakglass-ui-browser-flow.webm) |
+| Synchronized `bgctl`/`kubectl` console only | [Play asciinema](./docs/demos/breakglass-console-flow.cast) · [Watch WebM](./docs/demos/breakglass-console-flow.webm) |
+| 4:3 browser UI plus synchronized console | [Watch/download WebM](./docs/demos/breakglass-ui-flow.webm) |
+| REST API and authorization webhook details | [Play/download asciinema cast](./docs/demos/breakglass-api-flow.cast) |
+
+**CLI recording — inline preview; click it for the full asciinema cast:**
+
+[![Breakglass CLI recording](./docs/demos/breakglass-user-flow.gif)](./docs/demos/breakglass-user-flow.cast)
+
+<video controls width="960" src="./docs/demos/breakglass-ui-flow.webm">
+  Browser UI plus narrated kubectl console recording.
+</video>
+
+```bash
+asciinema play docs/demos/breakglass-user-flow.cast
+asciinema play docs/demos/breakglass-api-flow.cast
+```
+
 ## Architecture
 
 **Components:**

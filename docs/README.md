@@ -53,6 +53,7 @@ Complete documentation for the breakglass privilege escalation system.
 - **[BreakglassSession](./breakglass-session.md)** - Active escalation sessions
 - **[Debug Session](./debug-session.md)** - Debug pod deployments and kubectl debug access
 - **[Debug Session Cluster Bindings](./debug-session-cluster-binding.md)** - Delegate template access to teams and clusters
+- **[Breakglass user-flow recording](./demos/breakglass-user-flow.md)** - Asciinema demo of denial, approval, API access, and DebugSession
 - **[Extra Deploy Variables](./extra-deploy-variables.md)** - User-provided variables for customizable templates
 - **[DenyPolicy](./deny-policy.md)** - Explicit access restrictions
 - **[AuditConfig](./audit-config.md)** - Configure audit sinks (Kafka, webhooks, logs)
