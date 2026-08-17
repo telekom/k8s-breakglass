@@ -36,6 +36,10 @@ The repository includes real E2E recordings of the Breakglass user journey:
 | 4:3 browser UI plus synchronized console | [Watch/download WebM](./docs/demos/breakglass-ui-flow.webm) |
 | REST API and authorization webhook details | [Play/download asciinema cast](./docs/demos/breakglass-api-flow.cast) |
 
+**CLI recording — inline preview; click it for the full asciinema cast:**
+
+[![Breakglass CLI recording](./docs/demos/breakglass-user-flow.gif)](./docs/demos/breakglass-user-flow.cast)
+
 <video controls width="960" src="./docs/demos/breakglass-ui-flow.webm">
   Browser UI plus narrated kubectl console recording.
 </video>

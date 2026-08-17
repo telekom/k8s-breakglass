@@ -232,7 +232,7 @@ test.describe("Breakglass UI recording", () => {
       await showExplainer(
         approverPage,
         "Step 2 - Approver",
-        "Review the requester, reason, target cluster, and expiry before approving.",
+        "Self-approval is blocked; review the requester, reason, target cluster, and expiry before approving.",
       );
       const targetCard = approverPage
         .locator('[data-testid^="pending-session-card-"]')
@@ -324,6 +324,11 @@ test.describe("Breakglass UI recording", () => {
       if (await terminateButton.isVisible().catch(() => false)) {
         await terminateButton.click();
         await waitForScaleToast(debugPage, "success-toast");
+        await showExplainer(
+          debugPage,
+          "Step 4 - Terminated",
+          "Termination revokes the DebugSession and cleans up its controlled workload.",
+        );
       } else {
         await cleanupOwnDebugSessions(debugPage);
       }

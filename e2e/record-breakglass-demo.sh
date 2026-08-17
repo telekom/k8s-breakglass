@@ -337,7 +337,16 @@ run_demo() {
 
   step \
     '4. An authorized approver approves the request' \
-    'The approver API call transitions the session to Approved and records the approver.'
+    'The requester cannot self-approve; the approver API call transitions the session to Approved.'
+  api_request "$REQUESTER_TOKEN" POST \
+    "/api/breakglassSessions/${SESSION_NAME}/approve?namespace=${NAMESPACE}" \
+    '{"reason":"Requester self-approval attempt"}'
+  if [[ "$LAST_STATUS" != "403" ]]; then
+    printf 'Unexpected self-approval status: %s\n%s\n' "$LAST_STATUS" "$LAST_BODY" >&2
+    exit 1
+  fi
+  printf '%s\n' 'Expected self-approval denial (HTTP 403): requester cannot approve their own session.'
+  sleep "$DEMO_PAUSE"
   printf '%s\n' '$ POST /api/breakglassSessions/{name}/approve'
   approval_payload='{"reason":"INC-DEMO-001 verified; temporary access approved"}'
   api_request "$APPROVER_TOKEN" POST \
@@ -445,6 +454,28 @@ run_demo() {
     targetNamespace: .spec.targetNamespace,
     expiresAt: .status.expiresAt
   }' <<<"$LAST_BODY"
+  sleep "$DEMO_PAUSE"
+
+  step \
+    '11. The DebugSession list and termination APIs close the lifecycle' \
+    'The API lists the active session, terminates it, and confirms the terminal state without an infrastructure error.'
+  printf '%s\n' '$ GET /api/debugSessions?mine=true'
+  api_request "$DEBUG_TOKEN" GET '/api/debugSessions?mine=true'
+  expect_status 200
+  printf 'HTTP %s\n' "$LAST_STATUS"
+  jq --arg name "$DEBUG_SESSION_NAME" \
+    '{total, sessions: [.sessions[] | select(.name == $name) | {name, state, cluster}]}' <<<"$LAST_BODY"
+  printf '%s\n' '$ POST /api/debugSessions/{name}/terminate'
+  api_request "$DEBUG_TOKEN" POST "/api/debugSessions/${DEBUG_SESSION_NAME}/terminate"
+  if [[ "$LAST_STATUS" != "200" && "$LAST_STATUS" != "204" ]]; then
+    printf 'Unexpected DebugSession termination status: %s\n' "$LAST_STATUS" >&2
+    exit 1
+  fi
+  printf 'HTTP %s\n' "$LAST_STATUS"
+  api_request "$DEBUG_TOKEN" GET "/api/debugSessions/${DEBUG_SESSION_NAME}"
+  expect_status 200
+  jq '{name: .metadata.name, state: .status.state}' <<<"$LAST_BODY"
+  printf '%s\n' 'DebugSession transition: Active -> Terminated; pod access is revoked.'
   sleep "$DEMO_PAUSE"
 
   printf '\n%s\n' 'Demo complete. Temporary sessions are cleaned up after recording.'

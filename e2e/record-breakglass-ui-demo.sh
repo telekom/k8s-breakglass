@@ -14,9 +14,14 @@ VIDEO_DIR="${TEMP_DIR}/segments"
 SEGMENTS_FILE="${TEMP_DIR}/segments.txt"
 UI_SLOWDOWN="${BREAKGLASS_UI_SLOWDOWN:-2}"
 TERMINAL_SPEED="${BREAKGLASS_TERMINAL_SPEED:-0.425}"
+KEEP_TEMP="${BREAKGLASS_UI_KEEP_TEMP:-false}"
 
 cleanup() {
-  rm -rf "$TEMP_DIR"
+  if [[ "$KEEP_TEMP" == "true" ]]; then
+    printf 'ui-demo temporary artifacts retained at %s\n' "$TEMP_DIR" >&2
+  else
+    rm -rf "$TEMP_DIR"
+  fi
 }
 trap cleanup EXIT
 
@@ -109,16 +114,85 @@ ffmpeg -hide_banner -loglevel error -y \
   -b:v 0 \
   "$CONSOLE_WEBM"
 
+PAIR_DIR="${TEMP_DIR}/pairs"
+PAIR_LIST="${TEMP_DIR}/pairs.txt"
+TERMINAL_PAIR_LIST="${TEMP_DIR}/terminal-pairs.txt"
+mkdir -p "$PAIR_DIR"
+: >"$PAIR_LIST"
+: >"$TERMINAL_PAIR_LIST"
+terminal_offset=0
+segment_index=0
+while IFS=$'\t' read -r name path; do
+  raw_duration="$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$path")"
+  segment_duration="$(python3 - "$raw_duration" "$UI_SLOWDOWN" <<'PY'
+import sys
+
+print(float(sys.argv[1]) * float(sys.argv[2]))
+PY
+)"
+  ui_segment="${PAIR_DIR}/${segment_index}-ui.webm"
+  terminal_segment="${PAIR_DIR}/${segment_index}-terminal.webm"
+  pair_segment="${PAIR_DIR}/${segment_index}-pair.webm"
+
+  ffmpeg -hide_banner -loglevel error -y \
+    -nostdin \
+    -i "$path" \
+    -vf "setpts=${UI_SLOWDOWN}*PTS,scale=640:480:force_original_aspect_ratio=increase,crop=640:480,setsar=1,format=yuv420p" \
+    -t "$segment_duration" \
+    -an \
+    -c:v libvpx-vp9 \
+    -crf 30 \
+    -b:v 0 \
+    "$ui_segment"
+
+  ffmpeg -hide_banner -loglevel error -y \
+    -nostdin \
+    -ss "$terminal_offset" \
+    -i "$CONSOLE_WEBM" \
+    -t "$segment_duration" \
+    -vf "scale=640:480:force_original_aspect_ratio=increase,crop=640:480,setsar=1,format=yuv420p,tpad=stop_mode=clone:stop_duration=2" \
+    -an \
+    -c:v libvpx-vp9 \
+    -crf 30 \
+    -b:v 0 \
+    "$terminal_segment"
+
+  ffmpeg -hide_banner -loglevel error -y \
+    -nostdin \
+    -i "$ui_segment" \
+    -i "$terminal_segment" \
+    -t "$segment_duration" \
+    -filter_complex "[0:v][1:v]hstack=inputs=2,format=yuv420p[video]" \
+    -map "[video]" \
+    -an \
+    -c:v libvpx-vp9 \
+    -crf 30 \
+    -b:v 0 \
+    "$pair_segment"
+
+  printf "file '%s'\n" "$pair_segment" >>"$PAIR_LIST"
+  printf "file '%s'\n" "$terminal_segment" >>"$TERMINAL_PAIR_LIST"
+  terminal_offset="$(python3 - "$terminal_offset" "$segment_duration" <<'PY'
+import sys
+
+print(float(sys.argv[1]) + float(sys.argv[2]))
+PY
+)"
+  segment_index=$((segment_index + 1))
+done <"$SEGMENTS_FILE"
+
 ffmpeg -hide_banner -loglevel error -y \
-  -i "$UI_BROWSER_RECORDING" \
-  -stream_loop -1 \
-  -i "$CONSOLE_WEBM" \
-  -filter_complex "[0:v]scale=640:480:force_original_aspect_ratio=increase,crop=640:480,setsar=1,format=yuv420p[ui];[1:v]scale=640:480:force_original_aspect_ratio=increase,crop=640:480,setsar=1,format=yuv420p[terminal];[ui][terminal]hstack=inputs=2:shortest=1,format=yuv420p[video]" \
-  -map "[video]" \
-  -an \
-  -c:v libvpx-vp9 \
-  -crf 30 \
-  -b:v 0 \
+  -f concat \
+  -safe 0 \
+  -i "$TERMINAL_PAIR_LIST" \
+  -c copy \
+  "$CONSOLE_WEBM"
+
+ffmpeg -hide_banner -loglevel error -y \
+  -f concat \
+  -safe 0 \
+  -i "$PAIR_LIST" \
+  -c copy \
   "$RECORDING_FILE"
 
 printf 'Recording written to %s\n' "$RECORDING_FILE"

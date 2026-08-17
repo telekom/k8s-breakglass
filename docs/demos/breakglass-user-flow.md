@@ -5,6 +5,7 @@ The demo set contains three user-facing E2E recordings:
 | Recording | Format | Focus |
 | --- | --- | --- |
 | [`breakglass-user-flow.cast`](./breakglass-user-flow.cast) | asciinema | `bgctl`, `kubectl auth whoami`, API access, and `tcpdump` in the spawned debug pod |
+| [`breakglass-user-flow.gif`](./breakglass-user-flow.gif) | GIF preview | Inline-viewable preview of the CLI asciinema recording |
 | [`breakglass-ui-browser-flow.webm`](./breakglass-ui-browser-flow.webm) | WebM | Standalone 4:3 browser request/approval/DebugSession workflow |
 | [`breakglass-console-flow.cast`](./breakglass-console-flow.cast) | asciinema | Synchronized four-chapter `bgctl`/`kubectl` console track |
 | [`breakglass-console-flow.webm`](./breakglass-console-flow.webm) | WebM | Standalone console screen recording |

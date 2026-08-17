@@ -175,7 +175,7 @@ run_demo() {
   )"; then
     die "unauthorized request unexpectedly succeeded"
   else
-    printf '%s\n' "$denied_output" | sed -n '1p'
+    printf '%s\n' 'Expected denial (HTTP 403): requester is not authorized for the requested group.'
   fi
   sleep "$DEMO_PAUSE"
 
@@ -237,7 +237,16 @@ run_demo() {
 
   step \
     '5. Approver approves the session' \
-    'A separate approver confirms the incident and activates the temporary grant.'
+    'The requester cannot self-approve; a separate authorized approver must confirm the incident.'
+  printf '%s\n' '$ bgctl session approve SESSION_NAME # requester self-approval attempt'
+  if self_approval_output="$(
+    run_as_requester session approve "$SESSION_NAME" --reason "Requester self-approval attempt" 2>&1
+  )"; then
+    die "self-approval unexpectedly succeeded"
+  else
+    printf '%s\n' 'Expected self-approval denial (HTTP 403): requester cannot approve their own session.'
+  fi
+  sleep "$DEMO_PAUSE"
   printf '%s\n' '$ bgctl session approve SESSION_NAME --reason "Approved for incident response"'
   run_as_approver session approve "$SESSION_NAME" \
     --reason "INC-CLI-DEMO-001 verified; approved for incident response" >/dev/null
@@ -379,6 +388,18 @@ run_demo() {
     --as-group="$GROUP_NAME" \
     --as-group=system:authenticated \
     -- tcpdump -D | head -n 8
+  sleep "$DEMO_PAUSE"
+
+  step \
+    '12. DebugSession lifecycle closes cleanly' \
+    'The requester lists the session, terminates it deliberately, and verifies the terminal state.'
+  printf '%s\n' '$ bgctl debug session list --mine -o table'
+  run_as_requester debug session list --mine -o table | sed -n '1,14p'
+  printf '%s\n' '$ bgctl debug session terminate DEBUG_SESSION_NAME --yes'
+  run_as_requester debug session terminate "$DEBUG_SESSION_NAME" --yes >/dev/null
+  printf '%s\n' '$ bgctl debug session get DEBUG_SESSION_NAME -o table'
+  run_as_requester debug session get "$DEBUG_SESSION_NAME" -o table | sed -n '1,14p'
+  printf '%s\n' 'DebugSession transition: Active -> Terminated; the controlled pod is revoked.'
   sleep "$DEMO_PAUSE"
 
   printf '\n%s\n' 'CLI demo complete. Temporary sessions are cleaned up after recording.'

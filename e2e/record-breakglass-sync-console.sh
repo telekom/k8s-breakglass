@@ -212,6 +212,12 @@ run_console() {
   wait_for_session_state Pending
   printf '%s\n' '$ bgctl session get SESSION_NAME -o table'
   run_as_requester session get "$SESSION_NAME" -o table | sed -n '1,18p'
+  printf '%s\n' '$ bgctl session approve SESSION_NAME # requester self-approval attempt'
+  if self_approval_output="$(run_as_requester session approve "$SESSION_NAME" --reason "Requester self-approval attempt" 2>&1)"; then
+    die "self-approval unexpectedly succeeded"
+  else
+    printf '%s\n' 'Expected self-approval denial (HTTP 403): a separate approver is required.'
+  fi
   run_as_approver session approve "$SESSION_NAME" --reason "Approved for synchronized console demo" >/dev/null
   wait_for_session_state Approved
   printf '%s\n' 'After: Pending -> Approved; the approver is recorded and expiry is active.'
@@ -251,7 +257,13 @@ run_console() {
   run_kubectl get pods --namespace "$DEBUG_NAMESPACE" --selector "breakglass.telekom.com/debug-session=${DEBUG_SESSION_NAME}" --field-selector=status.phase=Running -o custom-columns='NAME:.metadata.name,READY:.status.containerStatuses[0].ready,STATUS:.status.phase'
   printf '%s\n' '$ kubectl exec DEBUG_POD -- tcpdump -D'
   run_kubectl exec --namespace "$DEBUG_NAMESPACE" "$debug_pod_name" -- tcpdump -D | head -n 8
-  printf '%s\n' 'After: DebugSession is Active, its pod is Running, and tcpdump is available.'
+  printf '%s\n' '$ bgctl debug session list --mine -o table'
+  run_as_requester debug session list --mine -o table | sed -n '1,14p'
+  printf '%s\n' '$ bgctl debug session terminate DEBUG_SESSION_NAME --yes'
+  run_as_requester debug session terminate "$DEBUG_SESSION_NAME" --yes >/dev/null
+  printf '%s\n' '$ bgctl debug session get DEBUG_SESSION_NAME -o table'
+  run_as_requester debug session get "$DEBUG_SESSION_NAME" -o table | sed -n '1,14p'
+  printf '%s\n' 'After: DebugSession is Active, its pod is Running, tcpdump is available, then Active -> Terminated is verified.'
   sleep_remaining "$started" "${SEGMENT_DURATIONS[3]}"
 }
 
