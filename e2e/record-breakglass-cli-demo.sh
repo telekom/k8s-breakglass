@@ -306,8 +306,24 @@ run_demo() {
 
   step \
     '9. Requester creates and observes a DebugSession' \
-    'bgctl requests a controlled debug workload in the breakglass-debug namespace.'
+    'First exec is unavailable because no debug pod exists; the auto-approved template then creates one.'
+  printf '%s\n' '$ kubectl exec -n breakglass-debug debug-pod-before-access -- ls'
+  if before_exec_output="$(
+    run_kubectl exec \
+      --namespace "$DEBUG_NAMESPACE" \
+      debug-pod-before-access \
+      --as=ops-gamma@example.com \
+      --as-group=ops \
+      --as-group="$GROUP_NAME" \
+      --as-group=system:authenticated \
+      -- ls 2>&1
+  )"; then
+    die "pre-session exec unexpectedly succeeded"
+  else
+    printf '%s\n' 'Expected pre-state rejection: no DebugSession pod exists, so exec is unavailable.'
+  fi
   printf '%s\n' '$ bgctl debug session create --template breakglass-dev-debug-template --cluster breakglass-hub'
+  printf '%s\n' 'Template policy: requiresApproval=false for this E2E cluster, so the request auto-approves.'
   debug_output="$(
     run_as_requester debug session create \
       --template "$DEBUG_TEMPLATE" \
@@ -365,6 +381,15 @@ run_demo() {
     --as-group="$GROUP_NAME" \
     --as-group=system:authenticated \
     -o custom-columns='NAME:.metadata.name,READY:.status.containerStatuses[0].ready,STATUS:.status.phase'
+  printf '%s\n' "\$ kubectl exec -n ${DEBUG_NAMESPACE} ${debug_pod_name} -- ls"
+  run_kubectl exec \
+    --namespace "$DEBUG_NAMESPACE" \
+    "$debug_pod_name" \
+    --as=ops-gamma@example.com \
+    --as-group=ops \
+    --as-group="$GROUP_NAME" \
+    --as-group=system:authenticated \
+    -- ls | head -n 20
   sleep "$DEMO_PAUSE"
 
   step \

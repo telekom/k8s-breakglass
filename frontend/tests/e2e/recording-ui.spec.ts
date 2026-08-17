@@ -294,7 +294,7 @@ test.describe("Breakglass UI recording", () => {
       await showExplainer(
         debugPage,
         "Step 4 - DebugSession",
-        "Select a controlled debug template, cluster, namespace, and reason.",
+        "Select the auto-approved debug template, cluster, namespace, and reason.",
       );
       const templateSelect = debugPage.locator('[data-testid="template-select"]');
       await templateSelect.click();

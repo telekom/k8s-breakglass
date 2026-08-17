@@ -239,8 +239,15 @@ run_console() {
   printf '\n%s\n' 'Chapter 4/4 - DebugSession diagnostics'
   printf '%s\n' 'The UI creates a DebugSession while the console observes its pod and runs tcpdump.'
   REQUESTER_TOKEN="$(get_token "$REQUESTER_USERNAME" "$REQUESTER_PASSWORD")"
+  printf '%s\n' '$ kubectl exec -n breakglass-debug debug-pod-before-access -- ls'
+  if before_exec_output="$(run_kubectl exec --namespace "$DEBUG_NAMESPACE" debug-pod-before-access -- ls 2>&1)"; then
+    die "pre-session exec unexpectedly succeeded"
+  else
+    printf '%s\n' 'Expected pre-state rejection: no DebugSession pod exists yet.'
+  fi
   printf '%s\n' '$ bgctl debug template list -o table'
   run_as_requester debug template list -o table | sed -n '1,18p'
+  printf '%s\n' 'Template policy: requiresApproval=false for this E2E cluster, so the request auto-approves.'
   debug_output="$(run_as_requester debug session create --template "$DEBUG_TEMPLATE" --cluster "$CLUSTER_NAME" --duration 20m --target-namespace "$DEBUG_NAMESPACE" --reason "INC-SYNC-DEMO: network diagnostics" -o json)"
   DEBUG_SESSION_NAME="$(jq -er '.metadata.name' <<<"$debug_output")"
   wait_for_debug_state Active
@@ -255,6 +262,8 @@ run_console() {
   [[ -n "$debug_pod_name" ]] || die "debug pod did not reach Running"
   printf '%s\n' '$ kubectl get pods -n breakglass-debug'
   run_kubectl get pods --namespace "$DEBUG_NAMESPACE" --selector "breakglass.telekom.com/debug-session=${DEBUG_SESSION_NAME}" --field-selector=status.phase=Running -o custom-columns='NAME:.metadata.name,READY:.status.containerStatuses[0].ready,STATUS:.status.phase'
+  printf '%s\n' '$ kubectl exec DEBUG_POD -- ls'
+  run_kubectl exec --namespace "$DEBUG_NAMESPACE" "$debug_pod_name" -- ls | head -n 20
   printf '%s\n' '$ kubectl exec DEBUG_POD -- tcpdump -D'
   run_kubectl exec --namespace "$DEBUG_NAMESPACE" "$debug_pod_name" -- tcpdump -D | head -n 8
   printf '%s\n' '$ bgctl debug session list --mine -o table'
