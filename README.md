@@ -24,6 +24,18 @@
 - **Automatic Cluster Cache Invalidation** - Watches ClusterConfig and kubeconfig Secret changes to refresh connectivity instantly
 - **Rich Prometheus Signals** - API endpoints expose dedicated request/error/duration metrics for fine-grained SLOs
 
+## 🎬 User-flow demo
+
+The repository includes a real E2E asciinema recording showing denial before
+approval, temporary access approval, allowed API calls, DenyPolicy precedence,
+and DebugSession activation.
+
+[▶ Play or download the Breakglass user-flow recording](./docs/demos/breakglass-user-flow.cast)
+
+```bash
+asciinema play docs/demos/breakglass-user-flow.cast
+```
+
 ## Architecture
 
 **Components:**
