@@ -1,7 +1,14 @@
-# Breakglass user-flow recording
+# Breakglass user-flow recordings
 
-`breakglass-user-flow.cast` is an asciinema recording of the user-facing E2E
-journey:
+The demo set contains three user-facing E2E recordings:
+
+| Recording | Format | Focus |
+| --- | --- | --- |
+| [`breakglass-cli-flow.cast`](./breakglass-cli-flow.cast) | asciinema | `bgctl`, `kubectl auth whoami`, API access, and `tcpdump` in the spawned debug pod |
+| [`breakglass-ui-flow.webm`](./breakglass-ui-flow.webm) | WebM | Browser request, approval, approved-session view, and DebugSession workflow |
+| [`breakglass-user-flow.cast`](./breakglass-user-flow.cast) | asciinema | REST API, authorization webhook, and DenyPolicy behavior |
+
+The API/webhook recording covers:
 
 1. A Kubernetes authorization webhook request is denied before approval.
 2. The requester discovers an escalation and creates a `BreakglassSession`.
@@ -12,27 +19,42 @@ journey:
 7. A developer discovers a debug template, creates a `DebugSession`, and reads
    its active state through the API.
 
-The recording uses the existing single-cluster E2E environment. It creates
-one temporary `BreakglassEscalation` for the demo and cleans up the escalation
-and sessions when the run finishes. OIDC passwords and bearer tokens are kept
-out of the terminal output and are not captured.
+The recordings use the existing single-cluster E2E environment. Temporary
+sessions and resources are cleaned up when each run finishes. OIDC passwords
+and bearer tokens are kept out of terminal output and are not captured.
 
-## Play the recording
+## Play the CLI/API recordings
 
 ```bash
+asciinema play docs/demos/breakglass-cli-flow.cast
 asciinema play docs/demos/breakglass-user-flow.cast
 ```
 
-## Re-record it
+## Re-record the CLI/API recordings
 
 The E2E Kind cluster must be running as `kind-breakglass-hub`, with the API
 forwarded to `localhost:8080` and Keycloak forwarded to `localhost:8443`.
 
 ```bash
+./e2e/record-breakglass-cli-demo.sh
 ./e2e/record-breakglass-demo.sh
 ```
 
-The runner loads `e2e/kind-setup-single-tdir/e2e-env.sh` automatically.
+The runners load `e2e/kind-setup-single-tdir/e2e-env.sh` automatically. The CLI
+recording uses Kubernetes impersonation for `kubectl auth whoami` and
+`kubectl auth can-i` because the reusable Kind API server does not accept the
+external Keycloak bearer token directly; the `bgctl` calls still use the real
+OIDC token.
+
+## Re-record the UI recording
+
+```bash
+./e2e/record-breakglass-ui-demo.sh
+```
+
+The UI runner uses the real Keycloak-backed Playwright E2E flow and concatenates
+the requester, approver, approved-session, and DebugSession browser segments
+into `docs/demos/breakglass-ui-flow.webm`.
 
 If the forwards are not already running, select the E2E Kind context and start
 the repository helper first:
@@ -42,5 +64,5 @@ kubectl config use-context kind-breakglass-hub
 ./e2e/setup-e2e-env.sh --all
 ```
 
-Set `KUBECTL_CONTEXT` or `BREAKGLASS_DEMO_RECORDING` to override the default
-cluster context or output path.
+Set `KUBECTL_CONTEXT`, `BREAKGLASS_DEMO_RECORDING`, `BREAKGLASS_CLI_DEMO_RECORDING`,
+or `BREAKGLASS_UI_DEMO_RECORDING` to override the defaults.
