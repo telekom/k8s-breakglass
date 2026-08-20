@@ -4,50 +4,63 @@
  * @vitest-environment jsdom
  */
 
-import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { mount, type VueWrapper } from "@vue/test-utils";
-import { nextTick } from "vue";
-import AutoLogoutWarning from "@/components/AutoLogoutWarning.vue";
-import { AuthKey } from "@/keys";
-import { getOIDCUserStorageKey, getStoredOIDCUser } from "@/services/auth";
+import { describe, it, expect, vi, afterEach } from "vitest";
 
-const AUTHORITY = "https://issuer.example.com";
-const CLIENT_ID = "breakglass-ui";
-const OIDC_USER_STORAGE_KEY = getOIDCUserStorageKey(AUTHORITY, CLIENT_ID);
+const loggerMocks = vi.hoisted(() => ({
+  warn: vi.fn(),
+}));
+
+vi.mock("@/services/logger", () => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: loggerMocks.warn,
+  error: vi.fn(),
+}));
+
+import { mount, VueWrapper } from "@vue/test-utils";
+import AutoLogoutWarning from "@/components/AutoLogoutWarning.vue";
+import AuthService from "@/services/auth";
+import { AuthKey } from "@/keys";
+
+type MockAuth = {
+  login: (state?: { path: string; idpName?: string }) => Promise<void>;
+  logout: () => void;
+  getIdentityProviderName: () => string | undefined;
+  getActiveOIDCUserStorageKeys: () => string[];
+  userManager: {
+    settings: {
+      authority: string;
+      client_id: string;
+    };
+  };
+};
+
+type AutoLogoutWarningVm = {
+  reauthenticate: () => Promise<void>;
+  dismiss: () => void;
+  show: boolean;
+};
 
 describe("AutoLogoutWarning", () => {
   let wrapper: VueWrapper | null = null;
-
-  beforeEach(() => {
-    sessionStorage.clear();
-    localStorage.clear();
-  });
 
   afterEach(() => {
     wrapper?.unmount();
     wrapper = null;
     vi.clearAllTimers();
-    vi.useRealTimers();
     vi.restoreAllMocks();
+    loggerMocks.warn.mockReset();
+    vi.useRealTimers();
     sessionStorage.clear();
     localStorage.clear();
-  });
-  const createMockAuth = () => ({
-    logout: vi.fn(),
-    userManager: {
-      settings: {
-        authority: AUTHORITY,
-        client_id: CLIENT_ID,
-      },
-      signinSilent: vi.fn().mockResolvedValue(undefined),
-    },
+    window.history.pushState({}, "", "/");
   });
 
-  const mountWithAuth = () =>
+  const mountWithAuth = (auth: MockAuth) =>
     mount(AutoLogoutWarning, {
       global: {
         provide: {
-          [AuthKey as symbol]: createMockAuth(),
+          [AuthKey as symbol]: auth,
         },
         stubs: {
           transition: false,
@@ -57,24 +70,19 @@ describe("AutoLogoutWarning", () => {
       },
     });
 
-  const runExpiryCheck = async () => {
-    await vi.advanceTimersByTimeAsync(5000);
-    await nextTick();
-  };
-
-  const storeOIDCUser = (storage: Storage, expiresAt: number | undefined) => {
-    if (!OIDC_USER_STORAGE_KEY) {
-      throw new Error("Expected OIDC user storage key");
-    }
-    storage.setItem(OIDC_USER_STORAGE_KEY, JSON.stringify({ expires_at: expiresAt }));
-  };
-
-  const storeOIDCUserString = (storage: Storage, value: string) => {
-    if (!OIDC_USER_STORAGE_KEY) {
-      throw new Error("Expected OIDC user storage key");
-    }
-    storage.setItem(OIDC_USER_STORAGE_KEY, value);
-  };
+  const createMockAuth = (overrides: Partial<MockAuth> = {}): MockAuth => ({
+    login: vi.fn().mockResolvedValue(undefined),
+    logout: vi.fn(),
+    getIdentityProviderName: vi.fn(() => undefined),
+    getActiveOIDCUserStorageKeys: vi.fn(() => ["oidc.user:https://issuer.example.com:breakglass-ui"]),
+    userManager: {
+      settings: {
+        authority: "https://issuer.example.com",
+        client_id: "breakglass-ui",
+      },
+    },
+    ...overrides,
+  });
 
   it("throws a clear error when mounted without auth provider", () => {
     expect(() => {
@@ -91,97 +99,296 @@ describe("AutoLogoutWarning", () => {
   });
 
   it("mounts successfully when auth provider is present", () => {
-    wrapper = mountWithAuth();
+    wrapper = mountWithAuth(createMockAuth());
 
     expect(wrapper.exists()).toBe(true);
   });
 
-  it("shows the warning when the sessionStorage OIDC user expires soon", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    storeOIDCUser(sessionStorage, Math.floor(Date.now() / 1000) + 20);
+  it("preserves the active identity provider when reauthenticating", async () => {
+    const auth = createMockAuth({
+      getIdentityProviderName: vi.fn(() => "corp"),
+    });
+    window.history.pushState({}, "", "/sessions?cluster=prod#approval");
+    wrapper = mountWithAuth(auth);
 
-    wrapper = mountWithAuth();
-    await runExpiryCheck();
+    await (wrapper.vm as unknown as AutoLogoutWarningVm).reauthenticate();
 
-    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(true);
+    expect(auth.login).toHaveBeenCalledWith({
+      path: "/sessions?cluster=prod#approval",
+      idpName: "corp",
+    });
   });
 
-  it("falls back to localStorage when no sessionStorage OIDC user exists", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    storeOIDCUser(localStorage, Math.floor(Date.now() / 1000) + 20);
+  it("uses the local persisted identity provider when persistent storage is active", async () => {
+    const auth = createMockAuth();
+    localStorage.setItem("breakglass_oidc_token_persistence", "persistent");
+    localStorage.setItem("breakglass_current_idp_name", "corp");
+    window.history.pushState({}, "", "/sessions?cluster=prod#approval");
+    wrapper = mountWithAuth(auth);
 
-    wrapper = mountWithAuth();
-    await runExpiryCheck();
+    await (wrapper.vm as unknown as AutoLogoutWarningVm).reauthenticate();
 
-    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(true);
+    expect(auth.login).toHaveBeenCalledWith({
+      path: "/sessions?cluster=prod#approval",
+      idpName: "corp",
+    });
   });
 
-  it("keeps the warning hidden when no OIDC user is stored", async () => {
-    vi.useFakeTimers();
+  it("ignores stale local persisted identity provider names by default", async () => {
+    const auth = createMockAuth();
+    localStorage.setItem("breakglass_current_idp_name", "corp");
+    window.history.pushState({}, "", "/sessions?cluster=prod#approval");
+    wrapper = mountWithAuth(auth);
 
-    wrapper = mountWithAuth();
-    await runExpiryCheck();
+    await (wrapper.vm as unknown as AutoLogoutWarningVm).reauthenticate();
 
-    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(false);
+    expect(auth.login).toHaveBeenCalledWith({
+      path: "/sessions?cluster=prod#approval",
+    });
   });
 
-  it("keeps the warning hidden for expired and non-expiring stored users", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+  it("does not recover stale local persisted identity provider names through AuthService", async () => {
+    const auth = new AuthService({
+      oidcAuthority: "https://issuer.example.com",
+      oidcClientID: "breakglass-ui",
+    });
+    const loginSpy = vi.spyOn(auth, "login").mockResolvedValue(undefined);
+    localStorage.setItem("breakglass_current_idp_name", "corp");
+    window.history.pushState({}, "", "/sessions?cluster=prod#approval");
+    wrapper = mountWithAuth(auth);
 
-    storeOIDCUser(sessionStorage, Math.floor(Date.now() / 1000) - 1);
-    wrapper = mountWithAuth();
-    await runExpiryCheck();
-    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(false);
+    await (wrapper.vm as unknown as AutoLogoutWarningVm).reauthenticate();
 
-    wrapper.unmount();
-    sessionStorage.clear();
-    storeOIDCUser(sessionStorage, undefined);
-    wrapper = mountWithAuth();
-    await runExpiryCheck();
-    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(false);
+    expect(loginSpy).toHaveBeenCalledWith({
+      path: "/sessions?cluster=prod#approval",
+    });
   });
 
-  it("hides a visible warning when the stored OIDC user disappears", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    storeOIDCUser(sessionStorage, Math.floor(Date.now() / 1000) + 20);
-
-    wrapper = mountWithAuth();
-    await runExpiryCheck();
-    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(true);
-
-    if (!OIDC_USER_STORAGE_KEY) {
-      throw new Error("Expected OIDC user storage key");
-    }
-    sessionStorage.removeItem(OIDC_USER_STORAGE_KEY);
-    await runExpiryCheck();
-
-    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(false);
-  });
-
-  it("hides a visible warning when stored OIDC user data becomes invalid", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    storeOIDCUser(sessionStorage, Math.floor(Date.now() / 1000) + 20);
-
-    wrapper = mountWithAuth();
-    await runExpiryCheck();
-    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(true);
-
-    storeOIDCUserString(sessionStorage, "{not-json");
-    await runExpiryCheck();
-
-    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(false);
-  });
-
-  it("returns null when browser storage access is blocked", () => {
-    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-      throw new DOMException("blocked", "SecurityError");
+  it("falls back to default reauthentication when session storage is unavailable", async () => {
+    const auth = createMockAuth();
+    const sessionStorageDescriptor = Object.getOwnPropertyDescriptor(window, "sessionStorage");
+    Object.defineProperty(window, "sessionStorage", {
+      configurable: true,
+      get() {
+        throw new Error("storage blocked");
+      },
     });
 
-    expect(getStoredOIDCUser(AUTHORITY, CLIENT_ID)).toBeNull();
+    try {
+      wrapper = mountWithAuth(auth);
+
+      await (wrapper.vm as unknown as AutoLogoutWarningVm).reauthenticate();
+
+      expect(auth.login).toHaveBeenCalledWith({
+        path: "/",
+      });
+    } finally {
+      if (sessionStorageDescriptor) {
+        Object.defineProperty(window, "sessionStorage", sessionStorageDescriptor);
+      }
+    }
+  });
+
+  it("shows the warning for an expiring IDP-specific OIDC user", async () => {
+    vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+    const expiresAt = Math.floor((Date.now() + 10_000) / 1000);
+    const auth = createMockAuth({
+      getActiveOIDCUserStorageKeys: vi.fn(() => ["oidc.user:/api/oidc/authority:corp-ui"]),
+    });
+    sessionStorage.setItem(
+      "oidc.user:/api/oidc/authority:corp-ui",
+      JSON.stringify({
+        expires_at: expiresAt,
+      }),
+    );
+
+    wrapper = mountWithAuth(auth);
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await wrapper.vm.$nextTick();
+
+    expect((wrapper.vm as unknown as { show: boolean }).show).toBe(true);
+    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(true);
+  });
+
+  it("resets dismissal when active OIDC user storage disappears", async () => {
+    vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+    const userKey = "oidc.user:/api/oidc/authority:corp-ui";
+    const auth = createMockAuth({
+      getActiveOIDCUserStorageKeys: vi.fn(() => [userKey]),
+    });
+    const setExpiringUser = () => {
+      sessionStorage.setItem(
+        userKey,
+        JSON.stringify({
+          expires_at: Math.floor((Date.now() + 10_000) / 1000),
+        }),
+      );
+    };
+    setExpiringUser();
+    wrapper = mountWithAuth(auth);
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await wrapper.vm.$nextTick();
+    expect((wrapper.vm as unknown as AutoLogoutWarningVm).show).toBe(true);
+
+    (wrapper.vm as unknown as AutoLogoutWarningVm).dismiss();
+    await wrapper.vm.$nextTick();
+    expect((wrapper.vm as unknown as AutoLogoutWarningVm).show).toBe(false);
+
+    sessionStorage.removeItem(userKey);
+    await vi.advanceTimersByTimeAsync(5000);
+    await wrapper.vm.$nextTick();
+    expect((wrapper.vm as unknown as AutoLogoutWarningVm).show).toBe(false);
+
+    setExpiringUser();
+    await vi.advanceTimersByTimeAsync(5000);
+    await wrapper.vm.$nextTick();
+
+    expect((wrapper.vm as unknown as AutoLogoutWarningVm).show).toBe(true);
+    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(true);
+  });
+
+  it("ignores expiring OIDC users from unrelated authorities", async () => {
+    vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+    const expiresAt = Math.floor((Date.now() + 10_000) / 1000);
+    sessionStorage.setItem(
+      "oidc.user:https://other.example.com:other-ui",
+      JSON.stringify({
+        expires_at: expiresAt,
+      }),
+    );
+
+    wrapper = mountWithAuth(createMockAuth());
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await wrapper.vm.$nextTick();
+
+    expect((wrapper.vm as unknown as { show: boolean }).show).toBe(false);
+    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(false);
+  });
+
+  it("ignores stale localStorage OIDC users unless persistent storage is active", async () => {
+    vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+    const expiresAt = Math.floor((Date.now() + 10_000) / 1000);
+    localStorage.setItem(
+      "oidc.user:/api/oidc/authority:corp-ui",
+      JSON.stringify({
+        expires_at: expiresAt,
+      }),
+    );
+
+    wrapper = mountWithAuth(createMockAuth());
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await wrapper.vm.$nextTick();
+
+    expect((wrapper.vm as unknown as { show: boolean }).show).toBe(false);
+    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(false);
+  });
+
+  it("uses localStorage OIDC users when non-production persistent storage is active", async () => {
+    vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+    const expiresAt = Math.floor((Date.now() + 10_000) / 1000);
+    const auth = createMockAuth({
+      getActiveOIDCUserStorageKeys: vi.fn(() => ["oidc.user:/api/oidc/authority:corp-ui"]),
+    });
+    localStorage.setItem("breakglass_oidc_token_persistence", "persistent");
+    localStorage.setItem(
+      "oidc.user:/api/oidc/authority:corp-ui",
+      JSON.stringify({
+        expires_at: expiresAt,
+      }),
+    );
+
+    wrapper = mountWithAuth(auth);
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await wrapper.vm.$nextTick();
+
+    expect((wrapper.vm as unknown as { show: boolean }).show).toBe(true);
+    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(true);
+  });
+
+  it("ignores inactive IDP OIDC users when only they are expiring", async () => {
+    vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+    const inactiveExpiresAt = Math.floor((Date.now() + 10_000) / 1000);
+    const activeExpiresAt = Math.floor((Date.now() + 120_000) / 1000);
+    const auth = createMockAuth({
+      getIdentityProviderName: vi.fn(() => "corp"),
+      getActiveOIDCUserStorageKeys: vi.fn(() => ["oidc.user:/api/oidc/authority:corp-ui"]),
+    });
+    sessionStorage.setItem(
+      "oidc.user:/api/oidc/authority:legacy-ui",
+      JSON.stringify({
+        expires_at: inactiveExpiresAt,
+      }),
+    );
+    sessionStorage.setItem(
+      "oidc.user:/api/oidc/authority:corp-ui",
+      JSON.stringify({
+        expires_at: activeExpiresAt,
+      }),
+    );
+
+    wrapper = mountWithAuth(auth);
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await wrapper.vm.$nextTick();
+
+    expect((wrapper.vm as unknown as { show: boolean }).show).toBe(false);
+    expect(wrapper.find('[data-testid="auto-logout-warning"]').exists()).toBe(false);
+  });
+
+  it("warns once per storage item when OIDC user storage reads fail repeatedly", async () => {
+    vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+    const originalSessionStorageDescriptor = Object.getOwnPropertyDescriptor(window, "sessionStorage");
+    const throwingStorage = {
+      get length() {
+        return 0;
+      },
+      clear: vi.fn(),
+      getItem: vi.fn(() => {
+        throw new Error("storage read blocked");
+      }),
+      key: vi.fn(() => null),
+      removeItem: vi.fn(),
+      setItem: vi.fn(),
+    } satisfies Storage;
+
+    Object.defineProperty(window, "sessionStorage", {
+      configurable: true,
+      value: throwingStorage,
+    });
+
+    try {
+      wrapper = mountWithAuth(createMockAuth());
+
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      const readWarnings = loggerMocks.warn.mock.calls.filter(
+        ([tag, message]) => tag === "AutoLogoutWarning" && message === "Unable to read browser storage item",
+      );
+      expect(readWarnings).toHaveLength(1);
+    } finally {
+      if (originalSessionStorageDescriptor) {
+        Object.defineProperty(window, "sessionStorage", originalSessionStorageDescriptor);
+      }
+    }
+  });
+
+  it("warns once per malformed OIDC user value when parsing fails repeatedly", async () => {
+    vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+    sessionStorage.setItem("oidc.user:https://issuer.example.com:breakglass-ui", "{not-json");
+
+    wrapper = mountWithAuth(createMockAuth());
+
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    const parseWarnings = loggerMocks.warn.mock.calls.filter(
+      ([tag, message]) =>
+        tag === "AutoLogoutWarning" && message === "Failed to parse OIDC user data from browser storage",
+    );
+    expect(parseWarnings).toHaveLength(1);
   });
 });
