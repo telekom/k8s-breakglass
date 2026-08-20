@@ -546,6 +546,27 @@ escalations:
 helm upgrade my-escalation ./charts/escalation-config -f values.yaml
 ```
 
+## ValidatingAdmissionPolicy
+
+The chart can install the phase-1 ValidatingAdmissionPolicy resources that mirror the existing webhook validations. These objects are cluster-scoped, require Kubernetes 1.30 or newer, and should be enabled only once per cluster.
+
+The rendered policy and binding names are static. A second release with this option enabled will collide with the first release, and uninstalling the enabled release removes the cluster-wide policy and binding resources for every namespace that relies on them. If these objects are already managed by `config/components/vap`, keep this chart value disabled, or delete/adopt those cluster-scoped resources before enabling Helm management.
+
+They are disabled by default. Enable them explicitly for the single release that should own the cluster-scoped policies:
+
+```yaml
+validatingAdmissionPolicy:
+  enabled: true
+  validationActions:
+    - Warn
+    - Audit
+```
+
+| Value | Description | Default |
+|-------|-------------|---------|
+| `validatingAdmissionPolicy.enabled` | Create ValidatingAdmissionPolicy and binding resources | `false` |
+| `validatingAdmissionPolicy.validationActions` | Binding actions for policy violations (`Deny`, `Warn`, `Audit`). `Deny` and `Warn` cannot be combined. | `[Warn, Audit]` |
+
 ## Uninstalling
 
 ```bash

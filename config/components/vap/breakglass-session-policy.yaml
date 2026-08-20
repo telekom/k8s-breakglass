@@ -32,37 +32,31 @@ spec:
         resources: ["breakglasssessions"]
 
   validations:
-    # --- CREATE-only validations (skip on UPDATE via has(oldSelf)) ---
+    # --- CREATE-only validations (skip on UPDATE when oldObject exists) ---
 
     # Cluster must be non-empty
     - expression: >-
-        has(oldSelf) || object.spec.cluster.size() > 0
+        oldObject != null || (has(object.spec.cluster) && object.spec.cluster.size() > 0)
       message: "spec.cluster is required"
       reason: Invalid
 
     # User must be non-empty
     - expression: >-
-        has(oldSelf) || object.spec.user.size() > 0
+        oldObject != null || (has(object.spec.user) && object.spec.user.size() > 0)
       message: "spec.user is required"
       reason: Invalid
 
     # GrantedGroup must be non-empty
     - expression: >-
-        has(oldSelf) || object.spec.grantedGroup.size() > 0
+        oldObject != null || (has(object.spec.grantedGroup) && object.spec.grantedGroup.size() > 0)
       message: "spec.grantedGroup is required"
-      reason: Invalid
-
-    # Reason must be at least 10 characters
-    - expression: >-
-        has(oldSelf) || object.spec.requestReason.size() >= 10
-      message: "spec.requestReason must be at least 10 characters"
       reason: Invalid
 
     # --- UPDATE-only validations ---
 
     # Spec is immutable after creation
     - expression: >-
-        !has(oldSelf) || object.spec == oldSelf.spec
+        oldObject == null || object.spec == oldObject.spec
       message: "spec is immutable after creation"
       reason: Invalid
 
@@ -71,13 +65,13 @@ spec:
     #        WaitingForScheduledTime → {Approved, Withdrawn}, Approved → Expired
     # Terminal states (Rejected, Withdrawn, Expired, ApprovalTimeout) cannot transition
     - expression: >-
-        !has(oldSelf) ||
-        !has(oldSelf.status) ||
-        !has(oldSelf.status.state) ||
-        oldSelf.status.state == "" ||
-        oldSelf.status.state == object.status.state ||
-        (oldSelf.status.state == "Pending" && object.status.state in ["Approved", "WaitingForScheduledTime", "Rejected", "Withdrawn", "ApprovalTimeout"]) ||
-        (oldSelf.status.state == "WaitingForScheduledTime" && object.status.state in ["Approved", "Withdrawn", "Expired"]) ||
-        (oldSelf.status.state == "Approved" && object.status.state in ["Expired", "IdleExpired"])
+        oldObject == null ||
+        !has(oldObject.status) ||
+        !has(oldObject.status.state) ||
+        oldObject.status.state == "" ||
+        oldObject.status.state == object.status.state ||
+        (oldObject.status.state == "Pending" && object.status.state in ["Approved", "WaitingForScheduledTime", "Rejected", "Withdrawn", "ApprovalTimeout"]) ||
+        (oldObject.status.state == "WaitingForScheduledTime" && object.status.state in ["Approved", "Withdrawn", "Expired"]) ||
+        (oldObject.status.state == "Approved" && object.status.state in ["Expired", "IdleExpired"])
       message: "invalid state transition"
       reason: Invalid

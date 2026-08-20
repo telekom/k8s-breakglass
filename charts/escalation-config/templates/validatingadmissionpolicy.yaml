@@ -1,0 +1,248 @@
+{{/*
+SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+
+SPDX-License-Identifier: Apache-2.0
+*/}}
+{{- $vap := .Values.validatingAdmissionPolicy | default dict -}}
+{{- if $vap.enabled }}
+{{- if not (semverCompare ">=1.30.0-0" .Capabilities.KubeVersion.Version) }}
+{{- fail "validatingAdmissionPolicy.enabled requires Kubernetes 1.30 or newer" }}
+{{- end }}
+{{- $actions := default (list "Warn" "Audit") $vap.validationActions }}
+{{- if and (has "Deny" $actions) (has "Warn" $actions) }}
+{{- fail "validatingAdmissionPolicy.validationActions cannot combine Deny and Warn" }}
+{{- end }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: breakglass-session-validation
+  labels:
+    {{- include "escalation-config.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admission
+    breakglass.t-caas.telekom.com/phase: "1"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["breakglass.t-caas.telekom.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["breakglasssessions"]
+  validations:
+    - expression: >-
+        oldObject != null || (has(object.spec.cluster) && object.spec.cluster.size() > 0)
+      message: "spec.cluster is required"
+      reason: Invalid
+    - expression: >-
+        oldObject != null || (has(object.spec.user) && object.spec.user.size() > 0)
+      message: "spec.user is required"
+      reason: Invalid
+    - expression: >-
+        oldObject != null || (has(object.spec.grantedGroup) && object.spec.grantedGroup.size() > 0)
+      message: "spec.grantedGroup is required"
+      reason: Invalid
+    - expression: >-
+        oldObject == null || object.spec == oldObject.spec
+      message: "spec is immutable after creation"
+      reason: Invalid
+    - expression: >-
+        oldObject == null ||
+        !has(oldObject.status) ||
+        !has(oldObject.status.state) ||
+        oldObject.status.state == "" ||
+        oldObject.status.state == object.status.state ||
+        (oldObject.status.state == "Pending" && object.status.state in ["Approved", "WaitingForScheduledTime", "Rejected", "Withdrawn", "ApprovalTimeout"]) ||
+        (oldObject.status.state == "WaitingForScheduledTime" && object.status.state in ["Approved", "Withdrawn", "Expired"]) ||
+        (oldObject.status.state == "Approved" && object.status.state in ["Expired", "IdleExpired"])
+      message: "invalid state transition"
+      reason: Invalid
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: breakglass-escalation-validation
+  labels:
+    {{- include "escalation-config.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admission
+    breakglass.t-caas.telekom.com/phase: "1"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["breakglass.t-caas.telekom.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["breakglassescalations"]
+  validations:
+    - expression: >-
+        has(object.spec.approvers) &&
+        (
+          (has(object.spec.approvers.groups) && object.spec.approvers.groups.size() > 0) ||
+          (has(object.spec.approvers.users) && object.spec.approvers.users.size() > 0)
+        )
+      message: "at least one approver group or user must be specified"
+      reason: Invalid
+    - expression: >-
+        has(object.spec.escalatedGroup) &&
+        object.spec.escalatedGroup.size() > 0 &&
+        object.spec.escalatedGroup.matches('^[a-zA-Z0-9._:-]+$')
+      message: "spec.escalatedGroup must match identifier format [a-zA-Z0-9._:-]+"
+      reason: Invalid
+    - expression: >-
+        !has(object.spec.allowed) ||
+        !has(object.spec.allowed.groups) ||
+        object.spec.allowed.groups.all(g, g.size() > 0)
+      message: "spec.allowed.groups must not contain empty entries"
+      reason: Invalid
+    - expression: >-
+        !has(object.spec.allowed) ||
+        !has(object.spec.allowed.clusters) ||
+        object.spec.allowed.clusters.all(c, c.size() > 0)
+      message: "spec.allowed.clusters must not contain empty entries"
+      reason: Invalid
+    - expression: >-
+        !has(object.spec.allowed) ||
+        !has(object.spec.allowed.groups) ||
+        object.spec.allowed.groups.all(g, object.spec.allowed.groups.exists_one(x, x == g))
+      message: "spec.allowed.groups must not contain duplicates"
+      reason: Invalid
+    - expression: >-
+        !has(object.spec.allowed) ||
+        !has(object.spec.allowed.clusters) ||
+        object.spec.allowed.clusters.all(c, object.spec.allowed.clusters.exists_one(x, x == c))
+      message: "spec.allowed.clusters must not contain duplicates"
+      reason: Invalid
+    - expression: >-
+        !has(object.spec.allowedIdentityProviders) ||
+        object.spec.allowedIdentityProviders.size() == 0 ||
+        (!has(object.spec.allowedIdentityProvidersForRequests) || object.spec.allowedIdentityProvidersForRequests.size() == 0) &&
+        (!has(object.spec.allowedIdentityProvidersForApprovers) || object.spec.allowedIdentityProvidersForApprovers.size() == 0)
+      message: "allowedIdentityProviders cannot be used together with allowedIdentityProvidersForRequests or allowedIdentityProvidersForApprovers"
+      reason: Invalid
+    - expression: >-
+        (!has(object.spec.allowedIdentityProvidersForRequests) || object.spec.allowedIdentityProvidersForRequests.size() == 0) ==
+        (!has(object.spec.allowedIdentityProvidersForApprovers) || object.spec.allowedIdentityProvidersForApprovers.size() == 0)
+      message: "allowedIdentityProvidersForRequests and allowedIdentityProvidersForApprovers must both be set or both be empty"
+      reason: Invalid
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: breakglass-clusterconfig-validation
+  labels:
+    {{- include "escalation-config.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admission
+    breakglass.t-caas.telekom.com/phase: "1"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["breakglass.t-caas.telekom.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["clusterconfigs"]
+  validations:
+    - expression: >-
+        (has(object.spec.kubeconfigSecretRef) && object.spec.kubeconfigSecretRef.name.size() > 0) !=
+        ((has(object.spec.oidcAuth) && has(object.spec.oidcAuth.issuerURL) && object.spec.oidcAuth.issuerURL.size() > 0) ||
+         (has(object.spec.oidcFromIdentityProvider) && has(object.spec.oidcFromIdentityProvider.name) && object.spec.oidcFromIdentityProvider.name.size() > 0))
+      message: "exactly one of spec.kubeconfigSecretRef or spec.oidcAuth/oidcFromIdentityProvider must be configured"
+      reason: Invalid
+    - expression: >-
+        !has(object.spec.kubeconfigSecretRef) ||
+        object.spec.kubeconfigSecretRef.name.size() > 0
+      message: "spec.kubeconfigSecretRef.name is required when kubeconfigSecretRef is set"
+      reason: Invalid
+    - expression: >-
+        !has(object.spec.identityProviderRefs) ||
+        object.spec.identityProviderRefs.all(ref, object.spec.identityProviderRefs.exists_one(x, x == ref))
+      message: "spec.identityProviderRefs must not contain duplicates"
+      reason: Invalid
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: breakglass-identityprovider-validation
+  labels:
+    {{- include "escalation-config.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admission
+    breakglass.t-caas.telekom.com/phase: "1"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["breakglass.t-caas.telekom.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["identityproviders"]
+  validations:
+    - expression: >-
+        has(object.spec.oidc) &&
+        has(object.spec.oidc.authority) &&
+        object.spec.oidc.authority.startsWith('https://')
+      message: "spec.oidc.authority is required and must be an HTTPS URL"
+      reason: Invalid
+    - expression: >-
+        has(object.spec.oidc) &&
+        has(object.spec.oidc.clientID) &&
+        object.spec.oidc.clientID.size() > 0
+      message: "spec.oidc.clientID is required"
+      reason: Invalid
+    - expression: >-
+        !has(object.spec.oidc) ||
+        !has(object.spec.oidc.jwksEndpoint) ||
+        object.spec.oidc.jwksEndpoint.size() == 0 ||
+        object.spec.oidc.jwksEndpoint.startsWith('https://')
+      message: "spec.oidc.jwksEndpoint must be an HTTPS URL when specified"
+      reason: Invalid
+    - expression: >-
+        !has(object.spec.oidc) ||
+        !has(object.spec.oidc.insecureSkipVerify) ||
+        object.spec.oidc.insecureSkipVerify == false
+      message: "spec.oidc.insecureSkipVerify is not supported; configure spec.oidc.certificateAuthority"
+      reason: Forbidden
+    - expression: >-
+        !has(object.spec.issuer) ||
+        object.spec.issuer.size() == 0 ||
+        object.spec.issuer.startsWith('https://')
+      message: "spec.issuer must be an HTTPS URL when specified"
+      reason: Invalid
+    - expression: >-
+        !has(object.spec.groupSyncProvider) ||
+        object.spec.groupSyncProvider != 'Keycloak' ||
+        (has(object.spec.keycloak) &&
+         has(object.spec.keycloak.baseURL) && object.spec.keycloak.baseURL.size() > 0 &&
+         has(object.spec.keycloak.realm) && object.spec.keycloak.realm.size() > 0 &&
+         has(object.spec.keycloak.clientID) && object.spec.keycloak.clientID.size() > 0)
+      message: "spec.keycloak (baseURL, realm, clientID) is required when groupSyncProvider is Keycloak"
+      reason: Invalid
+    - expression: >-
+        !has(object.spec.keycloak) ||
+        !has(object.spec.keycloak.insecureSkipVerify) ||
+        object.spec.keycloak.insecureSkipVerify == false
+      message: "spec.keycloak.insecureSkipVerify is not supported; configure spec.keycloak.certificateAuthority"
+      reason: Forbidden
+    - expression: >-
+        !has(object.spec.keycloak) ||
+        !has(object.spec.groupSyncProvider) ||
+        object.spec.groupSyncProvider == 'Keycloak'
+      message: "spec.keycloak must not be set when groupSyncProvider is not Keycloak"
+      reason: Invalid
+{{- range $name := list "breakglass-session-validation" "breakglass-escalation-validation" "breakglass-clusterconfig-validation" "breakglass-identityprovider-validation" }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $name }}-binding
+  labels:
+    {{- include "escalation-config.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: admission
+    breakglass.t-caas.telekom.com/phase: "1"
+spec:
+  policyName: {{ $name }}
+  validationActions:
+    {{- toYaml $actions | nindent 4 }}
+  matchResources: {}
+{{- end }}
+{{- end }}
