@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-rc.8] - 2026-08-22
+
 ### Added
 
 - **User-flow recordings**: Added reproducible, narrated and paced E2E API/webhook, `bgctl`/`kubectl`, standalone browser/console, and synchronized browser-plus-console recordings covering denial, approval, Kubernetes identity/API access, deny-policy precedence, DebugSession creation, and debug-pod `tcpdump` usage.
@@ -14,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Persist empty approver-group membership as `[]` instead of invalid `null`, and
-  avoid repeated warning logs for an unchanged expected-empty group state.
+  avoid repeated warning logs for an unchanged expected-empty group state. (#1244)
 
 ## [0.1.0-rc.7] - 2026-08-12
 
