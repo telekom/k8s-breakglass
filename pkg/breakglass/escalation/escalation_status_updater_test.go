@@ -272,6 +272,7 @@ func TestDeduplicateMembersFromHierarchy_EmptyHierarchy(t *testing.T) {
 	hierarchy := map[string]map[string][]string{}
 
 	result := deduplicateMembersFromHierarchy(hierarchy, "admin-group")
+	assert.NotNil(t, result)
 	assert.Len(t, result, 0)
 }
 
@@ -284,6 +285,7 @@ func TestDeduplicateMembersFromHierarchy_GroupNotFound(t *testing.T) {
 	}
 
 	result := deduplicateMembersFromHierarchy(hierarchy, "admin-group")
+	assert.NotNil(t, result)
 	assert.Len(t, result, 0)
 }
 
