@@ -474,7 +474,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	}
 	out = normalizeMembers(out)
 	if len(out) == 0 && log != nil {
-		log.Warnw("Configured Keycloak group exists but has no resolvable members",
+		log.Debugw("Configured Keycloak group exists but has no resolvable members",
 			"group", system.RedactGroupName(group))
 	}
 	if log != nil {
@@ -1095,7 +1095,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPsReport(
 			}
 			idpGroupMembers[g] = normalizeMembers(members)
 			if len(idpGroupMembers[g]) == 0 {
-				log.Warnw("Configured approver group exists but has no resolvable members",
+				log.Debugw("Configured approver group exists but has no resolvable members",
 					"escalation", escalation.Name,
 					"idp", idpName,
 					"group", system.RedactGroupName(g))
@@ -1393,7 +1393,7 @@ func equalIDPHierarchy(a, b map[string]map[string][]string) bool {
 // Returns the deduplicated list of members for that group from all IDPs, sorted for deterministic output
 func deduplicateMembersFromHierarchy(hierarchy map[string]map[string][]string, group string) []string {
 	seen := make(map[string]struct{})
-	var result []string
+	result := make([]string, 0)
 
 	// Iterate through each IDP in hierarchy
 	for _, groupMembers := range hierarchy {

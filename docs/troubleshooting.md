@@ -734,6 +734,9 @@ kubectl get events --field-selector involvedObject.name=<name>
 
 **Solution:** Add the intended approver to the AD/Keycloak group, or configure
 an approver user/group that is populated in the selected identity provider.
+Empty membership is persisted as an empty list. The controller emits a warning
+event when this state changes, while unchanged periodic checks are logged only
+at debug level.
 
 ### ApprovalGroupMembersResolved Condition: False (GroupNotFound)
 
