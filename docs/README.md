@@ -56,7 +56,7 @@ Complete documentation for the breakglass privilege escalation system.
 - **[BreakglassEscalation](./breakglass-escalation.md)** - Define privilege escalation policies
 - **[BreakglassSession](./breakglass-session.md)** - Active escalation sessions
 - **[Debug Session](./debug-session.md)** - Debug pod deployments and kubectl debug access
-- **[OCI runbook bundles](./runbook-bundle-contract.md)** - Additive, digest-pinned documentation image volumes for debug templates
+- **[DebugSession terminal recording](./terminal-recording.md)** - Sidecar contract, artifact metadata, replay authorization, and signing hooks
 - **[Debug Session Cluster Bindings](./debug-session-cluster-binding.md)** - Delegate template access to teams and clusters
 - **[Breakglass user-flow recording](./demos/breakglass-user-flow.md)** - Asciinema demo of denial, approval, API access, and DebugSession
 - **[Extra Deploy Variables](./extra-deploy-variables.md)** - User-provided variables for customizable templates

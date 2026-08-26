@@ -37,6 +37,8 @@ var allSensitiveEventTypes = []EventType{
 	EventDebugSessionResourceCleanup, EventDebugSessionCleanupFailed,
 	EventDebugSessionTerminated, EventDebugSessionFailed,
 	EventDebugSessionExpired, EventDebugSessionApprovalTimeout,
+	EventDebugSessionRecordingStarted, EventDebugSessionRecordingReady,
+	EventDebugSessionRecordingFailed, EventDebugSessionRecordingDeleted,
 	EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
 	EventResourceImpersonate, EventPolicyBypassed,
 	EventPodSecurityDenied, EventPodSecurityWarning, EventPodSecurityOverride,

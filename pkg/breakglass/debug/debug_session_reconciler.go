@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -70,31 +71,41 @@ const (
 
 // DebugSessionController manages DebugSession lifecycle
 type DebugSessionController struct {
-	log          *zap.SugaredLogger
-	client       ctrlclient.Client
-	ccProvider   *cluster.ClientProvider
-	auditService *audit.Service
-	auditManager *audit.Manager
-	mailService  breakglass.MailEnqueuer
-	auxiliaryMgr *AuxiliaryResourceManager
-	brandingName string
-	baseURL      string
-	disableEmail bool
+	log                    *zap.SugaredLogger
+	client                 ctrlclient.Client
+	ccProvider             *cluster.ClientProvider
+	auditService           *audit.Service
+	auditManager           *audit.Manager
+	mailService            breakglass.MailEnqueuer
+	auxiliaryMgr           *AuxiliaryResourceManager
+	terminalRecordingImage string
+	brandingName           string
+	baseURL                string
+	disableEmail           bool
 }
 
 // NewDebugSessionController creates a new DebugSessionController
 func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client, ccProvider *cluster.ClientProvider) *DebugSessionController {
 	c := &DebugSessionController{
-		log:          log,
-		client:       client,
-		ccProvider:   ccProvider,
-		auxiliaryMgr: NewAuxiliaryResourceManager(log.Named("auxiliary"), client),
+		log:                    log,
+		client:                 client,
+		ccProvider:             ccProvider,
+		auxiliaryMgr:           NewAuxiliaryResourceManager(log.Named("auxiliary"), client),
+		terminalRecordingImage: strings.TrimSpace(os.Getenv("BREAKGLASS_TERMINAL_RECORDING_IMAGE")),
 	}
 	c.auxiliaryMgr.SetInventoryPersister(func(ctx context.Context, session *breakglassv1alpha1.DebugSession) error {
 		return breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
 			status.DeployedResources = session.Status.DeployedResources
 		})
 	})
+	return c
+}
+
+// WithTerminalRecordingSidecarImage configures the deployment-supplied image
+// implementing the terminal recording sidecar contract. The controller never
+// selects an internal or mutable image implicitly.
+func (c *DebugSessionController) WithTerminalRecordingSidecarImage(image string) *DebugSessionController {
+	c.terminalRecordingImage = strings.TrimSpace(image)
 	return c
 }
 
@@ -474,7 +485,6 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 		// path that is expected to retry.
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
-
 	// cleanupResources clears the status lists as it succeeds. If anything is still
 	// tracked, the cleanup was incomplete even though it reported no error, so the
 	// session is not yet safe to abandon.
@@ -507,6 +517,20 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 		c.emitCleanupFailureAudit(ctx, ds, err)
 		// Requeue to retry cleanup
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	}
+	if ds.Status.Recording != nil && ds.Status.Recording.Enabled && ds.Status.Recording.State != breakglassv1alpha1.TerminalRecordingStateFailed {
+		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+			if status.Recording == nil {
+				return
+			}
+			status.Recording.State = breakglassv1alpha1.TerminalRecordingStateRetained
+			now := metav1.Now()
+			status.Recording.CompletedAt = &now
+		}); err != nil {
+			return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, err
+		}
+		ds.Status.Recording.State = breakglassv1alpha1.TerminalRecordingStateRetained
+		c.emitRecordingAudit(ctx, audit.EventDebugSessionRecordingReady, ds, map[string]interface{}{"state": string(ds.Status.Recording.State)})
 	}
 
 	// Decrement active gauge for terminated sessions. Expired sessions are
@@ -605,11 +629,26 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		return c.failSession(ctx, ds, "invalid binding extra deploy variable constraints")
 	}
 	template = effectiveTemplate
+	if template.Spec.Audit != nil && template.Spec.Audit.EnableTerminalRecording && (ds.Status.Recording == nil || !ds.Status.Recording.Enabled) {
+		now := metav1.Now()
+		ds.Status.Recording = &breakglassv1alpha1.TerminalRecordingStatus{
+			Enabled:       true,
+			State:         breakglassv1alpha1.TerminalRecordingStateStarting,
+			Format:        TerminalRecordingFormat,
+			CorrelationID: recordingCorrelationID(ds.Namespace, ds.Name),
+			Retention:     defaultRecordingRetention(template.Spec.Audit.RecordingRetention),
+			StartedAt:     &now,
+		}
+	}
 
 	// Only deploy workloads for workload or hybrid mode
 	mode := template.Spec.Mode
 	if mode == "" {
 		mode = breakglassv1alpha1.DebugSessionModeWorkload
+	}
+	if template.Spec.Audit != nil && template.Spec.Audit.EnableTerminalRecording &&
+		mode != breakglassv1alpha1.DebugSessionModeWorkload && mode != breakglassv1alpha1.DebugSessionModeHybrid {
+		return c.failSession(ctx, ds, "terminal recording requires a workload or hybrid debug session mode")
 	}
 
 	if mode == breakglassv1alpha1.DebugSessionModeWorkload || mode == breakglassv1alpha1.DebugSessionModeHybrid {
@@ -618,6 +657,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 			return c.failSession(ctx, ds, fmt.Sprintf("failed to deploy resources: %v", err))
 		}
 	}
+<<<<<<< HEAD
 	if c.shouldEmitAudit(ds) {
 		if auditManager := c.currentAuditManager(); auditManager != nil {
 			for _, resource := range ds.Status.DeployedResources {
@@ -630,6 +670,13 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 					resource.Kind, resource.Name, resource.Namespace)
 			}
 		}
+	}
+	if ds.Status.Recording != nil && ds.Status.Recording.Enabled {
+		ds.Status.Recording.State = breakglassv1alpha1.TerminalRecordingStateRecording
+		c.emitRecordingAudit(ctx, audit.EventDebugSessionRecordingStarted, ds, map[string]interface{}{
+			"format":    ds.Status.Recording.Format,
+			"retention": ds.Status.Recording.Retention,
+		})
 	}
 
 	// Calculate expiration
@@ -778,6 +825,13 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglass
 	ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
 	ds.Status.Message = reason
 	breakglass.SetDebugSessionRetainedUntil(ds, time.Now())
+	if ds.Status.Recording != nil && ds.Status.Recording.Enabled {
+		ds.Status.Recording.State = breakglassv1alpha1.TerminalRecordingStateFailed
+		ds.Status.Recording.Error = safeRecordingFailure(reason)
+		c.emitRecordingAudit(ctx, audit.EventDebugSessionRecordingFailed, ds, map[string]interface{}{
+			"reason": ds.Status.Recording.Error,
+		})
+	}
 
 	// Send failure notification email to requester
 	c.sendDebugSessionFailedEmail(ds, reason)
@@ -880,6 +934,17 @@ func (c *DebugSessionController) shouldEmitAudit(ds *breakglassv1alpha1.DebugSes
 		return true // Default to enabled if not configured
 	}
 	return ds.Status.ResolvedTemplate.Audit.Enabled
+}
+
+func (c *DebugSessionController) emitRecordingAudit(ctx context.Context, eventType audit.EventType, ds *breakglassv1alpha1.DebugSession, details map[string]interface{}) {
+	if !c.shouldEmitAudit(ds) {
+		return
+	}
+	manager := c.currentAuditManager()
+	if manager == nil || ds.Status.Recording == nil {
+		return
+	}
+	manager.DebugSessionRecording(ctx, eventType, ds.Name, ds.Namespace, ds.Spec.Cluster, ds.Status.Recording.CorrelationID, details)
 }
 
 // sendToWebhookDestinations sends audit events to configured webhook destinations

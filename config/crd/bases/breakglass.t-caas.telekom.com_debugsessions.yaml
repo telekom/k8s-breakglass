@@ -1488,6 +1488,85 @@ spec:
                       type: string
                   type: object
                 type: array
+              recording:
+                description: |-
+                  recording contains the terminal recording lifecycle and artifact metadata.
+                  It is populated only when the resolved template enables terminal recording.
+                properties:
+                  artifact:
+                    description: |-
+                      artifact contains metadata for a completed recording. It never contains
+                      the recording payload itself.
+                    properties:
+                      expiresAt:
+                        description: expiresAt is when the artifact should be removed
+                          by the store.
+                        format: date-time
+                        type: string
+                      replayUrl:
+                        description: replayURL is an API-relative URL for an authorized
+                          replay request.
+                        type: string
+                      sha256:
+                        description: sha256 is the digest of the artifact bytes, when
+                          supplied by the store.
+                        type: string
+                      sizeBytes:
+                        description: sizeBytes is the artifact size, when supplied
+                          by the store.
+                        format: int64
+                        type: integer
+                      uri:
+                        description: uri is an opaque artifact location or object
+                          key.
+                        type: string
+                    required:
+                    - uri
+                    type: object
+                  completedAt:
+                    description: completedAt records when finalization completed.
+                    format: date-time
+                    type: string
+                  correlationId:
+                    description: |-
+                      correlationID joins sidecar, artifact, and audit events. It is opaque and
+                      contains no user-provided secret or token.
+                    type: string
+                  enabled:
+                    description: enabled records the resolved audit flag used for
+                      this session.
+                    type: boolean
+                  error:
+                    description: |-
+                      error records a safe, operator-facing failure reason. Secrets and sidecar
+                      payloads must not be copied here.
+                    type: string
+                  format:
+                    description: format is the sidecar output format (currently asciicast-v2).
+                    type: string
+                  retention:
+                    description: retention is the requested retention period as configured
+                      on the template.
+                    type: string
+                  startedAt:
+                    description: startedAt records when the recorder was enabled.
+                    format: date-time
+                    type: string
+                  state:
+                    description: state is the recording lifecycle state.
+                    enum:
+                    - Disabled
+                    - Starting
+                    - Recording
+                    - Finalizing
+                    - Ready
+                    - Failed
+                    - Retained
+                    type: string
+                required:
+                - enabled
+                - state
+                type: object
               renewalCount:
                 description: renewalCount tracks how many times the session has been
                   renewed.

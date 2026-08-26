@@ -286,6 +286,78 @@ type DebugSessionStatus struct {
 	// documents of a pod templateString (first document is always the PodSpec).
 	// +optional
 	PodTemplateResourceStatuses []PodTemplateResourceStatus `json:"podTemplateResourceStatuses,omitempty"`
+
+	// recording contains the terminal recording lifecycle and artifact metadata.
+	// It is populated only when the resolved template enables terminal recording.
+	// +optional
+	Recording *TerminalRecordingStatus `json:"recording,omitempty"`
+}
+
+// TerminalRecordingState represents the lifecycle of a terminal recording.
+// +kubebuilder:validation:Enum=Disabled;Starting;Recording;Finalizing;Ready;Failed;Retained
+type TerminalRecordingState string
+
+const (
+	TerminalRecordingStateDisabled   TerminalRecordingState = "Disabled"
+	TerminalRecordingStateStarting   TerminalRecordingState = "Starting"
+	TerminalRecordingStateRecording  TerminalRecordingState = "Recording"
+	TerminalRecordingStateFinalizing TerminalRecordingState = "Finalizing"
+	TerminalRecordingStateReady      TerminalRecordingState = "Ready"
+	TerminalRecordingStateFailed     TerminalRecordingState = "Failed"
+	TerminalRecordingStateRetained   TerminalRecordingState = "Retained"
+)
+
+// TerminalRecordingStatus describes terminal recording without carrying
+// terminal bytes or credentials in the DebugSession object.
+type TerminalRecordingStatus struct {
+	// enabled records the resolved audit flag used for this session.
+	Enabled bool `json:"enabled"`
+
+	// state is the recording lifecycle state.
+	State TerminalRecordingState `json:"state"`
+
+	// format is the sidecar output format (currently asciicast-v2).
+	Format string `json:"format,omitempty"`
+
+	// correlationID joins sidecar, artifact, and audit events. It is opaque and
+	// contains no user-provided secret or token.
+	CorrelationID string `json:"correlationId,omitempty"`
+
+	// retention is the requested retention period as configured on the template.
+	Retention string `json:"retention,omitempty"`
+
+	// artifact contains metadata for a completed recording. It never contains
+	// the recording payload itself.
+	Artifact *TerminalRecordingArtifact `json:"artifact,omitempty"`
+
+	// startedAt records when the recorder was enabled.
+	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+
+	// completedAt records when finalization completed.
+	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
+
+	// error records a safe, operator-facing failure reason. Secrets and sidecar
+	// payloads must not be copied here.
+	Error string `json:"error,omitempty"`
+}
+
+// TerminalRecordingArtifact identifies a recording stored by an external
+// artifact service. URI is opaque and is not fetched by the controller.
+type TerminalRecordingArtifact struct {
+	// uri is an opaque artifact location or object key.
+	URI string `json:"uri"`
+
+	// sha256 is the digest of the artifact bytes, when supplied by the store.
+	SHA256 string `json:"sha256,omitempty"`
+
+	// sizeBytes is the artifact size, when supplied by the store.
+	SizeBytes int64 `json:"sizeBytes,omitempty"`
+
+	// expiresAt is when the artifact should be removed by the store.
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+
+	// replayURL is an API-relative URL for an authorized replay request.
+	ReplayURL string `json:"replayUrl,omitempty"`
 }
 
 // PodTemplateResourceStatus tracks the state of resources deployed from multi-doc pod templates.

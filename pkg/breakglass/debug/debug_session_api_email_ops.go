@@ -381,7 +381,9 @@ func (c *DebugSessionAPIController) emitDebugSessionAuditDetails(ctx context.Con
 			Cluster:   audit.SanitizeDebugSessionAuditDetail(session.Spec.Cluster),
 		},
 		RequestContext: &audit.RequestContext{
-			SessionName: session.Name,
+			SessionName:      session.Name,
+			DebugSessionName: session.Name,
+			CorrelationID:    recordingCorrelationID(session.Namespace, session.Name),
 		},
 		Details: details,
 	}

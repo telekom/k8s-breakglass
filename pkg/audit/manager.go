@@ -870,6 +870,32 @@ func (m *Manager) DebugSessionCreated(ctx context.Context, sessionName, user, cl
 	})
 }
 
+// DebugSessionRecording emits a lifecycle event for a terminal recording.
+// CorrelationID is intentionally supplied separately from artifact metadata so
+// the event remains useful even when finalization fails.
+func (m *Manager) DebugSessionRecording(ctx context.Context, eventType EventType, sessionName, namespace, cluster, correlationID string, details map[string]interface{}) {
+	if details == nil {
+		details = make(map[string]interface{})
+	}
+	// Never let callers accidentally put the recording payload or credentials in
+	// the audit queue. The sidecar contract only permits metadata here.
+	delete(details, "data")
+	delete(details, "content")
+	delete(details, "token")
+	delete(details, "authorization")
+	m.Emit(ctx, &Event{
+		Type:     eventType,
+		Severity: SeverityForEventType(eventType),
+		Actor:    Actor{User: "system"},
+		Target:   Target{Kind: "DebugSession", Name: sessionName, Namespace: namespace, Cluster: cluster},
+		Details:  details,
+		RequestContext: &RequestContext{
+			CorrelationID:    correlationID,
+			DebugSessionName: sessionName,
+		},
+	})
+}
+
 // DebugSessionTerminated emits an audit event for debug session termination.
 func (m *Manager) DebugSessionTerminated(ctx context.Context, sessionName, user, reason string) {
 	m.Emit(ctx, &Event{

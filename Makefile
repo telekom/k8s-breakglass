@@ -4,6 +4,12 @@ include versions.env
 IMG ?= ghcr.io/telekom/k8s-breakglass:latest
 VALIDATOR_IMG ?= ghcr.io/telekom/k8s-breakglass/cluster-validator:dev
 
+# Terminal recording is deployment-supplied. These hooks intentionally do not
+# embed an image name, registry, Dockerfile, or signing identity.
+TERMINAL_RECORDING_IMAGE ?=
+TERMINAL_RECORDING_CONTEXT ?=
+TERMINAL_RECORDING_DOCKERFILE ?=
+
 # ENVTEST_K8S_VERSION is defined as a Make variable in versions.env (included above)
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
@@ -240,6 +246,20 @@ docker-build-validator-multiarch: ## Build the cluster-validator image for amd64
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
 		--output=type=oci,dest=cluster-validator-multiarch.tar \
 		-t $(VALIDATOR_IMG) .
+
+.PHONY: terminal-recording-image-build
+terminal-recording-image-build: ## Build a deployment-supplied terminal recorder image (set image/context/dockerfile).
+	@test -n "$(TERMINAL_RECORDING_IMAGE)" || (echo "TERMINAL_RECORDING_IMAGE is required" >&2; exit 1)
+	@test -n "$(TERMINAL_RECORDING_CONTEXT)" || (echo "TERMINAL_RECORDING_CONTEXT is required" >&2; exit 1)
+	@test -n "$(TERMINAL_RECORDING_DOCKERFILE)" || (echo "TERMINAL_RECORDING_DOCKERFILE is required" >&2; exit 1)
+	docker buildx build --file "$(TERMINAL_RECORDING_DOCKERFILE)" --tag "$(TERMINAL_RECORDING_IMAGE)" "$(TERMINAL_RECORDING_CONTEXT)"
+
+.PHONY: terminal-recording-image-sign
+terminal-recording-image-sign: ## Sign a digest-pinned terminal recorder image with cosign.
+	@test -n "$(TERMINAL_RECORDING_IMAGE)" || (echo "TERMINAL_RECORDING_IMAGE is required" >&2; exit 1)
+	case "$(TERMINAL_RECORDING_IMAGE)" in *@sha256:*) ;; *) echo "TERMINAL_RECORDING_IMAGE must be digest-pinned for signing" >&2; exit 1;; esac
+	command -v cosign >/dev/null 2>&1 || (echo "cosign is required" >&2; exit 1)
+	cosign sign --yes "$(TERMINAL_RECORDING_IMAGE)"
 
 ##@ Deployment
 

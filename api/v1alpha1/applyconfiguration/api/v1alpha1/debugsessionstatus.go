@@ -66,6 +66,8 @@ type DebugSessionStatusApplyConfiguration struct {
 	// from multi-document pod templates. These are K8s resources defined in second+
 	// documents of a pod templateString (first document is always the PodSpec).
 	PodTemplateResourceStatuses []PodTemplateResourceStatusApplyConfiguration `json:"podTemplateResourceStatuses,omitempty"`
+	// recording contains terminal recording lifecycle and artifact metadata.
+	Recording *TerminalRecordingStatusApplyConfiguration `json:"recording,omitempty"`
 }
 
 // DebugSessionStatusApplyConfiguration constructs a declarative configuration of the DebugSessionStatus type for use with
@@ -269,5 +271,11 @@ func (b *DebugSessionStatusApplyConfiguration) WithPodTemplateResourceStatuses(v
 		}
 		b.PodTemplateResourceStatuses = append(b.PodTemplateResourceStatuses, *values[i])
 	}
+	return b
+}
+
+// WithRecording sets the Recording field in the declarative configuration.
+func (b *DebugSessionStatusApplyConfiguration) WithRecording(value *TerminalRecordingStatusApplyConfiguration) *DebugSessionStatusApplyConfiguration {
+	b.Recording = value
 	return b
 }

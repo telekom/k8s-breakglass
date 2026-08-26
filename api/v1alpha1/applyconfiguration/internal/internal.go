@@ -1712,6 +1712,9 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.PodTemplateResourceStatus
           elementRelationship: atomic
+    - name: recording
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TerminalRecordingStatus
     - name: renewalCount
       type:
         scalar: numeric
@@ -1733,6 +1736,56 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: terminalSharing
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TerminalSharingStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.TerminalRecordingArtifact
+  map:
+    fields:
+    - name: expiresAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: replayUrl
+      type:
+        scalar: string
+    - name: sha256
+      type:
+        scalar: string
+    - name: sizeBytes
+      type:
+        scalar: numeric
+    - name: uri
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.TerminalRecordingState
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.TerminalRecordingStatus
+  map:
+    fields:
+    - name: artifact
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TerminalRecordingArtifact
+    - name: completedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: correlationId
+      type:
+        scalar: string
+    - name: enabled
+      type:
+        scalar: boolean
+    - name: error
+      type:
+        scalar: string
+    - name: format
+      type:
+        scalar: string
+    - name: retention
+      type:
+        scalar: string
+    - name: startedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: state
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TerminalRecordingState
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplate
   map:
     fields:

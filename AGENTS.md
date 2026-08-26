@@ -442,3 +442,22 @@ The 16 reviewer personas cover every issue class found by automated reviewers
 - **REST API** catches validation gaps, inconsistent response formats, auth bypasses, 401-vs-403 misuse
 - **Helm chart** catches RBAC drift, stale CRDs, upgrade failures, missing security contexts, **orphaned resources** (ConfigMaps/Secrets rendered but never consumed or documented)
 - **End-user** catches UX pain for SREs during incidents, admin config friction, audit gaps
+
+## Terminal recording privacy and retention
+
+- `DebugSessionTemplate.spec.audit.enableTerminalRecording` is terminal-session
+  recording only; keep it separate from narrated/demo recordings under
+  `e2e/` and `docs/demos/`.
+- The recording sidecar image is deployment-supplied. Runtime code must fail
+  closed when recording is enabled but the image or retention value is invalid;
+  never silently run an unrecorded session.
+- Pass only non-secret session metadata to the sidecar. Never copy webhook
+  headers, bearer tokens, Secret values, or terminal bytes into Kubernetes
+  status, audit details, logs, or failure messages. Sidecars must enable
+  secret redaction and artifact stores must expose opaque metadata only.
+- Replay endpoints use the same DebugSession read authorization as session
+  details. Artifact URIs are opaque and must not be treated as local paths;
+  external stores own upload, retention expiry, and deletion.
+- Prefer digest-pinned, signed sidecar images. Build/sign hooks must accept
+  explicit deployment image inputs rather than embedding an internal registry
+  or image name.

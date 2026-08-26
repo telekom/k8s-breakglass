@@ -749,6 +749,31 @@ func TestDebugSessionStatusFromPreservesAuthorizationAndResourceFields(t *testin
 	assert.Equal(t, "cleanup pending", *podTemplateStatus.Error)
 }
 
+func TestDebugSessionStatusFromPreservesTerminalRecording(t *testing.T) {
+	status := &breakglassv1alpha1.DebugSessionStatus{
+		Recording: &breakglassv1alpha1.TerminalRecordingStatus{
+			Enabled:       true,
+			State:         breakglassv1alpha1.TerminalRecordingStateReady,
+			Format:        "asciicast-v2",
+			CorrelationID: "dsr-abc",
+			Retention:     "30d",
+			Artifact: &breakglassv1alpha1.TerminalRecordingArtifact{
+				URI:       "opaque/object-key",
+				SHA256:    "sha256:abc",
+				SizeBytes: 42,
+			},
+		},
+	}
+	result := DebugSessionStatusFrom(status)
+	require.NotNil(t, result.Recording)
+	assert.True(t, *result.Recording.Enabled)
+	assert.Equal(t, breakglassv1alpha1.TerminalRecordingStateReady, *result.Recording.State)
+	assert.Equal(t, "dsr-abc", *result.Recording.CorrelationID)
+	require.NotNil(t, result.Recording.Artifact)
+	assert.Equal(t, "opaque/object-key", *result.Recording.Artifact.URI)
+	assert.Equal(t, int64(42), *result.Recording.Artifact.SizeBytes)
+}
+
 func TestDebugSessionStatusFromIncludesEmptyErrorFields(t *testing.T) {
 	status := &breakglassv1alpha1.DebugSessionStatus{
 		AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{

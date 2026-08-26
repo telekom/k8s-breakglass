@@ -1073,6 +1073,16 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 		}
 	}
 
+	// Terminal recording is deliberately independent from the demo recording
+	// scripts under e2e/. A template opt-in is consumed here, at the final pod
+	// construction boundary, so structured templates and rendered templates get
+	// the same sidecar contract.
+	if template.Spec.Audit != nil && template.Spec.Audit.EnableTerminalRecording {
+		if err := injectTerminalRecording(spec, ds, template, c.terminalRecordingImage); err != nil {
+			return nil, fmt.Errorf("configure terminal recording: %w", err)
+		}
+	}
+
 	return renderResult, nil
 }
 

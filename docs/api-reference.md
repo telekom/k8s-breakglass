@@ -970,6 +970,27 @@ GET /api/debugSessions/:name
 
 **Response:** Full `DebugSession` object including status and participants.
 
+### Get DebugSession Recording Metadata
+
+```http
+GET /api/debugSessions/:name/recording
+```
+
+Returns the metadata-only `status.recording` object when terminal recording is
+enabled. The endpoint uses the same DebugSession read authorization as the
+detail endpoint; recording bytes and credentials are never returned.
+
+### Replay DebugSession Recording
+
+```http
+GET /api/debugSessions/:name/recording/replay
+```
+
+Streams the external artifact through the deployment-configured recording
+reader. It returns `503` when replay storage is not configured and `404` when
+the artifact is unavailable. The opaque artifact URI is not treated as a local
+path.
+
 ### Create Debug Session
 
 ```http

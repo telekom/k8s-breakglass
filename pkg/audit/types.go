@@ -132,6 +132,10 @@ const (
 	EventDebugSessionResourceDeploy   EventType = "debug_session.resource_deployed"
 	EventDebugSessionResourceCleanup  EventType = "debug_session.resource_cleanup"
 	EventDebugSessionCleanupFailed    EventType = "debug_session.cleanup_failed"
+	EventDebugSessionRecordingStarted EventType = "debug_session.recording_started"
+	EventDebugSessionRecordingReady   EventType = "debug_session.recording_ready"
+	EventDebugSessionRecordingFailed  EventType = "debug_session.recording_failed"
+	EventDebugSessionRecordingDeleted EventType = "debug_session.recording_deleted"
 	// EventDebugSessionBindingUnresolved is emitted when a DebugSession names an
 	// explicit BindingRef that cannot be resolved. The binding carries the approver
 	// configuration, so an unresolvable ref means the approval requirement is
@@ -498,6 +502,8 @@ func IsSensitiveEvent(eventType EventType) bool {
 		EventDebugSessionExpired, EventDebugSessionApprovalTimeout,
 		EventDebugSessionAttached, EventDebugSessionResourceDeploy,
 		EventDebugSessionResourceCleanup, EventDebugSessionCleanupFailed,
+		EventDebugSessionRecordingStarted, EventDebugSessionRecordingReady,
+		EventDebugSessionRecordingFailed, EventDebugSessionRecordingDeleted,
 		EventDebugSessionBindingUnresolved,
 		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
 		EventResourceImpersonate, EventPolicyBypassed,

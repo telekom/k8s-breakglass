@@ -239,6 +239,10 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 		result.WithPodTemplateResourceStatuses(PodTemplateResourceStatusFrom(&status.PodTemplateResourceStatuses[i]))
 	}
 
+	if status.Recording != nil {
+		result.WithRecording(TerminalRecordingStatusFrom(status.Recording))
+	}
+
 	// Set allowed pods
 	for i := range status.AllowedPods {
 		result.WithAllowedPods(AllowedPodRefFrom(&status.AllowedPods[i]))
@@ -296,6 +300,51 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 		result.WithResolvedBinding(ResolvedBindingRefFrom(status.ResolvedBinding))
 	}
 
+	return result
+}
+
+func TerminalRecordingStatusFrom(status *breakglassv1alpha1.TerminalRecordingStatus) *ac.TerminalRecordingStatusApplyConfiguration {
+	if status == nil {
+		return nil
+	}
+	result := ac.TerminalRecordingStatus().WithEnabled(status.Enabled)
+	if status.State != "" {
+		result.WithState(status.State)
+	}
+	if status.Format != "" {
+		result.WithFormat(status.Format)
+	}
+	if status.CorrelationID != "" {
+		result.WithCorrelationID(status.CorrelationID)
+	}
+	if status.Retention != "" {
+		result.WithRetention(status.Retention)
+	}
+	if status.Artifact != nil {
+		artifact := ac.TerminalRecordingArtifact().WithURI(status.Artifact.URI)
+		if status.Artifact.SHA256 != "" {
+			artifact.WithSHA256(status.Artifact.SHA256)
+		}
+		if status.Artifact.SizeBytes != 0 {
+			artifact.WithSizeBytes(status.Artifact.SizeBytes)
+		}
+		if status.Artifact.ExpiresAt != nil {
+			artifact.WithExpiresAt(*status.Artifact.ExpiresAt)
+		}
+		if status.Artifact.ReplayURL != "" {
+			artifact.WithReplayURL(status.Artifact.ReplayURL)
+		}
+		result.WithArtifact(artifact)
+	}
+	if status.StartedAt != nil {
+		result.WithStartedAt(*status.StartedAt)
+	}
+	if status.CompletedAt != nil {
+		result.WithCompletedAt(*status.CompletedAt)
+	}
+	if status.Error != "" {
+		result.WithError(status.Error)
+	}
 	return result
 }
 

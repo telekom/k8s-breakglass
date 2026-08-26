@@ -58,13 +58,21 @@ type DebugSessionAPIController struct {
 	// clusterClients optionally overrides how target-cluster clients are
 	// obtained. When nil, ccProvider is used. Tests set this to evaluate
 	// namespace selectorTerms without a live spoke cluster.
-	clusterClients ClientProviderInterface
-	middleware     gin.HandlerFunc
-	mailService    breakglass.MailEnqueuer
-	auditService   breakglass.AuditEmitter
-	disableEmail   bool
-	brandingName   string
-	baseURL        string
+	clusterClients  ClientProviderInterface
+	middleware      gin.HandlerFunc
+	mailService     breakglass.MailEnqueuer
+	auditService    breakglass.AuditEmitter
+	disableEmail    bool
+	brandingName    string
+	baseURL         string
+	recordingReader RecordingReplayReader
+}
+
+// RecordingReplayReader is the deployment-specific artifact reader used by
+// the replay endpoint. The controller deliberately does not assume S3, PVC,
+// Kafka, or an internal artifact service.
+type RecordingReplayReader interface {
+	OpenRecording(ctx context.Context, session *breakglassv1alpha1.DebugSession) (io.ReadCloser, string, error)
 }
 
 // NewDebugSessionAPIController creates a new debug session API controller
@@ -94,6 +102,14 @@ func (c *DebugSessionAPIController) WithAuditService(auditService breakglass.Aud
 // WithDisableEmail disables email notifications
 func (c *DebugSessionAPIController) WithDisableEmail(disable bool) *DebugSessionAPIController {
 	c.disableEmail = disable
+	return c
+}
+
+// WithRecordingReplayReader configures the external recording artifact reader.
+// When unset, recording metadata remains readable but replay returns a clear
+// service-unavailable response instead of silently exposing a local path.
+func (c *DebugSessionAPIController) WithRecordingReplayReader(reader RecordingReplayReader) *DebugSessionAPIController {
+	c.recordingReader = reader
 	return c
 }
 
@@ -138,6 +154,8 @@ func (c *DebugSessionAPIController) Register(rg *gin.RouterGroup) error {
 	// Session endpoints
 	rg.GET("", breakglass.InstrumentedHandler("handleListDebugSessions", c.handleListDebugSessions))
 	rg.GET(":name", breakglass.InstrumentedHandler("handleGetDebugSession", c.handleGetDebugSession))
+	rg.GET(":name/recording", breakglass.InstrumentedHandler("handleGetDebugSessionRecording", c.handleGetDebugSessionRecording))
+	rg.GET(":name/recording/replay", breakglass.InstrumentedHandler("handleReplayDebugSessionRecording", c.handleReplayDebugSessionRecording))
 	rg.POST("", breakglass.InstrumentedHandler("handleCreateDebugSession", c.handleCreateDebugSession))
 	rg.POST(":name/join", breakglass.InstrumentedHandler("handleJoinDebugSession", c.handleJoinDebugSession))
 	rg.POST(":name/leave", breakglass.InstrumentedHandler("handleLeaveDebugSession", c.handleLeaveDebugSession))
@@ -739,6 +757,96 @@ func (c *DebugSessionAPIController) handleGetDebugSession(ctx *gin.Context) {
 		CanApprove:   canApprove,
 		CanReject:    canApprove,
 	})
+}
+
+// handleGetDebugSessionRecording returns recording metadata only. Recording
+// bytes never belong in the DebugSession response or Kubernetes status.
+func (c *DebugSessionAPIController) handleGetDebugSessionRecording(ctx *gin.Context) {
+	identity, ok := debugSessionRequestIdentity(ctx)
+	if !ok {
+		apiresponses.RespondUnauthorized(ctx)
+		return
+	}
+	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
+	defer cancel()
+	session, err := c.getDebugSessionByName(apiCtx, ctx.Param("name"), ctx.Query("namespace"))
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			apiresponses.RespondNotFoundSimple(ctx, "debug session not found")
+			return
+		}
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to get debug session")
+		return
+	}
+	canRead, err := c.canReadDebugSession(apiCtx, session, identity)
+	if err != nil {
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to evaluate debug session read authorization")
+		return
+	}
+	if !canRead {
+		apiresponses.RespondForbidden(ctx, "user is not authorized to read this debug session")
+		return
+	}
+	if session.Status.Recording == nil || !session.Status.Recording.Enabled {
+		apiresponses.RespondNotFoundSimple(ctx, "terminal recording is not enabled")
+		return
+	}
+	ctx.JSON(http.StatusOK, session.Status.Recording)
+}
+
+// handleReplayDebugSessionRecording streams an artifact through an injected
+// reader after the same DebugSession authorization check used by the detail
+// endpoint. A reader controls storage and content type; no URI is trusted as a
+// local filesystem path.
+func (c *DebugSessionAPIController) handleReplayDebugSessionRecording(ctx *gin.Context) {
+	identity, ok := debugSessionRequestIdentity(ctx)
+	if !ok {
+		apiresponses.RespondUnauthorized(ctx)
+		return
+	}
+	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
+	defer cancel()
+	session, err := c.getDebugSessionByName(apiCtx, ctx.Param("name"), ctx.Query("namespace"))
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			apiresponses.RespondNotFoundSimple(ctx, "debug session not found")
+			return
+		}
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to get debug session")
+		return
+	}
+	canRead, err := c.canReadDebugSession(apiCtx, session, identity)
+	if err != nil {
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to evaluate debug session read authorization")
+		return
+	}
+	if !canRead {
+		apiresponses.RespondForbidden(ctx, "user is not authorized to read this debug session")
+		return
+	}
+	if c.recordingReader == nil {
+		apiresponses.RespondServiceUnavailable(ctx, "terminal recording replay is not configured")
+		return
+	}
+	if session.Status.Recording == nil || !session.Status.Recording.Enabled {
+		apiresponses.RespondNotFoundSimple(ctx, "terminal recording is not enabled")
+		return
+	}
+	reader, contentType, err := c.recordingReader.OpenRecording(apiCtx, session)
+	if err != nil {
+		apiresponses.RespondNotFoundSimple(ctx, "terminal recording artifact is unavailable")
+		return
+	}
+	defer reader.Close()
+	if contentType == "" {
+		contentType = "application/x-asciicast"
+	}
+	ctx.Header("Content-Type", contentType)
+	ctx.Header("Content-Disposition", `inline; filename="`+session.Name+`.cast"`)
+	if _, err := io.Copy(ctx.Writer, reader); err != nil {
+		// Headers may already be committed; only log-safe status is available.
+		c.log.Warnw("Failed to stream terminal recording", "session", session.Name, "error", err)
+	}
 }
 
 // handleCreateDebugSession creates a new debug session
