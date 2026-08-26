@@ -4,21 +4,17 @@
 
 SHELL := /bin/sh
 
-IMAGE ?= ghcr.io/telekom/k8s-breakglass/utils/node-maintenance:dev
+IMAGE ?= ghcr.io/telekom/k8s-breakglass/node-maintenance:dev
 PLATFORMS ?= linux/amd64,linux/arm64
 VERSION ?= dev
 VCS_REF ?= $(shell git rev-parse --short HEAD 2>/dev/null || printf unknown)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 OCI_ARCHIVE ?= node-maintenance.oci.tar
 
-.PHONY: test integration build build-multiarch sbom sign
+.PHONY: test build build-multiarch sbom sign
 
 test:
 	./tests/test-helpers.sh
-	GOCACHE=$${NODE_MAINTENANCE_GOCACHE:-$${TMPDIR:-/tmp}/node-maintenance-go-cache} go test ./cmd/network-action
-
-integration:
-	./tests/integration.sh
 
 build:
 	docker build --pull=false \

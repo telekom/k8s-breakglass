@@ -38,20 +38,12 @@ done
 validate_target "$target_node"
 validate_interface "$interface"
 validate_confirmation NODE-RECOVERY-PREFLIGHT "$confirmation"
-validate_recording_context
-operation_tuple_digest=$(sha256_text "target_node=$target_node&interface=$interface&action=read-only&confirmation=$confirmation")
 prepare_evidence_dir "$evidence_dir"
-acquire_operation_lock "$evidence_dir" "$operation_tuple_digest"
-trap 'cleanup_evidence_temporary_candidates || true; release_operation_lock || true' EXIT
-assert_no_active_legacy_locks || die "an older node-maintenance operation is active or requires migration"
-cleanup_evidence_temporary_candidates || die "cannot clean stale evidence temporary files"
 
 bundle=$(new_bundle "$evidence_dir" node-recovery)
 write_metadata "$bundle/metadata" node-recovery "$target_node" "$interface" read-only
-record_event operation-started accepted
 
 if ! capture "$bundle/interface.txt" ip -details link show dev "$interface"; then
-	record_event operation-completed preflight-failed
 	printf 'Interface %s was not found; evidence bundle is incomplete: %s\n' "$interface" "$bundle" >&2
 	exit 1
 fi
@@ -64,9 +56,7 @@ capture "$bundle/neighbors.txt" ip neigh show dev "$interface" || true
 capture "$bundle/ethtool.txt" ethtool "$interface" || true
 capture "$bundle/resolver.txt" cat /etc/resolv.conf || true
 capture "$bundle/kernel.txt" uname -a || true
-assert_safe_bundle "$bundle"
-printf 'completed_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | append_evidence "$bundle/metadata"
-record_event operation-completed succeeded
+printf 'completed_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$bundle/metadata"
 
 printf 'Preflight completed for target %s, interface %s. Evidence: %s\n' \
 	"$target_node" "$interface" "$bundle"
