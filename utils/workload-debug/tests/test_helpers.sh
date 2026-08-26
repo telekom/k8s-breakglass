@@ -4,7 +4,16 @@
 set -eu
 
 root=$(cd -- "$(dirname "$0")/.." && pwd)
-PATH="$root/scripts:$PATH"
+fixture=$(mktemp -d)
+trap 'rm -rf "$fixture"' EXIT HUP INT TERM
+cat >"$fixture/nslookup" <<'EOF'
+#!/bin/sh
+[ "$#" -eq 1 ] && [ "$1" = localhost ] || exit 2
+printf '%s\n' 'Name: localhost' 'Address: 127.0.0.1'
+EOF
+chmod +x "$fixture/nslookup"
+
+PATH="$root/scripts:$fixture:$PATH"
 export PATH
 
 assert_contains() {
@@ -16,12 +25,12 @@ assert_contains() {
     }
 }
 
-workload-debug --help | grep -F 'kube-api' >/dev/null
-debug-dns --help | grep -F 'Usage:' >/dev/null
-debug-tls --help | grep -F 'Usage:' >/dev/null
-debug-http --help | grep -F 'Usage:' >/dev/null
-debug-kube-api --help | grep -F 'Usage:' >/dev/null
-debug-report --help | grep -F 'Usage:' >/dev/null
+wrapped=$(workload-debug report)
+assert_contains "$wrapped" 'workload-debug report'
+assert_contains "$wrapped" 'checks_failed: 0'
+
+dns_result=$(debug-dns localhost)
+assert_contains "$dns_result" '127.0.0.1'
 
 if debug-http ftp://invalid.example >/dev/null 2>&1; then
     printf '%s\n' 'debug-http accepted an unsupported URL scheme' >&2
