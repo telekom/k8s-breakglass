@@ -116,6 +116,35 @@ manifest with keyless Cosign.
   random IDs. Changes to tools or permissions require an update to the image
   README, `docs/network-debug-image.md`, and the Unreleased changelog entry.
 
+## Standalone cluster-validator image (TCAAS-1619)
+
+The provider-neutral validator is intentionally isolated in `pkg/clustervalidator`
+and `cmd/cluster-validator`; its image is built only by `Dockerfile.validator`.
+Keep this boundary intact: built-in checks may use only public, read-only
+Kubernetes APIs and must not assume internal T-CaaS namespaces, operators,
+CRDs, or services. New checks require stable names, unit tests with fake
+clients, and an update to `docs/cluster-validator.md` and the post-upgrade
+runbook. Extend through the exported `Check` interface rather than adding
+provider-specific behavior to the public image.
+
+The report contract (`cluster-validator.telekom.com/v1alpha1`) must remain
+deterministic: sort check results by name, omit timestamps by default, and
+preserve exit codes 0 (ready), 1 (not-ready), and 2 (usage/configuration).
+Changes to the contract require a versioned API decision and changelog entry.
+Run `make test-validator` before committing. Image changes must preserve the
+digest-pinned base images, `linux/amd64` + `linux/arm64` build, OCI revision /
+SBOM / signing labels, and the pinned-action workflow's provenance, SPDX SBOM,
+and Sigstore attestation steps. Run REUSE and YAML validation for new docs,
+MOTD, Dockerfile, and workflow files; never use floating image or action tags.
+Run `make test-validator-integration` when Docker, kind, kubectl, jq, and Go
+are available. The integration harness must build the image, execute every
+built-in check and the extension contract against a disposable real cluster
+with least-privilege RBAC, assert the documented exit codes and deterministic
+reports, prove forbidden mutations and secret isolation, and verify cleanup;
+it must fail loudly when a required tool or cluster is unavailable. Keep the
+machine-readable intent in `hack/cluster-validator-integration.contract.json`
+in sync with the harness and any consolidated utility workflow.
+
 ## Build Tags
 
 - `//go:build e2e` — E2E tests (compiled with `-tags=e2e`; at runtime, tests skip unless `E2E_TEST=true`)

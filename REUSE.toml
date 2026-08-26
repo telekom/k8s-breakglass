@@ -67,6 +67,13 @@ path = ["*.md", "docs/**", "config/samples/README.md"]
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "CC-BY-4.0"
 
+# Standalone validator MOTD
+[[annotations]]
+precedence = "aggregate"
+path = ["motd/**"]
+SPDX-FileCopyrightText = "2026 Deutsche Telekom AG"
+SPDX-License-Identifier = "CC-BY-4.0"
+
 # Charts documentation under charts/ (recursive)
 [[annotations]]
 precedence = "aggregate"

@@ -2,6 +2,7 @@ include versions.env
 
 # Image URL to use all building/pushing image targets
 IMG ?= ghcr.io/telekom/k8s-breakglass:latest
+VALIDATOR_IMG ?= ghcr.io/telekom/k8s-breakglass-cluster-validator:latest
 
 # ENVTEST_K8S_VERSION is defined as a Make variable in versions.env (included above)
 
@@ -114,6 +115,14 @@ prepare-test: ## Regenerate code/manifests, format Go files, and run vet before 
 test: vet ## Run all unit tests (controller + CLI) without mutating generated or formatted files.
 	go test $(GO_TEST_FLAGS) $$(go list ./... | $(E2E_EXCLUDE)) -coverprofile cover.out
 
+.PHONY: test-validator
+test-validator: ## Run the standalone cluster-validator unit tests.
+	go test $(GO_TEST_FLAGS) ./pkg/clustervalidator ./cmd/cluster-validator ./hack/cluster-validator-extension
+
+.PHONY: test-validator-integration
+test-validator-integration: ## Build and run the validator against a disposable real kind cluster.
+	bash hack/cluster-validator-integration.sh
+
 .PHONY: test-controller
 test-controller: vet ## Run controller unit tests (excludes bgctl and e2e) without mutating generated or formatted files.
 	go test $(GO_TEST_FLAGS) $$(go list ./... | $(E2E_EXCLUDE) | grep -v bgctl) -coverprofile cover-controller.out
@@ -210,6 +219,26 @@ docker-build-telekom: ## Build Telekom branded UI image
 .PHONY: docker-build-dev
 docker-build-dev: ## Build docker image with controller.
 	docker build -t breakglass:dev .
+
+.PHONY: docker-build-validator
+docker-build-validator: ## Build the provider-neutral cluster-validator image for the host architecture.
+	docker build \
+		-f Dockerfile.validator \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t $(VALIDATOR_IMG) .
+
+.PHONY: docker-build-validator-multiarch
+docker-build-validator-multiarch: ## Build the cluster-validator image for amd64 and arm64 (no push).
+	docker buildx build \
+		--platform linux/amd64,linux/arm64 \
+		-f Dockerfile.validator \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		--output=type=oci,dest=cluster-validator-multiarch.tar \
+		-t $(VALIDATOR_IMG) .
 
 ##@ Deployment
 
