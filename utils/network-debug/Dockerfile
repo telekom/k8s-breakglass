@@ -67,7 +67,10 @@ LABEL org.opencontainers.image.title="Network Debug Utility" \
 	org.opencontainers.image.created="${BUILD_DATE}" \
 	org.opencontainers.image.base.name="docker.io/library/alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b" \
 	org.opencontainers.image.base.digest="sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b" \
-	org.opencontainers.image.vendor="Deutsche Telekom AG"
+	org.opencontainers.image.vendor="Deutsche Telekom AG" \
+	io.telekom.breakglass.intent="network-diagnostics" \
+	io.telekom.breakglass.image.role="debug-network" \
+	io.telekom.breakglass.security.capabilities="NET_RAW,NET_ADMIN,BPF,PERFMON"
 
 # Keep this list intentionally focused. APK resolves dependencies for the
 # digest-pinned Alpine release; versions are recorded in versions.env and
@@ -109,6 +112,7 @@ RUN chmod 0755 /usr/local/bin/net-debug /usr/local/bin/net-report /etc/profile.d
 	&& chmod 0644 /usr/share/network-debug/version
 
 ENV NETWORK_DEBUG_VERSION=${VERSION}
+ENV NETWORK_DEBUG_INTENT=network-diagnostics
 ENV PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 WORKDIR /work
