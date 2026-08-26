@@ -114,8 +114,9 @@ not skippable when Docker, kind, or kubectl is unavailable.
 
 The checked-in `tool-contract.json` records the stable `workload-diagnostics`
 intent and each helper's allowed operation. `debug-report --json` emits a
-deterministic JSON summary containing only check identities and success
-statuses. Use `debug-tls --ca FILE` when the endpoint must be verified against
+deterministic JSON summary with `status: ready|not-ready`, containing only
+check identities and success statuses for one-time or post-upgrade readiness.
+Use `debug-tls --ca FILE` when the endpoint must be verified against
 a supplied local CA, and `debug-dns --server HOST#PORT` for a non-default
 resolver port.
 
