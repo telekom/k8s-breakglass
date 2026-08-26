@@ -189,6 +189,14 @@ cluster) created by that invocation.
 
 All PRs must pass: golangci-lint, unit tests, frontend tests (Vitest), Helm lint, Docker build, manifest validation, REUSE compliance, Trivy scan, OpenSSF Scorecard.
 
+Tests must prove observable behavior. Do not add assertions that merely search
+source files, workflows, manifests, or documentation for expected strings or
+check that an implementation file exists. Exercise the public command, API,
+rendering, release script, or controller transition and assert its output,
+failure mode, security boundary, and cleanup. If the behavior cannot be
+executed reliably in the available test environment, document the missing
+acceptance gate instead of adding a presence-only test.
+
 ## Debug Session Catalogue
 
 The standalone `charts/debug-session-catalogue` chart renders paired,
