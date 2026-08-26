@@ -584,57 +584,6 @@ jobs:
             echo "Published ${chart_package} to ${CHART_REPO}"
           done
 
-      - name: Publish debug-session-catalogue chart when present
-        env:
-          CHART_REPO: oci://ghcr.io/${{ github.repository }}/charts
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          packages=(chart-dist/debug-session-catalogue-*.tgz)
-          if [ "${#packages[@]}" -eq 0 ]; then
-            echo "No standalone debug-session-catalogue chart package; skipping."
-            exit 0
-          fi
-          [ "${#packages[@]}" -eq 1 ] || {
-            echo "Expected one debug-session-catalogue package, found ${#packages[@]}." >&2
-            exit 1
-          }
-          chart_package="${packages[0]}"
-          metadata="$(helm show chart "${chart_package}")"
-          chart_name="$(printf '%s\n' "${metadata}" | awk '/^name:/ {print $2}')"
-          chart_version="$(printf '%s\n' "${metadata}" | awk '/^version:/ {print $2}')"
-          chart_app_version="$(printf '%s\n' "${metadata}" | awk '/^appVersion:/ {print $2}' | tr -d '"')"
-          [ "${chart_name}" = "debug-session-catalogue" ] || {
-            echo "Unexpected catalogue chart name: ${chart_name}" >&2
-            exit 1
-          }
-          [ -n "${chart_version}" ] || { echo "Catalogue chart version is empty." >&2; exit 1; }
-          [ "${chart_app_version}" = "${GITHUB_REF_NAME}" ] || {
-            echo "Catalogue appVersion ${chart_app_version} does not match ${GITHUB_REF_NAME}." >&2
-            exit 1
-          }
-
-          set +e
-          remote_metadata="$(helm show chart "${CHART_REPO}/${chart_name}" --version "${chart_version}" 2>&1)"
-          lookup_status=$?
-          set -e
-          if [ "${lookup_status}" -eq 0 ]; then
-            remote_app_version="$(printf '%s\n' "${remote_metadata}" | awk '/^appVersion:/ {print $2}' | tr -d '"')"
-            if [ "${remote_app_version}" = "${chart_app_version}" ]; then
-              echo "Catalogue chart ${chart_version} already published for ${remote_app_version}; skipping push."
-              exit 0
-            fi
-            echo "Catalogue chart ${chart_version} exists with appVersion ${remote_app_version}; bump Chart.yaml version." >&2
-            exit 1
-          fi
-          if ! printf '%s\n' "${remote_metadata}" | grep -Eiq '(^Error: .*(not found|manifest unknown)|(^|[[:space:]])manifest unknown([[:space:][:punct:]]|$))'; then
-            echo "Could not inspect catalogue chart ${chart_name}:${chart_version} before publishing." >&2
-            printf '%s\n' "${remote_metadata}" >&2
-            exit "${lookup_status}"
-          fi
-          helm push "${chart_package}" "${CHART_REPO}"
-          echo "Published ${chart_package} to ${CHART_REPO}"
-
       - name: Sign and verify immutable chart contracts
         env:
           CHART_REPO: oci://ghcr.io/${{ github.repository }}/charts
