@@ -60,25 +60,25 @@ require_pattern 'Could not determine registry digest' \
   "release workflow must fail when the registry digest cannot be determined"
 require_pattern 'subject-digest: \$\{\{ steps\.inspect\.outputs\.digest \}\}' \
   "release provenance attestation must use the inspected registry digest output"
-require_pattern 'CHART_APP_VERSION=' \
+require_pattern 'chart_app_version=' \
   "release workflow must read the packaged Helm chart appVersion"
-require_pattern 'CHART_METADATA="\$\(helm show chart "\$\{CHART_PACKAGE\}"\)"' \
+require_pattern 'chart_metadata="\$\(helm show chart "\$\{chart_package\}"\)"' \
   "release workflow must capture packaged Helm chart metadata once"
-require_pattern '\[ "\$\{CHART_APP_VERSION\}" != "\$\{RELEASE_TAG\}" \]' \
+require_pattern '\[ "\$\{chart_app_version\}" = "\$\{RELEASE_TAG\}" \]' \
   "release workflow must fail when packaged Helm chart appVersion does not match the release tag"
-require_pattern 'REMOTE_APP_VERSION=' \
+require_pattern 'remote_app_version=' \
   "release workflow must read the remote Helm chart appVersion before skipping an existing chart version"
-require_pattern 'Failed to determine remote escalation-config:\$\{CHART_VERSION\} appVersion from GHCR metadata' \
+require_pattern '\[ "\$\{remote_app_version\}" = "\$\{chart_app_version\}" \]' \
   "release workflow must fail clearly when remote chart metadata lacks appVersion"
-require_pattern 'REMOTE_CHART_LOOKUP_STATUS=' \
+require_pattern 'remote_status=\$\?' \
   "release workflow must preserve the remote chart lookup exit status"
-require_pattern 'Failed to inspect existing escalation-config' \
+require_pattern 'Failed to inspect \$\{remote\}' \
   "release workflow must fail real remote chart lookup errors before publishing"
 require_pattern 'grep -Eiq.*manifest unknown' \
   "release workflow must classify Helm/GHCR missing-chart errors without broad network-error matches"
-require_pattern '\[ "\$\{REMOTE_APP_VERSION\}" = "\$\{CHART_APP_VERSION\}" \]' \
+require_pattern '\[ "\$\{remote_app_version\}" = "\$\{chart_app_version\}" \]' \
   "release workflow must skip chart publication only when remote and packaged appVersion match"
-require_pattern 'Bump charts/escalation-config/Chart.yaml version before releasing' \
+require_pattern 'bump chart version' \
   "release workflow must fail clearly when a chart version already exists with a different appVersion"
 
 if [ "${failures}" -ne 0 ]; then
