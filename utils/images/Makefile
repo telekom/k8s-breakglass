@@ -1,10 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-.PHONY: test shellcheck integration multiarch
+.PHONY: test storage-test dump-test shellcheck integration multiarch
 
-test:
+test: storage-test dump-test
+
+storage-test:
 	./storage-debug/tests/test.sh
+
+dump-test:
 	./dump-reader/tests/test.sh
 
 shellcheck:
