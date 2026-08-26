@@ -18,7 +18,6 @@ profiles:
     enabled: true
     elevated: false
     imageKey: workload
-    workloadType: Job
     command: ["/usr/local/bin/workload-debug"]
     args: ["report"]
   - name: network-diagnostics
@@ -27,21 +26,12 @@ profiles:
     description: Explicitly elevated network diagnostics.
     enabled: true
     elevated: true
-    hostNetwork: true
     requiredElevation: true
     preset: elevated-node
     imageKey: network
     command: ["/usr/local/bin/net-debug"]
     args: ["report"]
     capabilities: [NET_ADMIN, NET_RAW, BPF, PERFMON]
-    workloadType: Job
-    pod:
-      volumeMounts:
-        - name: work
-          mountPath: /work
-      volumes:
-        - name: work
-          emptyDir: {}
   - name: storage-diagnostics
     intent: storage-diagnostics
     displayName: Storage diagnostics
@@ -49,7 +39,6 @@ profiles:
     enabled: true
     elevated: false
     imageKey: storage
-    workloadType: Job
     command: ["/usr/local/bin/storage-report"]
     args: ["--path", "/scratch"]
     pod:
@@ -58,31 +47,22 @@ profiles:
           mountPath: /scratch
         - name: reports
           mountPath: /reports
-        - name: tmp
-          mountPath: /tmp
-      env:
-        - name: TMPDIR
-          value: /tmp
       volumes:
         - name: scratch
           emptyDir: {}
         - name: reports
           emptyDir: {}
-        - name: tmp
-          emptyDir: {}
   - name: dump-access
     intent: dump-access
     displayName: Dump access
-    description: Bounded approved dump copy.
+    description: Explicitly elevated dump access.
     enabled: true
-    elevated: false
-    hostNetwork: false
+    elevated: true
+    requiredElevation: true
+    preset: elevated-node
     imageKey: dumpAccess
-    workloadType: Job
-    command: ["/usr/local/bin/dump-reader"]
-    args: ["copy", "/input/catalogue-fixture.dump"]
-    sourcePath: /input/catalogue-fixture.dump
-    allowExec: false
+    command: ["sh", "-c"]
+    args: ["sleep 3600"]
     pod:
       volumeMounts:
         - name: input
@@ -92,67 +72,34 @@ profiles:
           mountPath: /output
       volumes:
         - name: input
-          hostPath:
-            path: /var/lib/catalogue-fixtures/dumps
-            type: Directory
+          emptyDir: {}
         - name: output
-          emptyDir:
-            sizeLimit: 1Gi
+          emptyDir: {}
   - name: network-repair
     intent: network-repair
     displayName: Network repair
     description: Explicitly elevated network repair.
     enabled: true
     elevated: true
-    hostNetwork: true
     requiredElevation: true
     preset: elevated-node
     imageKey: networkRepair
-    workloadType: Job
-    allowExec: false
     command: ["/usr/local/bin/node-maintenance"]
-    args: ["network-repair", "--target-node", "fixture-node", "--interface", "eth0", "--action", "link-cycle", "--evidence-dir", "/evidence", "--confirm", "NETWORK-REPAIR"]
+    args: ["network-repair"]
     capabilities: [NET_ADMIN]
-    pod:
-      env:
-        - name: NODE_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
-      volumeMounts:
-        - name: evidence
-          mountPath: /evidence
-      volumes:
-        - name: evidence
-          emptyDir: {}
   - name: node-recovery
     intent: node-recovery
     displayName: Node recovery
     description: Explicitly elevated node recovery.
     enabled: true
     elevated: true
-    hostNetwork: true
     requiredElevation: true
     preset: elevated-node
     imageKey: nodeRecovery
-    workloadType: Job
-    allowExec: false
     command: ["/usr/local/bin/node-maintenance"]
-    args: ["node-recovery", "--target-node", "fixture-node", "--interface", "eth0", "--evidence-dir", "/evidence", "--confirm", "NODE-RECOVERY-PREFLIGHT"]
+    args: ["node-recovery"]
     capabilities: [NET_ADMIN]
     hostPID: true
-    pod:
-      env:
-        - name: NODE_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
-      volumeMounts:
-        - name: evidence
-          mountPath: /evidence
-      volumes:
-        - name: evidence
-          emptyDir: {}
   - name: cluster-validation
     intent: cluster-validation
     displayName: Cluster validation
@@ -160,7 +107,6 @@ profiles:
     enabled: true
     elevated: false
     imageKey: clusterValidation
-    workloadType: Job
     command: ["/cluster-validator"]
     args: ["--mode", "one-time", "--report", "-"]
     serviceAccountName: cluster-validator
