@@ -83,12 +83,18 @@ type DebugSessionController struct {
 
 // NewDebugSessionController creates a new DebugSessionController
 func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client, ccProvider *cluster.ClientProvider) *DebugSessionController {
-	return &DebugSessionController{
+	c := &DebugSessionController{
 		log:          log,
 		client:       client,
 		ccProvider:   ccProvider,
 		auxiliaryMgr: NewAuxiliaryResourceManager(log.Named("auxiliary"), client),
 	}
+	c.auxiliaryMgr.SetInventoryPersister(func(ctx context.Context, session *breakglassv1alpha1.DebugSession) error {
+		return breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
+			status.DeployedResources = session.Status.DeployedResources
+		})
+	})
+	return c
 }
 
 // WithAuditManager sets the audit manager for the controller

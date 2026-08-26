@@ -8,6 +8,7 @@ import (
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -157,6 +158,9 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				Namespace:  rq.Namespace,
 				Source:     "debug-resourcequota",
 			})
+			if err := c.persistDeployedResourceInventory(ctx, ds); err != nil {
+				return fmt.Errorf("failed to persist resource quota inventory: %w", err)
+			}
 		}
 	}
 
@@ -179,6 +183,9 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				Namespace:  pdb.Namespace,
 				Source:     "debug-pdb",
 			})
+			if err := c.persistDeployedResourceInventory(ctx, ds); err != nil {
+				return fmt.Errorf("failed to persist pod disruption budget inventory: %w", err)
+			}
 		}
 	}
 
@@ -197,6 +204,9 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		for _, res := range podTemplateResources {
 			if err := c.deployPodTemplateResource(ctx, targetClient, ds, res, targetNs); err != nil {
 				return fmt.Errorf("failed to deploy pod template resource %s/%s: %w", res.GetKind(), res.GetName(), err)
+			}
+			if err := c.persistDeployedResourceInventory(ctx, ds); err != nil {
+				return fmt.Errorf("failed to persist pod template resource inventory: %w", err)
 			}
 		}
 	}
@@ -228,6 +238,9 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		Namespace:  targetNs,
 		Source:     "debug-pod",
 	})
+	if err := c.persistDeployedResourceInventory(ctx, ds); err != nil {
+		return fmt.Errorf("failed to persist debug workload inventory: %w", err)
+	}
 
 	log.Infow("Deployed debug workload",
 		"name", workload.GetName(),
@@ -253,6 +266,17 @@ func startAuxiliaryStatusTracking(ds *breakglassv1alpha1.DebugSession, auxiliary
 	statuses := []breakglassv1alpha1.AuxiliaryResourceStatus{}
 	ds.Status.AuxiliaryResourceStatuses = statuses
 	return statuses
+}
+
+// persistDeployedResourceInventory writes the inventory immediately after a
+// spoke apply. A later controller restart can therefore clean up resources
+// even when activation never reaches its final status update.
+func (c *DebugSessionController) persistDeployedResourceInventory(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	return breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.DeployedResources = ds.Status.DeployedResources
+		status.AuxiliaryResourceStatuses = ds.Status.AuxiliaryResourceStatuses
+		status.PodTemplateResourceStatuses = ds.Status.PodTemplateResourceStatuses
+	})
 }
 
 // buildWorkload creates the DaemonSet or Deployment for debug pods.

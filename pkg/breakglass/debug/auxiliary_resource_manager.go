@@ -45,6 +45,9 @@ type AuxiliaryResourceManager struct {
 	auditManager     *audit.Manager
 	auditProvider    func() *audit.Manager
 	readinessChecker *utils.ReadinessChecker
+	// persistInventory is called after every successfully applied resource so
+	// a crash between two auxiliary documents cannot lose the first identity.
+	persistInventory func(context.Context, *breakglassv1alpha1.DebugSession) error
 }
 
 // NewAuxiliaryResourceManager creates a new auxiliary resource manager.
@@ -65,6 +68,12 @@ func (m *AuxiliaryResourceManager) SetAuditManager(am *audit.Manager) {
 // SetAuditManagerProvider sets a reload-aware audit manager provider.
 func (m *AuxiliaryResourceManager) SetAuditManagerProvider(provider func() *audit.Manager) {
 	m.auditProvider = provider
+}
+
+// SetInventoryPersister configures the durable status writer used during
+// deployment. It is optional for standalone manager tests.
+func (m *AuxiliaryResourceManager) SetInventoryPersister(persist func(context.Context, *breakglassv1alpha1.DebugSession) error) {
+	m.persistInventory = persist
 }
 
 func (m *AuxiliaryResourceManager) currentAuditManager() *audit.Manager {
@@ -135,6 +144,14 @@ func (m *AuxiliaryResourceManager) deployAuxiliaryResources(
 
 		status, err := m.deployResource(ctx, targetClient, targetNamespace, auxRes, renderCtx, session)
 		statuses = append(statuses, status)
+		// Add every successfully applied document before evaluating failure policy.
+		// This preserves partial multi-document deployments for crash recovery.
+		AddAuxiliaryResourceToDeployedResources(session, status)
+		if m.persistInventory != nil && status.Created {
+			if persistErr := m.persistInventory(ctx, session); persistErr != nil {
+				return statuses, fmt.Errorf("persist auxiliary resource inventory for %s: %w", auxRes.Name, persistErr)
+			}
+		}
 
 		if err != nil {
 			failurePolicy := effectiveAuxiliaryResourceFailurePolicy(auxRes)
@@ -733,6 +750,16 @@ func (m *AuxiliaryResourceManager) deleteResource(
 			return nil
 		}
 		return fmt.Errorf("failed to delete %s/%s: %w", status.Kind, status.ResourceName, err)
+	}
+	remaining := &unstructured.Unstructured{}
+	remaining.SetAPIVersion(status.APIVersion)
+	remaining.SetKind(status.Kind)
+	remaining.SetName(status.ResourceName)
+	remaining.SetNamespace(status.Namespace)
+	if err := targetClient.Get(ctx, client.ObjectKey{Name: status.ResourceName, Namespace: status.Namespace}, remaining); err == nil {
+		return fmt.Errorf("delete %s/%s is pending finalizers", status.Kind, status.ResourceName)
+	} else if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to verify deletion of %s/%s: %w", status.Kind, status.ResourceName, err)
 	}
 
 	m.log.Infow("Deleted auxiliary resource",

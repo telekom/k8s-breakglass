@@ -221,6 +221,20 @@ cluster) created by that invocation.
     DebugSession starts are intentionally unsupported. Approval, idle, and retention
     durations are optional template constraints with controller-wide fallback defaults.
 
+### DebugSession cleanup invariants
+
+- `status.deployedResources` is the durable spoke-cluster cleanup inventory. Add
+  each identity immediately after a successful apply and preserve residual refs
+  when the spoke API is unavailable or a delete fails; never infer completion
+  from a controller restart or a transient `GetRESTConfig` error.
+- Cleanup deletes inventory entries generically by GVK, name, namespace, and
+  optional UID. Treat `NotFound` as success, retain entries while finalizers
+  are pending, and use UID preconditions when available so a reused name is
+  not deleted accidentally.
+- Cleanup failures set the `CleanupFailed` condition and retain residual
+  identities. Terminal sessions must requeue until the inventory and auxiliary
+  status trackers are empty; a later successful pass clears the condition.
+
 ## Build Tags
 
 - `//go:build e2e` — E2E tests (compiled with `-tags=e2e`; at runtime, tests skip unless `E2E_TEST=true`)

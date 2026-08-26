@@ -76,6 +76,12 @@ const (
 	DebugSessionConditionApproved DebugSessionConditionType = "Approved"
 	// DebugSessionConditionResourcesDeployed indicates resources have been deployed.
 	DebugSessionConditionResourcesDeployed DebugSessionConditionType = "ResourcesDeployed"
+	// DebugSessionConditionCleanupFailed indicates that one or more resources
+	// remain in the target cluster after a cleanup attempt. The
+	// status.deployedResources inventory contains the identities that will be
+	// retried; the condition is deliberately retained across controller
+	// restarts so operators can see and recover from an unreachable spoke.
+	DebugSessionConditionCleanupFailed DebugSessionConditionType = "CleanupFailed"
 )
 
 // DebugSessionSpec defines the desired state of DebugSession.
