@@ -25,7 +25,7 @@ checks:
   - id: kernel-packet-tracing
     operation: observe-generated-packets
     tools: [pwru]
-    requirements: [linux-kernel, kernel-btf, CAP_BPF, PERFMON, ephemeral-network-namespace]
+    requirements: [linux-kernel, kernel-btf, debugfs, tracefs, securityfs, CAP_BPF, CAP_PERFMON, CAP_NET_ADMIN, CAP_NET_RAW, CAP_SYS_RESOURCE, ephemeral-network-namespace]
   - id: kubernetes-storage
     operation: provision-and-run-disposable-fio
     tools: [kubestr]

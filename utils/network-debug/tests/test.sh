@@ -37,6 +37,10 @@ fi
 
 wrapped=$(sh "$root/scripts/net-debug" printf '%s' 'wrapper-executed')
 test "$wrapped" = 'wrapper-executed'
+if PATH=/usr/bin:/bin sh "$root/scripts/net-debug" does-not-exist >/dev/null 2>&1; then
+	printf '%s\n' 'net-debug accepted an unknown command' >&2
+	exit 1
+fi
 
 version=$(NETWORK_DEBUG_VERSION=0.1.0 sh "$root/scripts/net-report" --version)
 test "$version" = 'net-report 0.1.0'
