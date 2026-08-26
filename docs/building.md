@@ -240,6 +240,8 @@ server configuration after `kind-setup-single.sh` completes. It polls the
 then checks the parsed authentication and authorization arguments together
 with their read-only hostPath volumes and mounts. This deliberately validates
 the running cluster rather than searching generated YAML or source text.
+The argument parser used by this check also has tagged table-driven tests for
+both Kubernetes flag forms, duplicate values, and missing-value handling.
 
 ## Build Flags
 

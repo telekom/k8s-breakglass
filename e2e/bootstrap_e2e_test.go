@@ -40,6 +40,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -265,11 +266,58 @@ func flagValues(args []string, flag string) []string {
 		switch {
 		case strings.HasPrefix(arg, flag+"="):
 			values = append(values, strings.TrimPrefix(arg, flag+"="))
-		case arg == flag && i+1 < len(args):
+		case arg == flag && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-"):
 			values = append(values, args[i+1])
 		}
 	}
 	return values
+}
+
+func TestBootstrapC002FlagValues(t *testing.T) {
+	t.Parallel()
+
+	const flag = "--authentication-config"
+	const configPath = "/etc/kubernetes/authentication-config.yaml"
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "equals form",
+			args: []string{flag + "=" + configPath},
+			want: []string{configPath},
+		},
+		{
+			name: "separate argument form",
+			args: []string{flag, configPath},
+			want: []string{configPath},
+		},
+		{
+			name: "duplicate flags preserve both values",
+			args: []string{flag + "=/etc/kubernetes/first.yaml", flag, configPath},
+			want: []string{"/etc/kubernetes/first.yaml", configPath},
+		},
+		{
+			name: "bare flag before another flag is missing",
+			args: []string{flag, "--authorization-config=/etc/kubernetes/authorization-config.yaml"},
+			want: nil,
+		},
+		{
+			name: "bare final flag is missing",
+			args: []string{flag},
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := flagValues(tt.args, flag); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("flagValues(%v, %q) = %v, want %v", tt.args, flag, got, tt.want)
+			}
+		})
+	}
 }
 
 // --- K-001: Keycloak deployment ---
