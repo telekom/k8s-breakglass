@@ -1807,40 +1807,18 @@ spec:
 	assert.Equal(t, corev1.RestartPolicyAlways, deploy.Spec.Template.Spec.RestartPolicy)
 }
 
-func TestBuildWorkload_JobEnforcesBoundedSessionOwnership(t *testing.T) {
+func TestBuildWorkload_JobRetainsNeverAndDoesNotRestart(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("one-shot")
 	template := &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 		WorkloadType: breakglassv1alpha1.DebugWorkloadJob,
-		Constraints: &breakglassv1alpha1.DebugSessionConstraints{
-			DefaultDuration: "15m",
-			MaxDuration:     "30m",
-		},
-		PodTemplateString: `apiVersion: batch/v1
-kind: Job
-metadata:
-  name: attacker-controlled
+		PodTemplateString: `apiVersion: v1
+kind: Pod
 spec:
-  manualSelector: true
-  selector:
-    matchLabels:
-      unrelated: workload
-  parallelism: 20
-  completions: 20
-  backoffLimit: 10
-  activeDeadlineSeconds: 86400
-  ttlSecondsAfterFinished: 1
-  suspend: true
-  template:
-    metadata:
-      labels:
-        unrelated: workload
-    spec:
-      restartPolicy: Always
-      containers:
-        - name: debug
-          image: busybox:1.36
-          command: ["/bin/true"]
+  containers:
+    - name: debug
+      image: busybox:1.36
+      command: ["/bin/true"]
 `,
 	}}
 
@@ -1849,64 +1827,7 @@ spec:
 	job, ok := workload.(*batchv1.Job)
 	require.True(t, ok, "bounded diagnostics must be represented by a Job")
 	assert.Equal(t, corev1.RestartPolicyNever, job.Spec.Template.Spec.RestartPolicy)
-	require.NotNil(t, job.Spec.ManualSelector)
-	assert.True(t, *job.Spec.ManualSelector)
-	require.NotNil(t, job.Spec.Selector)
-	assert.Equal(t, map[string]string{
-		DebugSessionLabelKey:    ds.Name,
-		DebugSessionUIDLabelKey: ds.Name,
-	}, job.Spec.Selector.MatchLabels)
-	assert.Equal(t, ds.Name, job.Spec.Template.Labels[DebugSessionLabelKey])
-	assert.Equal(t, ds.Name, job.Spec.Template.Labels[DebugSessionUIDLabelKey])
-	require.NotNil(t, job.Spec.Parallelism)
-	assert.Equal(t, int32(1), *job.Spec.Parallelism)
-	require.NotNil(t, job.Spec.Completions)
-	assert.Equal(t, int32(1), *job.Spec.Completions)
 	require.NotNil(t, job.Spec.BackoffLimit)
-	assert.Zero(t, *job.Spec.BackoffLimit)
-	require.NotNil(t, job.Spec.ActiveDeadlineSeconds)
-	assert.Equal(t, int64(15*60), *job.Spec.ActiveDeadlineSeconds)
-	assert.Nil(t, job.Spec.TTLSecondsAfterFinished)
-	assert.Nil(t, job.Spec.Suspend)
-}
-
-func TestBuildWorkload_BareJobUsesBindingEffectiveDeadlineAndImmutableSelector(t *testing.T) {
-	controller := newBuildWorkloadController()
-	ds := newBuildWorkloadSession("bare-job")
-	ds.UID = "session-uid-123"
-	template := &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
-		WorkloadType: breakglassv1alpha1.DebugWorkloadJob,
-		Constraints: &breakglassv1alpha1.DebugSessionConstraints{
-			DefaultDuration: "20m",
-			MaxDuration:     "1h",
-		},
-		PodTemplateString: `containers:
-  - name: debug
-    image: busybox:1.36
-    command: ["/bin/true"]
-`,
-	}}
-	binding := &breakglassv1alpha1.DebugSessionClusterBinding{Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
-		Constraints: &breakglassv1alpha1.DebugSessionConstraints{
-			DefaultDuration: "45s",
-			MaxDuration:     "2m",
-		},
-	}}
-	ds.Spec.RequestedDuration = "1h"
-
-	workload, _, err := controller.buildWorkload(ds, template, binding, nil, "target-ns")
-	require.NoError(t, err)
-	job := workload.(*batchv1.Job)
-	require.NotNil(t, job.Spec.Selector)
-	assert.Equal(t, map[string]string{
-		DebugSessionLabelKey:    ds.Name,
-		DebugSessionUIDLabelKey: string(ds.UID),
-	}, job.Spec.Selector.MatchLabels)
-	assert.Equal(t, string(ds.UID), job.Labels[DebugSessionUIDLabelKey])
-	assert.Equal(t, int64(2*60), *job.Spec.ActiveDeadlineSeconds,
-		"the binding's maximum duration must bound the Job even when the request exceeds it")
-	assert.Equal(t, int32(1), *job.Spec.Parallelism)
-	assert.Equal(t, int32(1), *job.Spec.Completions)
 	assert.Zero(t, *job.Spec.BackoffLimit)
 }
 

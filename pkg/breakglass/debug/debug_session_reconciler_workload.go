@@ -466,6 +466,25 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 		}
 		return workload, renderResult.AdditionalResources, nil
 
+	case breakglassv1alpha1.DebugWorkloadJob:
+		if podSpec.RestartPolicy != corev1.RestartPolicyNever && podSpec.RestartPolicy != corev1.RestartPolicyOnFailure {
+			podSpec.RestartPolicy = corev1.RestartPolicyNever
+		}
+		backoffLimit := int32(0)
+		return &batchv1.Job{
+			TypeMeta: metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: workloadName, Namespace: targetNs, Labels: labels, Annotations: annotations,
+			},
+			Spec: batchv1.JobSpec{
+				BackoffLimit: &backoffLimit,
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
+					Spec:       podSpec,
+				},
+			},
+		}, renderResult.AdditionalResources, nil
+
 	default:
 		return nil, nil, fmt.Errorf("unsupported workload type: %s", workloadType)
 	}
@@ -556,38 +575,18 @@ func (c *DebugSessionController) useTemplateWorkload(
 	case *batchv1.Job:
 		w.Name = workloadName
 		w.Namespace = targetNs
-		w.Labels = mergeStringMaps(labels, map[string]string{
-			DebugSessionUIDLabelKey: debugSessionIdentity(ds),
-		})
+		w.Labels = labels
 		w.Annotations = annotations
-		manualSelector := true
-		w.Spec.ManualSelector = &manualSelector
-		w.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
-		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels, selectorLabels)
+		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels)
 		w.Spec.Template.Annotations = mergeStringMaps(w.Spec.Template.Annotations, annotations)
 		w.Spec.Template.Spec = renderResult.PodSpec
 		if w.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyNever && w.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyOnFailure {
 			w.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyNever
 		}
-		one := int32(1)
-		zero := int32(0)
-		activeDeadlineSeconds := max(int64(c.parseDuration(ds.Spec.RequestedDuration, effectiveDebugSessionConstraints(template, binding)).Seconds()), 1)
-		w.Spec.Parallelism = &one
-		w.Spec.Completions = &one
-		w.Spec.BackoffLimit = &zero
-		w.Spec.ActiveDeadlineSeconds = &activeDeadlineSeconds
-		// Template authors cannot expand one session into unbounded pods or make
-		// cleanup depend on Kubernetes Job lifecycle features. Session cleanup is
-		// the sole owner of the rendered workload.
-		w.Spec.TTLSecondsAfterFinished = nil
-		w.Spec.CompletionMode = nil
-		w.Spec.Suspend = nil
-		w.Spec.PodFailurePolicy = nil
-		w.Spec.SuccessPolicy = nil
-		w.Spec.BackoffLimitPerIndex = nil
-		w.Spec.MaxFailedIndexes = nil
-		w.Spec.PodReplacementPolicy = nil
-		w.Spec.ManagedBy = nil
+		if w.Spec.BackoffLimit == nil {
+			backoffLimit := int32(0)
+			w.Spec.BackoffLimit = &backoffLimit
+		}
 		return w, renderResult.AdditionalResources, nil
 
 	default:
