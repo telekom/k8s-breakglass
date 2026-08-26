@@ -46,10 +46,11 @@ import sys
 from pathlib import Path
 
 workflow = Path(sys.argv[1]).read_text()
-publish = workflow.split("Publish debug-session-catalogue chart when present", 1)[1]
-publish = publish.split("Sign and verify immutable chart contracts", 1)[0]
+publish = workflow.split("- name: Publish charts", 1)[1]
+publish = publish.split("- name: Sign and verify immutable chart contracts", 1)[0]
 assert 'helm push "${chart_package}" "${CHART_REPO}"' in publish, "catalogue package is not published"
-assert "remote_metadata" in publish, "catalogue publication is not rerun-safe"
+assert 'chart_packages=(chart-dist/*.tgz)' in publish, "publication does not include every packaged chart"
+assert "remote_output" in publish and "remote_app_version" in publish, "catalogue publication is not rerun-safe"
 assert "SUPPLY_CHAIN_IDENTITY_REGEXP: https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*" in workflow, "identity scope is too broad"
 assert 'cosign verify-attestation "${subject}" --type slsaprovenance' in workflow, "chart provenance is not verified"
 integration = Path(sys.argv[1]).with_name("catalogue-utility-integration.yml").read_text()

@@ -102,13 +102,34 @@ exit 64
 EOF
 chmod +x "${test_dir}/bin/helm"
 
-run_publish() {
-  PATH="${test_dir}/bin:${PATH}" FAKE_HELM_LOG="${test_dir}/helm.log" FAKE_HELM_CALL_LOG="${test_dir}/helm-calls.log" \
-    FAKE_LOCAL_PACKAGE="${test_dir}/charts/debug-session-catalogue-0.2.0.tgz" \
-    FAKE_TIMESTAMP_PACKAGE="${test_dir}/timestamp.tgz" FAKE_CHANGED_PACKAGE="${test_dir}/changed.tgz" \
-    "${script_dir}/publish-helm-charts.sh" "${test_dir}/charts" \
-    oci://ghcr.io/example/charts v1.2.3
-}
+require_pattern 'docker buildx imagetools inspect "\$\{IMG\}"' \
+  "release workflow must inspect the pushed image through the registry"
+require_pattern 'Digest:\[\[:space:\]\][+]sha256:\[0-9a-f\][{]64[}]' \
+  "release workflow must parse a strict sha256 registry Digest line"
+require_pattern 'Could not determine registry digest' \
+  "release workflow must fail when the registry digest cannot be determined"
+require_pattern 'subject-digest: \$\{\{ steps\.inspect\.outputs\.digest \}\}' \
+  "release provenance attestation must use the inspected registry digest output"
+require_pattern 'chart_app_version=' \
+  "release workflow must read the packaged Helm chart appVersion"
+require_pattern 'chart_metadata="\$\(helm show chart "\$\{chart_package\}"\)"' \
+  "release workflow must capture packaged Helm chart metadata once"
+require_pattern '\[ "\$\{chart_app_version\}" = "\$\{RELEASE_TAG\}" \]' \
+  "release workflow must fail when packaged Helm chart appVersion does not match the release tag"
+require_pattern 'remote_app_version=' \
+  "release workflow must read the remote Helm chart appVersion before skipping an existing chart version"
+require_pattern '\[ "\$\{remote_app_version\}" = "\$\{chart_app_version\}" \]' \
+  "release workflow must fail clearly when remote chart metadata lacks appVersion"
+require_pattern 'remote_status=\$\?' \
+  "release workflow must preserve the remote chart lookup exit status"
+require_pattern 'Failed to inspect \$\{remote\}' \
+  "release workflow must fail real remote chart lookup errors before publishing"
+require_pattern 'grep -Eiq.*manifest unknown' \
+  "release workflow must classify Helm/GHCR missing-chart errors without broad network-error matches"
+require_pattern '\[ "\$\{remote_app_version\}" = "\$\{chart_app_version\}" \]' \
+  "release workflow must skip chart publication only when remote and packaged appVersion match"
+require_pattern 'bump chart version' \
+  "release workflow must fail clearly when a chart version already exists with a different appVersion"
 
 : >"${test_dir}/helm.log"
 : >"${test_dir}/helm-calls.log"
