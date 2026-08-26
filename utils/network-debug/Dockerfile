@@ -90,6 +90,7 @@ RUN apk add --no-cache \
 	jq=1.8.1-r0 \
 	mtr=0.96-r2 \
 	ncurses-terminfo=6.6_p20260516-r0 \
+	openssl=3.5.7-r0 \
 	netcat-openbsd=1.234.1-r0 \
 	procps=4.0.6-r0 \
 	tcpdump=4.99.6-r1 \
