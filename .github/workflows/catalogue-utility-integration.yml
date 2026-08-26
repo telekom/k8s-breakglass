@@ -54,7 +54,7 @@ jobs:
           set -euo pipefail
           curl --fail --silent --show-error --location "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" --output kind
           curl --fail --silent --show-error --location "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum" --output kind.sha256sum
-          grep 'kind-linux-amd64' kind.sha256sum | sha256sum --check --status
+          sed 's#kind-linux-amd64#kind#' kind.sha256sum | sha256sum --check --status
           install -m 0755 kind "${RUNNER_TEMP}/kind"
           echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
       - name: Build native image and disposable fio fixture
@@ -126,7 +126,7 @@ jobs:
           set -euo pipefail
           curl --fail --silent --show-error --location "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" --output kind
           curl --fail --silent --show-error --location "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum" --output kind.sha256sum
-          grep 'kind-linux-amd64' kind.sha256sum | sha256sum --check --status
+          sed 's#kind-linux-amd64#kind#' kind.sha256sum | sha256sum --check --status
           install -m 0755 kind "${RUNNER_TEMP}/kind"
           echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
       - name: Execute DNS, TLS, HTTP, API, security, and cleanup contracts
@@ -176,7 +176,7 @@ jobs:
           set -euo pipefail
           curl --fail --silent --show-error --location "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" --output kind
           curl --fail --silent --show-error --location "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum" --output kind.sha256sum
-          grep 'kind-linux-amd64' kind.sha256sum | sha256sum --check --status
+          sed 's#kind-linux-amd64#kind#' kind.sha256sum | sha256sum --check --status
           install -m 0755 kind "${RUNNER_TEMP}/kind"
           echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
       - name: Execute readiness, RBAC, extension, secrecy, and cleanup contracts
