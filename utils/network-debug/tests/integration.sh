@@ -145,7 +145,7 @@ fi
 tools_output=$(exec_in net-debug tools)
 for tool in curl dig host nslookup nc ping tracepath traceroute mtr ip ss tcpdump ethtool kubestr pwru; do
 	case "$tool" in
-		kubestr|pwru) tool_pattern="^${tool}[[:space:]]+${tool} v[0-9]+" ;;
+		pwru) tool_pattern="^${tool}[[:space:]]+${tool} v[0-9]+" ;;
 		*) tool_pattern="^${tool}[[:space:]]+installed$" ;;
 	esac
 	printf '%s\n' "$tools_output" | grep -E "$tool_pattern" >/dev/null || requirement "$tool is not installed according to net-debug tools"

@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Network debug image**: Rebased the runtime on the immutable netshoot v0.16
   multi-architecture manifest. The inherited netshoot toolset now supplies all
   overlapping network commands; the image retains only its bounded helpers,
-  pinned `kubestr`/`pwru` additions, and signed SBOM/provenance workflow.
+  pinned `kubestr`/`pwru` binaries, the pinned `openssl` package needed by its
+  disposable TLS proof, and signed SBOM/provenance workflow.
 - The standalone debug-session catalogue now uses an ordered, extensible
   profile list with DNS-safe names and stable generic intent names. Existing
   map-shaped profile values must be converted before upgrading; the chart
@@ -52,10 +53,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release and development digest resolution now uses bounded, fail-closed
   retries, and provenance behavior checks run in a Cosign-provisioned CI job
   without duplicating normal publication checks.
-- Final release manifests now receive and semantically verify an exact custom
-  SLSA provenance attestation in addition to GitHub's native attestation; the
-  development workflow checks live environment protection before requesting
-  approval and recognizes both producers without treating either as the other.
+- Final release manifests and development images now receive and semantically
+  verify exactly one custom SLSA provenance attestation and one GitHub-native
+  Statement/v1 attestation for the same immutable subject. The gate checks the
+  native workflow identity, source commit, and OIDC signer and fails closed if
+  either producer cannot be retrieved; the development workflow also checks
+  live environment protection before requesting approval.
 - **Standalone debug-session catalogue**: Added the OCI-ready
   `debug-session-catalogue` Helm chart with neutral workload, network,
   storage, packet-capture, network-repair, node-recovery, and cluster-validation

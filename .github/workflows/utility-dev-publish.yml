@@ -23,9 +23,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
-  id-token: write
-  attestations: write
 
 concurrency:
   group: development-utility-publication-${{ github.ref }}
@@ -97,7 +94,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      deployments: read
     steps:
       - name: Verify required reviewers and self-review prevention
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b # v9.0.0
@@ -133,6 +129,12 @@ jobs:
     name: Publish ${{ matrix.name }} development image
     needs: publication-approval
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     strategy:
       fail-fast: false
       matrix:
@@ -309,6 +311,7 @@ jobs:
           SUBJECT: ${{ steps.resolve.outputs.subject }}
           IMAGE: ${{ steps.metadata.outputs.image }}
           DIGEST: ${{ steps.resolve.outputs.digest }}
+          SOURCE_SHA: ${{ github.sha }}
           WORKFLOW_IDENTITY: https://github.com/${{ github.workflow_ref }}
         run: |
           set -Eeuo pipefail
@@ -355,6 +358,22 @@ jobs:
           subject-digest: ${{ steps.resolve.outputs.digest }}
           push-to-registry: true
 
+      - name: Verify custom and GitHub-native provenance
+        env:
+          SUBJECT: ${{ steps.resolve.outputs.subject }}
+          WORKFLOW_IDENTITY: https://github.com/${{ github.workflow_ref }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          cosign verify-attestation "${SUBJECT}" --type slsaprovenance1 \
+            --certificate-identity="${WORKFLOW_IDENTITY}" \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+            --output json >"${{ matrix.name }}.all-slsa-attestations.json"
+          hack/verify-slsa-provenance.sh "${{ matrix.name }}.all-slsa-attestations.json" "${SUBJECT}" \
+            "https://github.com/telekom/k8s-breakglass/.github/workflows/utility-dev-publish.yml" \
+            "https://github.com/telekom/k8s-breakglass" "${SOURCE_SHA}" \
+            "${WORKFLOW_IDENTITY}" true
+
       - name: Upload immutable reference and metadata
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -365,6 +384,7 @@ jobs:
             ${{ matrix.name }}.spdx.json
             ${{ matrix.name }}.provenance.json
             ${{ matrix.name }}.slsa-attestation.json
+            ${{ matrix.name }}.all-slsa-attestations.json
           if-no-files-found: error
 
   utility-reference:

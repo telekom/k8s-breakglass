@@ -23,8 +23,11 @@ tool_version() {
 	if command -v "$name" >/dev/null 2>&1; then
 		case "$name" in
 			kubestr)
-				value=$(kubestr version 2>/dev/null | sed -n '1p' || true)
-				printf '%s\t%s\n' "$name" "${value:-installed}"
+				if kubestr --help >/dev/null 2>&1; then
+					printf '%s\tinstalled\n' "$name"
+				else
+					printf '%s\tunavailable\n' "$name"
+				fi
 				;;
 			pwru)
 				value=$(pwru --version 2>/dev/null | sed -n '1p' || true)

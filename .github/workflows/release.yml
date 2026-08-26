@@ -428,6 +428,7 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+      artifact-metadata: write
     runs-on: ubuntu-latest
     outputs:
       digest: ${{ steps.inspect.outputs.digest }}
@@ -555,10 +556,10 @@ jobs:
           cosign verify-attestation "${SUBJECT}" --type slsaprovenance1 \
             --certificate-identity="${WORKFLOW_IDENTITY}" \
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-            --output json > release-image-slsa-attestation.json
-          hack/verify-slsa-provenance.sh release-image-slsa-attestation.json \
+            --output json > release-image-all-slsa-attestations.json
+          hack/verify-slsa-provenance.sh release-image-all-slsa-attestations.json \
             "${SUBJECT}" "${BUILD_TYPE}" "${SOURCE_URI}" "${GITHUB_SHA}" \
-            "${WORKFLOW_IDENTITY}"
+            "${WORKFLOW_IDENTITY}" true
 
   # ---------------------------------------------------------------------------
   # Push multi-arch image to Artifactory OCI mirror

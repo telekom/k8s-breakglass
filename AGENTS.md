@@ -270,8 +270,11 @@ the publication approval job. It uses the live GitHub environment API and must
 fail closed when its token cannot read protection rules or when required
 reviewers/self-review prevention are absent; repository variables are not
 evidence of those settings. Release assemble must check the final manifest's
-immutable digest and exact custom provenance (subject, source URI, source
-commit, release workflow/build type, builder identity, and OIDC identity).
+immutable digest and exactly one custom plus one GitHub-native provenance
+attestation (subject, source URI, source commit, release workflow/build type,
+custom builder identity, native workflow identity, and OIDC identity).
+The official native attestation action requires `artifact-metadata: write` when
+`push-to-registry: true`; scope that permission only to publishing jobs.
 The preflight must use only the least-privilege workflow token and a pinned
 API action; never inject an administrator token into branch-controlled code.
 If that token cannot read environment rules, absence or insufficient access

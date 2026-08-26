@@ -17,9 +17,10 @@ The pinned netshoot release already provides every overlapping command used by
 this contract: `bash`, `bind-tools` (`dig`, `host`, `nslookup`), `busybox-extras`,
 `curl`, `ethtool`, `iproute2` (`ip`, `ss`), `iputils` (`ping`, `tracepath`),
 `jq`, `mtr`, `netcat-openbsd`, `tcpdump`, and the `util-linux` helpers used by
-the proofs. We deliberately do not reinstall or independently pin those
-packages. The upstream netshoot package set is part of the digest-pinned base;
-the additions are listed in [`IMAGE-METADATA.yaml`](./IMAGE-METADATA.yaml).
+the proofs. The image adds only the pinned `openssl` package for the disposable
+TLS fixture used by the integration proof; all other overlapping packages are
+inherited without reinstallation. The additions are listed in
+[`IMAGE-METADATA.yaml`](./IMAGE-METADATA.yaml).
 
 ## Included capabilities
 

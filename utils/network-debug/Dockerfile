@@ -57,6 +57,12 @@ ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 ARG KUBESTR_VERSION=v0.4.49
 ARG PWRU_VERSION=v1.0.12
+ARG RUNTIME_OPENSSL=3.5.8-r0
+
+# The pinned netshoot runtime does not include a TLS fixture server. Keep the
+# real-tool integration proof hermetic by adding the exact Alpine package
+# version used by the pinned base release.
+RUN apk add --no-cache "openssl=${RUNTIME_OPENSSL}"
 
 LABEL org.opencontainers.image.title="Network Debug Utility" \
 	org.opencontainers.image.description="Standalone, multi-architecture Kubernetes network troubleshooting toolbox" \

@@ -24,8 +24,13 @@ contains the complete source SHA and GitHub run identity, refuses to overwrite
 an existing tag, and records the manifest digest in an uploaded reference
 manifest. Each digest is keylessly signed and carries SPDX and SLSA v1
 attestations (`slsaprovenance1`). The workflow supplies Cosign a bare SLSA v1
-predicate, then decodes and validates the signed in-toto statement's exact
-subject and predicate before uploading the reference.
+predicate and also requests GitHub's native build-provenance record. After both
+producers complete, Cosign retrieval and the semantic verifier require exactly
+one custom statement and exactly one GitHub-native Statement/v1 for the same
+image digest, source commit, workflow, and OIDC identity; a missing or
+unreadable native record fails closed before the reference is uploaded. The
+workflow grants `artifact-metadata: write` solely so the official action can
+store its registry attestation record.
 Consumers must mirror and deploy the digest reference, not the development tag.
 The workflow's exact GitHub OIDC certificate identity is recorded in the
 reference manifest and is required when verifying the source signature. The
@@ -83,7 +88,9 @@ logs and retry only after the registry/API condition is corrected.
 
 4. **Provenance**
    - SLSA v1 provenance is generated for every release image using
-     `actions/attest-build-provenance` and Cosign `slsaprovenance1` attestations.
+     `actions/attest-build-provenance` and Cosign `slsaprovenance1` attestations;
+     the assemble gate semantically verifies one attestation from each
+     producer, including the native workflow identity and source commit.
    - Provenance attestations are pushed to the container registry alongside the image.
 
 5. **SBOM**
@@ -111,7 +118,7 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 
 1. **Prepare** — generates Kustomize manifests, packages both Helm charts, cross-compiles `bgctl` binaries for all OS/arch combinations, and uploads them as artifacts.
 2. **Build** (matrix: `amd64`, `arm64`) — builds and pushes a single-platform image by digest on a native runner for each architecture.
-3. **Assemble** — downloads all per-arch digests and creates a unified multi-arch manifest tagged with the release version. Stable `vX.Y.Z` tags also update `latest`; prerelease tags such as `vX.Y.Z-rc.1` keep only their explicit version tag. Tags with SemVer build metadata (`+build`) are rejected because Docker image tags cannot contain `+`. The final manifest digest is resolved with bounded fail-closed retries, receives GitHub and custom keyless SLSA provenance, and is semantically checked for the exact subject digest, source repository, release workflow, commit, builder identity, and OIDC signing identity before the assemble job completes.
+3. **Assemble** — downloads all per-arch digests and creates a unified multi-arch manifest tagged with the release version. Stable `vX.Y.Z` tags also update `latest`; prerelease tags such as `vX.Y.Z-rc.1` keep only their explicit version tag. Tags with SemVer build metadata (`+build`) are rejected because Docker image tags cannot contain `+`. The final manifest digest is resolved with bounded fail-closed retries, receives GitHub and custom keyless SLSA provenance, and is semantically checked for exactly one attestation from each producer: exact subject digest, source repository, release workflow, source commit, custom builder identity, native workflow identity, and OIDC signer must all match before the assemble job completes. The action's `artifact-metadata: write` permission is scoped to this assemble job.
 4. **Artifactory** — mirrors the multi-arch image and cosign artifacts (signatures + attestations) to the internal Artifactory OCI registry (best-effort).
 5. **Publish charts** — pushes both charts to GHCR Helm OCI (`oci://ghcr.io/telekom/k8s-breakglass/charts`).
 6. **Release** — creates a GitHub Release with manifests, Helm chart packages, `bgctl` binaries, release-wide checksums, CLI archive checksums, and SBOM (SPDX-JSON format via Syft).
