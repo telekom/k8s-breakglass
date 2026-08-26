@@ -11,6 +11,7 @@ outside_dir=$(mktemp -d "${TMPDIR:-/tmp}/dump-reader-outside.XXXXXX")
 trap 'rm -rf "$test_dir" "$outside_dir"' EXIT HUP INT TERM
 mkdir "$test_dir/output"
 mkdir "$test_dir/output/sub" "$test_dir/output/nested"
+chmod 0755 "$test_dir" "$test_dir/output"
 ln -s "$test_dir/output" "$test_dir/output/nested/path-link"
 printf '%s\n' 'existing artifact' >"$test_dir/source.dump"
 printf '%s\n' 'outside artifact' >"$outside_dir/outside.dump"
@@ -26,6 +27,11 @@ printf '%s\n' "$checksum" | grep -F 'sha256=63a0c194794026e2f3e0374882bff803c4ea
 copy=$(DUMP_INPUT_DIR="$test_dir" DUMP_OUTPUT_DIR="$test_dir/output" $reader copy "$test_dir/source.dump")
 printf '%s\n' "$copy" | grep -F 'name=source.dump' >/dev/null
 cmp "$test_dir/source.dump" "$test_dir/output/source.dump"
+test -r "$test_dir/output/source.dump"
+if su nobody -s /bin/sh -c "test -r '$test_dir/output/source.dump'" 2>/dev/null; then
+    echo "dump artifact was readable by a different UID" >&2
+    exit 1
+fi
 
 if DUMP_INPUT_DIR="$test_dir" $reader copy "$test_dir/source.dump" >/dev/null 2>&1; then
     echo "copy unexpectedly succeeded without a writable output mount" >&2
