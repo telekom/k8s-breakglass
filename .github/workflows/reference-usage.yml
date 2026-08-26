@@ -1,0 +1,88 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Public reference usage
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - examples/reference-usage/**
+      - .github/workflows/reference-usage.yml
+  pull_request:
+    paths:
+      - examples/reference-usage/**
+      - .github/workflows/reference-usage.yml
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Reference artifact mode
+        required: true
+        default: published
+        type: choice
+        options: [source, published]
+      elevated:
+        description: Run the explicit elevated opt-in case
+        required: true
+        default: false
+        type: boolean
+      catalogue_version:
+        description: Public debug-session-catalogue chart version
+        required: true
+        default: '0.1.0'
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  KIND_VERSION: v0.32.0
+  KIND_NODE_IMAGE: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  reference:
+    name: Reference usage (${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'source' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Kind
+        run: |
+          curl -fsSL -o ./kind "https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64"
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - name: Install reference tools
+        run: |
+          make kustomize
+          echo "${{ github.workspace }}/bin" >> "$GITHUB_PATH"
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Run source reference flow
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'source' }}
+        env:
+          REFERENCE_MODE: source
+          REFERENCE_RUN_ELEVATED: ${{ github.event_name == 'workflow_dispatch' && inputs.elevated || 'false' }}
+          CATALOGUE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.catalogue_version || '0.1.0' }}
+          KIND_NODE_IMAGE: ${{ env.KIND_NODE_IMAGE }}
+        run: ./examples/reference-usage/reference-usage.sh
+      - name: Run published reference flow
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'published' }}
+        env:
+          REFERENCE_MODE: published
+          REFERENCE_RUN_ELEVATED: ${{ inputs.elevated }}
+          CATALOGUE_VERSION: ${{ inputs.catalogue_version }}
+          KIND_NODE_IMAGE: ${{ env.KIND_NODE_IMAGE }}
+        run: ./examples/reference-usage/reference-usage.sh
