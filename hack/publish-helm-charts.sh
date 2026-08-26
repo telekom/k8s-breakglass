@@ -9,6 +9,14 @@ chart_dir="${1:?chart package directory is required}"
 chart_repo="${2:?OCI chart repository is required}"
 release_tag="${3:?release tag is required}"
 
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
 shopt -s nullglob
 chart_packages=("${chart_dir}"/*.tgz)
 [ "${#chart_packages[@]}" -gt 0 ] || {
@@ -45,7 +53,30 @@ for chart_package in "${chart_packages[@]}"; do
       echo "${chart_name}:${chart_version} exists with appVersion ${remote_app_version}; bump chart version" >&2
       exit 1
     }
-    echo "Chart ${chart_name}:${chart_version} already present with matching appVersion; skipping push."
+
+    # Metadata alone is not an identity check. Pull the remote package and
+    # compare its bytes before allowing a rerun to continue to signing. A
+    # matching appVersion can still hide a changed chart payload.
+    remote_dir="$(mktemp -d)"
+    if ! helm pull "${remote}" --version "${chart_version}" --destination "${remote_dir}" >/dev/null 2>&1; then
+      rm -rf "${remote_dir}"
+      echo "Could not pull existing ${remote}:${chart_version} for content comparison" >&2
+      exit 1
+    fi
+    remote_package="${remote_dir}/$(basename "${chart_package}")"
+    if [ ! -f "${remote_package}" ]; then
+      rm -rf "${remote_dir}"
+      echo "Pulled ${remote}:${chart_version} did not contain $(basename "${chart_package}")" >&2
+      exit 1
+    fi
+    local_digest="$(sha256_file "${chart_package}")"
+    remote_digest="$(sha256_file "${remote_package}")"
+    rm -rf "${remote_dir}"
+    [ "${local_digest}" = "${remote_digest}" ] || {
+      echo "${chart_name}:${chart_version} exists but its package content differs; refusing to sign or replace it" >&2
+      exit 1
+    }
+    echo "Chart ${chart_name}:${chart_version} already present and content-equivalent; skipping push."
     continue
   fi
 
