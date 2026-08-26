@@ -14,12 +14,13 @@ test_dir="$(mktemp -d)"
 trap 'rm -rf "${test_dir}"' EXIT
 
 mkdir -p "${test_dir}/bin" "${test_dir}/charts"
-touch "${test_dir}/charts/debug-session-catalogue-0.2.0.tgz"
+printf 'locally packaged chart\n' >"${test_dir}/charts/debug-session-catalogue-0.2.0.tgz"
 
 cat >"${test_dir}/bin/helm" <<'EOF'
 #!/usr/bin/env bash
 set -eu
 if [ "$1 $2" = "show chart" ]; then
+  printf '%s\n' "$*" >>"${FAKE_HELM_CALL_LOG:?}"
   ref="$3"
   if [[ "${ref}" == *.tgz ]]; then
     printf 'name: debug-session-catalogue\nversion: 0.2.0\n'
@@ -28,6 +29,7 @@ if [ "$1 $2" = "show chart" ]; then
   fi
   case "${FAKE_REMOTE_MODE:-missing}" in
     matching) printf 'name: debug-session-catalogue\nversion: 0.2.0\nappVersion: "%s"\n' "${FAKE_LOCAL_APP_VERSION:-v1.2.3}" ;;
+    different) printf 'name: debug-session-catalogue\nversion: 0.2.0\nappVersion: "%s"\n' "${FAKE_LOCAL_APP_VERSION:-v1.2.3}" ;;
     mismatch) printf 'name: debug-session-catalogue\nversion: 0.2.0\nappVersion: "v9.9.9"\n' ;;
     incomplete) printf 'name: debug-session-catalogue\nversion: 0.2.0\n' ;;
     missing) echo 'Error: manifest unknown' >&2; exit 1 ;;
@@ -35,7 +37,20 @@ if [ "$1 $2" = "show chart" ]; then
   esac
   exit 0
 fi
+if [ "$1" = pull ]; then
+  printf '%s\n' "$*" >>"${FAKE_HELM_CALL_LOG:?}"
+  [ "${FAKE_REMOTE_MODE:-missing}" != pull-failure ] || exit 1
+  destination="${6:?}"
+  mkdir -p "${destination}"
+  if [ "${FAKE_REMOTE_MODE:-missing}" = different ]; then
+    printf 'different remote chart\n' >"${destination}/debug-session-catalogue-0.2.0.tgz"
+  else
+    cp "${FAKE_LOCAL_PACKAGE:?}" "${destination}/debug-session-catalogue-0.2.0.tgz"
+  fi
+  exit 0
+fi
 if [ "$1" = push ]; then
+  printf '%s\n' "$*" >>"${FAKE_HELM_CALL_LOG:?}"
   printf '%s\n' "$*" >>"${FAKE_HELM_LOG:?}"
   exit 0
 fi
@@ -44,12 +59,13 @@ EOF
 chmod +x "${test_dir}/bin/helm"
 
 run_publish() {
-  PATH="${test_dir}/bin:${PATH}" FAKE_HELM_LOG="${test_dir}/helm.log" \
+  PATH="${test_dir}/bin:${PATH}" FAKE_HELM_LOG="${test_dir}/helm.log" FAKE_HELM_CALL_LOG="${test_dir}/helm-calls.log" FAKE_LOCAL_PACKAGE="${test_dir}/charts/debug-session-catalogue-0.2.0.tgz" \
     "${script_dir}/publish-helm-charts.sh" "${test_dir}/charts" \
     oci://ghcr.io/example/charts v1.2.3
 }
 
 : >"${test_dir}/helm.log"
+: >"${test_dir}/helm-calls.log"
 FAKE_REMOTE_MODE=missing run_publish >/dev/null
 [ "$(wc -l <"${test_dir}/helm.log" | tr -d ' ')" -eq 1 ] || {
   echo "missing chart was not pushed exactly once" >&2
@@ -57,13 +73,18 @@ FAKE_REMOTE_MODE=missing run_publish >/dev/null
 }
 
 : >"${test_dir}/helm.log"
+: >"${test_dir}/helm-calls.log"
 FAKE_REMOTE_MODE=matching run_publish >/dev/null
 [ ! -s "${test_dir}/helm.log" ] || {
   echo "matching published chart was pushed again" >&2
   exit 1
 }
+grep -q '^pull ' "${test_dir}/helm-calls.log" || {
+  echo "matching chart was not pulled for content comparison" >&2
+  exit 1
+}
 
-for mode in mismatch incomplete network; do
+for mode in mismatch incomplete network different pull-failure; do
   : >"${test_dir}/helm.log"
   if FAKE_REMOTE_MODE="${mode}" run_publish >/dev/null 2>&1; then
     echo "remote ${mode} condition did not fail closed" >&2
