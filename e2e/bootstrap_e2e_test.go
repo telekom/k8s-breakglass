@@ -160,18 +160,25 @@ func TestBootstrapC002_APIServerAuthFlags(t *testing.T) {
 	defer cancel()
 
 	cli := setupClient(t)
-	var pods corev1.PodList
-	require.NoError(t, cli.List(ctx, &pods, client.InNamespace("kube-system")),
-		"failed to list kube-system Pods")
-
 	var apiserverPods []corev1.Pod
-	for _, pod := range pods.Items {
-		if isKubeAPIServerPod(pod) {
-			apiserverPods = append(apiserverPods, pod)
+	var lastListErr error
+	waitErr := helpers.WaitForCondition(ctx, func() (bool, error) {
+		var pods corev1.PodList
+		if err := cli.List(ctx, &pods, client.InNamespace("kube-system")); err != nil {
+			lastListErr = err
+			return false, nil
 		}
-	}
-	require.NotEmpty(t, apiserverPods,
-		"running cluster must expose at least one kube-apiserver static Pod")
+
+		apiserverPods = apiserverPods[:0]
+		for _, pod := range pods.Items {
+			if isKubeAPIServerPod(pod) {
+				apiserverPods = append(apiserverPods, pod)
+			}
+		}
+		return len(apiserverPods) > 0, nil
+	}, 2*time.Minute, helpers.DefaultInterval)
+	require.NoError(t, waitErr,
+		"waiting for a kube-apiserver static Pod (last list error: %v)", lastListErr)
 
 	for _, pod := range apiserverPods {
 		t.Run(pod.Name, func(t *testing.T) {
