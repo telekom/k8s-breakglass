@@ -200,7 +200,9 @@ case "$1" in
         checksum "$2"
         ;;
     copy)
-        [ "$#" -ge 2 ] && [ "$#" -le 3 ] || fail "copy requires FILE and optional OUTPUT_NAME"
+        if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+            fail "copy requires FILE and optional OUTPUT_NAME"
+        fi
         copy_out "$2" "${3-}"
         ;;
     *)
