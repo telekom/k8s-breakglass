@@ -8,6 +8,21 @@ matrix job, builds both `linux/amd64` and `linux/arm64` OCI artifacts, and
 executes each image's command on the real runtime; it is not duplicated in the
 ordinary controller CI suite.
 
+Development image publication is a separate, opt-in path. Pushes to a
+repository-owned, protected `dev-images/*` branch run
+`utility-dev-publish.yml`; ordinary branches and forks cannot publish to the
+canonical GHCR namespace. Repository administrators must configure the
+`UTILITY_DEV_ALLOWED_ACTORS` repository variable and the protected
+`utility-development` environment before using it. The workflow builds all
+six utility images as multi-architecture manifests, uses a tag that
+contains the complete source SHA and GitHub run identity, refuses to overwrite
+an existing tag, and records the manifest digest in an uploaded reference
+manifest. Each digest is keylessly signed and carries SPDX and SLSA
+attestations. Consumers must mirror and deploy the digest reference, not the
+development tag. The workflow's exact GitHub OIDC certificate identity is
+recorded in the reference manifest and is required when verifying the source
+signature.
+
 ## Goals
 
 - Publish reproducible, verifiable release artifacts

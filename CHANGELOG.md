@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now accepts both explicit and implicit `:latest` containerd references and
   deduplicates by manifest digest before creating the immutable local image
   reference.
+- A protected `dev-images/*` push workflow publishes all six standalone
+  utility images as immutable, signed multi-architecture development artifacts
+  with SBOM/provenance and an auditable digest reference manifest.
 - **Standalone debug-session catalogue**: Added the OCI-ready
   `debug-session-catalogue` Helm chart with neutral workload, network,
   storage, packet-capture, network-repair, node-recovery, and cluster-validation
