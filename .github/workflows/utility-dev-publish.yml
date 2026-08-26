@@ -89,9 +89,27 @@ jobs:
             esac
           done
 
+  environment-preflight:
+    name: Verify live publication environment protection
+    needs: validate-trigger
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: read
+    steps:
+      - name: Checkout environment preflight
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify required reviewers and self-review prevention
+        env:
+          GH_REPO: ${{ github.repository }}
+          # Prefer a least-privilege fine-grained token with repository
+          # Administration:read when GITHUB_TOKEN cannot inspect rules.
+          GH_TOKEN: ${{ secrets.UTILITY_DEV_ENVIRONMENT_TOKEN || github.token }}
+        run: hack/verify-github-environment.sh utility-development
+
   publication-approval:
     name: Approve development publication
-    needs: validate-trigger
+    needs: [validate-trigger, environment-preflight]
     runs-on: ubuntu-latest
     environment: utility-development
     permissions: {}

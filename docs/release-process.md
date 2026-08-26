@@ -38,6 +38,27 @@ be in `UTILITY_DEV_ALLOWED_ACTORS`; GitHub's protected environment performs the
 independent approval check for the current run. An approval cannot be inferred
 from either actor value or from repository variables.
 
+Before the approval job can start, `environment-preflight` reads the live
+GitHub environment configuration with `GITHUB_TOKEN` and fails closed unless
+the environment exposes non-empty required reviewers and
+`prevent_self_review=true`. The token must have permission to read repository
+environments; if the repository policy does not grant that to `GITHUB_TOKEN`,
+configure the optional `UTILITY_DEV_ENVIRONMENT_TOKEN` repository secret as a
+fine-grained token with only repository Administration:read access. The
+workflow uses it for this preflight and still fails closed when it is absent or
+insufficient. An administrator must verify the preflight before publication is
+enabled. This bootstrap check is deliberately separate from the workflow's
+protected-environment approval.
+
+Development consumers download the uploaded reference manifest, verify each
+Cosign signature and attestation, and mirror/deploy the `image@sha256:digest`
+values. Never promote a `dev-*` tag by retagging it without first recording
+and verifying its digest. To roll back, deploy the last known-good digest
+manifest; the immutable development tag itself is never overwritten. A
+missing digest, failed environment preflight, failed provenance check, or
+registry authentication error is a stop condition. Inspect the workflow run
+logs and retry only after the registry/API condition is corrected.
+
 ## Goals
 
 - Publish reproducible, verifiable release artifacts
@@ -89,7 +110,7 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 
 1. **Prepare** — generates Kustomize manifests, packages both Helm charts, cross-compiles `bgctl` binaries for all OS/arch combinations, and uploads them as artifacts.
 2. **Build** (matrix: `amd64`, `arm64`) — builds and pushes a single-platform image by digest on a native runner for each architecture.
-3. **Assemble** — downloads all per-arch digests and creates a unified multi-arch manifest tagged with the release version. Stable `vX.Y.Z` tags also update `latest`; prerelease tags such as `vX.Y.Z-rc.1` keep only their explicit version tag. Tags with SemVer build metadata (`+build`) are rejected because Docker image tags cannot contain `+`. Generates SLSA provenance attestation, signs the image with keyless Cosign, and attaches an SBOM attestation.
+3. **Assemble** — downloads all per-arch digests and creates a unified multi-arch manifest tagged with the release version. Stable `vX.Y.Z` tags also update `latest`; prerelease tags such as `vX.Y.Z-rc.1` keep only their explicit version tag. Tags with SemVer build metadata (`+build`) are rejected because Docker image tags cannot contain `+`. The final manifest digest is resolved with bounded fail-closed retries, receives GitHub and custom keyless SLSA provenance, and is semantically checked for the exact subject digest, source repository, release workflow, commit, builder identity, and OIDC signing identity before the assemble job completes.
 4. **Artifactory** — mirrors the multi-arch image and cosign artifacts (signatures + attestations) to the internal Artifactory OCI registry (best-effort).
 5. **Publish charts** — pushes both charts to GHCR Helm OCI (`oci://ghcr.io/telekom/k8s-breakglass/charts`).
 6. **Release** — creates a GitHub Release with manifests, Helm chart packages, `bgctl` binaries, release-wide checksums, CLI archive checksums, and SBOM (SPDX-JSON format via Syft).

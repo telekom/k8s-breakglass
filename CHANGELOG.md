@@ -52,6 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release and development digest resolution now uses bounded, fail-closed
   retries, and provenance behavior checks run in a Cosign-provisioned CI job
   without duplicating normal publication checks.
+- Final release manifests now receive and semantically verify an exact custom
+  SLSA provenance attestation in addition to GitHub's native attestation; the
+  development workflow checks live environment protection before requesting
+  approval and recognizes both producers without treating either as the other.
 - **Standalone debug-session catalogue**: Added the OCI-ready
   `debug-session-catalogue` Helm chart with neutral workload, network,
   storage, packet-capture, network-repair, node-recovery, and cluster-validation

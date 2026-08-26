@@ -25,11 +25,28 @@ decode_statement() {
 validate_one() {
   local document="$1" subject="$2" expected_build_type="$3"
   local expected_source_uri="$4" expected_source_sha="$5" expected_builder_id="$6"
-  local image="${subject%@*}" digest="${subject##*@}" statement
+  local image="${subject%@*}" digest="${subject##*@}" statement source_repository
+  source_repository="${expected_source_uri#https://github.com/}"
   statement="$(mktemp)"
   if ! decode_statement "${document}" "${statement}"; then
     rm -f "${statement}"
     return 1
+  fi
+  # The workflow invokes this verifier only after Cosign has cryptographically
+  # restricted output to the expected certificate identity and SLSA type. A
+  # GitHub-native attestation can still be present alongside our custom
+  # statement; recognize only its documented producer shape and never use it
+  # as the custom statement being required below.
+  if jq -e --arg source_repository "${source_repository}" '
+    ._type == "https://in-toto.io/Statement/v0.1" and
+    .predicateType == "https://slsa.dev/provenance/v1" and
+    (.predicate.buildDefinition.buildType == "https://slsa.dev/github-actions-buildtypes/v1" or
+      .predicate.buildDefinition.buildType == "https://slsa.dev/github-actions-buildtypes/workflow/v1") and
+    (.predicate.runDetails.builder.id | type == "string" and startswith("https://github.com/")) and
+    .predicate.buildDefinition.externalParameters.workflow.repository == $source_repository
+  ' "${statement}" >/dev/null; then
+    rm -f "${statement}"
+    return 2
   fi
   if jq -e \
     --arg image "${image}" \
@@ -66,24 +83,40 @@ validate_one() {
 validate_document() {
   local document="$1" subject="$2" expected_build_type="$3"
   local expected_source_uri="$4" expected_source_sha="$5" expected_builder_id="$6"
-  local count index element
+  local count index element result custom_count=0
   if jq -e 'type == "array"' "${document}" >/dev/null 2>&1; then
     count="$(jq 'length' "${document}")"
     [[ "${count}" -gt 0 ]] || return 1
     for ((index = 0; index < count; index++)); do
       element="$(mktemp)"
       jq ".[$index]" "${document}" >"${element}"
-      if ! validate_one "${element}" "${subject}" "${expected_build_type}" \
+      if validate_one "${element}" "${subject}" "${expected_build_type}" \
         "${expected_source_uri}" "${expected_source_sha}" "${expected_builder_id}"; then
+        custom_count=$((custom_count + 1))
+      else
+        result=$?
+        [[ "${result}" -eq 2 ]] || {
+          rm -f "${element}"
+          return 1
+        }
+      fi
+      if [[ "${custom_count}" -gt 1 ]]; then
         rm -f "${element}"
         return 1
       fi
       rm -f "${element}"
     done
+    [[ "${custom_count}" -eq 1 ]] || return 1
     return 0
   fi
-  validate_one "${document}" "${subject}" "${expected_build_type}" \
-    "${expected_source_uri}" "${expected_source_sha}" "${expected_builder_id}"
+  if validate_one "${document}" "${subject}" "${expected_build_type}" \
+    "${expected_source_uri}" "${expected_source_sha}" "${expected_builder_id}"; then
+    return 0
+  else
+    result=$?
+  fi
+  [[ "${result}" -eq 2 ]] && return 1
+  return "${result}"
 }
 
 if [[ "$#" -eq 6 ]]; then
@@ -117,6 +150,10 @@ jq -n --arg build_type "${build_type}" --arg source_uri "${source_uri}" \
   --arg source_sha "${source_sha}" \
   '{buildDefinition:{buildType:$build_type,externalParameters:{source:{uri:$source_uri,digest:{sha1:$source_sha}}},resolvedDependencies:[]}}' \
   >"${test_dir}/malformed-predicate.json"
+jq -n '{buildDefinition:{buildType:"https://slsa.dev/github-actions-buildtypes/v1",externalParameters:{workflow:{repository:"telekom/k8s-breakglass"}},resolvedDependencies:[]},runDetails:{builder:{id:"https://github.com/slsa-framework/github-actions-builder/.github/workflows/builder.yml@refs/heads/main"}}}' \
+  >"${test_dir}/github-predicate.json"
+jq -n '{buildDefinition:{buildType:"https://slsa.dev/github-actions-buildtypes/v1"},runDetails:{builder:{id:"https://example.invalid/not-github"}}}' \
+  >"${test_dir}/wrong-github-predicate.json"
 
 make_bundle() {
   local predicate="$1" type="$2" output="$3"
@@ -139,6 +176,24 @@ make_bundle "${test_dir}/malformed-predicate.json" slsaprovenance1 "${test_dir}/
 if validate_document "${test_dir}/malformed.bundle.json" "${subject}" "${build_type}" \
   "${source_uri}" "${source_sha}" "${builder_id}"; then
   echo "malformed SLSA predicate was accepted" >&2
+  exit 1
+fi
+
+make_bundle "${test_dir}/github-predicate.json" slsaprovenance1 "${test_dir}/github.bundle.json"
+jq -s '.' "${test_dir}/valid.bundle.json" "${test_dir}/github.bundle.json" >"${test_dir}/valid-and-github.json"
+validate_document "${test_dir}/valid-and-github.json" "${subject}" "${build_type}" \
+  "${source_uri}" "${source_sha}" "${builder_id}"
+if validate_document "${test_dir}/github.bundle.json" "${subject}" "${build_type}" \
+  "${source_uri}" "${source_sha}" "${builder_id}"; then
+  echo "GitHub-native attestation was incorrectly accepted as the custom statement" >&2
+  exit 1
+fi
+
+make_bundle "${test_dir}/wrong-github-predicate.json" slsaprovenance1 "${test_dir}/wrong-github.bundle.json"
+jq -s '.' "${test_dir}/valid.bundle.json" "${test_dir}/wrong-github.bundle.json" >"${test_dir}/valid-and-wrong-github.json"
+if validate_document "${test_dir}/valid-and-wrong-github.json" "${subject}" "${build_type}" \
+  "${source_uri}" "${source_sha}" "${builder_id}"; then
+  echo "untrusted producer-shaped attestation was ignored" >&2
   exit 1
 fi
 

@@ -265,6 +265,17 @@ environment controls, not repository variables. Administrators should run
 enabling development publication. On reruns, validate both the original
 `github.actor` and `github.triggering_actor` against the publisher allowlist;
 the protected environment remains the source of truth for approval.
+The workflow's environment-preflight job must remain a required dependency of
+the publication approval job. It uses the live GitHub environment API and must
+fail closed when its token cannot read protection rules or when required
+reviewers/self-review prevention are absent; repository variables are not
+evidence of those settings. Release assemble must check the final manifest's
+immutable digest and exact custom provenance (subject, source URI, source
+commit, release workflow/build type, builder identity, and OIDC identity).
+If `GITHUB_TOKEN` cannot read environment rules, use the optional
+`UTILITY_DEV_ENVIRONMENT_TOKEN` secret backed by a fine-grained
+Administration:read token; absence or insufficient access must remain a hard
+failure.
 The consolidated `.github/workflows/catalogue-utility-integration.yml` is the
 separate real-tool proof for `network-debug` and `node-maintenance`; keep its
 matrix entries as distinct required checks and do not copy those tests into
