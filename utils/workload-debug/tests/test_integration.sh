@@ -31,8 +31,12 @@ cleanup() {
       status=1
     fi
   fi
-  (( image_built )) && docker image rm "$image" >/dev/null 2>&1 || true
-  (( fixture_image_built )) && docker image rm "$fixture_image" >/dev/null 2>&1 || true
+  if (( image_built )); then
+    docker image rm "$image" >/dev/null 2>&1 || true
+  fi
+  if (( fixture_image_built )); then
+    docker image rm "$fixture_image" >/dev/null 2>&1 || true
+  fi
   rm -rf -- "$fixture_dir"
   [[ ! -e "$fixture_dir" ]] || status=1
   exit "$status"

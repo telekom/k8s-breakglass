@@ -24,10 +24,10 @@ done
 case "$timeout_seconds" in
     ''|*[!0-9]*) printf '%s\n' 'debug-tls: timeout must be a positive integer' >&2; exit 2 ;;
 esac
-[ "$timeout_seconds" -ge 1 ] && [ "$timeout_seconds" -le 300 ] || {
+if [ "$timeout_seconds" -lt 1 ] || [ "$timeout_seconds" -gt 300 ]; then
     printf '%s\n' 'debug-tls: timeout must be between 1 and 300' >&2
     exit 2
-}
+fi
 endpoint=$1
 case "$endpoint" in
     \[*\]:*) host=${endpoint%%]:*}; host=${host#\[}; port=${endpoint##]:} ;;
@@ -35,11 +35,17 @@ case "$endpoint" in
     *:*) host=${endpoint%:*}; port=${endpoint##*:} ;;
     *) host=$endpoint; port=443 ;;
 esac
-[ -n "$host" ] && [ -n "$port" ] || { printf '%s\n' 'debug-tls: invalid endpoint' >&2; exit 2; }
+if [ -z "$host" ] || [ -z "$port" ]; then
+    printf '%s\n' 'debug-tls: invalid endpoint' >&2
+    exit 2
+fi
 case "$port" in
     ''|*[!0-9]*) printf '%s\n' 'debug-tls: port must be numeric' >&2; exit 2 ;;
 esac
-[ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { printf '%s\n' 'debug-tls: port out of range' >&2; exit 2; }
+if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+    printf '%s\n' 'debug-tls: port out of range' >&2
+    exit 2
+fi
 
 printf 'TLS endpoint: %s:%s\n' "$host" "$port"
 set -- openssl s_client -connect "$host:$port" -servername "$host" -brief

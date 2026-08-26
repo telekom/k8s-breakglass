@@ -24,20 +24,20 @@ validate_positive_integer() {
     case "$value" in
         ''|*[!0-9]*) printf 'debug-http: %s must be a positive integer\n' "$label" >&2; exit 2 ;;
     esac
-    [ "$value" -ge 1 ] && [ "$value" -le 300 ] || {
+    if [ "$value" -lt 1 ] || [ "$value" -gt 300 ]; then
         printf 'debug-http: %s must be between 1 and 300\n' "$label" >&2
         exit 2
-    }
+    fi
 }
 
 validate_max_bytes() {
     case "$1" in
         ''|*[!0-9]*) printf '%s\n' 'debug-http: max response size must be a positive integer' >&2; exit 2 ;;
     esac
-    [ "$1" -ge 1 ] && [ "$1" -le 10485760 ] || {
+    if [ "$1" -lt 1 ] || [ "$1" -gt 10485760 ]; then
         printf '%s\n' 'debug-http: max response size must be between 1 and 10485760 bytes' >&2
         exit 2
-    }
+    fi
 }
 while [ "$#" -gt 0 ]; do
     case "$1" in

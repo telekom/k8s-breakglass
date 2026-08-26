@@ -25,17 +25,17 @@ if command -v nslookup >/dev/null 2>&1; then
             *'#'*)
                 resolver_host=${server%%#*}
                 resolver_port=${server##*#}
-                [ -n "$resolver_host" ] && [ -n "$resolver_port" ] || {
+                if [ -z "$resolver_host" ] || [ -z "$resolver_port" ]; then
                     printf '%s\n' 'debug-dns: invalid resolver HOST#PORT' >&2
                     exit 2
-                }
+                fi
                 case "$resolver_port" in
                     ''|*[!0-9]*) printf '%s\n' 'debug-dns: resolver port must be numeric' >&2; exit 2 ;;
                 esac
-                [ "$resolver_port" -ge 1 ] && [ "$resolver_port" -le 65535 ] || {
+                if [ "$resolver_port" -lt 1 ] || [ "$resolver_port" -gt 65535 ]; then
                     printf '%s\n' 'debug-dns: resolver port out of range' >&2
                     exit 2
-                }
+                fi
                 exec nslookup -port="$resolver_port" "$name" "$resolver_host"
                 ;;
             *) exec nslookup "$name" "$server" ;;

@@ -8,7 +8,9 @@ fixture=$(mktemp -d)
 trap 'rm -rf "$fixture"' EXIT HUP INT TERM
 cat >"$fixture/nslookup" <<'EOF'
 #!/bin/sh
-[ "$#" -eq 1 ] && [ "$1" = localhost ] || exit 2
+if [ "$#" -ne 1 ] || [ "$1" != localhost ]; then
+  exit 2
+fi
 printf '%s\n' 'Name: localhost' 'Address: 127.0.0.1'
 EOF
 chmod +x "$fixture/nslookup"
