@@ -392,6 +392,32 @@ jobs:
           helm template test-release charts/escalation-config --values charts/escalation-config/ci/test-values.yaml --debug
           helm template test-release charts/debug-session-catalogue --values charts/debug-session-catalogue/ci/test-values.yaml --debug
 
+  utility-image-tests:
+    name: Utility image checks (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep this as one matrix so new utility images do not add duplicate
+        # workflows or diverging lint/build contracts.
+        image:
+          - utils/workload-debug
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run helper tests
+        run: make -C "${{ matrix.image }}" test
+      - name: ShellCheck helpers
+        run: shellcheck "${{ matrix.image }}"/scripts/* "${{ matrix.image }}"/tests/*
+      - name: Hadolint Dockerfile
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: ${{ matrix.image }}/Dockerfile
+      - name: Validate image metadata
+        env:
+          IMAGE_METADATA: ${{ matrix.image }}/IMAGE-METADATA.yaml
+        run: |
+          ruby -e 'require "yaml"; YAML.load_file(ENV.fetch("IMAGE_METADATA"), aliases: true)'
+
   build-image:
     name: Build Image
     runs-on: ubuntu-latest
@@ -510,6 +536,7 @@ jobs:
       - manifest-validation
       - frontend-tests
       - helm-lint
+      - utility-image-tests
       - single-cluster-e2e
       - oidc-comprehensive-e2e
       - ui-e2e
@@ -719,7 +746,7 @@ jobs:
     name: Single-Cluster E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
+    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint, utility-image-tests]
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1297,7 +1324,7 @@ jobs:
     # above the Go test timeout so the test process, not the runner, owns
     # suite-level timeout failures.
     timeout-minutes: 75
-    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
+    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint, utility-image-tests]
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1605,7 +1632,7 @@ jobs:
     name: UI E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
+    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint, utility-image-tests]
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -2291,7 +2318,7 @@ jobs:
     name: Multi-Cluster E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 75
-    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
+    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint, utility-image-tests]
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
