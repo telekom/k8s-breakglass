@@ -13,10 +13,11 @@ LABEL org.opencontainers.image.title="Dump reader utilities" \
 # supplies stat, sha256sum, and cp; the pinned base is the only dependency.
 RUN addgroup -S -g 65532 reader \
     && adduser -S -D -H -u 65532 -G reader reader \
-    && install -d -o reader -g reader /input /output
+    && install -d -o reader -g reader /input /output /usr/share/dump-reader
 
 COPY --chmod=0755 bin/dump-reader /usr/local/bin/dump-reader
 COPY --chmod=0644 motd /etc/motd
+COPY --chmod=0644 README.md RUNBOOK.md /usr/share/dump-reader/
 
 USER 65532:65532
 WORKDIR /input

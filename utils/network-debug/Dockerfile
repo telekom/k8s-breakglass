@@ -106,9 +106,11 @@ COPY scripts/network-debug-profile.sh /etc/profile.d/network-debug.sh
 COPY MOTD /etc/motd
 COPY LICENSES /licenses
 COPY versions.env /usr/share/network-debug/versions.env
+COPY README.md RUNBOOK.md /usr/share/network-debug/
 
 RUN chmod 0755 /usr/local/bin/net-debug /usr/local/bin/net-report /etc/profile.d/network-debug.sh \
 	&& chmod 0644 /etc/motd /usr/share/network-debug/versions.env \
+		/usr/share/network-debug/README.md /usr/share/network-debug/RUNBOOK.md \
 	&& printf '%s\n' "${VERSION}" > /usr/share/network-debug/version \
 	&& chmod 0644 /usr/share/network-debug/version
 
