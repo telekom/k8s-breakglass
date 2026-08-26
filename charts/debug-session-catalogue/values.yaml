@@ -1,14 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-# This chart creates cluster-scoped DebugPodTemplate and DebugSessionTemplate
-# resources. It does not create namespaces, RBAC, ClusterConfig resources, or
-# images. Install it after the k8s-breakglass CRDs and pre-create targetNamespace.
-
+# Cluster-scoped templates only; this chart does not create namespaces, RBAC,
+# ClusterConfig resources, or images. Pre-create targetNamespace.
 enabled: true
 
-# Empty lists intentionally grant no access and target no clusters. Configure
-# these values for the installation; do not put tenant or provider names here.
+# Empty lists intentionally grant no access and target no clusters.
 requesters:
   groups: []
   users: []
@@ -25,148 +22,112 @@ maxDuration: 1h
 maxConcurrentSessions: 1
 imagePullPolicy: IfNotPresent
 
-# Replace these public, versioned utility images with images approved by your
-# organization. Image digests are supported by setting image.digest.
+# Replace these public, versioned utility images with approved images. Digests
+# are supported by setting image.digest.
 images:
-  workload: {repository: busybox, tag: "1.36.1", digest: ""}
-  network: {repository: busybox, tag: "1.36.1", digest: ""}
-  storage: {repository: busybox, tag: "1.36.1", digest: ""}
-  dumpAccess: {repository: busybox, tag: "1.36.1", digest: ""}
-  networkRepair: {repository: busybox, tag: "1.36.1", digest: ""}
-  nodeRecovery: {repository: busybox, tag: "1.36.1", digest: ""}
-  clusterValidation: {repository: busybox, tag: "1.36.1", digest: ""}
+  workload: {repository: busybox, tag: "1.36.1"}
+  network: {repository: busybox, tag: "1.36.1"}
+  storage: {repository: busybox, tag: "1.36.1"}
+  dumpAccess: {repository: busybox, tag: "1.36.1"}
+  networkRepair: {repository: busybox, tag: "1.36.1"}
+  nodeRecovery: {repository: busybox, tag: "1.36.1"}
+  clusterValidation: {repository: busybox, tag: "1.36.1"}
 
-# Elevated profiles are disabled by default. To use one, set both enabled and
-# elevated to true. The chart fails closed if a required-elevation profile is
-# enabled without the explicit opt-in.
+# Ordered, extensible profile list. Map-shaped profiles from versions before
+# 0.2.0 must be converted to list items (see the chart README).
 profiles:
-  workload:
-    enabled: true
-    elevated: false
+  - name: workload-diagnostics
+    intent: workload-diagnostics
     displayName: Workload diagnostics
     description: Inspect a workload from an isolated, non-privileged pod.
-    workloadType: Deployment
-    replicas: 1
+    enabled: true
+    elevated: false
     imageKey: workload
     command: ["sh", "-c"]
     args: ["echo 'Workload diagnostics ready'; while true; do sleep 3600; done"]
-    requiredElevation: false
-    hostNetwork: false
-    hostPID: false
-    hostIPC: false
-    privileged: false
-    capabilities: []
-    volumeMounts: []
-    volumes: []
-  network:
-    enabled: true
-    elevated: false
+  - name: network-diagnostics
+    intent: network-diagnostics
     displayName: Network diagnostics
     description: Inspect DNS and network connectivity from an isolated pod.
-    workloadType: Deployment
-    replicas: 1
+    enabled: true
+    elevated: false
     imageKey: network
     command: ["sh", "-c"]
     args: ["echo 'Network diagnostics ready'; while true; do sleep 3600; done"]
-    requiredElevation: false
-    hostNetwork: false
-    hostPID: false
-    hostIPC: false
-    privileged: false
-    capabilities: []
-    volumeMounts: []
-    volumes: []
-  storage:
-    enabled: true
-    elevated: false
+  - name: storage-diagnostics
+    intent: storage-diagnostics
     displayName: Storage diagnostics
     description: Inspect ephemeral storage from an isolated pod.
-    workloadType: Deployment
-    replicas: 1
-    imageKey: storage
-    command: ["sh", "-c"]
-    args: ["echo 'Storage diagnostics ready'; df -h /workspace; while true; do sleep 3600; done"]
-    requiredElevation: false
-    hostNetwork: false
-    hostPID: false
-    hostIPC: false
-    privileged: false
-    capabilities: []
-    volumeMounts:
-      - name: workspace
-        mountPath: /workspace
-    volumes:
-      - name: workspace
-        emptyDir: {}
-  dump-access:
-    enabled: false
-    elevated: false
-    displayName: Packet capture (opt-in)
-    description: Capture packets on a target node; requires explicit elevated opt-in.
-    workloadType: Deployment
-    replicas: 1
-    imageKey: dumpAccess
-    command: ["sh", "-c"]
-    args: ["echo 'Packet capture ready; provide an approved capture command'; while true; do sleep 3600; done"]
-    requiredElevation: true
-    hostNetwork: true
-    hostPID: false
-    hostIPC: false
-    privileged: false
-    capabilities: [NET_RAW, NET_ADMIN]
-    volumeMounts: []
-    volumes: []
-  network-repair:
-    enabled: false
-    elevated: false
-    displayName: Network repair (opt-in)
-    description: Perform network repair actions on a target node; requires explicit elevated opt-in.
-    workloadType: Deployment
-    replicas: 1
-    imageKey: networkRepair
-    command: ["sh", "-c"]
-    args: ["echo 'Network repair ready; provide an approved repair command'; while true; do sleep 3600; done"]
-    requiredElevation: true
-    hostNetwork: true
-    hostPID: false
-    hostIPC: false
-    privileged: false
-    capabilities: [NET_ADMIN]
-    volumeMounts: []
-    volumes: []
-  node-recovery:
-    enabled: false
-    elevated: false
-    displayName: Node recovery (opt-in)
-    description: Inspect and recover a node; requires explicit elevated opt-in.
-    workloadType: Deployment
-    replicas: 1
-    imageKey: nodeRecovery
-    command: ["sh", "-c"]
-    args: ["echo 'Node recovery ready; provide an approved recovery command'; while true; do sleep 3600; done"]
-    requiredElevation: true
-    hostNetwork: true
-    hostPID: true
-    hostIPC: false
-    privileged: true
-    capabilities: []
-    volumeMounts: []
-    volumes: []
-  cluster-validation:
     enabled: true
     elevated: false
+    imageKey: storage
+    command: ["sh", "-c"]
+    args:
+      - >-
+        echo 'Storage diagnostics ready'; df -h /workspace; while true; do sleep
+        3600; done
+    pod:
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+      volumes:
+        - name: workspace
+          emptyDir: {}
+  - name: dump-access
+    intent: dump-access
+    displayName: Dump access (opt-in)
+    description: >-
+      Read approved existing dump files; requires explicit elevated opt-in.
+    enabled: false
+    elevated: false
+    requiredElevation: true
+    imageKey: dumpAccess
+    command: ["sh", "-c"]
+    args:
+      - >-
+        echo 'Dump reader ready; provide an approved read-only command'; while
+        true; do sleep 3600; done
+    preset: elevated-node
+    capabilities: [SYS_PTRACE]
+  - name: network-repair
+    intent: network-repair
+    displayName: Network repair (opt-in)
+    description: >-
+      Perform network repair actions on a target node; requires explicit
+      elevated opt-in.
+    enabled: false
+    elevated: false
+    requiredElevation: true
+    imageKey: networkRepair
+    command: ["sh", "-c"]
+    args:
+      - >-
+        echo 'Network repair ready; provide an approved repair command'; while
+        true; do sleep 3600; done
+    preset: elevated-node
+    capabilities: [NET_ADMIN]
+  - name: node-recovery
+    intent: node-recovery
+    displayName: Node recovery (opt-in)
+    description: Inspect and recover a node; requires explicit elevated opt-in.
+    enabled: false
+    elevated: false
+    requiredElevation: true
+    imageKey: nodeRecovery
+    command: ["sh", "-c"]
+    args:
+      - >-
+        echo 'Node recovery ready; provide an approved recovery command'; while
+        true; do sleep 3600; done
+    preset: elevated-node
+    privileged: true
+    hostPID: true
+  - name: cluster-validation
+    intent: cluster-validation
     displayName: Cluster validation
     description: Run read-only cluster validation checks from an isolated pod.
-    workloadType: Deployment
-    replicas: 1
+    enabled: true
+    elevated: false
     imageKey: clusterValidation
     command: ["sh", "-c"]
     args: ["echo 'Cluster validation ready'; while true; do sleep 3600; done"]
-    requiredElevation: false
-    hostNetwork: false
-    hostPID: false
-    hostIPC: false
-    privileged: false
-    capabilities: []
-    volumeMounts: []
-    volumes: []

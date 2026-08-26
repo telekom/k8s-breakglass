@@ -8,8 +8,8 @@ description: >-
   k8s-breakglass. Profiles are restricted by default and configurable for the
   requesters, approvers, and clusters of an installation.
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.2.0
+appVersion: "0.2.0"
 home: https://github.com/telekom/k8s-breakglass
 icon: https://raw.githubusercontent.com/telekom/k8s-breakglass/main/frontend/public/favicon.svg
 keywords:
