@@ -67,7 +67,26 @@ generated SBOM and sign the final manifest digest with the approved policy.
 make -C utils/network-debug test
 make -C utils/network-debug build
 make -C utils/network-debug build-multiarch
+# Linux only: disposable Docker + kind integration proofs
+KUBECONFIG="$HOME/.kube/config" make -C utils/network-debug integration
 ```
+
+The integration target is intentionally fail-closed. It generates loopback
+HTTP traffic and proves curl, netcat, DNS, TLS, ping, tracepath, traceroute,
+mtr, ethtool, routing, sockets, deterministic reporting, and tcpdump capture.
+It then runs `pwru` against that traffic in a privileged ephemeral network
+namespace and executes `kubestr fio` with a pinned, disposable fio fixture
+image against the `standard` StorageClass in a kind cluster. It never reuses a
+production namespace or PVC. A missing Docker capability, Linux BTF/BPF
+support, kind cluster, or StorageClass prints a `REQUIREMENT:` diagnostic and
+fails; it does not silently skip a proof. See
+[`tests/tool-contract.yaml`](./tests/tool-contract.yaml) for the machine-readable
+operation and prerequisite contract.
+
+The dedicated CI job runs this target on a Linux runner with Docker and kind.
+The `pwru` portion requires readable `/sys/kernel/btf/vmlinux`, BPF/PERFMON
+support, and privileged access. Local macOS/Windows Docker Desktop or a
+non-kind Kubernetes context is not a substitute for that job.
 
 `build-multiarch` writes a local OCI archive and never pushes a mutable tag.
 Publish the reviewed manifest, resolve its immutable digest, then run

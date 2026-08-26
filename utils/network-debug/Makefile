@@ -7,7 +7,7 @@ VCS_REF ?= $(shell git rev-parse --short HEAD 2>/dev/null || printf 'unknown')
 BUILD_DATE ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 PLATFORMS ?= linux/amd64,linux/arm64
 
-.PHONY: help build build-multiarch test sbom sign
+.PHONY: help build build-multiarch test integration sbom sign
 
 OCI_ARCHIVE ?= network-debug.oci.tar
 
@@ -36,3 +36,6 @@ sign: ## Sign an immutable image digest with keyless cosign.
 
 test: ## Run static helper and Dockerfile checks.
 	./tests/test.sh
+
+integration: ## Run real tool proofs in disposable Docker and kind resources.
+	./tests/integration.sh
