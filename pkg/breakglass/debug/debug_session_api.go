@@ -841,7 +841,7 @@ func (c *DebugSessionAPIController) handleReplayDebugSessionRecording(ctx *gin.C
 		apiresponses.RespondNotFoundSimple(ctx, "terminal recording artifact is unavailable")
 		return
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	// The reader is deployment supplied; do not allow it to inject response
 	// headers or advertise an executable content type.
 	if contentType != "application/x-asciicast" && contentType != "text/plain" {

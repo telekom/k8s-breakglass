@@ -1511,6 +1511,7 @@ func TestDebugSessionApprovalTimedOut(t *testing.T) {
 			session := &breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: tt.createdAt},
 				Status: breakglassv1alpha1.DebugSessionStatus{
+					State:    breakglassv1alpha1.DebugSessionStatePendingApproval,
 					Approval: tt.approval,
 				},
 			}

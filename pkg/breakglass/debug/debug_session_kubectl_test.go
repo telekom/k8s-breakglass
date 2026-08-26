@@ -82,7 +82,9 @@ func TestKubectlDebugHandler_StatusPatchRecordsActiveActivity(t *testing.T) {
 
 	assert.Equal(t, int64(4), got.Status.ActivityCount)
 	require.NotNil(t, got.Status.LastActivity)
-	assert.False(t, got.Status.LastActivity.Before(&now))
+	// Kubernetes status timestamps have second precision, so compare against
+	// the precision retained by the fake API server.
+	assert.False(t, got.Status.LastActivity.Before(&metav1.Time{Time: now.Truncate(time.Second)}))
 }
 
 func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {

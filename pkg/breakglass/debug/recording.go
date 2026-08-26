@@ -140,9 +140,9 @@ func sanitizedRecordingStatus(status *breakglassv1alpha1.TerminalRecordingStatus
 	if status == nil {
 		return nil
 	}
-	copy := status.DeepCopy()
-	copy.Error = safeRecordingFailure(copy.Error)
-	return copy
+	sanitized := status.DeepCopy()
+	sanitized.Error = safeRecordingFailure(sanitized.Error)
+	return sanitized
 }
 
 // injectTerminalRecording adds the sidecar contract and a private shared
