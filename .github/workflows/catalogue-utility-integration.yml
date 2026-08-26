@@ -13,6 +13,7 @@ on:
       - "pkg/clustervalidator/**"
       - "hack/cluster-validator-**"
       - "Dockerfile.validator"
+      - "utils/cluster-validator/**"
       - "utils/**"
       - ".github/workflows/catalogue-utility-integration.yml"
   push:
@@ -23,6 +24,7 @@ on:
       - "pkg/clustervalidator/**"
       - "hack/cluster-validator-**"
       - "Dockerfile.validator"
+      - "utils/cluster-validator/**"
       - "utils/**"
       - ".github/workflows/catalogue-utility-integration.yml"
 
@@ -167,7 +169,7 @@ jobs:
       - name: Prove multi-architecture build
         run: |
           docker buildx build --platform linux/amd64,linux/arm64 \
-            --provenance=true --sbom=true --file Dockerfile.validator \
+            --provenance=true --sbom=true --file utils/cluster-validator/Dockerfile \
             --output "type=oci,dest=${RUNNER_TEMP}/cluster-validator.oci.tar" .
       - name: Install checksum-verified kind
         run: |
