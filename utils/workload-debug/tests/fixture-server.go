@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -84,7 +85,7 @@ func runHTTP(ctx context.Context, listen string, slow time.Duration, tlsCert, tl
 		defer cancel()
 		return server.Shutdown(shutdownCtx)
 	case err := <-errs:
-		if err == http.ErrServerClosed {
+		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
 		return err
@@ -100,13 +101,14 @@ func runDNS(ctx context.Context, listen, expectedName, address string) error {
 	if err != nil {
 		return err
 	}
-	defer sock.Close()
+	defer func() { _ = sock.Close() }()
 	buffer := make([]byte, 4096)
 	for {
 		_ = sock.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		size, peer, readErr := sock.ReadFromUDP(buffer)
 		if readErr != nil {
-			if timeout, ok := readErr.(net.Error); ok && timeout.Timeout() {
+			var timeoutErr net.Error
+			if errors.As(readErr, &timeoutErr) && timeoutErr.Timeout() {
 				select {
 				case <-ctx.Done():
 					return nil
@@ -198,7 +200,7 @@ func main() {
 		log.Fatalf("unknown fixture mode %q", *mode)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
