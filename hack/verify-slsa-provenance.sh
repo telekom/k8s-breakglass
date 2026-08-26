@@ -46,20 +46,20 @@ validate_one() {
     --arg source_uri "${expected_source_uri}" \
     --arg source_sha "${expected_source_sha}" \
     --arg workflow_identity "${expected_builder_id}" '
+    (.predicate.buildDefinition.externalParameters.workflow) as $workflow |
     ._type == "https://in-toto.io/Statement/v1" and
     .predicateType == "https://slsa.dev/provenance/v1" and
     (.subject | type == "array" and length == 1) and
     .subject[0].name == $image and
     (.subject[0].digest | type == "object") and
     .subject[0].digest.sha256 == ($digest | sub("^sha256:"; "")) and
-    (.predicate.buildDefinition.buildType == "https://actions.github.io/buildtypes/workflow/v1" or
-      .predicate.buildDefinition.buildType == "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1") and
-    (.predicate.buildDefinition.externalParameters.workflow | type == "object") and
-    .predicate.buildDefinition.externalParameters.workflow.repository == $source_uri and
-    (($source_uri + "/" + .predicate.buildDefinition.externalParameters.workflow.path + "@" + .predicate.buildDefinition.externalParameters.workflow.ref) == $workflow_identity) and
+    .predicate.buildDefinition.buildType == "https://actions.github.io/buildtypes/workflow/v1" and
+    ($workflow | type == "object") and
+    ($workflow.repository? == $source_uri) and
+    (($source_uri + "/" + ($workflow.path? // "") + "@" + ($workflow.ref? // "")) == $workflow_identity) and
     ([.predicate.buildDefinition.resolvedDependencies[]? |
-      select(.digest.gitCommit == $source_sha and (.uri | startswith("git+" + $source_uri + "@")))] | length == 1) and
-    .predicate.runDetails.builder.id == $workflow_identity
+      select(.digest.gitCommit == $source_sha and .uri == ("git+" + $source_uri + "@" + ($workflow.ref? // "")))] | length == 1) and
+    .predicate.runDetails.builder.id? == $workflow_identity
   ' "${statement}" >/dev/null; then
     rm -f "${statement}"
     return 2
@@ -100,47 +100,42 @@ validate_document() {
   local document="$1" subject="$2" expected_build_type="$3"
   local expected_source_uri="$4" expected_source_sha="$5" expected_builder_id="$6"
   local require_native="${7:-false}"
-  local count index element result custom_count=0 native_count=0
+  local count index element result custom_count=0 native_count=0 is_array=false
   [[ "${require_native}" == true || "${require_native}" == false ]] || return 2
   if jq -e 'type == "array"' "${document}" >/dev/null 2>&1; then
+    is_array=true
     count="$(jq 'length' "${document}")"
-    [[ "${count}" -gt 0 ]] || return 1
-    for ((index = 0; index < count; index++)); do
-      element="$(mktemp)"
-      jq ".[$index]" "${document}" >"${element}"
-      if validate_one "${element}" "${subject}" "${expected_build_type}" \
-        "${expected_source_uri}" "${expected_source_sha}" "${expected_builder_id}"; then
-        custom_count=$((custom_count + 1))
-      else
-        result=$?
-        [[ "${result}" -eq 2 ]] || {
-          rm -f "${element}"
-          return 1
-        }
-        native_count=$((native_count + 1))
-      fi
-      if [[ "${custom_count}" -gt 1 ]]; then
-        rm -f "${element}"
-        return 1
-      fi
-      if [[ "${native_count}" -gt 1 ]]; then
-        rm -f "${element}"
-        return 1
-      fi
-      rm -f "${element}"
-    done
-    [[ "${custom_count}" -eq 1 ]] || return 1
-    [[ "${require_native}" != true || "${native_count}" -eq 1 ]] || return 1
-    return 0
-  fi
-  if validate_one "${document}" "${subject}" "${expected_build_type}" \
-    "${expected_source_uri}" "${expected_source_sha}" "${expected_builder_id}"; then
-    return 0
   else
-    result=$?
+    # Normalize singleton objects into the same iteration as Cosign arrays.
+    # Strict mixed verification must not accept a custom-only or native-only
+    # singleton as if both producers were present.
+    count=1
   fi
-  [[ "${result}" -eq 2 ]] && return 1
-  return "${result}"
+  [[ "${count}" -gt 0 ]] || return 1
+  [[ "${require_native}" != true || "${count}" -eq 2 ]] || return 1
+  for ((index = 0; index < count; index++)); do
+    element="$(mktemp)"
+    if [[ "${is_array}" == true ]]; then
+      jq ".[${index}]" "${document}" >"${element}"
+    else
+      jq . "${document}" >"${element}"
+    fi
+    if validate_one "${element}" "${subject}" "${expected_build_type}" \
+      "${expected_source_uri}" "${expected_source_sha}" "${expected_builder_id}"; then
+      custom_count=$((custom_count + 1))
+    else
+      result=$?
+      [[ "${result}" -eq 2 ]] || {
+        rm -f "${element}"
+        return 1
+      }
+      native_count=$((native_count + 1))
+    fi
+    rm -f "${element}"
+    [[ "${custom_count}" -le 1 && "${native_count}" -le 1 ]] || return 1
+  done
+  [[ "${custom_count}" -eq 1 ]] || return 1
+  [[ "${require_native}" != true || "${native_count}" -eq 1 ]] || return 1
 }
 
 if [[ "$#" -eq 6 || "$#" -eq 7 ]]; then
@@ -214,10 +209,33 @@ if validate_document "${test_dir}/github-predicate.json" "${subject}" "${build_t
   exit 1
 fi
 
+if validate_document "${test_dir}/valid.bundle.json" "${subject}" "${build_type}" \
+  "${source_uri}" "${source_sha}" "${builder_id}" true; then
+  echo "custom-only singleton was accepted as mixed provenance" >&2
+  exit 1
+fi
+
+jq -n '[]' >"${test_dir}/empty.json"
+if validate_document "${test_dir}/empty.json" "${subject}" "${build_type}" \
+  "${source_uri}" "${source_sha}" "${builder_id}" true; then
+  echo "empty provenance array was accepted" >&2
+  exit 1
+fi
+
 jq -s '.' "${test_dir}/valid.bundle.json" "${test_dir}/wrong-github-predicate.json" >"${test_dir}/valid-and-wrong-github.json"
 if validate_document "${test_dir}/valid-and-wrong-github.json" "${subject}" "${build_type}" \
   "${source_uri}" "${source_sha}" "${builder_id}" true; then
   echo "untrusted producer-shaped attestation was ignored" >&2
+  exit 1
+fi
+
+jq '.predicate.buildDefinition.resolvedDependencies[0].uri += "-unexpected"' \
+  "${test_dir}/github-predicate.json" >"${test_dir}/wrong-dependency-predicate.json"
+jq -s '.' "${test_dir}/valid.bundle.json" "${test_dir}/wrong-dependency-predicate.json" \
+  >"${test_dir}/valid-and-wrong-dependency.json"
+if validate_document "${test_dir}/valid-and-wrong-dependency.json" "${subject}" "${build_type}" \
+  "${source_uri}" "${source_sha}" "${builder_id}" true; then
+  echo "native dependency ref with an unexpected suffix was accepted" >&2
   exit 1
 fi
 
@@ -226,6 +244,14 @@ jq -s '.' "${test_dir}/valid.bundle.json" "${test_dir}/github-predicate.json" \
 if validate_document "${test_dir}/duplicate-github.json" "${subject}" "${build_type}" \
   "${source_uri}" "${source_sha}" "${builder_id}" true; then
   echo "duplicate GitHub-native attestations were accepted" >&2
+  exit 1
+fi
+
+jq -s '.' "${test_dir}/valid.bundle.json" "${test_dir}/github-predicate.json" \
+  "${test_dir}/malformed.bundle.json" >"${test_dir}/too-many.json"
+if validate_document "${test_dir}/too-many.json" "${subject}" "${build_type}" \
+  "${source_uri}" "${source_sha}" "${builder_id}" true; then
+  echo "more than two provenance entries were accepted" >&2
   exit 1
 fi
 

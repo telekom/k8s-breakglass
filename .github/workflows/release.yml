@@ -160,8 +160,8 @@ jobs:
           cosign verify "${subject}" --certificate-identity="${identity}" --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
           cosign verify-attestation "${subject}" --type spdxjson --certificate-identity="${identity}" --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
           cosign verify-attestation "${subject}" --type slsaprovenance1 --certificate-identity="${identity}" --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
-          cosign verify-attestation "${subject}" --type slsaprovenance1 --certificate-identity="${identity}" --certificate-oidc-issuer='https://token.actions.githubusercontent.com' --output json > "${{ matrix.name }}.slsa-attestation.json"
-          hack/verify-slsa-provenance.sh "${{ matrix.name }}.slsa-attestation.json" "${subject}" \
+          cosign verify-attestation "${subject}" --type slsaprovenance1 --certificate-identity="${identity}" --certificate-oidc-issuer='https://token.actions.githubusercontent.com' --output json > "${{ matrix.name }}.custom-slsa-attestation.json"
+          hack/verify-slsa-provenance.sh "${{ matrix.name }}.custom-slsa-attestation.json" "${subject}" \
             "https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml" \
             "https://github.com/telekom/k8s-breakglass" "${GITHUB_SHA}" \
             "https://github.com/${GITHUB_WORKFLOW_REF}"
@@ -556,8 +556,8 @@ jobs:
           cosign verify-attestation "${SUBJECT}" --type slsaprovenance1 \
             --certificate-identity="${WORKFLOW_IDENTITY}" \
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-            --output json > release-image-all-slsa-attestations.json
-          hack/verify-slsa-provenance.sh release-image-all-slsa-attestations.json \
+            --output json > release-image-verified-slsa-attestations.json
+          hack/verify-slsa-provenance.sh release-image-verified-slsa-attestations.json \
             "${SUBJECT}" "${BUILD_TYPE}" "${SOURCE_URI}" "${GITHUB_SHA}" \
             "${WORKFLOW_IDENTITY}" true
 
@@ -727,8 +727,8 @@ jobs:
             cosign verify-attestation "${subject}" --type slsaprovenance1 \
               --certificate-identity="${identity}" \
               --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
-              --output json > chart-slsa-attestation.json
-            hack/verify-slsa-provenance.sh chart-slsa-attestation.json "${subject}" \
+              --output json > chart-custom-slsa-attestation.json
+            hack/verify-slsa-provenance.sh chart-custom-slsa-attestation.json "${subject}" \
               "https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml" \
               "https://github.com/telekom/k8s-breakglass" "${GITHUB_SHA}" \
               "${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}"

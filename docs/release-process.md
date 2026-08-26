@@ -30,7 +30,12 @@ one custom statement and exactly one GitHub-native Statement/v1 for the same
 image digest, source commit, workflow, and OIDC identity; a missing or
 unreadable native record fails closed before the reference is uploaded. The
 workflow grants `artifact-metadata: write` solely so the official action can
-store its registry attestation record.
+store its registry attestation record. The pre-native custom Cosign output is
+named `custom-slsa-attestation.json` and is used only as an intermediate gate;
+it is not uploaded as final evidence. The uploaded
+`verified-slsa-attestations.json` is captured after the native action and is
+the authoritative mixed-producer evidence (the release assemble equivalent is
+`release-image-verified-slsa-attestations.json`).
 Consumers must mirror and deploy the digest reference, not the development tag.
 The workflow's exact GitHub OIDC certificate identity is recorded in the
 reference manifest and is required when verifying the source signature. The

@@ -53,12 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release and development digest resolution now uses bounded, fail-closed
   retries, and provenance behavior checks run in a Cosign-provisioned CI job
   without duplicating normal publication checks.
-- Final release manifests and development images now receive and semantically
-  verify exactly one custom SLSA provenance attestation and one GitHub-native
-  Statement/v1 attestation for the same immutable subject. The gate checks the
-  native workflow identity, source commit, and OIDC signer and fails closed if
-  either producer cannot be retrieved; the development workflow also checks
-  live environment protection before requesting approval.
+- Final release and development publication workflows now require exactly one
+  custom SLSA provenance attestation and one GitHub-native Statement/v1
+  attestation for the same immutable subject. Their gate checks the native
+  workflow identity, source commit, and OIDC signer and fails closed if either
+  producer cannot be retrieved; the local behavioral verifier covers singleton,
+  malformed, duplicate, and wrong-dependency cases. Development publication
+  also checks live environment protection before requesting approval.
 - **Standalone debug-session catalogue**: Added the OCI-ready
   `debug-session-catalogue` Helm chart with neutral workload, network,
   storage, packet-capture, network-repair, node-recovery, and cluster-validation

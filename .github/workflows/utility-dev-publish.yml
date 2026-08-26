@@ -334,8 +334,8 @@ jobs:
           cosign verify-attestation "${SUBJECT}" --type slsaprovenance1 \
             --certificate-identity="${WORKFLOW_IDENTITY}" \
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-            --output json >"${{ matrix.name }}.slsa-attestation.json"
-          hack/verify-slsa-provenance.sh "${{ matrix.name }}.slsa-attestation.json" "${SUBJECT}" \
+            --output json >"${{ matrix.name }}.custom-slsa-attestation.json"
+          hack/verify-slsa-provenance.sh "${{ matrix.name }}.custom-slsa-attestation.json" "${SUBJECT}" \
             "https://github.com/telekom/k8s-breakglass/.github/workflows/utility-dev-publish.yml" \
             "https://github.com/telekom/k8s-breakglass" "${SOURCE_SHA}" \
             "${WORKFLOW_IDENTITY}"
@@ -368,8 +368,8 @@ jobs:
           cosign verify-attestation "${SUBJECT}" --type slsaprovenance1 \
             --certificate-identity="${WORKFLOW_IDENTITY}" \
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-            --output json >"${{ matrix.name }}.all-slsa-attestations.json"
-          hack/verify-slsa-provenance.sh "${{ matrix.name }}.all-slsa-attestations.json" "${SUBJECT}" \
+            --output json >"${{ matrix.name }}.verified-slsa-attestations.json"
+          hack/verify-slsa-provenance.sh "${{ matrix.name }}.verified-slsa-attestations.json" "${SUBJECT}" \
             "https://github.com/telekom/k8s-breakglass/.github/workflows/utility-dev-publish.yml" \
             "https://github.com/telekom/k8s-breakglass" "${SOURCE_SHA}" \
             "${WORKFLOW_IDENTITY}" true
@@ -383,8 +383,7 @@ jobs:
             ${{ matrix.name }}.metadata.json
             ${{ matrix.name }}.spdx.json
             ${{ matrix.name }}.provenance.json
-            ${{ matrix.name }}.slsa-attestation.json
-            ${{ matrix.name }}.all-slsa-attestations.json
+            ${{ matrix.name }}.verified-slsa-attestations.json
           if-no-files-found: error
 
   utility-reference:
