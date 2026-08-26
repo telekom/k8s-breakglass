@@ -8,6 +8,23 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
+// FuzzEffectiveExtraDeployVariables ensures malformed binding constraints are
+// rejected without panics, including regex and numeric-bound edge cases.
+func FuzzEffectiveExtraDeployVariables(f *testing.F) {
+	f.Add("^[a-z]+$", "1", "10", "safe")
+	f.Add("[", "not-a-number", "", "unknown")
+	f.Fuzz(func(t *testing.T, pattern, min, max, option string) {
+		_, _ = EffectiveExtraDeployVariables(
+			[]ExtraDeployVariable{{Name: "value", InputType: InputTypeText, Options: []SelectOption{{Value: "safe"}}}},
+			[]ExtraDeployVariableConstraint{{
+				Name:       "value",
+				Options:    []SelectOption{{Value: option}},
+				Validation: &VariableValidation{Pattern: pattern, Min: min, Max: max},
+			}},
+		)
+	})
+}
+
 // FuzzValidateIdentifierFormat tests the identifier validation with fuzzed inputs
 func FuzzValidateIdentifierFormat(f *testing.F) {
 	// Add seed corpus with various edge cases

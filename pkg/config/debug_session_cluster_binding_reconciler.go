@@ -284,6 +284,9 @@ func (r *DebugSessionClusterBindingReconciler) resolveTemplates(
 		if err := r.client.Get(ctx, client.ObjectKey{Name: binding.Spec.TemplateRef.Name}, template); err != nil {
 			return nil, err
 		}
+		if _, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, binding.Spec.ExtraDeployVariables); err != nil {
+			return nil, fmt.Errorf("validate extraDeployVariables against template %q: %w", template.Name, err)
+		}
 
 		displayName := template.Spec.DisplayName
 		if binding.Spec.DisplayNamePrefix != "" && displayName != "" {
@@ -316,6 +319,9 @@ func (r *DebugSessionClusterBindingReconciler) resolveTemplates(
 
 		for i := range templateList.Items {
 			template := &templateList.Items[i]
+			if _, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, binding.Spec.ExtraDeployVariables); err != nil {
+				return nil, fmt.Errorf("validate extraDeployVariables against template %q: %w", template.Name, err)
+			}
 
 			displayName := template.Spec.DisplayName
 			if binding.Spec.DisplayNamePrefix != "" && displayName != "" {
