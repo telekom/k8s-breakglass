@@ -66,6 +66,8 @@ config/                        Kustomize overlays
 11. **Strict Readiness Enforcement**: Unready clusters (`Ready=False`) MUST be hidden from Escalation API by default (`activeOnly=true`) and MUST be blocked from session requests at the controller level.
 12. **Utility-image mutation boundary**: Bind every supplied repair flag to an immutable controller-owned approval tuple, reject duplicates and irrelevant flags, pin kernel object identity (for example ifindex) across preflight and mutation, and make volume leases crash-recoverable only for the same immutable operation.
 
+For utility image changes, keep `IMAGE-METADATA.yaml` synchronized with image labels, dependency locks, supported platforms, the shared `network-diagnostics` intent, and digest-gated signing targets. Multi-architecture local builds must produce a reviewable OCI archive without pushing mutable tags.
+
 ## Build Tags
 
 - `//go:build e2e` — E2E tests (compiled with `-tags=e2e`; at runtime, tests skip unless `E2E_TEST=true`)
