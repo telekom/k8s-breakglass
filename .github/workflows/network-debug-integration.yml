@@ -31,7 +31,7 @@ env:
 
 jobs:
   integration-linux-bpf-kind:
-    name: Real network tools, BPF, and kubestr proofs
+    name: "Required compatible Linux BPF runner: real tool and kubestr proofs"
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -47,7 +47,9 @@ jobs:
             "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum" --output kind.sha256sum
           grep 'kind-linux-amd64' kind.sha256sum | sha256sum --check --status
           chmod 0755 kind
-          sudo mv kind /usr/local/bin/kind
+          mkdir -p "${RUNNER_TEMP}/network-debug-bin"
+          mv kind "${RUNNER_TEMP}/network-debug-bin/kind"
+          echo "${RUNNER_TEMP}/network-debug-bin" >> "${GITHUB_PATH}"
           kind version
           kubectl version --client
 

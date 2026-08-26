@@ -34,7 +34,7 @@ sign: ## Sign an immutable image digest with keyless cosign.
 	@test -n "$(DIGEST)" || (printf '%s\n' 'DIGEST is required' >&2; exit 2)
 	cosign sign --yes "$(IMAGE)@$(DIGEST)"
 
-test: ## Run static helper and Dockerfile checks.
+test: ## Run hermetic helper behavior checks.
 	./tests/test.sh
 
 integration: ## Run real tool proofs in disposable Docker and kind resources.
