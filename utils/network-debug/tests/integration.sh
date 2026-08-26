@@ -45,6 +45,14 @@ command -v docker >/dev/null 2>&1 || requirement "docker is required to run disp
 command -v timeout >/dev/null 2>&1 || requirement "GNU timeout is required for bounded integration commands"
 docker image inspect "$IMAGE" >/dev/null 2>&1 || requirement "image $IMAGE is unavailable; build it before running integration proofs"
 
+# shellcheck disable=SC2016 # The command is intentionally interpreted inside the container.
+default_shell_script='printf "default-shell=%s\\n" "$0"; exit 0'
+default_shell="$(printf '%s\n' "${default_shell_script}" |
+	timeout --foreground "$EXEC_TIMEOUT" docker run --rm -i "$IMAGE")" ||
+	requirement "the image default command did not start successfully"
+printf '%s\n' "$default_shell" | grep -F 'default-shell=/bin/sh' >/dev/null ||
+	requirement "the image default command is not the documented POSIX /bin/sh contract"
+
 docker network create "$NETWORK" >/dev/null || requirement "Docker could not create an ephemeral network"
 docker run --detach --name "$CONTAINER" --network "$NETWORK" \
 	--cap-add NET_RAW --cap-add NET_ADMIN \

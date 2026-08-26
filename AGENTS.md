@@ -272,10 +272,11 @@ reviewers/self-review prevention are absent; repository variables are not
 evidence of those settings. Release assemble must check the final manifest's
 immutable digest and exact custom provenance (subject, source URI, source
 commit, release workflow/build type, builder identity, and OIDC identity).
-If `GITHUB_TOKEN` cannot read environment rules, use the optional
-`UTILITY_DEV_ENVIRONMENT_TOKEN` secret backed by a fine-grained
-Administration:read token; absence or insufficient access must remain a hard
-failure.
+The preflight must use only the least-privilege workflow token and a pinned
+API action; never inject an administrator token into branch-controlled code.
+If that token cannot read environment rules, absence or insufficient access
+must remain a hard failure; administrators can use the local checker
+separately with a short-lived admin-readable token.
 The consolidated `.github/workflows/catalogue-utility-integration.yml` is the
 separate real-tool proof for `network-debug` and `node-maintenance`; keep its
 matrix entries as distinct required checks and do not copy those tests into

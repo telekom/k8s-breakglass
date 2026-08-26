@@ -97,6 +97,8 @@ ENV PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 WORKDIR /work
 # tcpdump and pwru require root or equivalent Linux capabilities. Consumers
 # should drop capabilities and isolate the network namespace per the runbook.
+# netshoot's interactive default is zsh; this image deliberately overrides it
+# with net-debug's portable POSIX /bin/sh contract for generic consumers.
 # hadolint ignore=DL3002
 USER 0
 ENTRYPOINT ["/usr/local/bin/net-debug"]

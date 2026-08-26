@@ -15,6 +15,8 @@ on:
       - 'utils/**'
       - 'cmd/cluster-validator/**'
       - 'pkg/clustervalidator/**'
+      - 'go.mod'
+      - 'go.sum'
       - 'Dockerfile.validator'
       - 'hack/cluster-validator-*'
       - '.github/workflows/utility-dev-publish.yml'
@@ -97,15 +99,25 @@ jobs:
       contents: read
       deployments: read
     steps:
-      - name: Checkout environment preflight
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Verify required reviewers and self-review prevention
-        env:
-          GH_REPO: ${{ github.repository }}
-          # Prefer a least-privilege fine-grained token with repository
-          # Administration:read when GITHUB_TOKEN cannot inspect rules.
-          GH_TOKEN: ${{ secrets.UTILITY_DEV_ENVIRONMENT_TOKEN || github.token }}
-        run: hack/verify-github-environment.sh utility-development
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b # v9.0.0
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const { data } = await github.rest.repos.getEnvironment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              environment_name: 'utility-development',
+            });
+            const valid = (data.protection_rules || []).some((rule) =>
+              rule.type === 'required_reviewers' &&
+              Array.isArray(rule.reviewers) &&
+              rule.reviewers.length > 0 &&
+              rule.prevent_self_review === true
+            );
+            if (!valid) {
+              core.setFailed('utility-development lacks required reviewers or prevent-self-review');
+            }
 
   publication-approval:
     name: Approve development publication
@@ -401,9 +413,11 @@ jobs:
             --arg identity "https://github.com/${WORKFLOW_REF}" \
             '{sourceSha:$source,workflowRef:$workflow,workflowIdentity:$identity,images:sort_by(.name)}' \
             utility-dev/*.metadata.json >utility-dev/references.json
+          canonical_names='["cluster-validator","dump-reader","network-debug","node-maintenance","storage-debug","workload-debug"]'
           jq -e --arg source "${SOURCE_SHA}" --arg workflow "${WORKFLOW_REF}" \
             --arg identity "https://github.com/${WORKFLOW_REF}" \
-            '.sourceSha == $source and .workflowRef == $workflow and .workflowIdentity == $identity and (.images | length == 6) and (([.images[].name] | sort | join(",")) == "cluster-validator,dump-reader,network-debug,node-maintenance,storage-debug,workload-debug") and (([.images[].name] | unique | length) == 6) and all(.images[]; (.digest | test("^sha256:[0-9a-f]{64}$")))' \
+            --argjson canonical_names "${canonical_names}" \
+            '.sourceSha == $source and .workflowRef == $workflow and .workflowIdentity == $identity and (([.images[].name] | sort) == $canonical_names) and (([.images[].name] | unique | length) == ($canonical_names | length)) and all(.images[]; (.digest | test("^sha256:[0-9a-f]{64}$")))' \
             utility-dev/references.json >/dev/null
 
       - name: Upload immutable development reference manifest

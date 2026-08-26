@@ -38,16 +38,17 @@ be in `UTILITY_DEV_ALLOWED_ACTORS`; GitHub's protected environment performs the
 independent approval check for the current run. An approval cannot be inferred
 from either actor value or from repository variables.
 
-Before the approval job can start, `environment-preflight` reads the live
-GitHub environment configuration with `GITHUB_TOKEN` and fails closed unless
+Before the approval job can start, the pinned `actions/github-script` in
+`environment-preflight` reads the live GitHub environment configuration with
+the least-privilege `GITHUB_TOKEN` and fails closed unless
 the environment exposes non-empty required reviewers and
 `prevent_self_review=true`. The token must have permission to read repository
-environments; if the repository policy does not grant that to `GITHUB_TOKEN`,
-configure the optional `UTILITY_DEV_ENVIRONMENT_TOKEN` repository secret as a
-fine-grained token with only repository Administration:read access. The
-workflow uses it for this preflight and still fails closed when it is absent or
-insufficient. An administrator must verify the preflight before publication is
-enabled. This bootstrap check is deliberately separate from the workflow's
+environments. If that token cannot read protection rules, the gate fails and
+an administrator must correct the GitHub policy before publication is enabled;
+no administrator token is injected into branch-controlled workflow code. An
+administrator can separately verify the setup with the local
+`hack/verify-github-environment.sh` using a short-lived, admin-readable token.
+This bootstrap check is deliberately separate from the workflow's
 protected-environment approval.
 
 Development consumers download the uploaded reference manifest, verify each
