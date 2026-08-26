@@ -65,12 +65,16 @@ provenance, and signature verification.
 Utility helpers must provide `--help`, deterministic bounded reports, explicit
 input/output mount boundaries, cleanup on success and failure, and refuse
 symlink/traversal escapes and destination overwrites. Add adversarial shell
-tests for missing files, symlinks, traversal, bounds, and cleanup. Run the
-image tests, ShellCheck, Dockerfile linting, YAML validation, REUSE, and a
-multi-architecture BuildKit build before release. Keep image docs, MOTD,
-runbooks, `CHANGELOG.md`, and metadata synchronized with the actual command
-surface. Release CI must attach an SBOM and provenance attestation and sign
-the immutable manifest with keyless Cosign.
+tests for missing files, symlinks, traversal, bounds, and cleanup. The
+mandatory `make -C utils/images integration` fixture must build and run every
+image with its declared non-root/read-only settings, execute real packaged
+tools (not mocks), exercise every report/inspection mode, and fail rather than
+silently skip when Docker is unavailable. Run the image tests, ShellCheck,
+Dockerfile linting, YAML validation, REUSE, and a multi-architecture BuildKit
+build before release. Keep image docs, MOTD, runbooks, `CHANGELOG.md`, and
+machine-readable metadata synchronized with the actual command surface.
+Release CI must attach an SBOM and provenance attestation and sign the immutable
+manifest with keyless Cosign.
 
 ## Critical Rules
 
