@@ -23,22 +23,24 @@ spec:
       nodeSelector:
         kubernetes.io/os: linux
       containers:
-      - name: netdebug
-        image: ghcr.io/telekom/k8s-breakglass-network-debug:0.1.0
-        imagePullPolicy: IfNotPresent
-        command: ["/usr/local/bin/net-debug"]
-        args: ["shell"]
-        securityContext:
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: false
-          runAsNonRoot: false
-          capabilities:
-            drop: ["ALL"]
-            add: ["NET_ADMIN", "NET_RAW"]
-        resources:
-          limits:
-            cpu: "500m"
-            memory: "256Mi"
-          requests:
-            cpu: "100m"
-            memory: "64Mi"
+        - name: netdebug
+          image: ghcr.io/telekom/k8s-breakglass/network-debug:0.1.0
+          imagePullPolicy: IfNotPresent
+          stdin: true
+          tty: true
+          command: ["/usr/local/bin/net-debug"]
+          args: ["shell"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["NET_ADMIN", "NET_RAW"]
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+            requests:
+              cpu: "100m"
+              memory: "64Mi"

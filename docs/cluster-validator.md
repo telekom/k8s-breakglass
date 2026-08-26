@@ -181,7 +181,7 @@ publishes BuildKit provenance and an SPDX SBOM, and signs the resulting digest
 with Sigstore keyless signing. Verify a release before use:
 
 ```bash
-cosign verify ghcr.io/telekom/k8s-breakglass-cluster-validator:v0.1.0 \
+cosign verify ghcr.io/telekom/k8s-breakglass/cluster-validator:v0.1.0 \
   --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/.github/workflows/cluster-validator-image.yml@refs/tags/v.*' \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com
 ```

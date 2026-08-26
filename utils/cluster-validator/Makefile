@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 ROOT_DIR := $(abspath ../..)
-IMAGE ?= ghcr.io/telekom/k8s-breakglass-cluster-validator:dev
+IMAGE ?= ghcr.io/telekom/k8s-breakglass/cluster-validator:dev
 PLATFORMS ?= linux/amd64,linux/arm64
 VERSION ?= dev
 GIT_COMMIT ?= $(shell git -C $(ROOT_DIR) rev-parse --short HEAD 2>/dev/null || printf unknown)
