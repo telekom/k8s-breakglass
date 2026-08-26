@@ -28,7 +28,7 @@ has_analyzer_error() {
   # gosec can return zero while skipping packages it could not load. Treat
   # analyzer and package-loading diagnostics as a failed security gate. Normal
   # progress messages ("Checking ...", "Import directory ...") do not match.
-  rg -Niq -- 'error building|type errors|no ssa|failed? to (load|build|analy[sz]e)|could not (load|import|analy[sz]e)|panic(:|\s)|fatal (error|:)|skipping (package|ssa)|cannot (load|import|analy[sz]e)|operation not permitted|undefined:' "${log_file}"
+  grep -Eiq -- 'error building|type errors|no ssa|failed? to (load|build|analy[sz]e)|could not (load|import|analy[sz]e)|panic(:|[[:space:]])|fatal (error|:)|skipping (package|ssa)|cannot (load|import|analy[sz]e)|operation not permitted|undefined:' "${log_file}"
 }
 
 valid_sarif() {
