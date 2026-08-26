@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+schemaVersion: 1
+image:
+  name: ghcr.io/telekom/k8s-breakglass-network-debug
+  version: 0.1.0
+  intent: network-diagnostics
+  platforms:
+    - linux/amd64
+    - linux/arm64
+  base:
+    name: alpine:3.24
+    digest: sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+  build:
+    name: golang:1.27
+    digest: sha256:c5b07c17f54c5f22230c4b4da6e90249165cf55368e01a52808cb92064e18836
+  dependencyLock: versions.env
+  user: "0:0"
+  capabilities:
+    - NET_RAW
+    - NET_ADMIN
+    - BPF
+    - PERFMON
+provenance:
+  source: https://github.com/telekom/k8s-breakglass/tree/main/utils/network-debug
+  license: Apache-2.0
+  sbom:
+    format: spdx-json
+    command: syft OCI_IMAGE -o spdx-json=sbom.spdx.json
+  signing:
+    tool: cosign
+    mode: keyless
+    commands:
+      - cosign sign --yes IMAGE@DIGEST
+      - cosign verify IMAGE@DIGEST --certificate-identity-regexp 'https://github.com/telekom/k8s-breakglass/' --certificate-oidc-issuer https://token.actions.githubusercontent.com

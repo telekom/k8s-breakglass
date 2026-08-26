@@ -50,6 +50,7 @@ case "${1:-}" in
 esac
 
 printf 'network-debug report %s\n' "$version"
+printf 'intent %s\n' "${NETWORK_DEBUG_INTENT:-network-diagnostics}"
 printf '\n[interfaces]\n'
 if command -v ip >/dev/null 2>&1; then ip -o address show 2>/dev/null | LC_ALL=C sort -k2,2 -k3,3 -k4,4 || true; else printf 'unavailable\n'; fi
 printf '\n[routes]\n'

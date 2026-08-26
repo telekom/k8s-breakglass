@@ -69,6 +69,9 @@ make -C utils/network-debug build
 make -C utils/network-debug build-multiarch
 ```
 
-`build-multiarch` pushes the requested tag because a local Docker image cannot
-represent a complete manifest list. Set `IMAGE`, `VERSION`, `VCS_REF`, and
-`BUILD_DATE` explicitly in release automation.
+`build-multiarch` writes a local OCI archive and never pushes a mutable tag.
+Publish the reviewed manifest, resolve its immutable digest, then run
+`make sbom IMAGE=... DIGEST=... SBOM=...` and
+`make sign IMAGE=... DIGEST=...`. Set `IMAGE`, `VERSION`, `VCS_REF`, and
+`BUILD_DATE` explicitly in release automation. `IMAGE-METADATA.yaml` records
+the shared `network-diagnostics` intent and the expected attestation policy.
