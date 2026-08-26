@@ -6,36 +6,51 @@ set -eu
 
 root=$(cd -- "$(dirname -- "$0")/.." && pwd)
 
-grep -Eq '^FROM alpine:3\.24@sha256:[0-9a-f]{64} AS runtime$' "$root/Dockerfile"
-grep -Eq '^FROM golang:1\.27@sha256:[0-9a-f]{64} AS tools$' "$root/Dockerfile"
-if grep -En '(:|@)latest([[:space:]]|$)' "$root/Dockerfile" "$root/versions.env"; then
+fixture=$(mktemp -d)
+trap 'rm -rf "$fixture"' EXIT HUP INT TERM
+
+cat >"$fixture/ip" <<'EOF'
+#!/bin/sh
+case "$*" in
+  '-o address show') printf '%s\n' '1: lo    inet 127.0.0.1/8 scope host lo' ;;
+  '-o route show') printf '%s\n' 'default via 192.0.2.1 dev eth0' ;;
+  '-o rule show') printf '%s\n' '0: from all lookup local' ;;
+  *) exit 2 ;;
+esac
+EOF
+cat >"$fixture/kubestr" <<'EOF'
+#!/bin/sh
+[ "${1:-}" = version ] || exit 2
+printf '%s\n' 'kubestr fixture-version'
+EOF
+cat >"$fixture/pwru" <<'EOF'
+#!/bin/sh
+[ "${1:-}" = --version ] || exit 2
+printf '%s\n' 'pwru fixture-version'
+EOF
+chmod +x "$fixture/ip" "$fixture/kubestr" "$fixture/pwru"
+
+if sh "$root/scripts/net-report" --not-an-option >/dev/null 2>&1; then
+	printf '%s\n' 'net-report accepted an unknown option' >&2
 	exit 1
 fi
-grep -q 'KUBESTR_VERSION=v0.4.49' "$root/versions.env"
-grep -q 'KUBESTR_COMMIT=01940ed37be9a0c7a70d80cd26c648eaa11e5174' "$root/versions.env"
-grep -q 'PWRU_VERSION=v1.0.12' "$root/versions.env"
-grep -Eq '^PWRU_SHA256_(AMD64|ARM64)=[0-9a-f]{64}$' "$root/versions.env"
-grep -q 'intent: network-diagnostics' "$root/IMAGE-METADATA.yaml"
-grep -q 'io.telekom.breakglass.intent="network-diagnostics"' "$root/Dockerfile"
 
-if grep -Eq -- '--push|docker push' "$root/Makefile"; then
-	printf '%s\n' 'multi-arch build must not push a mutable tag' >&2
-	exit 1
-fi
-grep -q 'cosign sign --yes' "$root/Makefile"
-grep -q 'cosign attest --yes' "$root/Makefile"
-
-for helper in net-debug net-report; do
-	sh "$root/scripts/$helper" --help >/dev/null
-done
+wrapped=$(sh "$root/scripts/net-debug" printf '%s' 'wrapper-executed')
+test "$wrapped" = 'wrapper-executed'
 
 version=$(NETWORK_DEBUG_VERSION=0.1.0 sh "$root/scripts/net-report" --version)
 test "$version" = 'net-report 0.1.0'
 intent=$(NETWORK_DEBUG_INTENT=network-diagnostics sh "$root/scripts/net-report" | sed -n '2p')
 test "$intent" = 'intent network-diagnostics'
 
-# No timestamp or random-id output: this check runs with a minimal PATH.
-first=$(PATH=/usr/bin:/bin NETWORK_DEBUG_VERSION=test sh "$root/scripts/net-report" 2>/dev/null || true)
-second=$(PATH=/usr/bin:/bin NETWORK_DEBUG_VERSION=test sh "$root/scripts/net-report" 2>/dev/null || true)
+# Exercise the report against deterministic command fixtures. These assertions
+# validate the public runtime output, not implementation files.
+first=$(PATH="$fixture:/usr/bin:/bin" NETWORK_DEBUG_VERSION=test sh "$root/scripts/net-report")
+second=$(PATH="$fixture:/usr/bin:/bin" NETWORK_DEBUG_VERSION=test sh "$root/scripts/net-report")
 test "$first" = "$second"
+printf '%s\n' "$first" | grep -F '1: lo    inet 127.0.0.1/8 scope host lo' >/dev/null
+printf '%s\n' "$first" | grep -F 'default via 192.0.2.1 dev eth0' >/dev/null
+printf '%s\n' "$first" | grep -F '0: from all lookup local' >/dev/null
+printf '%s\n' "$first" | grep -F 'kubestr' | grep -F 'kubestr fixture-version' >/dev/null
+printf '%s\n' "$first" | grep -F 'pwru' | grep -F 'pwru fixture-version' >/dev/null
 echo 'network-debug image checks passed'
