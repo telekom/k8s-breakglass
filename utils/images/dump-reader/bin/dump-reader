@@ -169,6 +169,10 @@ copy_out() {
     fi
     umask 077
     temporary=$(mktemp "$output_dir/.dump-reader.XXXXXX") || fail "cannot create temporary output in: $output_dir"
+    # The output is an incident artifact retrieved from the mounted volume;
+    # make it readable to the external collector while keeping the image
+    # itself non-root and the input mount read-only.
+    chmod 0644 "$temporary" || fail "cannot set output permissions: $temporary"
     if ! cat "$source" >"$temporary"; then
         rm -f "$temporary"
         fail "copy failed: $source"
