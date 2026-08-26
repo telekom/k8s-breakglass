@@ -254,6 +254,11 @@ type Event struct {
 	// ID is a unique identifier for this event
 	ID string `json:"id"`
 
+	// Sequence is a manager-local monotonic ordering number. Sinks may process
+	// events concurrently, so consumers should use it with Timestamp when
+	// reconstructing a DebugSession lifecycle.
+	Sequence uint64 `json:"sequence,omitempty"`
+
 	// Type is the type of event
 	Type EventType `json:"type"`
 

@@ -18,6 +18,7 @@ package audit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -32,6 +33,10 @@ import (
 )
 
 const maxDebugSessionAuditDetailLength = 256
+
+const maxDebugSessionAuditDetailEntries = 32
+
+const maxDebugSessionAuditDetailDepth = 3
 
 var debugSessionAuditSecretPattern = regexp.MustCompile(`(?i)(authorization\s*:\s*bearer\s+|bearer\s+|(?:token|password|secret|client_secret)\s*[=:]\s*)[^\s,;]+`)
 
@@ -48,32 +53,135 @@ func SanitizeDebugSessionAuditDetail(value string) string {
 		}
 		return r
 	}, value)
-	if len(value) > maxDebugSessionAuditDetailLength {
-		value = value[:maxDebugSessionAuditDetailLength]
+	if len([]rune(value)) > maxDebugSessionAuditDetailLength {
+		value = string([]rune(value)[:maxDebugSessionAuditDetailLength])
 	}
 	return value
+}
+
+func isSensitiveDebugSessionDetailKey(key string) bool {
+	switch strings.ToLower(key) {
+	case "authorization", "body", "command", "credentials", "credential", "env", "environment", "error", "headers", "message", "output", "password", "raw", "reason", "request", "requestbody", "secret", "token":
+		return true
+	default:
+		return false
+	}
+}
+
+func sanitizeDebugSessionAuditValue(key string, value interface{}, depth int) interface{} {
+	if isSensitiveDebugSessionDetailKey(key) {
+		return "[REDACTED]"
+	}
+	if depth >= maxDebugSessionAuditDetailDepth {
+		return "[REDACTED]"
+	}
+
+	switch typed := value.(type) {
+	case string:
+		return SanitizeDebugSessionAuditDetail(typed)
+	case []string:
+		bounded := typed
+		if len(bounded) > 16 {
+			bounded = bounded[:16]
+		}
+		result := make([]string, 0, len(bounded))
+		for _, item := range bounded {
+			result = append(result, SanitizeDebugSessionAuditDetail(item))
+		}
+		return result
+	case map[string]string:
+		result := make(map[string]string, min(len(typed), maxDebugSessionAuditDetailEntries))
+		count := 0
+		for itemKey, itemValue := range typed {
+			if count >= maxDebugSessionAuditDetailEntries {
+				break
+			}
+			if isSensitiveDebugSessionDetailKey(itemKey) {
+				result[itemKey] = "[REDACTED]"
+			} else {
+				result[itemKey] = SanitizeDebugSessionAuditDetail(itemValue)
+			}
+			count++
+		}
+		return result
+	case map[string]interface{}:
+		result := make(map[string]interface{}, min(len(typed), maxDebugSessionAuditDetailEntries))
+		count := 0
+		for itemKey, itemValue := range typed {
+			if count >= maxDebugSessionAuditDetailEntries {
+				break
+			}
+			result[itemKey] = sanitizeDebugSessionAuditValue(itemKey, itemValue, depth+1)
+			count++
+		}
+		return result
+	default:
+		return value
+	}
 }
 
 func debugSessionAuditDetails(values map[string]interface{}) map[string]interface{} {
 	if len(values) == 0 {
 		return nil
 	}
-	result := make(map[string]interface{}, len(values))
+	result := make(map[string]interface{}, min(len(values), maxDebugSessionAuditDetailEntries))
+	count := 0
 	for key, value := range values {
-		switch typed := value.(type) {
-		case string:
-			result[key] = SanitizeDebugSessionAuditDetail(typed)
-		case []string:
-			bounded := make([]string, 0, min(len(typed), 16))
-			for _, item := range typed[:min(len(typed), 16)] {
-				bounded = append(bounded, SanitizeDebugSessionAuditDetail(item))
-			}
-			result[key] = bounded
-		default:
-			result[key] = value
+		if count >= maxDebugSessionAuditDetailEntries {
+			break
 		}
+		result[key] = sanitizeDebugSessionAuditValue(key, value, 0)
+		count++
 	}
 	return result
+}
+
+func sanitizeDebugSessionAuditEvent(event *Event) {
+	if event == nil || !strings.HasPrefix(string(event.Type), "debug_session.") {
+		return
+	}
+	event.Actor.User = SanitizeDebugSessionAuditDetail(event.Actor.User)
+	event.Actor.IdentityProvider = SanitizeDebugSessionAuditDetail(event.Actor.IdentityProvider)
+	event.Actor.SourceIP = SanitizeDebugSessionAuditDetail(event.Actor.SourceIP)
+	event.Actor.UserAgent = SanitizeDebugSessionAuditDetail(event.Actor.UserAgent)
+	if len(event.Actor.Groups) > 16 {
+		event.Actor.Groups = event.Actor.Groups[:16]
+	}
+	for i := range event.Actor.Groups {
+		event.Actor.Groups[i] = SanitizeDebugSessionAuditDetail(event.Actor.Groups[i])
+	}
+	event.Target.Kind = SanitizeDebugSessionAuditDetail(event.Target.Kind)
+	event.Target.Name = SanitizeDebugSessionAuditDetail(event.Target.Name)
+	event.Target.Namespace = SanitizeDebugSessionAuditDetail(event.Target.Namespace)
+	event.Target.Cluster = SanitizeDebugSessionAuditDetail(event.Target.Cluster)
+	event.Target.APIGroup = SanitizeDebugSessionAuditDetail(event.Target.APIGroup)
+	event.Details = debugSessionAuditDetails(event.Details)
+	if event.RequestContext != nil {
+		event.RequestContext.CorrelationID = SanitizeDebugSessionAuditDetail(event.RequestContext.CorrelationID)
+		event.RequestContext.SessionName = SanitizeDebugSessionAuditDetail(event.RequestContext.SessionName)
+		event.RequestContext.EscalationName = SanitizeDebugSessionAuditDetail(event.RequestContext.EscalationName)
+		event.RequestContext.DebugSessionName = SanitizeDebugSessionAuditDetail(event.RequestContext.DebugSessionName)
+	}
+}
+
+// stableDebugSessionEventID makes retries of the same observed transition
+// idempotent for sinks that deduplicate by Event.ID. Details are sanitized
+// before they participate in the key, so secrets and raw errors never affect
+// or enter the identity.
+func stableDebugSessionEventID(event *Event) string {
+	if event == nil || !strings.HasPrefix(string(event.Type), "debug_session.") {
+		return ""
+	}
+	payload, err := json.Marshal(struct {
+		Type    EventType              `json:"type"`
+		Actor   string                 `json:"actor"`
+		Target  Target                 `json:"target"`
+		Details map[string]interface{} `json:"details,omitempty"`
+	}{event.Type, event.Actor.User, event.Target, event.Details})
+	if err != nil {
+		return ""
+	}
+	return uuid.NewSHA1(uuid.NameSpaceURL, payload).String()
 }
 
 // Manager coordinates audit event creation and distribution.
@@ -96,6 +204,7 @@ type Manager struct {
 	droppedEvents              atomic.Int64
 	processedEvents            atomic.Int64
 	sensitiveEventsSyncWritten atomic.Int64
+	sequence                   atomic.Uint64
 
 	// Configuration
 	config ManagerConfig
@@ -259,6 +368,7 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 // Sensitive events (IsSensitiveEvent) fall back to a synchronous write when the
 // queue is full, which may block up to WriteTimeout.
 func (m *Manager) Emit(ctx context.Context, event *Event) {
+	sanitizeDebugSessionAuditEvent(event)
 	if m.closed.Load() {
 		return
 	}
@@ -275,12 +385,18 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 
 	// Assign ID if not set
 	if event.ID == "" {
-		event.ID = uuid.New().String()
+		event.ID = stableDebugSessionEventID(event)
+		if event.ID == "" {
+			event.ID = uuid.New().String()
+		}
 	}
 
 	// Set timestamp if not set
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now().UTC()
+	}
+	if event.Sequence == 0 {
+		event.Sequence = m.sequence.Add(1)
 	}
 
 	// Set default severity if not set
@@ -379,18 +495,25 @@ func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
 // EmitSync sends an audit event synchronously.
 // Use sparingly - for critical events only.
 func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
+	sanitizeDebugSessionAuditEvent(event)
 	if !eventTypeAllowed(event.Type, m.config.IncludeEventTypes, m.config.ExcludeEventTypes) {
 		return nil
 	}
 
 	// Assign ID if not set
 	if event.ID == "" {
-		event.ID = uuid.New().String()
+		event.ID = stableDebugSessionEventID(event)
+		if event.ID == "" {
+			event.ID = uuid.New().String()
+		}
 	}
 
 	// Set timestamp if not set
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now().UTC()
+	}
+	if event.Sequence == 0 {
+		event.Sequence = m.sequence.Add(1)
 	}
 
 	// Set default severity if not set

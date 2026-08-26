@@ -123,6 +123,24 @@ func TestQueuedSink_BasicOperation(t *testing.T) {
 	assert.False(t, health.CircuitOpen)
 }
 
+func TestIsolatedMultiSink_PropagatesSensitiveWriteFailure(t *testing.T) {
+	failing := newQueuedMockSink("failing")
+	failing.alwaysFail = true
+	failing.writeDelay = time.Second
+	ims := NewIsolatedMultiSink([]Sink{failing}, QueuedSinkConfig{
+		QueueSize: 1, WorkerCount: 1, WriteTimeout: time.Second,
+	}, zap.NewNop())
+	defer func() { _ = ims.Close() }()
+
+	// Force the per-sink queue-full fallback, which is the only synchronous
+	// delivery path available to a sensitive event.
+	ims.sinks[0].queue <- &Event{Type: EventResourceGet}
+	time.Sleep(25 * time.Millisecond)
+	ims.sinks[0].queue <- &Event{Type: EventResourceList}
+	err := ims.Write(context.Background(), &Event{Type: EventSessionRevoked})
+	assert.Error(t, err)
+}
+
 func TestQueuedSink_QueueOverflow(t *testing.T) {
 	logger := zap.NewNop()
 	mock := newQueuedMockSink("slow-sink")

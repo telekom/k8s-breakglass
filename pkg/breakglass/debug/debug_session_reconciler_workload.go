@@ -823,6 +823,12 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		"kind", obj.GetKind(),
 		"name", obj.GetName(),
 		"namespace", obj.GetNamespace())
+	if c.shouldEmitAudit(ds) {
+		if auditManager := c.currentAuditManager(); auditManager != nil {
+			auditManager.DebugSessionResourceDeployed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster,
+				obj.GetKind(), obj.GetName(), obj.GetNamespace())
+		}
+	}
 
 	return nil
 }

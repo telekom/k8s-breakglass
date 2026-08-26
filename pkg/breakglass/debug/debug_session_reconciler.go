@@ -183,7 +183,7 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		if statusErr := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); statusErr != nil {
 			log.Errorw("Failed to update DebugSession status after validation failure", "error", statusErr)
 		}
-		if c.shouldEmitAudit(ds) {
+		if c.shouldEmitAudit(ds) && !validationFailureAuditRecorded(ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
 				auditManager.DebugSessionValidationFailed(ctx, ds.Name, ds.Namespace, ds.Spec.RequestedBy, ds.Spec.Cluster, "structural_validation_failed")
 			}
@@ -581,10 +581,19 @@ func (c *DebugSessionController) emitCleanupFailureAudit(ctx context.Context, ds
 }
 
 func trackedResourceCount(ds *breakglassv1alpha1.DebugSession) int {
-	return len(ds.Status.DeployedResources) +
+	count := len(ds.Status.DeployedResources) +
 		len(ds.Status.AuxiliaryResourceStatuses) +
 		len(ds.Status.PodTemplateResourceStatuses) +
 		len(ds.Status.AllowedPods)
+	if ds.Status.KubectlDebugStatus != nil {
+		count++
+	}
+	return count
+}
+
+func validationFailureAuditRecorded(ds *breakglassv1alpha1.DebugSession) bool {
+	return ds.Status.State == breakglassv1alpha1.DebugSessionStateFailed &&
+		strings.HasPrefix(ds.Status.Message, "Validation failed:")
 }
 
 // activateSession deploys debug resources and marks session as active
@@ -899,6 +908,7 @@ func (c *DebugSessionController) sendToWebhookDestinations(ctx context.Context, 
 
 // sendWebhookEvent sends an audit event to a webhook destination.
 func (c *DebugSessionController) sendWebhookEvent(ctx context.Context, dest breakglassv1alpha1.AuditDestination, eventType string, ds *breakglassv1alpha1.DebugSession, payload map[string]interface{}) error {
+	redactedPayload := sanitizeDebugSessionWebhookDetails(payload)
 	// Build the full payload
 	fullPayload := map[string]interface{}{
 		"eventType": eventType,
@@ -911,7 +921,7 @@ func (c *DebugSessionController) sendWebhookEvent(ctx context.Context, dest brea
 			"requestedBy": ds.Spec.RequestedBy,
 			"state":       string(ds.Status.State),
 		},
-		"details": payload,
+		"details": redactedPayload,
 	}
 
 	jsonData, err := json.Marshal(fullPayload)
@@ -941,6 +951,38 @@ func (c *DebugSessionController) sendWebhookEvent(ctx context.Context, dest brea
 	}
 
 	return nil
+}
+
+// sanitizeDebugSessionWebhookDetails keeps the legacy per-template webhook
+// path subject to the same audit boundary as pkg/audit. Webhook payloads must
+// never become an alternate channel for request bodies, commands, environment
+// values, credentials, or raw pod/API errors.
+func sanitizeDebugSessionWebhookDetails(payload map[string]interface{}) map[string]interface{} {
+	if len(payload) == 0 {
+		return nil
+	}
+	result := make(map[string]interface{}, min(len(payload), 32))
+	count := 0
+	for key, value := range payload {
+		if count >= 32 {
+			break
+		}
+		lowerKey := strings.ToLower(key)
+		if lowerKey == "authorization" || lowerKey == "body" || lowerKey == "command" ||
+			lowerKey == "credentials" || lowerKey == "env" || lowerKey == "environment" ||
+			lowerKey == "error" || lowerKey == "headers" || lowerKey == "message" ||
+			lowerKey == "output" || lowerKey == "password" || lowerKey == "raw" ||
+			lowerKey == "reason" || lowerKey == "request" || lowerKey == "requestbody" ||
+			lowerKey == "secret" || lowerKey == "token" {
+			result[key] = "[REDACTED]"
+		} else if text, ok := value.(string); ok {
+			result[key] = audit.SanitizeDebugSessionAuditDetail(text)
+		} else {
+			result[key] = value
+		}
+		count++
+	}
+	return result
 }
 
 // getTemplate retrieves a DebugSessionTemplate by name

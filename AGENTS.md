@@ -253,6 +253,13 @@ resource identity only; never include request bodies, credentials, command
 contents, or raw Kubernetes errors. Add new lifecycle event types to
 `pkg/audit/types.go`, mark sensitive transitions non-sampleable, and test both
 sink-neutral emission and redaction/bounds when extending this taxonomy.
+DebugSession event IDs must be stable for the same observed transition so
+controller retries are deduplicable by sinks; retry/failure attempts may carry
+distinct bounded counters when they represent a new observation. The legacy
+template webhook path is an audit sink too and must apply the same recursive
+redaction and bounds as `pkg/audit`. Use the manager-local monotonic event
+sequence when consumers need to reconstruct emission order across concurrent
+workers.
 
 ## Build Tags
 

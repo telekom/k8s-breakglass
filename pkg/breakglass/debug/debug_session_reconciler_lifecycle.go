@@ -778,6 +778,12 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 				"kind", status.Kind,
 				"name", status.ResourceName,
 				"namespace", status.Namespace)
+			if c.shouldEmitAudit(ds) {
+				if auditManager := c.currentAuditManager(); auditManager != nil {
+					auditManager.DebugSessionResourceCleanup(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster,
+						status.Kind, status.ResourceName, status.Namespace)
+				}
+			}
 		}
 
 		status.Deleted = true

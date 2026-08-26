@@ -1616,8 +1616,10 @@ cleanup failures (as well as approval timeouts, session failures, pod
 failures, and container restarts). Lifecycle details are structured and
 bounded; request reasons and error-shaped text are redacted, and raw request
 bodies, credentials, commands, and internal sink or terminal-recorder data are
-not sent to sinks. Audit filtering, sampling, queueing, and delivery remain
-the responsibility of the generic audit service.
+not sent to sinks. Pod-template and auxiliary resource deployment/cleanup
+transitions use the same event path, including cleanup failures when the spoke
+cluster configuration is unavailable. Audit filtering, sampling, queueing, and
+delivery remain the responsibility of the generic audit service.
 
 ## API Endpoints
 

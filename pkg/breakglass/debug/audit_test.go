@@ -139,3 +139,16 @@ func TestEmitDebugSessionAuditEvent_AllEventTypes(t *testing.T) {
 		})
 	}
 }
+
+func TestSanitizeDebugSessionWebhookDetails(t *testing.T) {
+	result := sanitizeDebugSessionWebhookDetails(map[string]interface{}{
+		"pod":       "debug-pod",
+		"message":   "raw token=webhook-secret",
+		"reason":    "user supplied command --password=secret",
+		"namespace": "debug-ns",
+	})
+	assert.Equal(t, "debug-pod", result["pod"])
+	assert.Equal(t, "debug-ns", result["namespace"])
+	assert.Equal(t, "[REDACTED]", result["message"])
+	assert.Equal(t, "[REDACTED]", result["reason"])
+}

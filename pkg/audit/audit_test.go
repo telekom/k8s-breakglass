@@ -1748,6 +1748,68 @@ func TestSanitizeDebugSessionAuditDetail(t *testing.T) {
 	assert.LessOrEqual(t, len(result), maxDebugSessionAuditDetailLength)
 }
 
+func TestManager_DebugSessionAuditRedactsNestedSensitiveDetails(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	var received *Event
+	sink := &testSink{name: "test", writeFunc: func(event *Event) { received = event }}
+	manager := NewManager(sink, DefaultManagerConfig(), logger)
+	manager.Emit(context.Background(), &Event{
+		Type:  EventDebugSessionFailed,
+		Actor: Actor{User: "user\nwith-control"},
+		Details: map[string]interface{}{
+			"reason":  "kubectl get secret --token=top-secret",
+			"message": "raw Kubernetes error with user@example.com",
+			"safe": map[string]interface{}{
+				"value": "Authorization: Bearer nested-secret",
+			},
+		},
+	})
+	time.Sleep(100 * time.Millisecond)
+	_ = manager.Close()
+
+	require.NotNil(t, received)
+	assert.Equal(t, "[REDACTED]", received.Details["reason"])
+	assert.Equal(t, "[REDACTED]", received.Details["message"])
+	assert.Equal(t, "[REDACTED]", received.Details["safe"].(map[string]interface{})["value"])
+	assert.NotContains(t, received.Actor.User, "\n")
+}
+
+func TestManager_DebugSessionAuditEventIDsAreStableAcrossRetries(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	var received []*Event
+	var mu sync.Mutex
+	sink := &testSink{name: "test", writeFunc: func(event *Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		received = append(received, event)
+	}}
+	manager := NewManager(sink, DefaultManagerConfig(), logger)
+	first := &Event{
+		Type:   EventDebugSessionCleanupFailed,
+		Target: Target{Kind: "DebugSession", Name: "session", Namespace: "ns", Cluster: "cluster"},
+		Details: map[string]interface{}{
+			"reason":    "cleanup_failed",
+			"remaining": 2,
+		},
+	}
+	second := &Event{
+		Type:   EventDebugSessionCleanupFailed,
+		Target: Target{Kind: "DebugSession", Name: "session", Namespace: "ns", Cluster: "cluster"},
+		Details: map[string]interface{}{
+			"reason":    "cleanup_failed",
+			"remaining": 2,
+		},
+	}
+	manager.Emit(context.Background(), first)
+	manager.Emit(context.Background(), second)
+	assert.Equal(t, first.Sequence+1, second.Sequence)
+	_ = manager.Close()
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, received, 2)
+	assert.Equal(t, received[0].ID, received[1].ID)
+}
+
 func TestManager_DebugSessionLifecycleEventsAreStructuredAndBounded(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	var events []*Event
