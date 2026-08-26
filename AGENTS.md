@@ -78,6 +78,29 @@ config/                        Kustomize overlays
 
 All PRs must pass: golangci-lint, unit tests, frontend tests (Vitest), Helm lint, Docker build, manifest validation, REUSE compliance, Trivy scan, OpenSSF Scorecard.
 
+## Debug Session Catalogue
+
+The standalone `charts/debug-session-catalogue` chart renders paired,
+cluster-scoped `DebugPodTemplate` and `DebugSessionTemplate` objects. Keep
+`profiles` as an ordered list of concise, generic intent items; do not restore
+the historical map shape or add platform/tenant names. Each item has a unique
+DNS-safe `name`, stable `intent`, display metadata, explicit `enabled` and
+`elevated` flags, command/args, and an `imageKey` or direct image reference.
+Shared authorization, lifecycle, audit, image, workload, pod-hardening, and
+resource behavior belongs in named Helm helpers. Generic presets may be
+extended, but restricted profiles must always remain non-root, seccomp
+RuntimeDefault, drop ALL capabilities, no privilege escalation, no host
+namespaces, and no service-account token.
+
+For catalogue changes run `charts/debug-session-catalogue/ci/validate.sh` and
+`helm lint charts/debug-session-catalogue --strict`. The validation fixture
+must cover default counts, custom list profiles, duplicate and invalid names,
+missing image references, explicit elevated opt-in, and attempts to weaken
+restricted security. Also run ShellCheck on the validator, `yamllint` on chart
+values, `reuse lint` in CI, and package/render the chart with a clean build
+context. Helm list profiles cannot be patched reliably with dotted map-style
+`--set` paths; use a values fixture when testing a profile item.
+
 ## Reusable Prompts (19 total)
 
 Prompts are in [`.github/prompts/`](.github/prompts/) and can be invoked by name:

@@ -16,7 +16,7 @@ This document defines the release requirements for k8s-breakglass. It is intende
 
 2. **Checksums**
    - Publish SHA-256 checksums for every release payload artifact.
-   - `release-<tag>-checksums.txt` covers manifests, Helm chart package, `bgctl` archives, and the SPDX SBOM.
+   - `release-<tag>-checksums.txt` covers manifests, all Helm chart packages, `bgctl` archives, and the SPDX SBOM.
    - Entries in `release-<tag>-checksums.txt` use downloaded asset filenames, without workflow staging directories.
    - `bgctl_<tag>_checksums.txt` and per-archive `.sha256` files are kept for CLI-only consumers.
 
@@ -37,10 +37,10 @@ This document defines the release requirements for k8s-breakglass. It is intende
    - Cosign signatures and attestations are mirrored to Artifactory on a best-effort basis via `cosign copy`.
 
 7. **Helm chart publication**
-   - `charts/escalation-config` is packaged during release preparation.
-   - The packaged chart is pushed to GHCR as a Helm OCI artifact at `oci://ghcr.io/telekom/k8s-breakglass/charts/escalation-config`.
-   - The chart `.tgz` is attached to the GitHub Release assets.
-   - Every release tag that changes the packaged chart `appVersion` must use a unique chart `version` in `charts/escalation-config/Chart.yaml`. Release reruns may skip an already-published chart only when the remote chart `appVersion` matches the release tag.
+   - `charts/escalation-config` and `charts/debug-session-catalogue` are packaged during release preparation.
+   - Each packaged chart is pushed to GHCR as a Helm OCI artifact below `oci://ghcr.io/telekom/k8s-breakglass/charts/<chart-name>`.
+   - Chart `.tgz` packages are attached to the GitHub Release assets and included in release checksums.
+   - Every release tag that changes a packaged chart `appVersion` must use a unique chart `version` in that chart's `Chart.yaml`. Release reruns may skip an already-published chart only when the remote chart `appVersion` matches the release tag.
 
 ## Multi-Architecture Builds
 
@@ -48,12 +48,12 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 
 **Build pipeline:**
 
-1. **Prepare** — generates Kustomize manifests, packages `charts/escalation-config`, cross-compiles `bgctl` binaries for all OS/arch combinations, and uploads them as artifacts.
+1. **Prepare** — generates Kustomize manifests, packages both Helm charts, cross-compiles `bgctl` binaries for all OS/arch combinations, and uploads them as artifacts.
 2. **Build** (matrix: `amd64`, `arm64`) — builds and pushes a single-platform image by digest on a native runner for each architecture.
 3. **Assemble** — downloads all per-arch digests and creates a unified multi-arch manifest tagged with the release version. Stable `vX.Y.Z` tags also update `latest`; prerelease tags such as `vX.Y.Z-rc.1` keep only their explicit version tag. Tags with SemVer build metadata (`+build`) are rejected because Docker image tags cannot contain `+`. Generates SLSA provenance attestation, signs the image with keyless Cosign, and attaches an SBOM attestation.
 4. **Artifactory** — mirrors the multi-arch image and cosign artifacts (signatures + attestations) to the internal Artifactory OCI registry (best-effort).
-5. **Publish chart** — pushes `escalation-config` chart to GHCR Helm OCI (`oci://ghcr.io/telekom/k8s-breakglass/charts`).
-6. **Release** — creates a GitHub Release with manifests, Helm chart package, `bgctl` binaries, release-wide checksums, CLI archive checksums, and SBOM (SPDX-JSON format via Syft).
+5. **Publish charts** — pushes both charts to GHCR Helm OCI (`oci://ghcr.io/telekom/k8s-breakglass/charts`).
+6. **Release** — creates a GitHub Release with manifests, Helm chart packages, `bgctl` binaries, release-wide checksums, CLI archive checksums, and SBOM (SPDX-JSON format via Syft).
 
 > **Note:** Buildx layer caching (`cache-from`/`cache-to`) is intentionally omitted in
 > release builds to ensure clean, reproducible images without layer reuse from prior
@@ -64,9 +64,9 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 - Verify CI success on the release commit.
 - Ensure the changelog is up to date.
 - Use `vX.Y.Z` tags for stable releases and `vX.Y.Z-rc.1` style tags for prereleases. Do not use SemVer build metadata in release tags.
-- Bump `charts/escalation-config/Chart.yaml` `version` before cutting a release whose chart `appVersion` has not already been published under that chart version.
+- Bump the applicable chart's `version` before cutting a release whose chart `appVersion` has not already been published under that chart version. The catalogue's map-to-list migration is a breaking values-interface change recorded by its `0.2.0` chart version.
 - Generate artifacts via the release workflow.
-- Verify chart publication in GHCR (`oci://ghcr.io/telekom/k8s-breakglass/charts/escalation-config`).
+- Verify both chart publications in GHCR (`.../charts/escalation-config` and `.../charts/debug-session-catalogue`).
 - Publish checksums and update release notes.
 - Verify provenance attestation was pushed to the registry.
 - Verify SBOM is attached to the GitHub Release.
@@ -83,7 +83,7 @@ Consumers should be able to:
 - Verify Cosign signature: `cosign verify ghcr.io/telekom/k8s-breakglass@<digest> --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'`
 - Verify Helm chart availability:
    ```bash
-   helm show chart oci://ghcr.io/telekom/k8s-breakglass/charts/escalation-config \
+   helm show chart oci://ghcr.io/telekom/k8s-breakglass/charts/debug-session-catalogue \
       --version <chart-version>
    ```
   - Confirm the returned `version` is the expected chart version and `appVersion` is the release tag.

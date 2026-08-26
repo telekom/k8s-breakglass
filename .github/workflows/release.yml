@@ -127,6 +127,9 @@ jobs:
           helm package charts/escalation-config \
             --destination chart-dist \
             --app-version "${{ github.ref_name }}"
+          helm package charts/debug-session-catalogue \
+            --destination chart-dist \
+            --app-version "${{ github.ref_name }}"
 
           echo "Packaged chart artifacts:"
           ls -la chart-dist
@@ -134,7 +137,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-chart
-          path: chart-dist/escalation-config-*.tgz
+          path: chart-dist/*.tgz
       - name: Build bgctl release assets
         run: |
           set -e
@@ -502,7 +505,7 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # Publish escalation-config Helm chart to GHCR OCI
+  # Publish Helm charts to GHCR OCI
   # ---------------------------------------------------------------------------
   publish-chart:
     needs: [prepare]
@@ -525,68 +528,38 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} \
             --username "${{ github.actor }}" \
             --password-stdin
-      - name: Publish escalation-config chart
+      - name: Publish charts
         env:
           CHART_REPO: oci://ghcr.io/${{ github.repository }}/charts
         run: |
           set -euo pipefail
 
-          CHART_PACKAGE="$(ls chart-dist/escalation-config-*.tgz | head -n1)"
           RELEASE_TAG="${{ github.ref_name }}"
-          CHART_METADATA="$(helm show chart "${CHART_PACKAGE}")"
-          CHART_VERSION="$(printf '%s\n' "${CHART_METADATA}" | awk '/^version:/ {print $2}')"
-          CHART_APP_VERSION="$(printf '%s\n' "${CHART_METADATA}" | awk '/^appVersion:/ {print $2}' | tr -d '"')"
-
-          if [ -z "${CHART_VERSION}" ]; then
-            echo "Failed to determine chart version from ${CHART_PACKAGE}" >&2
-            exit 1
-          fi
-          if [ -z "${CHART_APP_VERSION}" ]; then
-            echo "Failed to determine chart appVersion from ${CHART_PACKAGE}" >&2
-            exit 1
-          fi
-          if [ "${CHART_APP_VERSION}" != "${RELEASE_TAG}" ]; then
-            echo "::error::Packaged escalation-config:${CHART_VERSION} appVersion ${CHART_APP_VERSION} does not match release tag ${RELEASE_TAG}." >&2
-            exit 1
-          fi
-
-          echo "Preparing to publish escalation-config:${CHART_VERSION} appVersion ${CHART_APP_VERSION} to ${CHART_REPO}"
-
-          # Idempotent behavior for reruns: skip only if this exact chart version
-          # already exists for the same release tag. A different appVersion under
-          # the same chart version would leave GHCR serving a stale release.
-          set +e
-          REMOTE_CHART_LOOKUP_OUTPUT="$(helm show chart "${CHART_REPO}/escalation-config" --version "${CHART_VERSION}" 2>&1)"
-          REMOTE_CHART_LOOKUP_STATUS=$?
-          set -e
-
-          if [ "${REMOTE_CHART_LOOKUP_STATUS}" -eq 0 ]; then
-            REMOTE_CHART_METADATA="${REMOTE_CHART_LOOKUP_OUTPUT}"
-            REMOTE_APP_VERSION="$(printf '%s\n' "${REMOTE_CHART_METADATA}" | awk '/^appVersion:/ {print $2}' | tr -d '"')"
-            if [ -z "${REMOTE_APP_VERSION}" ]; then
-              echo "::error::Failed to determine remote escalation-config:${CHART_VERSION} appVersion from GHCR metadata." >&2
-              printf '%s\n' "${REMOTE_CHART_METADATA}" >&2
-              exit 1
+          shopt -s nullglob
+          chart_packages=(chart-dist/*.tgz)
+          [ "${#chart_packages[@]}" -gt 0 ] || { echo "No chart packages found" >&2; exit 1; }
+          for chart_package in "${chart_packages[@]}"; do
+            chart_metadata="$(helm show chart "${chart_package}")"
+            chart_name="$(printf '%s\n' "${chart_metadata}" | awk '/^name:/ {print $2}')"
+            chart_version="$(printf '%s\n' "${chart_metadata}" | awk '/^version:/ {print $2}')"
+            chart_app_version="$(printf '%s\n' "${chart_metadata}" | awk '/^appVersion:/ {print $2}' | tr -d '"')"
+            [ -n "${chart_name}" ] && [ -n "${chart_version}" ] && [ -n "${chart_app_version}" ] || { echo "Invalid chart metadata: ${chart_package}" >&2; exit 1; }
+            [ "${chart_app_version}" = "${RELEASE_TAG}" ] || { echo "${chart_name}:${chart_version} appVersion ${chart_app_version} does not match ${RELEASE_TAG}" >&2; exit 1; }
+            remote="${CHART_REPO}/${chart_name}"
+            set +e
+            remote_output="$(helm show chart "${remote}" --version "${chart_version}" 2>&1)"
+            remote_status=$?
+            set -e
+            if [ "${remote_status}" -eq 0 ]; then
+              remote_app_version="$(printf '%s\n' "${remote_output}" | awk '/^appVersion:/ {print $2}' | tr -d '"')"
+              [ "${remote_app_version}" = "${chart_app_version}" ] || { echo "${chart_name}:${chart_version} exists with appVersion ${remote_app_version}; bump chart version" >&2; exit 1; }
+              echo "Chart ${chart_name}:${chart_version} already present with matching appVersion; skipping push."
+              continue
             fi
-            if [ "${REMOTE_APP_VERSION}" = "${CHART_APP_VERSION}" ]; then
-              echo "Chart escalation-config:${CHART_VERSION} already present in GHCR with appVersion ${REMOTE_APP_VERSION}; skipping push."
-              exit 0
-            fi
-
-            echo "::error::Chart escalation-config:${CHART_VERSION} already exists in GHCR with appVersion ${REMOTE_APP_VERSION:-<unknown>}, but this release packages appVersion ${CHART_APP_VERSION}. Bump charts/escalation-config/Chart.yaml version before releasing."
-            exit 1
-          fi
-
-          if printf '%s\n' "${REMOTE_CHART_LOOKUP_OUTPUT}" | grep -Eiq '(^Error: .*(not found|manifest unknown)|(^|[[:space:]])manifest unknown([[:space:][:punct:]]|$))'; then
-            echo "Chart escalation-config:${CHART_VERSION} is not present in GHCR; publishing new package."
-          else
-            echo "::error::Failed to inspect existing escalation-config:${CHART_VERSION} chart in GHCR before publishing." >&2
-            printf '%s\n' "${REMOTE_CHART_LOOKUP_OUTPUT}" >&2
-            exit "${REMOTE_CHART_LOOKUP_STATUS}"
-          fi
-
-          helm push "${CHART_PACKAGE}" "${CHART_REPO}"
-          echo "Published ${CHART_PACKAGE} to ${CHART_REPO}"
+            printf '%s\n' "${remote_output}" | grep -Eiq '(^Error: .*(not found|manifest unknown)|(^|[[:space:]])manifest unknown([[:space:][:punct:]]|$))' || { echo "Failed to inspect ${remote}" >&2; printf '%s\n' "${remote_output}" >&2; exit "${remote_status}"; }
+            helm push "${chart_package}" "${CHART_REPO}"
+            echo "Published ${chart_package} to ${CHART_REPO}"
+          done
 
   # ---------------------------------------------------------------------------
   # Create GitHub Release with manifests, bgctl binaries, and SBOM
@@ -627,10 +600,10 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
 
-          chart_packages=(chart-dist/escalation-config-*.tgz)
+          chart_packages=(chart-dist/*.tgz)
           bgctl_archives=(dist/bgctl_*.tar.gz dist/bgctl_*.zip)
           if [ "${#chart_packages[@]}" -eq 0 ]; then
-            echo "::error::No escalation-config chart package found for checksum generation"
+            echo "::error::No Helm chart packages found for checksum generation"
             exit 1
           fi
           if [ "${#bgctl_archives[@]}" -eq 0 ]; then
@@ -682,7 +655,7 @@ jobs:
             manifests-base.yaml
             manifests-debug.yaml
             manifests-crds.yaml
-            chart-dist/escalation-config-*.tgz
+            chart-dist/*.tgz
             dist/bgctl_*.tar.gz
             dist/bgctl_*.zip
             dist/bgctl_*.sha256
