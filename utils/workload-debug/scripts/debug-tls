@@ -3,10 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 set -eu
 
-usage() { printf '%s\n' 'Usage: debug-tls [--timeout SECONDS] HOST[:PORT]'; }
+usage() { printf '%s\n' 'Usage: debug-tls [--ca FILE] [--timeout SECONDS] HOST[:PORT]'; }
 timeout_seconds=${WORKLOAD_DEBUG_TIMEOUT:-10}
+ca_file=
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --ca)
+            [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+            ca_file=$2; shift 2 ;;
         --timeout)
             [ "$#" -ge 2 ] || { usage >&2; exit 2; }
             timeout_seconds=$2; shift 2 ;;
@@ -38,5 +42,9 @@ esac
 [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { printf '%s\n' 'debug-tls: port out of range' >&2; exit 2; }
 
 printf 'TLS endpoint: %s:%s\n' "$host" "$port"
-printf '\n' | timeout "$timeout_seconds" openssl s_client \
-    -connect "$host:$port" -servername "$host" -brief 2>&1
+set -- openssl s_client -connect "$host:$port" -servername "$host" -brief
+if [ -n "$ca_file" ]; then
+    [ -r "$ca_file" ] || { printf 'debug-tls: CA file is not readable: %s\n' "$ca_file" >&2; exit 2; }
+    set -- "$@" -CAfile "$ca_file" -verify 1 -verify_return_error
+fi
+printf '\n' | timeout "$timeout_seconds" "$@" 2>&1

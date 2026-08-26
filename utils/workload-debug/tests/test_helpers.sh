@@ -31,6 +31,7 @@ assert_contains "$wrapped" 'checks_failed: 0'
 
 dns_result=$(debug-dns localhost)
 assert_contains "$dns_result" '127.0.0.1'
+debug-report --json | jq -e '.schema_version == 1 and .checks == [] and .checks_failed == 0' >/dev/null
 
 if debug-http ftp://invalid.example >/dev/null 2>&1; then
     printf '%s\n' 'debug-http accepted an unsupported URL scheme' >&2
@@ -54,6 +55,10 @@ if WORKLOAD_DEBUG_MAX_BYTES=0 debug-http https://invalid.example >/dev/null 2>&1
 fi
 if debug-tls --timeout 0 example.invalid >/dev/null 2>&1; then
     printf '%s\n' 'debug-tls accepted an unbounded timeout' >&2
+    exit 1
+fi
+if debug-dns --server '127.0.0.1#0' example.invalid >/dev/null 2>&1; then
+    printf '%s\n' 'debug-dns accepted an invalid resolver port' >&2
     exit 1
 fi
 if debug-tls 2001:db8::1 >/dev/null 2>&1; then

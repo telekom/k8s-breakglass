@@ -33,10 +33,22 @@ non-root UID/GID `65532`, drops all capabilities, and does not write during
 normal operation. `IMAGE-METADATA.yaml` is the source of truth for OCI,
 provenance, signing, and SBOM metadata.
 
-Run `make test` for helper checks. `make build` creates a local image;
+Run `make test` for fast validation and `make integration-test` for the real
+container proof. The integration proof builds the image, runs every helper
+under the restricted policy, checks DNS/TLS/HTTP against disposable fixtures,
+uses a kind service-account token for a read-only Kubernetes API request, and
+verifies cleanup. Missing Docker/kind prerequisites are reported as failures.
+`make build` creates a local image;
 `make build-multiarch` uses BuildKit for both supported platforms and requests
 in-toto provenance plus an SPDX SBOM (`--provenance=true --sbom=true`), writing
 a local OCI archive (`workload-debug.oci.tar` by default; override with
 `OCI_ARCHIVE=...`). Release automation resolves and retains the immutable
 registry digest, then runs `make sign DIGEST=...` and
 `make sbom DIGEST=... SBOM=...`.
+
+`tool-contract.json` is the machine-readable contract for the shared
+`workload-diagnostics` intent. `debug-report --json` emits stable check names
+and statuses (without host timestamps or command output), making it suitable
+for automation and audit comparisons. The HTTP helper does not follow
+redirects and the Kubernetes helper reads a token from a file so credentials
+never appear in command arguments.

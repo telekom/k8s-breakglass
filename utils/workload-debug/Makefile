@@ -9,12 +9,15 @@ VERSION ?= dev
 VCS_REF ?= $(shell git rev-parse --short HEAD 2>/dev/null || printf unknown)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
-.PHONY: test build build-multiarch sbom sign
+.PHONY: test integration-test build build-multiarch sbom sign
 
 OCI_ARCHIVE ?= workload-debug.oci.tar
 
 test:
 	./tests/test_helpers.sh
+
+integration-test:
+	./tests/test_integration.sh
 
 build:
 	docker build --pull=false \
