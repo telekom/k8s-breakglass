@@ -22,7 +22,8 @@ USER 65532:65532
 WORKDIR /input
 
 ENV DUMP_INPUT_DIR=/input \
-    DUMP_OUTPUT_DIR=/output
+    DUMP_OUTPUT_DIR=/output \
+    DUMP_MAX_COPY_BYTES=1073741824
 
 ENTRYPOINT ["/usr/local/bin/dump-reader"]
 CMD ["help"]
