@@ -31,6 +31,29 @@ fail() {
     exit 2
 }
 
+reject_symlink_components() {
+    path=$1
+    current=/
+    remainder=${path#/}
+    while [ -n "$remainder" ]; do
+        component=${remainder%%/*}
+        if [ "$remainder" = "$component" ]; then
+            remainder=
+        else
+            remainder=${remainder#*/}
+        fi
+        [ -n "$component" ] || continue
+        current=$current$component
+        if [ -L "$current" ]; then
+            case "$current" in
+                /var|/tmp) ;;
+                *) fail "path may not contain symbolic links: $path" ;;
+            esac
+        fi
+        current=$current/
+    done
+}
+
 is_uint() {
     case "$1" in
         ''|*[!0-9]*) return 1 ;;
@@ -46,6 +69,7 @@ validate_input_dir() {
         *) fail "DUMP_INPUT_DIR must be an absolute path" ;;
     esac
     [ -d "$INPUT_DIR" ] || fail "DUMP_INPUT_DIR does not exist: $INPUT_DIR"
+    reject_symlink_components "$INPUT_DIR"
     [ ! -L "$input_dir_check" ] || fail "DUMP_INPUT_DIR may not be a symbolic link: $INPUT_DIR"
 }
 
@@ -124,6 +148,7 @@ copy_out() {
         *) fail "DUMP_OUTPUT_DIR must be an absolute path" ;;
     esac
     [ -d "$output_dir" ] || fail "DUMP_OUTPUT_DIR does not exist: $output_dir"
+    reject_symlink_components "$output_dir"
     output_dir_check=${output_dir%/}
     [ -n "$output_dir_check" ] || output_dir_check=/
     [ ! -L "$output_dir_check" ] || fail "DUMP_OUTPUT_DIR may not be a symbolic link: $output_dir"
