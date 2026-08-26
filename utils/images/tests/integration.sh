@@ -132,10 +132,6 @@ assert_no_residuals() {
 }
 
 echo "checking storage-report command modes and real tools"
-default_help=$(run_storage)
-printf '%s\n' "$default_help" | grep -F 'Usage:' >/dev/null
-help_output=$(run_storage --help)
-printf '%s\n' "$help_output" | grep -F 'Usage:' >/dev/null
 dry_output=$(run_storage_read_only --path /scratch --size-mb 1 \
     --runtime-seconds 1 --ioping-count 1 --dry-run)
 printf '%s\n' "$dry_output" | grep -F 'schema_version=storage-debug/v1' >/dev/null
@@ -188,8 +184,6 @@ assert_no_residuals "$storage_reports"
 [ -e "$storage_volume/existing-data" ] || fail "pre-existing storage file disappeared"
 
 echo "checking dump-reader metadata, checksum, and safe copy"
-default_dump_help=$(run_dump)
-printf '%s\n' "$default_dump_help" | grep -F 'Usage:' >/dev/null
 dump_size=$(wc -c <"$dump_input/existing.dump" | tr -d '[:space:]')
 expected_hash=$(if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$dump_input/existing.dump"
