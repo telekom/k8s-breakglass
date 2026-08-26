@@ -1,11 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-# Cluster-scoped templates only; this chart does not create namespaces, RBAC,
-# ClusterConfig resources, or images. Pre-create targetNamespace.
+# This chart creates cluster-scoped DebugPodTemplate and DebugSessionTemplate
+# resources. It does not create namespaces, RBAC, ClusterConfig resources, or
+# images. Install it after the k8s-breakglass CRDs and pre-create targetNamespace.
+
 enabled: true
 
-# Empty lists intentionally grant no access and target no clusters.
+# Empty lists intentionally grant no access and target no clusters. Configure
+# these values for the installation; do not put tenant or provider names here.
 requesters:
   groups: []
   users: []
@@ -22,261 +25,148 @@ maxDuration: 1h
 maxConcurrentSessions: 1
 imagePullPolicy: IfNotPresent
 
-# Replace these public, versioned utility images with approved images. Digests
-# are supported by setting image.digest.
+# Replace these public, versioned utility images with images approved by your
+# organization. Image digests are supported by setting image.digest.
 images:
-  workload: {repository: ghcr.io/telekom/k8s-breakglass/workload-debug, tag: "0.1.0"}
-  network: {repository: ghcr.io/telekom/k8s-breakglass/network-debug, tag: "0.1.0"}
-  storage: {repository: ghcr.io/telekom/k8s-breakglass/storage-debug, tag: "0.1.0"}
-  dumpAccess: {repository: ghcr.io/telekom/k8s-breakglass/dump-reader, tag: "0.1.0"}
-  networkRepair: {repository: ghcr.io/telekom/k8s-breakglass/node-maintenance, tag: "0.1.0"}
-  nodeRecovery: {repository: ghcr.io/telekom/k8s-breakglass/node-maintenance, tag: "0.1.0"}
-  clusterValidation: {repository: ghcr.io/telekom/k8s-breakglass/cluster-validator, tag: "0.1.0"}
+  workload: {repository: busybox, tag: "1.36.1", digest: ""}
+  network: {repository: busybox, tag: "1.36.1", digest: ""}
+  storage: {repository: busybox, tag: "1.36.1", digest: ""}
+  dumpAccess: {repository: busybox, tag: "1.36.1", digest: ""}
+  networkRepair: {repository: busybox, tag: "1.36.1", digest: ""}
+  nodeRecovery: {repository: busybox, tag: "1.36.1", digest: ""}
+  clusterValidation: {repository: busybox, tag: "1.36.1", digest: ""}
 
-# Ordered, extensible profile list. Map-shaped profiles from versions before
-# 0.2.0 must be converted to list items (see the chart README).
+# Elevated profiles are disabled by default. To use one, set both enabled and
+# elevated to true. The chart fails closed if a required-elevation profile is
+# enabled without the explicit opt-in.
 profiles:
-  - name: workload-diagnostics
-    intent: workload-diagnostics
+  workload:
+    enabled: true
+    elevated: false
     displayName: Workload diagnostics
     description: Inspect a workload from an isolated, non-privileged pod.
+    workloadType: Deployment
+    replicas: 1
+    imageKey: workload
+    command: ["sh", "-c"]
+    args: ["echo 'Workload diagnostics ready'; while true; do sleep 3600; done"]
+    requiredElevation: false
+    hostNetwork: false
+    hostPID: false
+    hostIPC: false
+    privileged: false
+    capabilities: []
+    volumeMounts: []
+    volumes: []
+  network:
     enabled: true
     elevated: false
-    imageKey: workload
-    workloadType: Job
-    command: ["/usr/local/bin/workload-debug"]
-    args: ["report"]
-  - name: network-diagnostics
-    intent: network-diagnostics
     displayName: Network diagnostics
-    description: Inspect node network connectivity with explicit elevation.
-    enabled: false
-    elevated: false
-    hostNetwork: false
-    requiredElevation: true
+    description: Inspect DNS and network connectivity from an isolated pod.
+    workloadType: Deployment
+    replicas: 1
     imageKey: network
-    command: ["/usr/local/bin/net-debug"]
-    args: ["report"]
-    preset: elevated-node
-    capabilities: [NET_ADMIN, NET_RAW, BPF, PERFMON]
-    workloadType: Job
-    pod:
-      volumeMounts:
-        - name: work
-          mountPath: /work
-      volumes:
-        - name: work
-          emptyDir: {}
-  - name: storage-diagnostics
-    intent: storage-diagnostics
+    command: ["sh", "-c"]
+    args: ["echo 'Network diagnostics ready'; while true; do sleep 3600; done"]
+    requiredElevation: false
+    hostNetwork: false
+    hostPID: false
+    hostIPC: false
+    privileged: false
+    capabilities: []
+    volumeMounts: []
+    volumes: []
+  storage:
+    enabled: true
+    elevated: false
     displayName: Storage diagnostics
     description: Inspect ephemeral storage from an isolated pod.
-    enabled: true
-    elevated: false
+    workloadType: Deployment
+    replicas: 1
     imageKey: storage
-    workloadType: Job
-    command: ["/usr/local/bin/storage-report"]
-    args: ["--path", "/scratch"]
-    pod:
-      volumeMounts:
-        - name: scratch
-          mountPath: /scratch
-        - name: reports
-          mountPath: /reports
-        - name: tmp
-          mountPath: /tmp
-      env:
-        - name: TMPDIR
-          value: /tmp
-      volumes:
-        - name: scratch
-          emptyDir: {}
-        - name: reports
-          emptyDir: {}
-        - name: tmp
-          emptyDir: {}
-  - name: dump-access
-    intent: dump-access
-    displayName: Dump access (opt-in)
-    description: >-
-      Copy one approved existing dump file to a bounded output volume.
-    enabled: false
-    elevated: false
+    command: ["sh", "-c"]
+    args: ["echo 'Storage diagnostics ready'; df -h /workspace; while true; do sleep 3600; done"]
+    requiredElevation: false
     hostNetwork: false
-    imageKey: dumpAccess
-    workloadType: Job
-    command: ["/usr/local/bin/dump-reader"]
-    # Supply sourcePath and the input/output volumes in an enabled deployment
-    # overlay; the generic catalogue has no implicit host filesystem source.
-    args: []
-    allowExec: false
+    hostPID: false
+    hostIPC: false
+    privileged: false
     capabilities: []
-    pod:
-      volumeMounts:
-        - name: input
-          mountPath: /input
-          readOnly: true
-        - name: output
-          mountPath: /output
-  - name: network-repair
-    intent: network-repair
-    displayName: Network repair (opt-in)
-    description: >-
-      Perform network repair actions on a target node; requires explicit
-      elevated opt-in.
+    volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+    volumes:
+      - name: workspace
+        emptyDir: {}
+  dump-access:
     enabled: false
     elevated: false
-    hostNetwork: false
+    displayName: Packet capture (opt-in)
+    description: Capture packets on a target node; requires explicit elevated opt-in.
+    workloadType: Deployment
+    replicas: 1
+    imageKey: dumpAccess
+    command: ["sh", "-c"]
+    args: ["echo 'Packet capture ready; provide an approved capture command'; while true; do sleep 3600; done"]
     requiredElevation: true
+    hostNetwork: true
+    hostPID: false
+    hostIPC: false
+    privileged: false
+    capabilities: [NET_RAW, NET_ADMIN]
+    volumeMounts: []
+    volumes: []
+  network-repair:
+    enabled: false
+    elevated: false
+    displayName: Network repair (opt-in)
+    description: Perform network repair actions on a target node; requires explicit elevated opt-in.
+    workloadType: Deployment
+    replicas: 1
     imageKey: networkRepair
-    workloadType: Job
-    command: ["/usr/local/bin/node-maintenance"]
-    args: ["network-repair"]
-    preset: elevated-node
+    command: ["sh", "-c"]
+    args: ["echo 'Network repair ready; provide an approved repair command'; while true; do sleep 3600; done"]
+    requiredElevation: true
+    hostNetwork: true
+    hostPID: false
+    hostIPC: false
+    privileged: false
     capabilities: [NET_ADMIN]
-    allowExec: false
-    extraDeployVariables:
-      - name: targetNode
-        displayName: Target node
-        description: Exact Kubernetes node name to inspect and schedule onto.
-        inputType: text
-        required: true
-        validation:
-          pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
-          maxLength: 253
-      - name: interface
-        displayName: Network interface
-        description: Exact interface name on the target node.
-        inputType: text
-        required: true
-        validation:
-          pattern: '^[a-zA-Z0-9_.-]{1,15}$'
-      - name: action
-        displayName: Repair action
-        description: One allowlisted, reversible network repair action.
-        inputType: select
-        required: true
-        options:
-          - value: link-cycle
-          - value: flush-neighbors
-          - value: restart-autonegotiation
-      - name: confirmation
-        displayName: Confirmation
-        description: Type NETWORK-REPAIR to authorize the selected operation.
-        inputType: text
-        required: true
-        validation:
-          pattern: '^NETWORK-REPAIR$'
-    podOverridesTemplate: |
-      nodeSelector:
-        kubernetes.io/hostname: {{ .vars.targetNode | yamlQuote }}
-      containers:
-        - name: debug
-          args:
-            - network-repair
-            - --target-node
-            - {{ .vars.targetNode | yamlQuote }}
-            - --interface
-            - {{ .vars.interface | yamlQuote }}
-            - --action
-            - {{ .vars.action | yamlQuote }}
-            - --evidence-dir
-            - /evidence
-            - --confirm
-            - {{ .vars.confirmation | yamlQuote }}
-    pod:
-      env:
-        - name: NODE_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
-      volumeMounts:
-        - name: evidence
-          mountPath: /evidence
-      volumes:
-        - name: evidence
-          emptyDir: {}
-  - name: node-recovery
-    intent: node-recovery
+    volumeMounts: []
+    volumes: []
+  node-recovery:
+    enabled: false
+    elevated: false
     displayName: Node recovery (opt-in)
     description: Inspect and recover a node; requires explicit elevated opt-in.
-    enabled: false
-    elevated: false
-    hostNetwork: false
-    requiredElevation: true
+    workloadType: Deployment
+    replicas: 1
     imageKey: nodeRecovery
-    workloadType: Job
-    command: ["/usr/local/bin/node-maintenance"]
-    args: ["node-recovery"]
-    preset: elevated-node
-    capabilities: [NET_ADMIN]
+    command: ["sh", "-c"]
+    args: ["echo 'Node recovery ready; provide an approved recovery command'; while true; do sleep 3600; done"]
+    requiredElevation: true
+    hostNetwork: true
     hostPID: true
-    allowExec: false
-    extraDeployVariables:
-      - name: targetNode
-        displayName: Target node
-        description: Exact Kubernetes node name to inspect and schedule onto.
-        inputType: text
-        required: true
-        validation:
-          pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
-          maxLength: 253
-      - name: interface
-        displayName: Network interface
-        description: Exact interface name on the target node.
-        inputType: text
-        required: true
-        validation:
-          pattern: '^[a-zA-Z0-9_.-]{1,15}$'
-      - name: confirmation
-        displayName: Confirmation
-        description: Type NODE-RECOVERY-PREFLIGHT to authorize read-only collection.
-        inputType: text
-        required: true
-        validation:
-          pattern: '^NODE-RECOVERY-PREFLIGHT$'
-    podOverridesTemplate: |
-      nodeSelector:
-        kubernetes.io/hostname: {{ .vars.targetNode | yamlQuote }}
-      containers:
-        - name: debug
-          args:
-            - node-recovery
-            - --target-node
-            - {{ .vars.targetNode | yamlQuote }}
-            - --interface
-            - {{ .vars.interface | yamlQuote }}
-            - --evidence-dir
-            - /evidence
-            - --confirm
-            - {{ .vars.confirmation | yamlQuote }}
-    pod:
-      env:
-        - name: NODE_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
-      volumeMounts:
-        - name: evidence
-          mountPath: /evidence
-      volumes:
-        - name: evidence
-          emptyDir: {}
-  - name: cluster-validation
-    intent: cluster-validation
+    hostIPC: false
+    privileged: true
+    capabilities: []
+    volumeMounts: []
+    volumes: []
+  cluster-validation:
+    enabled: true
+    elevated: false
     displayName: Cluster validation
     description: Run read-only cluster validation checks from an isolated pod.
-    enabled: false
-    elevated: false
-    hostNetwork: false
+    workloadType: Deployment
+    replicas: 1
     imageKey: clusterValidation
-    workloadType: Job
-    command: ["/cluster-validator"]
-    args: ["--mode", "one-time"]
-    pod:
-      volumeMounts:
-        - name: reports
-          mountPath: /reports
-      volumes:
-        - name: reports
-          emptyDir: {}
+    command: ["sh", "-c"]
+    args: ["echo 'Cluster validation ready'; while true; do sleep 3600; done"]
+    requiredElevation: false
+    hostNetwork: false
+    hostPID: false
+    hostIPC: false
+    privileged: false
+    capabilities: []
+    volumeMounts: []
+    volumes: []
