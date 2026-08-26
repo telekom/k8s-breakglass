@@ -74,7 +74,10 @@
         "workloadType": { "type": "string", "enum": ["DaemonSet", "Deployment"] },
         "replicas": { "type": "integer", "minimum": 1 },
         "privileged": { "type": "boolean" },
+        "allowPrivilegeEscalation": { "type": "boolean" },
         "hostPID": { "type": "boolean" },
+        "serviceAccountName": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "minLength": 1, "maxLength": 63 },
+        "automountServiceAccountToken": { "type": "boolean" },
         "capabilities": { "type": "array", "items": { "type": "string", "enum": ["AUDIT_CONTROL", "BPF", "NET_ADMIN", "NET_RAW", "PERFMON", "SYS_ADMIN", "SYS_PTRACE"] } },
         "pod": {
           "type": "object",

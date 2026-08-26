@@ -1,0 +1,120 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+requesters:
+  groups: [catalogue-requesters]
+  users: []
+approvers:
+  groups: [catalogue-approvers]
+  users: []
+targets:
+  clusters: [catalogue-cluster]
+targetNamespace: catalogue-debug
+profiles:
+  - name: workload-diagnostics
+    intent: workload-diagnostics
+    displayName: Workload diagnostics
+    description: Restricted workload diagnostics.
+    enabled: true
+    elevated: false
+    imageKey: workload
+    command: ["/usr/local/bin/workload-debug"]
+    args: ["report"]
+  - name: network-diagnostics
+    intent: network-diagnostics
+    displayName: Network diagnostics
+    description: Explicitly elevated network diagnostics.
+    enabled: true
+    elevated: true
+    requiredElevation: true
+    preset: elevated-node
+    imageKey: network
+    command: ["/usr/local/bin/net-debug"]
+    args: ["report"]
+    capabilities: [NET_ADMIN, NET_RAW, BPF, PERFMON]
+  - name: storage-diagnostics
+    intent: storage-diagnostics
+    displayName: Storage diagnostics
+    description: Restricted storage diagnostics.
+    enabled: true
+    elevated: false
+    imageKey: storage
+    command: ["/usr/local/bin/storage-report"]
+    args: ["--path", "/scratch"]
+    pod:
+      volumeMounts:
+        - name: scratch
+          mountPath: /scratch
+        - name: reports
+          mountPath: /reports
+      volumes:
+        - name: scratch
+          emptyDir: {}
+        - name: reports
+          emptyDir: {}
+  - name: dump-access
+    intent: dump-access
+    displayName: Dump access
+    description: Explicitly elevated dump access.
+    enabled: true
+    elevated: true
+    requiredElevation: true
+    preset: elevated-node
+    imageKey: dumpAccess
+    command: ["sh", "-c"]
+    args: ["sleep 3600"]
+    pod:
+      volumeMounts:
+        - name: input
+          mountPath: /input
+          readOnly: true
+        - name: output
+          mountPath: /output
+      volumes:
+        - name: input
+          emptyDir: {}
+        - name: output
+          emptyDir: {}
+  - name: network-repair
+    intent: network-repair
+    displayName: Network repair
+    description: Explicitly elevated network repair.
+    enabled: true
+    elevated: true
+    requiredElevation: true
+    preset: elevated-node
+    imageKey: networkRepair
+    command: ["/usr/local/bin/node-maintenance"]
+    args: ["network-repair"]
+    capabilities: [NET_ADMIN]
+  - name: node-recovery
+    intent: node-recovery
+    displayName: Node recovery
+    description: Explicitly elevated node recovery.
+    enabled: true
+    elevated: true
+    requiredElevation: true
+    preset: elevated-node
+    imageKey: nodeRecovery
+    command: ["/usr/local/bin/node-maintenance"]
+    args: ["node-recovery"]
+    capabilities: [NET_ADMIN]
+    hostPID: true
+  - name: cluster-validation
+    intent: cluster-validation
+    displayName: Cluster validation
+    description: Read-only validation with an explicitly constrained identity.
+    enabled: true
+    elevated: false
+    imageKey: clusterValidation
+    command: ["/cluster-validator"]
+    args: ["--mode", "one-time", "--report", "-"]
+    serviceAccountName: cluster-validator
+    automountServiceAccountToken: true
+    pod:
+      volumeMounts:
+        - name: reports
+          mountPath: /reports
+      volumes:
+        - name: reports
+          emptyDir: {}

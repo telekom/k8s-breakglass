@@ -9,6 +9,8 @@ SPDX-License-Identifier: Apache-2.0
 {{- if hasKey $seenProfiles $profile.name }}{{ fail (printf "profiles contains duplicate name %s" $profile.name) }}{{ end }}
 {{- $_ := set $seenProfiles $profile.name true }}
 {{- $_ := include "debug-session-catalogue.image" (dict "root" $ "profile" $profile) }}
+{{- $_ := include "debug-session-catalogue.validatePodOverrides" (dict "profile" $profile) }}
+{{- $_ := include "debug-session-catalogue.serviceAccount" (dict "profile" $profile) }}
 {{- if and $profile.enabled $profile.requiredElevation (not $profile.elevated) }}{{ fail (printf "profiles[%s] requires explicit elevated: true when enabled" $profile.name) }}{{ end }}
 {{- if $profile.enabled }}
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
