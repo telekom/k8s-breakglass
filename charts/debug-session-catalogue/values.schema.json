@@ -89,7 +89,18 @@
             "volumeMounts": { "type": "array", "items": { "type": "object" } },
             "volumes": { "type": "array", "items": { "type": "object" } },
             "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
-            "env": { "type": "array", "items": { "type": "object" } }
+            "env": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+                  "value": { "type": "string" }
+                },
+                "required": ["name", "value"]
+              }
+            }
           }
         }
       },

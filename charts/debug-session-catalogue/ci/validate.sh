@@ -133,6 +133,12 @@ expect_rejected "restricted hostPath volume override" helm template debug-catalo
 expect_rejected "restricted projected service-account-token override" helm template debug-catalogue "${chart_dir}" \
   --set-json 'profiles=[{"name":"projected-token","intent":"workload-diagnostics","displayName":"Projected token","description":"Sensitive volume test","enabled":true,"elevated":false,"imageKey":"workload","command":["sh"],"args":[],"pod":{"volumes":[{"name":"token","projected":{"sources":[{"serviceAccountToken":{"path":"token"}}]}}]}}]'
 
+expect_rejected "environment Secret reference" helm template debug-catalogue "${chart_dir}" \
+  --set-json 'profiles=[{"name":"secret-env","intent":"workload-diagnostics","displayName":"Secret environment","description":"Credential isolation test","enabled":true,"elevated":false,"imageKey":"workload","command":["sh"],"args":[],"pod":{"env":[{"name":"TOKEN","valueFrom":{"secretKeyRef":{"name":"credentials","key":"token"}}}]}}]'
+
+expect_rejected "environment ConfigMap reference" helm template debug-catalogue "${chart_dir}" \
+  --set-json 'profiles=[{"name":"config-env","intent":"workload-diagnostics","displayName":"Config environment","description":"Immutable catalogue test","enabled":true,"elevated":false,"imageKey":"workload","command":["sh"],"args":[],"pod":{"env":[{"name":"FLAGS","valueFrom":{"configMapKeyRef":{"name":"runtime-overrides","key":"flags"}}}]}}]'
+
 expect_rejected "restricted Secret volume override" helm template debug-catalogue "${chart_dir}" \
   --set-json 'profiles=[{"name":"secret-volume","intent":"workload-diagnostics","displayName":"Secret volume","description":"Sensitive volume test","enabled":true,"elevated":false,"imageKey":"workload","command":["sh"],"args":[],"pod":{"volumes":[{"name":"secret","secret":{"secretName":"sensitive"}}]}}]'
 
