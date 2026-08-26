@@ -1,0 +1,50 @@
+# syntax=docker/dockerfile:1.7
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Build with: docker buildx build --platform linux/amd64,linux/arm64
+#             -f Dockerfile.validator .
+FROM golang:1.27@sha256:c5b07c17f54c5f22230c4b4da6e90249165cf55368e01a52808cb92064e18836 AS builder
+ARG TARGETOS=linux
+ARG TARGETARCH
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_DATE=unknown
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/cluster-validator ./cmd/cluster-validator
+COPY pkg/clustervalidator ./pkg/clustervalidator
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH:-amd64} go build -a -trimpath \
+    -ldflags "-s -w -X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT} -X main.buildDate=${BUILD_DATE}" \
+    -o /out/cluster-validator ./cmd/cluster-validator
+
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:1c2c046bc09ed40fad370b599a0b1ae7987f55b01e247cf27a7c27cd97e5bbc7
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_DATE=unknown
+
+COPY --from=builder /out/cluster-validator /cluster-validator
+COPY LICENSE /licenses/PROJECT_LICENSE
+COPY LICENSES /licenses/
+COPY motd/cluster-validator.motd /etc/motd
+
+LABEL org.opencontainers.image.title="Kubernetes Cluster Validator"
+LABEL org.opencontainers.image.description="Provider-neutral, read-only Kubernetes readiness reports for one-time and post-upgrade validation"
+LABEL org.opencontainers.image.url="https://github.com/telekom/k8s-breakglass"
+LABEL org.opencontainers.image.documentation="https://github.com/telekom/k8s-breakglass/blob/main/docs/cluster-validator.md"
+LABEL org.opencontainers.image.source="https://github.com/telekom/k8s-breakglass"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.vendor="Deutsche Telekom"
+LABEL org.opencontainers.image.version=$VERSION
+LABEL org.opencontainers.image.revision=$GIT_COMMIT
+LABEL org.opencontainers.image.created=$BUILD_DATE
+LABEL org.opencontainers.image.base.name="gcr.io/distroless/static-debian12:nonroot"
+LABEL com.deutschetelekom.cluster-validator.report-api-version="cluster-validator.telekom.com/v1alpha1"
+LABEL com.deutschetelekom.cluster-validator.sbom="spdx-json"
+LABEL com.deutschetelekom.cluster-validator.signing="sigstore-keyless"
+
+USER 65532:65532
+ENTRYPOINT ["/cluster-validator"]
