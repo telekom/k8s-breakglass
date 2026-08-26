@@ -3,7 +3,7 @@
   "kind": "ClusterValidatorIntegrationContract",
   "intent": "real-kind-read-only-readiness",
   "image": {
-    "dockerfile": "Dockerfile.validator",
+    "dockerfile": "utils/cluster-validator/Dockerfile",
     "platform": "linux/amd64",
     "entrypoint": "/cluster-validator"
   },
