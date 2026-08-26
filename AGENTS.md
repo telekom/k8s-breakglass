@@ -51,6 +51,27 @@ e2e/                           E2E test infrastructure
 config/                        Kustomize overlays
 ```
 
+## Standalone utility images
+
+Images under `utils/images/` are generic, independently runnable OCI images;
+they must not depend on private registries, internal filesystem layouts, or
+controller-only assumptions. Keep each image's Docker build context inside its
+own directory, pin the base by digest and every package/tool version, declare
+`linux/amd64` and `linux/arm64` support in `image-metadata.yaml`, and run as a
+numeric non-root UID with no capabilities unless a reviewed exception exists.
+The metadata file is the release contract for immutable digests, SBOM,
+provenance, and signature verification.
+
+Utility helpers must provide `--help`, deterministic bounded reports, explicit
+input/output mount boundaries, cleanup on success and failure, and refuse
+symlink/traversal escapes and destination overwrites. Add adversarial shell
+tests for missing files, symlinks, traversal, bounds, and cleanup. Run the
+image tests, ShellCheck, Dockerfile linting, YAML validation, REUSE, and a
+multi-architecture BuildKit build before release. Keep image docs, MOTD,
+runbooks, `CHANGELOG.md`, and metadata synchronized with the actual command
+surface. Release CI must attach an SBOM and provenance attestation and sign
+the immutable manifest with keyless Cosign.
+
 ## Critical Rules
 
 1. **Never edit auto-generated files** — `config/crd/bases/`, `config/rbac/`, `zz_generated.deepcopy.go`.
