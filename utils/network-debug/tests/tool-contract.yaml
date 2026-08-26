@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+---
+schemaVersion: 1
+intent: network-diagnostics
+image: network-debug
+failurePolicy:
+  unavailableFeature: fail
+  messagePrefix: REQUIREMENT
+checks:
+  - id: helper-report
+    operation: deterministic-report
+    tools: [net-debug, net-report, ip, ss]
+  - id: connectivity
+    operation: loopback-and-fixture-traffic
+    tools: [curl, nc, ping, tracepath, traceroute, mtr, ethtool]
+  - id: dns-tls-http
+    operation: fixture-dns-and-http-plus-public-tls
+    tools: [dig, host, nslookup, curl]
+  - id: packet-capture
+    operation: capture-generated-http-packets
+    tools: [tcpdump]
+    requirements: [CAP_NET_RAW, CAP_NET_ADMIN]
+  - id: kernel-packet-tracing
+    operation: observe-generated-packets
+    tools: [pwru]
+    requirements: [linux-kernel, kernel-btf, CAP_BPF, PERFMON, ephemeral-network-namespace]
+  - id: kubernetes-storage
+    operation: provision-and-run-disposable-fio
+    tools: [kubestr]
+    requirements: [docker, kind, kubectl, default-storage-class, disposable-kubernetes-cluster]
+bounded:
+  commandTimeoutSeconds: 20
+  packetTraceTimeoutSeconds: 20
+  kubestrWaitTimeoutSeconds: 60
+cleanup:
+  container: required
+  networkNamespace: required
+  kubestrNamespace: required
