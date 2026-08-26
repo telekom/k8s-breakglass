@@ -221,9 +221,9 @@ func validateKubeAPIServerAuthConfiguration(t *testing.T, pod corev1.Pod) {
 	for _, volume := range pod.Spec.Volumes {
 		volumes[volume.Name] = volume
 	}
-	mounts := make(map[string]corev1.VolumeMount, len(apiserver.VolumeMounts))
+	mounts := make(map[string][]corev1.VolumeMount, len(apiserver.VolumeMounts))
 	for _, mount := range apiserver.VolumeMounts {
-		mounts[mount.Name] = mount
+		mounts[mount.Name] = append(mounts[mount.Name], mount)
 	}
 
 	for _, config := range []struct {
@@ -239,8 +239,10 @@ func validateKubeAPIServerAuthConfiguration(t *testing.T, pod corev1.Pod) {
 		require.Equal(t, config.path, volume.HostPath.Path,
 			"volume %q must expose the expected host path", config.volumeName)
 
-		mount, ok := mounts[config.volumeName]
-		require.True(t, ok, "API server container must mount %q", config.volumeName)
+		matchingMounts := mounts[config.volumeName]
+		require.Len(t, matchingMounts, 1,
+			"API server container must have exactly one mount for %q", config.volumeName)
+		mount := matchingMounts[0]
 		require.Equal(t, config.path, mount.MountPath,
 			"volume %q must be mounted at the configuration path", config.volumeName)
 		require.True(t, mount.ReadOnly,
