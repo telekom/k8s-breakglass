@@ -1125,6 +1125,7 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 	now := metav1.Now()
 	expiredAt := metav1.NewTime(now.Add(-time.Hour))
 	leftAt := metav1.NewTime(now.Add(-time.Minute))
+	idleActivity := metav1.NewTime(now.Add(-time.Hour))
 
 	tests := []struct {
 		name            string
@@ -1236,6 +1237,33 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 						AllowedPods: []breakglassv1alpha1.AllowedPodRef{
 							{Namespace: "default", Name: "test-pod"},
 						},
+						Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "test-user", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
+					},
+				},
+			},
+			expectAllowed: false,
+		},
+		{
+			name:        "debug session idle timeout denied before reconcile",
+			username:    "test-user",
+			clusterName: "test-cluster",
+			ra: &authorizationv1.ResourceAttributes{
+				Resource:    "pods",
+				Subresource: "exec",
+				Namespace:   "default",
+				Name:        "test-pod",
+			},
+			debugSessions: []breakglassv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "ds-idle", Namespace: "default"},
+					Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State:        breakglassv1alpha1.DebugSessionStateActive,
+						LastActivity: &idleActivity,
+						ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+							IdleTimeout: "15m",
+						}},
+						AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "test-pod"}},
 						Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "test-user", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
 					},
 				},

@@ -32,6 +32,7 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
@@ -156,6 +157,14 @@ func (h *KubectlDebugHandler) patchDebugSessionStatusWithRetry(
 		if current.Generation > 0 {
 			current.Status.ObservedGeneration = current.Generation
 		}
+		// A successful kubectl-debug API operation is activity for an active
+		// session. Reconciler cleanup/status writers use different patch paths,
+		// so they cannot keep an idle session alive accidentally.
+		if current.Status.State == breakglassv1alpha1.DebugSessionStateActive {
+			now := metav1.Now()
+			current.Status.LastActivity = &now
+			current.Status.ActivityCount++
+		}
 
 		if err := h.client.Status().Patch(ctx, current, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
 			return err
@@ -226,8 +235,12 @@ func (h *KubectlDebugHandler) FindActiveSession(ctx context.Context, user, clust
 		if ds.Status.State != breakglassv1alpha1.DebugSessionStateActive {
 			continue
 		}
-		// Check expiration just in case status is stale
-		if ds.Status.ExpiresAt != nil && time.Now().After(ds.Status.ExpiresAt.Time) {
+		// Check expiration just in case status is stale. The reconciler persists
+		// IdleExpired asynchronously, so enforce both deadlines at authorization
+		// time as well.
+		now := time.Now()
+		if (ds.Status.ExpiresAt != nil && !ds.Status.ExpiresAt.Time.After(now)) ||
+			breakglass.DebugSessionIdleExpired(&ds, now) {
 			continue
 		}
 

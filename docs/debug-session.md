@@ -1442,7 +1442,7 @@ Control session duration and renewal:
 constraints:
   # Optional lifecycle controls. Omitted values use controller defaults.
   approvalTimeout: "24h"
-  idleTimeout: "30m"     # no API activity after activation
+  idleTimeout: "30m"     # no successful API activity after activation
   retainFor: "168h"      # terminal status retention
 
   # Maximum total session duration

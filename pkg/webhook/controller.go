@@ -302,6 +302,13 @@ func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, userna
 				"expiresAt", ds.Status.ExpiresAt.Time)
 			continue
 		}
+		if breakglass.DebugSessionIdleExpired(&ds, time.Now()) {
+			reqLog.Debugw("Debug session skipped because it exceeded its idle timeout",
+				"session", ds.Name,
+				"lastActivity", ds.Status.LastActivity,
+				"idleTimeout", breakglass.DebugSessionIdleTimeoutFor(&ds))
+			continue
+		}
 
 		// Check if the pod is in the allowed pods list
 		podAllowed := false

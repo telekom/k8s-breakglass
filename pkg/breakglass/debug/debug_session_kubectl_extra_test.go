@@ -66,6 +66,18 @@ func TestFindActiveSession(t *testing.T) {
 			},
 		},
 	}
+	idleSession := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "idle-expired", Namespace: "default"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster", RequestedBy: "user@example.com"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:        breakglassv1alpha1.DebugSessionStateActive,
+			LastActivity: &metav1.Time{Time: time.Now().UTC().Add(-time.Hour)},
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+				IdleTimeout: "15m",
+			}},
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user@example.com"}},
+		},
+	}
 	leftAt := metav1.NewTime(time.Now().UTC().Add(-5 * time.Minute))
 	leftParticipantSession := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "left-participant", Namespace: "default"},
@@ -78,7 +90,7 @@ func TestFindActiveSession(t *testing.T) {
 		},
 	}
 
-	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(activeSession, otherSession, expiredSession).Build()
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(activeSession, otherSession, expiredSession, idleSession).Build()
 	handler := NewKubectlDebugHandler(client, &mockClientProvider{})
 
 	// Test finding the session (specific cluster)
@@ -112,6 +124,12 @@ func TestFindActiveSession(t *testing.T) {
 	clientExpired := fake.NewClientBuilder().WithScheme(scheme).WithObjects(expiredSession).Build()
 	handlerExpired := NewKubectlDebugHandler(clientExpired, &mockClientProvider{})
 	found, err = handlerExpired.FindActiveSession(context.Background(), "user@example.com", "test-cluster")
+	require.NoError(t, err)
+	assert.Nil(t, found)
+
+	clientIdle := fake.NewClientBuilder().WithScheme(scheme).WithObjects(idleSession).Build()
+	handlerIdle := NewKubectlDebugHandler(clientIdle, &mockClientProvider{})
+	found, err = handlerIdle.FindActiveSession(context.Background(), "user@example.com", "test-cluster")
 	require.NoError(t, err)
 	assert.Nil(t, found)
 

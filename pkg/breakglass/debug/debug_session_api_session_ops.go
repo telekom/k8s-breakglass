@@ -280,7 +280,16 @@ func canRenewDebugSession(session *breakglassv1alpha1.DebugSession, identity deb
 }
 
 func isDebugSessionExpired(session *breakglassv1alpha1.DebugSession, now time.Time) bool {
-	return session != nil && session.Status.ExpiresAt != nil && !session.Status.ExpiresAt.Time.After(now)
+	if session == nil {
+		return false
+	}
+	if session.Status.ExpiresAt != nil && !session.Status.ExpiresAt.Time.After(now) {
+		return true
+	}
+	// The reconciler persists IdleExpired, but API handlers must enforce the
+	// deadline immediately so a stale Active object cannot be used until the
+	// next reconcile.
+	return breakglass.DebugSessionIdleExpired(session, now)
 }
 
 func rejectUnexpectedDebugActionBody(ctx *gin.Context) bool {

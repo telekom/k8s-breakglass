@@ -60,6 +60,31 @@ func newKubectlTestScheme() *runtime.Scheme {
 	return scheme
 }
 
+func TestKubectlDebugHandler_StatusPatchRecordsActiveActivity(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	now := metav1.Now()
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "activity-session", Namespace: "default"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:         breakglassv1alpha1.DebugSessionStateActive,
+			LastActivity:  &now,
+			ActivityCount: 3,
+		},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	h := NewKubectlDebugHandler(client, nil)
+
+	got := session.DeepCopy()
+	require.NoError(t, h.patchDebugSessionStatusWithRetry(context.Background(), got, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.Message = "operation completed"
+	}))
+
+	assert.Equal(t, int64(4), got.Status.ActivityCount)
+	require.NotNil(t, got.Status.LastActivity)
+	assert.False(t, got.Status.LastActivity.Before(&now))
+}
+
 func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 	scheme := newKubectlTestScheme()
 

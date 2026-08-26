@@ -25,3 +25,5 @@ This document provides conventions specifically for AI coding agents working in 
    `Rejected` versus `Terminated` semantics, enforce approval deadlines, and stamp
    retention/activity status using optimistic locking. Keep lifecycle state filters in
    sync with `api/v1alpha1` and `bgctl`.
+   Idle deadlines are enforced at API/webhook authorization time as well as by the
+   reconciler; only successful DebugSession API operations may advance activity.

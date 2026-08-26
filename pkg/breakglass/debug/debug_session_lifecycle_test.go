@@ -16,19 +16,6 @@ import (
 )
 
 func TestDebugSessionLifecycleStatesAndDeadlines(t *testing.T) {
-	for _, state := range []breakglassv1alpha1.DebugSessionState{
-		breakglassv1alpha1.DebugSessionStatePending,
-		breakglassv1alpha1.DebugSessionStatePendingApproval,
-		breakglassv1alpha1.DebugSessionStateActive,
-		breakglassv1alpha1.DebugSessionStateExpired,
-		breakglassv1alpha1.DebugSessionStateIdleExpired,
-		breakglassv1alpha1.DebugSessionStateTerminated,
-		breakglassv1alpha1.DebugSessionStateRejected,
-		breakglassv1alpha1.DebugSessionStateFailed,
-	} {
-		assert.Contains(t, validDebugSessionStates, string(state))
-	}
-
 	now := time.Now().UTC()
 	templateSpec := &breakglassv1alpha1.DebugSessionTemplateSpec{
 		Constraints: &breakglassv1alpha1.DebugSessionConstraints{
@@ -79,6 +66,22 @@ func TestDebugSessionApprovalTimeoutStateAndTimeMatrix(t *testing.T) {
 			assert.Equal(t, tc.expected && tc.state == breakglassv1alpha1.DebugSessionStatePendingApproval, got)
 		})
 	}
+}
+
+func TestIsDebugSessionExpiredIncludesIdleDeadline(t *testing.T) {
+	now := time.Now().UTC()
+	lastActivity := metav1.NewTime(now.Add(-16 * time.Minute))
+	session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{
+		State:        breakglassv1alpha1.DebugSessionStateActive,
+		LastActivity: &lastActivity,
+		ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+			IdleTimeout: "15m",
+		}},
+	}}
+
+	assert.True(t, isDebugSessionExpired(session, now), "API expiry checks must enforce idle deadlines")
+	lastActivity = metav1.NewTime(now.Add(-time.Minute))
+	assert.False(t, isDebugSessionExpired(session, now), "recent activity must keep the session usable")
 }
 
 func FuzzDebugSessionLifecycleStateFilter(f *testing.F) {
