@@ -36,8 +36,8 @@ For each image directory:
    non-root/read-only settings, executes real fio/ioping operations, and
    verifies dump metadata/checksum/copy and cleanup/security denials. It fails
    rather than silently skipping when Docker is unavailable.
-2. Build both platforms from the digest-pinned Dockerfile and inspect the
-   resulting manifest.
+2. Run `make -C utils/images multiarch` to build both platforms from the
+   digest-pinned Dockerfiles, then inspect the resulting OCI archives/manifest.
 3. Generate an SBOM and SLSA provenance attestation for the manifest.
 4. Sign the immutable digest with keyless Cosign and verify the signature and
    attestations before adding the image to an allowlist.
