@@ -46,6 +46,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -859,6 +860,32 @@ func (c *DebugSessionController) validateActivationBeforePublish(ctx context.Con
 		return fmt.Errorf("debug session approval is no longer valid")
 	}
 	return nil
+}
+
+// effectiveTemplateForBinding applies binding variable constraints at the
+// controller boundary as well as at API admission. Sessions can be approved
+// or reconciled after either object changes, so rendering must fail closed and
+// use the same narrowed definition that was used for request validation.
+func effectiveTemplateForBinding(
+	template *breakglassv1alpha1.DebugSessionTemplate,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
+	values map[string]apiextensionsv1.JSON,
+) (*breakglassv1alpha1.DebugSessionTemplate, error) {
+	var constraints []breakglassv1alpha1.ExtraDeployVariableConstraint
+	if binding != nil {
+		constraints = binding.Spec.ExtraDeployVariables
+	}
+	effectiveVariables, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, constraints)
+	if err != nil {
+		return nil, err
+	}
+	nameErrs := breakglassv1alpha1.ValidateExtraDeployValueNames(values, effectiveVariables, len(constraints) > 0, field.NewPath("extraDeployValues"))
+	if len(nameErrs) > 0 {
+		return nil, fmt.Errorf("extra deploy values are not allowed by binding: %s", nameErrs[0].Error())
+	}
+	result := template.DeepCopy()
+	result.Spec.ExtraDeployVariables = effectiveVariables
+	return result, nil
 }
 
 // failSession marks a session as failed and logs the failure
