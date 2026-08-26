@@ -13,9 +13,14 @@ small:
   GID, and epoch mtime).
 * `checksum FILE` prints a SHA-256 checksum.
 * `copy FILE [OUTPUT_NAME]` copies an existing regular file beneath
-  `DUMP_OUTPUT_DIR`, refuses to overwrite, and reports the copied checksum.
+  `DUMP_OUTPUT_DIR`, refuses to overwrite, limits the source to
+  `DUMP_MAX_COPY_BYTES` (1 GiB by default), and reports the copied checksum.
 
 It rejects missing files, directories, unreadable files, and symbolic links.
+The resolved source must remain beneath `DUMP_INPUT_DIR` (default `/input`),
+which also prevents `..` and symlink-directory escape paths. Copy-out uses a
+private temporary file and an exclusive hard-link, so a pre-existing or
+concurrently-created destination is never replaced.
 There is no dump generator, debugger, host mount, or privileged capability in
 the image. The process runs as UID/GID 65532.
 

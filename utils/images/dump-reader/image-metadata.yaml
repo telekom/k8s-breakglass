@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
+---
+
 image: dump-reader
 context: utils/images/dump-reader
 platforms:
@@ -15,6 +17,8 @@ runtime:
     - /output
   read_only_paths:
     - /input
+  limits:
+    max_copy_bytes: 1073741824
   capabilities: []
   privileged: false
   network_required: false
