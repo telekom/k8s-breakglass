@@ -68,9 +68,15 @@ controller metadata is inferred:
 workload-debug dns api.example.test
 workload-debug tls api.example.test:443
 workload-debug http https://api.example.test/healthz
-workload-debug kube-api /version
+workload-debug kube-api --server https://api.example.test /version
 workload-debug report --dns api.example.test --tls api.example.test:443
 ```
+
+HTTP and Kubernetes API requests are deliberately bounded: only GET, HEAD, and
+OPTIONS are accepted, redirects are not followed, and responses are limited to
+1 MiB by default. `WORKLOAD_DEBUG_TIMEOUT` accepts 1–300 seconds and
+`WORKLOAD_DEBUG_MAX_BYTES` accepts 1–10 MiB when a different bounded limit is
+needed.
 
 ## Incident checklist
 

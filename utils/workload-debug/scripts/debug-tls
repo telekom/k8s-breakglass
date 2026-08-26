@@ -17,12 +17,25 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+case "$timeout_seconds" in
+    ''|*[!0-9]*) printf '%s\n' 'debug-tls: timeout must be a positive integer' >&2; exit 2 ;;
+esac
+[ "$timeout_seconds" -ge 1 ] && [ "$timeout_seconds" -le 300 ] || {
+    printf '%s\n' 'debug-tls: timeout must be between 1 and 300' >&2
+    exit 2
+}
 endpoint=$1
 case "$endpoint" in
+    \[*\]:*) host=${endpoint%%]:*}; host=${host#\[}; port=${endpoint##]:} ;;
+    *:*:*) printf '%s\n' 'debug-tls: IPv6 endpoints must use [HOST]:PORT' >&2; exit 2 ;;
     *:*) host=${endpoint%:*}; port=${endpoint##*:} ;;
     *) host=$endpoint; port=443 ;;
 esac
 [ -n "$host" ] && [ -n "$port" ] || { printf '%s\n' 'debug-tls: invalid endpoint' >&2; exit 2; }
+case "$port" in
+    ''|*[!0-9]*) printf '%s\n' 'debug-tls: port must be numeric' >&2; exit 2 ;;
+esac
+[ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { printf '%s\n' 'debug-tls: port out of range' >&2; exit 2; }
 
 printf 'TLS endpoint: %s:%s\n' "$host" "$port"
 printf '\n' | timeout "$timeout_seconds" openssl s_client \

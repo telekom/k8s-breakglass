@@ -27,8 +27,40 @@ if debug-http ftp://invalid.example >/dev/null 2>&1; then
     printf '%s\n' 'debug-http accepted an unsupported URL scheme' >&2
     exit 1
 fi
+if debug-http --method DELETE https://invalid.example >/dev/null 2>&1; then
+    printf '%s\n' 'debug-http accepted a mutating method' >&2
+    exit 1
+fi
+if debug-http --timeout 0 https://invalid.example >/dev/null 2>&1; then
+    printf '%s\n' 'debug-http accepted an unbounded timeout' >&2
+    exit 1
+fi
+if debug-http --timeout 301 https://invalid.example >/dev/null 2>&1; then
+    printf '%s\n' 'debug-http accepted an excessive timeout' >&2
+    exit 1
+fi
+if WORKLOAD_DEBUG_MAX_BYTES=0 debug-http https://invalid.example >/dev/null 2>&1; then
+    printf '%s\n' 'debug-http accepted an unbounded response size' >&2
+    exit 1
+fi
+if debug-tls --timeout 0 example.invalid >/dev/null 2>&1; then
+    printf '%s\n' 'debug-tls accepted an unbounded timeout' >&2
+    exit 1
+fi
+if debug-tls 2001:db8::1 >/dev/null 2>&1; then
+    printf '%s\n' 'debug-tls accepted an ambiguous bare IPv6 endpoint' >&2
+    exit 1
+fi
 if debug-kube-api /version >/dev/null 2>&1; then
     printf '%s\n' 'debug-kube-api unexpectedly used controller metadata' >&2
+    exit 1
+fi
+if WORKLOAD_DEBUG_TIMEOUT=0 debug-kube-api --server https://invalid.example >/dev/null 2>&1; then
+    printf '%s\n' 'debug-kube-api accepted an unbounded timeout' >&2
+    exit 1
+fi
+if WORKLOAD_DEBUG_MAX_BYTES=0 debug-kube-api --server https://invalid.example >/dev/null 2>&1; then
+    printf '%s\n' 'debug-kube-api accepted an unbounded response size' >&2
     exit 1
 fi
 

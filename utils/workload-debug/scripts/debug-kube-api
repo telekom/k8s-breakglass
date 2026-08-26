@@ -17,7 +17,16 @@ service_port=${KUBERNETES_SERVICE_PORT_HTTPS:-${KUBERNETES_SERVICE_PORT:-443}}
 server=${KUBERNETES_SERVICE_HOST:+https://${KUBERNETES_SERVICE_HOST}:${service_port}}
 ca_file=${KUBE_CA_FILE:-/var/run/secrets/kubernetes.io/serviceaccount/ca.crt}
 token_file=${KUBE_TOKEN_FILE:-/var/run/secrets/kubernetes.io/serviceaccount/token}
+timeout_seconds=${WORKLOAD_DEBUG_TIMEOUT:-10}
 path=/version
+
+case "$timeout_seconds" in
+    ''|*[!0-9]*) printf '%s\n' 'debug-kube-api: timeout must be a positive integer' >&2; exit 2 ;;
+esac
+[ "$timeout_seconds" -ge 1 ] && [ "$timeout_seconds" -le 300 ] || {
+    printf '%s\n' 'debug-kube-api: timeout must be between 1 and 300' >&2
+    exit 2
+}
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --server|--ca|--token)
@@ -47,12 +56,24 @@ esac
 case "$path" in /*) ;; *) path=/$path ;; esac
 url=${server%/}$path
 
-set -- curl --silent --show-error --include --location --connect-timeout "${WORKLOAD_DEBUG_TIMEOUT:-10}" \
-    --max-time "${WORKLOAD_DEBUG_TIMEOUT:-10}"
+max_bytes=${WORKLOAD_DEBUG_MAX_BYTES:-1048576}
+case "$max_bytes" in
+    ''|*[!0-9]*) printf '%s\n' 'debug-kube-api: max response size must be a positive integer' >&2; exit 2 ;;
+esac
+[ "$max_bytes" -ge 1 ] && [ "$max_bytes" -le 10485760 ] || {
+    printf '%s\n' 'debug-kube-api: max response size must be between 1 and 10485760 bytes' >&2
+    exit 2
+}
+set -- curl --silent --show-error --include --connect-timeout "$timeout_seconds" \
+    --max-time "$timeout_seconds" --max-filesize "$max_bytes"
 if [ -r "$ca_file" ]; then set -- "$@" --cacert "$ca_file"; fi
 if [ -r "$token_file" ]; then
     token=$(tr -d '\r\n' < "$token_file")
-    [ -n "$token" ] && set -- "$@" --header "Authorization: Bearer $token"
+    [ -n "$token" ] && {
+        # Feed the token through stdin so it does not appear in /proc/*/cmdline.
+        printf 'Authorization: Bearer %s\n' "$token" | "$@" --header @- "$url"
+        exit $?
+    }
 fi
 set -- "$@" "$url"
 exec "$@"

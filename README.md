@@ -102,7 +102,7 @@ Complete documentation is available in the [docs/](./docs/) directory:
 - **[AuditConfig](./docs/audit-config.md)** - Configure audit sinks (Kafka, webhooks, logs)
 - **[MailProvider](./docs/mail-provider.md)** - Email notification configuration
 - **[Debug Session](./docs/debug-session.md)** - Debug sessions and templates
-- **[Workload-debug image runbook](./docs/runbooks/workload-debug.md)** - Restricted standalone DNS/TLS/HTTP/Kubernetes API diagnostics
+- **[Workload diagnostics image runbook](./docs/runbooks/workload-debug.md)** - Restricted standalone DNS/TLS/HTTP/Kubernetes API diagnostics (`workload-diagnostics` intent)
 
 **Integration & Advanced Topics:**
 

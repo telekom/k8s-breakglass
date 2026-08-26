@@ -11,25 +11,27 @@ BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 .PHONY: test build build-multiarch sbom sign
 
+OCI_ARCHIVE ?= workload-debug.oci.tar
+
 test:
 	./tests/test_helpers.sh
 
 build:
 	docker build --pull=false \
-		--build-arg VERSION=$(VERSION) --build-arg VCS_REF=$(VCS_REF) --build-arg BUILD_DATE=$(BUILD_DATE) \
-		--tag $(IMAGE) .
+		--build-arg "VERSION=$(VERSION)" --build-arg "VCS_REF=$(VCS_REF)" --build-arg "BUILD_DATE=$(BUILD_DATE)" \
+		--tag "$(IMAGE)" .
 
 build-multiarch:
-	docker buildx build --pull=false --platform $(PLATFORMS) \
+	docker buildx build --pull=false --platform "$(PLATFORMS)" \
 		--provenance=true --sbom=true \
-		--build-arg VERSION=$(VERSION) --build-arg VCS_REF=$(VCS_REF) --build-arg BUILD_DATE=$(BUILD_DATE) \
-		--tag $(IMAGE) .
+		--build-arg "VERSION=$(VERSION)" --build-arg "VCS_REF=$(VCS_REF)" --build-arg "BUILD_DATE=$(BUILD_DATE)" \
+		--output "type=oci,dest=$(OCI_ARCHIVE)" --tag "$(IMAGE)" .
 
 sbom:
 	@test -n "$(DIGEST)" || (printf '%s\n' 'DIGEST is required' >&2; exit 2)
 	@test -n "$(SBOM)" || (printf '%s\n' 'SBOM is required' >&2; exit 2)
-	cosign attest --yes --type spdxjson --predicate $(SBOM) $(IMAGE)@$(DIGEST)
+	cosign attest --yes --type spdxjson --predicate "$(SBOM)" "$(IMAGE)@$(DIGEST)"
 
 sign:
 	@test -n "$(DIGEST)" || (printf '%s\n' 'DIGEST is required' >&2; exit 2)
-	cosign sign --yes $(IMAGE)@$(DIGEST)
+	cosign sign --yes "$(IMAGE)@$(DIGEST)"

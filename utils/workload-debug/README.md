@@ -23,7 +23,20 @@ Included helpers:
 default command for interactive sessions. See the [runbook](../../docs/runbooks/workload-debug.md)
 for build, signing, SBOM, and deployment guidance.
 
+HTTP and Kubernetes API helpers only allow GET, HEAD, and OPTIONS requests,
+do not follow redirects, and cap each response at 1 MiB by default. Set
+`WORKLOAD_DEBUG_TIMEOUT` (1–300 seconds) or `WORKLOAD_DEBUG_MAX_BYTES` (1–10
+MiB) when a different bounded limit is required.
+
 The image is pinned to a multi-architecture Alpine base digest, runs as
 non-root UID/GID `65532`, drops all capabilities, and does not write during
 normal operation. `IMAGE-METADATA.yaml` is the source of truth for OCI,
 provenance, signing, and SBOM metadata.
+
+Run `make test` for helper checks. `make build` creates a local image;
+`make build-multiarch` uses BuildKit for both supported platforms and requests
+in-toto provenance plus an SPDX SBOM (`--provenance=true --sbom=true`), writing
+a local OCI archive (`workload-debug.oci.tar` by default; override with
+`OCI_ARCHIVE=...`). Release automation resolves and retains the immutable
+registry digest, then runs `make sign DIGEST=...` and
+`make sbom DIGEST=... SBOM=...`.
