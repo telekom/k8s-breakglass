@@ -164,7 +164,9 @@ copy_out() {
     source_size=$(stat_field size "$source")
     [ "$source_size" -le "$MAX_COPY_BYTES" ] || fail "FILE exceeds DUMP_MAX_COPY_BYTES ($MAX_COPY_BYTES): $source"
     destination=$output_dir/$name
-    [ ! -e "$destination" ] && [ ! -L "$destination" ] || fail "refusing to overwrite existing output: $destination"
+    if [ -e "$destination" ] || [ -L "$destination" ]; then
+        fail "refusing to overwrite existing output: $destination"
+    fi
     umask 077
     temporary=$(mktemp "$output_dir/.dump-reader.XXXXXX") || fail "cannot create temporary output in: $output_dir"
     if ! cat "$source" >"$temporary"; then

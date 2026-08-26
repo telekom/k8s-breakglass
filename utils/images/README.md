@@ -24,6 +24,26 @@ The image runbooks are normative for bounds, mount permissions, and cleanup.
 Do not add vendor-specific paths, credentials, host mounts, dump generators, or
 unbounded workload commands to these images.
 
+## Why the other utilities stay purpose-built
+
+`dump-reader` is the one utility whose contract is fully covered by a tiny,
+well-maintained upstream BusyBox image. The other catalogue entries retain
+their own images because their contracts are not generic base-image problems:
+
+* `workload-debug` needs a deliberately allowlisted set of protocol and API
+  probes; a broad network toolbox would weaken its non-root boundary.
+* `storage-debug` packages pinned benchmark binaries and enforces bounded
+  scratch/report paths; no upstream image provides that contract.
+* `node-maintenance` contains reviewed recovery and repair dispatchers whose
+  host-network and capability boundary must remain explicit.
+* `cluster-validator` is a read-only report producer with a stable output
+  schema and RBAC assumptions; a generic kubectl toolbox would add commands
+  and credentials surface without implementing the schema.
+
+These are functional and security-boundary decisions, not claims about any
+particular external image digest. Each image must continue to carry its own
+SBOM, provenance, signature, and immutable-base metadata.
+
 The per-image `image-metadata.yaml` files include the machine-readable command
 and intent contract used by release review. Run `make -C utils/images test`
 for fast script tests and `make -C utils/images integration` for mandatory

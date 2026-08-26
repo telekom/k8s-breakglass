@@ -57,4 +57,7 @@ and output artifact according to the incident retention policy.
 Run `./tests/test.sh` from this directory. `image-metadata.yaml` records the
 supported platforms, non-root runtime, and required SBOM, provenance, and
 keyless Cosign signature attestations. The image has no mutable package
-dependency beyond its digest-pinned Alpine base.
+dependency beyond its digest-pinned BusyBox base. BusyBox is used only for the
+small POSIX utility set needed by the helper; no package manager or additional
+runtime package is installed. The resulting image includes BusyBox under its
+GPL-2.0-only license, which must remain represented in the generated SBOM.
