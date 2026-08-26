@@ -5,7 +5,7 @@ SPDX-License-Identifier: CC-BY-4.0
 
 # Workload-debug image runbook
 
-`ghcr.io/telekom/breakglass-workload-debug` is a generic, standalone toolbox
+`ghcr.io/telekom/k8s-breakglass/workload-debug` is a generic, standalone toolbox
 for a short-lived DebugSession or an ordinary workload Pod. It has no
 dependency on `DebugSession` labels, annotations, namespace names, or the
 Breakglass controller. It runs as UID/GID `65532`, has no Linux capabilities,
@@ -20,7 +20,7 @@ available in the build context:
 cd utils/workload-debug
 docker buildx build --platform linux/amd64,linux/arm64 \
   --file Dockerfile \
-  --tag ghcr.io/telekom/breakglass-workload-debug:0.1.0 --push .
+  --tag ghcr.io/telekom/k8s-breakglass/workload-debug:0.1.0 --push .
 ```
 
 Use the exact digest in `utils/workload-debug/IMAGE-METADATA.yaml`; do not
@@ -35,9 +35,9 @@ helpers write no files; add a tmpfs only if a local policy requires one:
 ```sh
 docker run --rm -it --read-only --cap-drop=ALL \
   --security-opt=no-new-privileges:true \
-  ghcr.io/telekom/breakglass-workload-debug@sha256:DIGEST
+  ghcr.io/telekom/k8s-breakglass/workload-debug@sha256:DIGEST
 podman run --rm -it --read-only --cap-drop=all \
-  ghcr.io/telekom/breakglass-workload-debug@sha256:DIGEST
+  ghcr.io/telekom/k8s-breakglass/workload-debug@sha256:DIGEST
 ```
 
 For Podman, the same image can be run with `--user 65532:65532`; it is already

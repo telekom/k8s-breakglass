@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-IMAGE ?= ghcr.io/telekom/k8s-breakglass-network-debug
+IMAGE ?= ghcr.io/telekom/k8s-breakglass/network-debug
 VERSION ?= 0.1.0
 VCS_REF ?= $(shell git rev-parse --short HEAD 2>/dev/null || printf 'unknown')
 BUILD_DATE ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')

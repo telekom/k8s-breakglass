@@ -54,7 +54,7 @@ for profile in workload-diagnostics storage-diagnostics cluster-validation; do
   grep -q 'allowPrivilegeEscalation: false' <<<"${block}"
   grep -q 'readOnlyRootFilesystem: true' <<<"${block}"
   grep -q 'automountServiceAccountToken: false' <<<"${block}" || [[ "${profile}" == cluster-validation ]]
-  ! grep -q 'privileged: true' <<<"${block}"
+  if grep -q 'privileged: true' <<<"${block}"; then exit 1; fi
 done
 
 # Node-capable profiles retain only their declared capabilities and never need
