@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: CC0-1.0
+
+name: Node-maintenance integration
+
+on:
+  pull_request:
+    paths:
+      - utils/node-maintenance/**
+      - .github/workflows/node-maintenance-integration.yml
+  push:
+    branches: [main]
+    paths:
+      - utils/node-maintenance/**
+      - .github/workflows/node-maintenance-integration.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: Disposable namespace and evidence proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Shellcheck helpers and integration harness
+        run: |
+          shellcheck \
+            utils/node-maintenance/bin/node-maintenance \
+            utils/node-maintenance/lib/*.sh \
+            utils/node-maintenance/tests/*.sh
+      - name: Run real-tool integration proof
+        run: make -C utils/node-maintenance integration
