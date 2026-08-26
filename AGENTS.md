@@ -65,6 +65,27 @@ config/                        Kustomize overlays
 10. **Fuzz tests**: Exist at `api/v1alpha1/fuzz_test.go`, `pkg/breakglass/fuzz_test.go`, and `pkg/breakglass/debug/fuzz_test.go`.
 11. **Strict Readiness Enforcement**: Unready clusters (`Ready=False`) MUST be hidden from Escalation API by default (`activeOnly=true`) and MUST be blocked from session requests at the controller level.
 
+## Utility images (`utils/network-debug/`)
+
+- Keep the network-debug image standalone and distribution-neutral: no internal
+  cluster names, private registries, credentials, cloud settings, or T-CaaS/TDG
+  assumptions belong in the image, helpers, MOTD, or runbook.
+- Pin the base and build images by OCI digest, pin direct Alpine packages, and
+  record every upstream tool release, source commit, checksum, and license in
+  `utils/network-debug/versions.env` and `LICENSES/THIRD_PARTY.md`. Verify
+  downloaded archives before copying them into the runtime stage.
+- The supported platforms are `linux/amd64` and `linux/arm64`; test both with
+  BuildKit before changing release metadata. Use
+  `make -C utils/network-debug test` (helper determinism), ShellCheck,
+  Hadolint, and a local Docker build as the minimum image checks.
+- Image changes must preserve OCI source/revision/version/base labels and the
+  SBOM/provenance flags in the image Makefile. Release automation signs the
+  final manifest digest; do not put signing keys or registry credentials in a
+  Dockerfile.
+- `net-report` output must not include timestamps, hostnames, credentials, or
+  random IDs. Changes to tools or permissions require an update to the image
+  README, `docs/network-debug-image.md`, and the Unreleased changelog entry.
+
 ## Build Tags
 
 - `//go:build e2e` — E2E tests (compiled with `-tags=e2e`; at runtime, tests skip unless `E2E_TEST=true`)

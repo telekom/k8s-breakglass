@@ -1,0 +1,42 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+set -eu
+
+help() {
+	cat <<'EOF'
+network-debug - a portable network troubleshooting toolbox
+
+Usage:
+  net-debug shell [COMMAND ...]   Start a shell (the default)
+  net-debug report                Print a stable, redaction-friendly report
+  net-debug tools                 List installed troubleshooting tools
+  net-debug --help                Show this help
+  net-debug --version             Show the image version
+
+The image is intentionally generic. It contains no cluster, registry, cloud,
+or organization-specific configuration. tcpdump and pwru may require host
+network access, CAP_NET_RAW, CAP_NET_ADMIN, and (for pwru) BPF permissions.
+EOF
+}
+
+case "${1:-shell}" in
+	--help|-h|help) help ;;
+	--version|-V|version) printf 'network-debug %s\n' "${NETWORK_DEBUG_VERSION:-unknown}" ;;
+	report) exec /usr/local/bin/net-report ;;
+	tools) exec /usr/local/bin/net-report --tools ;;
+	shell)
+		shift || true
+		if [ "$#" -gt 0 ]; then exec /bin/sh -c "$*"; fi
+		if [ -t 0 ] && [ -t 1 ]; then
+			# /etc/profile prints the short MOTD for interactive shells.
+			exec /bin/sh -l
+		fi
+		exec /bin/sh
+		;;
+	*)
+		# Permit the image to be used as a transparent command wrapper.
+		exec "$@"
+		;;
+esac

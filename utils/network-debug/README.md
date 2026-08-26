@@ -1,0 +1,74 @@
+<!--
+SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# Network Debug Utility Image
+
+`network-debug` is a generic, standalone toolbox for investigating connectivity
+from a Kubernetes pod or node network namespace. It is intentionally free of
+cluster names, cloud credentials, private registries, and organization-specific
+assumptions. The image is published as a multi-architecture artifact for
+`linux/amd64` and `linux/arm64`.
+
+## Included capabilities
+
+- Connectivity: `curl`, `nc`, `ping`, `tracepath`, `traceroute`, `mtr`, DNS
+  lookup (`dig`, `host`, `nslookup`), and HTTP/TLS inspection.
+- Interfaces and routing: `ip`, `ss`, `ethtool`, policy routing, and socket
+  state inspection.
+- Capture: `tcpdump` (including pcap output to a mounted directory).
+- Kubernetes storage diagnostics: the pinned `kubestr` release, where the
+  cluster API and the required RBAC are available.
+- Kernel packet tracing: the pinned `pwru` release on kernels with BPF/BTF and
+  the capabilities described by `pwru --help`. `pwru` is present for both
+  supported architectures; kernel support is evaluated at runtime.
+
+The image runs as root because packet capture and eBPF tracing are privileged
+operations. Grant only the network namespace and Linux capabilities needed for
+the specific investigation. Do not add `privileged: true` by default.
+
+## Usage
+
+The default command opens a POSIX shell. The interactive shell displays a
+short, neutral MOTD. Helpers are deterministic and do not include timestamps,
+hostnames, or command history:
+
+```console
+$ docker run --rm -it --net=container:app ghcr.io/telekom/k8s-breakglass-network-debug:0.1.0
+/work # net-debug --help
+/work # net-report
+/work # tcpdump -ni any -w /work/capture.pcap
+```
+
+For a Kubernetes ephemeral container, use the image through the platform's
+normal debug-session controls and review the required `CAP_NET_RAW`,
+`CAP_NET_ADMIN`, and BPF permissions with the cluster security team. A minimal
+pod example is deliberately omitted so this image remains portable across
+Kubernetes distributions and admission policies.
+
+## Reproducibility and supply chain
+
+The runtime and Go build images are pinned by immutable OCI manifest digest.
+kubestr and pwru are built from exact upstream release tags. `versions.env`
+is the human-readable lock record and the image carries OCI version, revision,
+creation, source, license, and base-digest labels. The multi-architecture Make
+target enables BuildKit SBOM and SLSA provenance attestations; signing is
+performed by the publishing pipeline, not by a Dockerfile secret.
+
+The image contains `/licenses/Apache-2.0.txt` and
+`/licenses/THIRD_PARTY.md`. Alpine package licenses remain attributable to
+Alpine Linux and are listed in the SBOM. Before redistribution, inspect the
+generated SBOM and sign the final manifest digest with the approved policy.
+
+## Local checks
+
+```console
+make -C utils/network-debug test
+make -C utils/network-debug build
+make -C utils/network-debug build-multiarch
+```
+
+`build-multiarch` pushes the requested tag because a local Docker image cannot
+represent a complete manifest list. Set `IMAGE`, `VERSION`, `VCS_REF`, and
+`BUILD_DATE` explicitly in release automation.
