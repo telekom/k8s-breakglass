@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "enabled": { "type": "boolean" },
+    "requesters": { "type": "object", "additionalProperties": false, "properties": { "groups": { "type": "array", "items": { "type": "string" } }, "users": { "type": "array", "items": { "type": "string" } } } },
+    "approvers": { "type": "object", "additionalProperties": false, "properties": { "groups": { "type": "array", "items": { "type": "string" } }, "users": { "type": "array", "items": { "type": "string" } } } },
+    "targets": { "type": "object", "additionalProperties": false, "properties": { "clusters": { "type": "array", "items": { "type": "string" } }, "clusterSelector": { "type": "object" } } },
+    "targetNamespace": { "type": "string", "minLength": 1 },
+    "defaultDuration": { "type": "string", "pattern": "^[0-9]+(ns|us|ms|s|m|h|d)+$" },
+    "maxDuration": { "type": "string", "pattern": "^[0-9]+(ns|us|ms|s|m|h|d)+$" },
+    "maxConcurrentSessions": { "type": "integer", "minimum": 1 },
+    "imagePullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
+    "images": { "type": "object" },
+    "profiles": { "type": "object" },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" }
+  },
+  "required": ["requesters", "approvers", "targets", "profiles"]
+}

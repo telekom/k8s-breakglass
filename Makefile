@@ -296,9 +296,11 @@ $(ENVTEST): $(LOCALBIN)
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
 
 .PHONY: helm-validate
-helm-validate: ## Validate Helm chart syntax and templates for escalation-config
+helm-validate: ## Validate Helm chart syntax and templates
 	helm lint charts/escalation-config --strict --values charts/escalation-config/ci/test-values.yaml
 	helm template escalation-config charts/escalation-config --values charts/escalation-config/ci/test-values.yaml > /dev/null
+	helm lint charts/debug-session-catalogue --strict --values charts/debug-session-catalogue/ci/test-values.yaml
+	helm template debug-session-catalogue charts/debug-session-catalogue --values charts/debug-session-catalogue/ci/test-values.yaml > /dev/null
 	@echo "Helm chart validation passed"
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist

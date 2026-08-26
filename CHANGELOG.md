@@ -63,10 +63,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now accepts both explicit and implicit `:latest` containerd references and
   deduplicates by manifest digest before creating the immutable local image
   reference.
-- **Node-maintenance recovery verification outcome**: Recovery evidence now
-  distinguishes a verified-file digest mismatch from failure to capture, read,
-  or parse a digest. Both outcomes fail closed without executing kexec, while
-  preserving the truthful outcome for incident handling.
+- **Standalone debug-session catalogue**: Added the OCI-ready
+  `debug-session-catalogue` Helm chart with neutral workload, network,
+  storage, packet-capture, network-repair, node-recovery, and cluster-validation
+  profiles. Requesters, approvers, targets, images, and the target namespace are
+  configurable; elevated profiles are disabled and require explicit opt-in.
 
 ## [0.1.0-rc.8] - 2026-08-22
 

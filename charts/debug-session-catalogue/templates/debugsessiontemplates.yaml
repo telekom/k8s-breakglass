@@ -1,0 +1,69 @@
+{{/*
+SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+SPDX-License-Identifier: Apache-2.0
+*/}}
+{{- if .Values.enabled }}
+{{- range $name, $profile := .Values.profiles }}
+{{- if $profile.enabled }}
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: {{ printf "%s-%s" (include "debug-session-catalogue.fullname" $) $name | replace "_" "-" | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "debug-session-catalogue.labels" $ | nindent 4 }}
+    breakglass.t-caas.telekom.com/catalogue-profile: {{ $name | quote }}
+    breakglass.t-caas.telekom.com/elevated: {{ $profile.elevated | default false | quote }}
+spec:
+  displayName: {{ required (printf "profiles.%s.displayName is required" $name) $profile.displayName | quote }}
+  description: {{ required (printf "profiles.%s.description is required" $name) $profile.description | quote }}
+  mode: workload
+  podTemplateRef:
+    name: {{ printf "%s-%s" (include "debug-session-catalogue.fullname" $) $name | replace "_" "-" | trunc 63 | trimSuffix "-" }}
+  workloadType: {{ $profile.workloadType | default "Deployment" }}
+  replicas: {{ $profile.replicas | default 1 }}
+  allowed:
+    groups:
+{{ toYaml $.Values.requesters.groups | nindent 6 }}
+    users:
+{{ toYaml $.Values.requesters.users | nindent 6 }}
+    clusters:
+{{ toYaml $.Values.targets.clusters | nindent 6 }}
+    {{- with $.Values.targets.clusterSelector }}
+    {{- if . }}
+    clusterSelector:
+{{ toYaml . | nindent 6 }}
+    {{- end }}
+    {{- end }}
+  approvers:
+    groups:
+{{ toYaml $.Values.approvers.groups | nindent 6 }}
+    users:
+{{ toYaml $.Values.approvers.users | nindent 6 }}
+  constraints:
+    defaultDuration: {{ $.Values.defaultDuration | quote }}
+    maxDuration: {{ $.Values.maxDuration | quote }}
+    maxConcurrentSessions: {{ $.Values.maxConcurrentSessions }}
+    allowRenewal: false
+    maxRenewals: 0
+  targetNamespace: {{ $.Values.targetNamespace | quote }}
+  namespaceConstraints:
+    defaultNamespace: {{ $.Values.targetNamespace | quote }}
+    allowUserNamespace: false
+    createIfNotExists: false
+  failMode: closed
+  requestReason:
+    mandatory: true
+    minLength: 10
+    maxLength: 1000
+    description: Explain the incident, scope, and intended diagnostic action.
+  audit:
+    enabled: true
+  allowedPodOperations:
+    exec: true
+    attach: false
+    logs: true
+    portForward: false
+---
+{{- end }}
+{{- end }}
+{{- end }}
