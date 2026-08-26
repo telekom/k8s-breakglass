@@ -8,7 +8,8 @@ rendered="$(mktemp)"
 custom_rendered="$(mktemp)"
 all_rendered="$(mktemp)"
 failure_output="$(mktemp)"
-trap 'rm -f "${rendered}" "${custom_rendered}" "${all_rendered}" "${failure_output}" "${elevated_rendered:-}"' EXIT
+digest_rendered="$(mktemp)"
+trap 'rm -f "${rendered}" "${custom_rendered}" "${all_rendered}" "${failure_output}" "${digest_rendered}" "${elevated_rendered:-}"' EXIT
 
 fail() {
   echo "::error::debug-session-catalogue validation failed: $*" >&2
@@ -119,6 +120,13 @@ expect_rejected "legacy map-shaped profiles" helm template debug-catalogue "${ch
 expect_rejected "missing image references" helm template debug-catalogue "${chart_dir}" --values "${chart_dir}/ci/missing-image-values.yaml"
 expect_rejected "required-elevation profile without opt-in" helm template debug-catalogue "${chart_dir}" --values "${chart_dir}/ci/elevated-required-values.yaml"
 
+helm template debug-catalogue "${chart_dir}" \
+  --set-json 'profiles=[{"name":"digest-image","intent":"workload-diagnostics","displayName":"Digest image","description":"Digest precedence test","enabled":true,"elevated":false,"command":["sh"],"args":[],"image":{"repository":"example.invalid/workload-debug","tag":"ignored","digest":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}]' >"${digest_rendered}"
+assert_contains "${digest_rendered}" 'image: "example.invalid/workload-debug@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"' "digest must take precedence over tag"
+assert_not_contains "${digest_rendered}" 'image: "example.invalid/workload-debug:ignored"' "digest render must not include tag"
+expect_rejected "image without tag or digest" helm template debug-catalogue "${chart_dir}" \
+  --set-json 'profiles=[{"name":"incomplete-image","intent":"workload-diagnostics","displayName":"Incomplete image","description":"Missing immutable reference","enabled":true,"elevated":false,"command":["sh"],"args":[],"image":{"repository":"example.invalid/workload-debug"}}]'
+
 expect_rejected "restricted hostPath volume override" helm template debug-catalogue "${chart_dir}" \
   --set-json 'profiles=[{"name":"hostpath","intent":"workload-diagnostics","displayName":"HostPath","description":"Sensitive volume test","enabled":true,"elevated":false,"imageKey":"workload","command":["sh"],"args":[],"pod":{"volumes":[{"name":"host","hostPath":{"path":"/"}}]}}]'
 
@@ -132,7 +140,7 @@ expect_rejected "restricted PVC volume override" helm template debug-catalogue "
   --set-json 'profiles=[{"name":"pvc-volume","intent":"workload-diagnostics","displayName":"PVC volume","description":"Unbounded volume test","enabled":true,"elevated":false,"imageKey":"workload","command":["sh"],"args":[],"pod":{"volumes":[{"name":"claim","persistentVolumeClaim":{"claimName":"external"}}]}}]'
 
 elevated_rendered="$(mktemp)"
-trap 'rm -f "${rendered}" "${custom_rendered}" "${all_rendered}" "${failure_output}" "${elevated_rendered}"' EXIT
+trap 'rm -f "${rendered}" "${custom_rendered}" "${all_rendered}" "${failure_output}" "${digest_rendered}" "${elevated_rendered}"' EXIT
 helm template debug-catalogue "${chart_dir}" \
   --set-json 'profiles=[{"name":"elevated-host","intent":"node-recovery","displayName":"Elevated host","description":"Explicit elevation test","enabled":true,"elevated":true,"preset":"elevated-node","imageKey":"nodeRecovery","command":["/usr/local/bin/node-maintenance"],"args":["node-recovery"],"pod":{"volumes":[{"name":"host","hostPath":{"path":"/var/lib/example","type":"Directory"}}]}}]' >"${elevated_rendered}"
 assert_contains "${elevated_rendered}" 'hostPath:' "elevated profile hostPath"

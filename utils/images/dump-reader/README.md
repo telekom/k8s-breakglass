@@ -52,6 +52,11 @@ The command reports only generic basenames and configured mount paths; it does
 not assume a vendor, cluster, or internal filesystem layout. Remove the pod
 and output artifact according to the incident retention policy.
 
+Copied artifacts are created with mode `0600` and remain readable by the image
+UID (`65532`) only. Collect them through the mounted output volume using that
+UID or an explicitly authorized handoff; the image does not make incident data
+world-readable.
+
 ## Tests and release metadata
 
 Run `./tests/test.sh` from this directory. `image-metadata.yaml` records the
