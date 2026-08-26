@@ -363,6 +363,134 @@ spec:
                   After this time, the binding becomes inactive automatically.
                 format: date-time
                 type: string
+              extraDeployVariables:
+                description: |-
+                  extraDeployVariables narrows the variables exposed by the referenced
+                  template for this binding. Entries must name variables defined by the
+                  template; options and validation can only become more restrictive.
+                items:
+                  description: |-
+                    ExtraDeployVariableConstraint narrows one variable exposed by a template
+                    through a DebugSessionClusterBinding. The variable must already exist on the
+                    referenced template. Fields are intentionally monotonic: a binding can
+                    remove options, tighten validation, require a value, disable a variable, or
+                    replace its default with another value accepted by the resulting policy,
+                    but cannot add options or relax template validation.
+                  properties:
+                    allowedValues:
+                      description: |-
+                        allowedValues is a shorthand for selecting an option subset by value.
+                        It is equivalent to options with template-owned display metadata.
+                      items:
+                        type: string
+                      type: array
+                    default:
+                      description: |-
+                        default replaces the template default when the value satisfies both
+                        template and binding constraints.
+                      x-kubernetes-preserve-unknown-fields: true
+                    disabled:
+                      description: disabled removes the variable from the binding's
+                        user-facing form.
+                      type: boolean
+                    name:
+                      description: name identifies the template variable to narrow.
+                      minLength: 1
+                      type: string
+                    options:
+                      description: |-
+                        options is the optional subset of template select/multiSelect options.
+                        If omitted, all template options remain available. An option may also be
+                        marked disabled; disabled options are never selectable.
+                      items:
+                        description: SelectOption defines a choice for select/multiSelect
+                          inputs.
+                        properties:
+                          allowedGroups:
+                            description: allowedGroups restricts who can select this
+                              option.
+                            items:
+                              type: string
+                            type: array
+                          description:
+                            description: description provides additional context shown
+                              as tooltip/help.
+                            type: string
+                          disabled:
+                            description: |-
+                              disabled prevents this option from being selected.
+                              Useful for showing unavailable options.
+                            type: boolean
+                          displayName:
+                            description: displayName is shown in the UI (defaults
+                              to value if empty).
+                            type: string
+                          value:
+                            description: value is the actual value stored and used
+                              in templates.
+                            minLength: 1
+                            type: string
+                        required:
+                        - value
+                        type: object
+                      type: array
+                    required:
+                      description: |-
+                        required makes the variable mandatory. A binding cannot make a required
+                        template variable optional.
+                      type: boolean
+                    validation:
+                      description: validation adds stricter validation to the template
+                        variable.
+                      properties:
+                        max:
+                          description: max is the maximum value for number inputs
+                            (as string).
+                          type: string
+                        maxItems:
+                          description: maxItems is the maximum selections for multiSelect
+                            inputs.
+                          minimum: 1
+                          type: integer
+                        maxLength:
+                          description: maxLength is the maximum string length for
+                            text inputs.
+                          minimum: 1
+                          type: integer
+                        maxStorage:
+                          description: maxStorage is the maximum size for storageSize
+                            inputs (e.g., "1Ti").
+                          type: string
+                        min:
+                          description: min is the minimum value for number inputs
+                            (as string).
+                          type: string
+                        minItems:
+                          description: minItems is the minimum selections for multiSelect
+                            inputs.
+                          minimum: 0
+                          type: integer
+                        minLength:
+                          description: minLength is the minimum string length for
+                            text inputs.
+                          minimum: 0
+                          type: integer
+                        minStorage:
+                          description: minStorage is the minimum size for storageSize
+                            inputs (e.g., "1Gi").
+                          type: string
+                        pattern:
+                          description: pattern is a regex pattern for text inputs.
+                          type: string
+                        patternError:
+                          description: patternError is a custom error message when
+                            pattern fails.
+                          type: string
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
               hidden:
                 default: false
                 description: hidden hides this binding from the UI but allows API
