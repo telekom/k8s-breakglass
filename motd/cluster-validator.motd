@@ -1,0 +1,15 @@
+<!--
+SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+
+SPDX-License-Identifier: CC-BY-4.0
+-->
+
+KUBERNETES CLUSTER VALIDATOR
+
+Provider-neutral, read-only readiness gate.
+Modes: one-time | post-upgrade
+Exit 0 = ready, 1 = not-ready, 2 = usage/configuration error.
+Report contract: cluster-validator.telekom.com/v1alpha1.
+Checks: API/discovery, nodes, namespaces, and active pods.
+No remediation is performed. See docs/cluster-validator.md for RBAC,
+extensions, signing, SBOM verification, and the post-upgrade runbook.

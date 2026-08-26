@@ -37,22 +37,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *kubeconfig == "" || (*mode != clustervalidator.ModeOneTime && *mode != clustervalidator.ModePostUpgrade) {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator-extension: kubeconfig and a supported mode are required")
+		fmt.Fprintln(stderr, "cluster-validator-extension: kubeconfig and a supported mode are required")
 		return 2
 	}
 	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator-extension: could not load kubeconfig")
+		fmt.Fprintln(stderr, "cluster-validator-extension: could not load kubeconfig")
 		return 2
 	}
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator-extension: could not create Kubernetes client")
+		fmt.Fprintln(stderr, "cluster-validator-extension: could not create Kubernetes client")
 		return 2
 	}
 	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator-extension: could not create discovery client")
+		fmt.Fprintln(stderr, "cluster-validator-extension: could not create discovery client")
 		return 2
 	}
 
@@ -60,7 +60,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	report := clustervalidator.NewValidator(checks...).Validate(context.Background(), client, discoveryClient, *mode, false)
 	data, err := clustervalidator.MarshalReport(report)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator-extension: could not marshal report")
+		fmt.Fprintln(stderr, "cluster-validator-extension: could not marshal report")
 		return 2
 	}
 	if _, err := stdout.Write(data); err != nil {

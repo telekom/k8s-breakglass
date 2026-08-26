@@ -84,27 +84,6 @@ type ReadOnlyDiscovery interface {
 
 type readOnlyClient struct{ client kubernetes.Interface }
 
-// PodIdentity identifies the validator pod running the check. Both fields are
-// required before a pod can be excluded from the readiness result; this keeps
-// a missing or mismatched Downward API value fail-safe.
-type PodIdentity struct {
-	Name      string
-	Namespace string
-}
-
-type validatorClient struct {
-	readOnlyClient
-	selfPod PodIdentity
-}
-
-// podPageReader is implemented by the validator facade so the built-in pod
-// check can stop after the first unhealthy page. It is deliberately private:
-// extensions continue to use the stable ListPods method and do not need to
-// understand Kubernetes continuation tokens.
-type podPageReader interface {
-	ListPodsPage(context.Context, metav1.ListOptions) (*corev1.PodList, error)
-}
-
 type readOnlyDiscovery struct{ client discovery.DiscoveryInterface }
 
 func (d readOnlyDiscovery) ServerGroups() (*metav1.APIGroupList, error) {
@@ -127,50 +106,6 @@ func (c readOnlyClient) ListPods(ctx context.Context, opts metav1.ListOptions) (
 	return c.client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, opts)
 }
 
-func (c validatorClient) ListPods(ctx context.Context, opts metav1.ListOptions) (*corev1.PodList, error) {
-	if opts.Limit == 0 || opts.Limit > podListPageSize {
-		opts.Limit = podListPageSize
-	}
-	result := &corev1.PodList{}
-	for {
-		pods, err := c.ListPodsPage(ctx, opts)
-		if err != nil {
-			return nil, err
-		}
-		result.ResourceVersion = pods.ResourceVersion
-		result.Items = append(result.Items, pods.Items...)
-		if pods.Continue == "" {
-			return result, nil
-		}
-		opts.Continue = pods.Continue
-	}
-}
-
-// ListPodsPage lists one bounded page and removes only the exact validator
-// pod when both identity values are present. A partial identity is fail-safe
-// and excludes nothing.
-func (c validatorClient) ListPodsPage(ctx context.Context, opts metav1.ListOptions) (*corev1.PodList, error) {
-	pods, err := c.readOnlyClient.ListPods(ctx, opts)
-	if err != nil {
-		return nil, err
-	}
-	if c.selfPod.Name == "" || c.selfPod.Namespace == "" {
-		return pods, nil
-	}
-	filtered := pods.DeepCopy()
-	kept := make([]corev1.Pod, 0, len(filtered.Items))
-	for _, pod := range filtered.Items {
-		if pod.Name == c.selfPod.Name && pod.Namespace == c.selfPod.Namespace {
-			continue
-		}
-		kept = append(kept, pod)
-	}
-	filtered.Items = kept
-	return filtered, nil
-}
-
-const podListPageSize int64 = 100
-
 // Validator executes checks serially, then sorts results by name. Serial
 // execution keeps API load predictable and deterministic across runs.
 type Validator struct {
@@ -185,15 +120,7 @@ func NewValidator(checks ...Check) *Validator {
 // Validate runs all checks and returns a report for mode. A check must return
 // StatusReady or StatusNotReady; unknown values are normalized to error.
 func (v *Validator) Validate(ctx context.Context, client kubernetes.Interface, discoveryClient discovery.DiscoveryInterface, mode string, includeTimestamp bool) Report {
-	return v.ValidateWithPodIdentity(ctx, client, discoveryClient, mode, includeTimestamp, PodIdentity{})
-}
-
-// ValidateWithPodIdentity runs checks while excluding exactly the current
-// validator pod from the built-in pod readiness check. The identity is
-// intentionally passed through the read-only facade so extensions see the
-// same pod view as built-in checks. An incomplete identity excludes nothing.
-func (v *Validator) ValidateWithPodIdentity(ctx context.Context, client kubernetes.Interface, discoveryClient discovery.DiscoveryInterface, mode string, includeTimestamp bool, selfPod PodIdentity) Report {
-	readOnlyClient := validatorClient{readOnlyClient: readOnlyClient{client: client}, selfPod: selfPod}
+	readOnlyClient := readOnlyClient{client: client}
 	readOnlyDiscovery := readOnlyDiscovery{client: discoveryClient}
 	results := make([]CheckResult, 0, len(v.checks))
 	for _, check := range v.checks {
@@ -329,9 +256,6 @@ type podsCheck struct{}
 func (podsCheck) Name() string { return "pods-ready" }
 
 func (podsCheck) Run(ctx context.Context, client ReadOnlyClient, _ ReadOnlyDiscovery) CheckResult {
-	if paged, ok := client.(podPageReader); ok {
-		return runPagedPodsCheck(ctx, paged)
-	}
 	pods, err := client.ListPods(ctx, metav1.ListOptions{})
 	if err != nil {
 		return CheckResult{Name: "pods-ready", Status: StatusNotReady, Message: "could not list pods"}
@@ -347,30 +271,6 @@ func (podsCheck) Run(ctx context.Context, client ReadOnlyClient, _ ReadOnlyDisco
 		}
 	}
 	return CheckResult{Name: "pods-ready", Status: StatusReady, Message: fmt.Sprintf("%d active pod(s) Ready", active)}
-}
-
-func runPagedPodsCheck(ctx context.Context, client podPageReader) CheckResult {
-	options := metav1.ListOptions{Limit: podListPageSize}
-	active := 0
-	for {
-		pods, err := client.ListPodsPage(ctx, options)
-		if err != nil {
-			return CheckResult{Name: "pods-ready", Status: StatusNotReady, Message: "could not list pods"}
-		}
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == corev1.PodSucceeded {
-				continue
-			}
-			active++
-			if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning || !podReady(pod) {
-				return CheckResult{Name: "pods-ready", Status: StatusNotReady, Message: "one or more active pods are not Ready"}
-			}
-		}
-		if pods.Continue == "" {
-			return CheckResult{Name: "pods-ready", Status: StatusReady, Message: fmt.Sprintf("%d active pod(s) Ready", active)}
-		}
-		options.Continue = pods.Continue
-	}
 }
 
 func podReady(pod corev1.Pod) bool {

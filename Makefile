@@ -2,7 +2,7 @@ include versions.env
 
 # Image URL to use all building/pushing image targets
 IMG ?= ghcr.io/telekom/k8s-breakglass:latest
-VALIDATOR_IMG ?= ghcr.io/telekom/k8s-breakglass/cluster-validator:dev
+VALIDATOR_IMG ?= ghcr.io/telekom/k8s-breakglass-cluster-validator:latest
 
 # ENVTEST_K8S_VERSION is defined as a Make variable in versions.env (included above)
 
@@ -225,7 +225,7 @@ docker-build-dev: ## Build docker image with controller.
 .PHONY: docker-build-validator
 docker-build-validator: ## Build the provider-neutral cluster-validator image for the host architecture.
 	docker build \
-		-f utils/cluster-validator/Dockerfile \
+		-f Dockerfile.validator \
 		--build-arg VERSION=$(VERSION) \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
@@ -235,7 +235,7 @@ docker-build-validator: ## Build the provider-neutral cluster-validator image fo
 docker-build-validator-multiarch: ## Build the cluster-validator image for amd64 and arm64 (no push).
 	docker buildx build \
 		--platform linux/amd64,linux/arm64 \
-		-f utils/cluster-validator/Dockerfile \
+		-f Dockerfile.validator \
 		--build-arg VERSION=$(VERSION) \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \

@@ -48,11 +48,7 @@ Built-in checks use only public Kubernetes APIs:
 * API server version and API discovery are reachable;
 * at least one node exists and every node reports `Ready=True`;
 * no namespace is terminating; and
-* every non-Succeeded pod is Running and reports `PodReady=True`. When the
-  validator runs inside Kubernetes, it excludes only its exact current pod
-  (matching both `metadata.name` and `metadata.namespace`) from this check.
-  The two Downward API identity values are optional for standalone runs; if
-  either is missing or does not match, no pod is excluded.
+* every non-Succeeded pod is Running and reports `PodReady=True`.
 
 Pod checking can be disabled with `--skip-pods` where a read-only identity is
 not allowed to list pods. This is an explicit trade-off and is recorded in
@@ -63,10 +59,6 @@ the invocation, not silently inferred by the image.
 The image first tries in-cluster configuration, then a kubeconfig. Reports are
 written to `/reports/{mode}.json` and also printed to stdout. Mount `/reports`
 as a writable volume, or pass `--report -` to disable the file.
-For safety, a report path supplied with `--report` or `VALIDATOR_REPORT_PATH`
-must resolve below `/reports`; relative paths are resolved within that volume,
-and traversal or symlink escapes are rejected. Report files are written with
-owner-only permissions.
 
 ```bash
 docker run --rm \
@@ -111,21 +103,6 @@ rules:
 Review this RBAC against the target cluster's discovery behavior. The image
 does not request, create, patch, or delete any Kubernetes object.
 
-For an in-cluster invocation, inject the validator pod identity using the
-Kubernetes Downward API:
-
-```yaml
-env:
-  - name: VALIDATOR_POD_NAME
-    valueFrom:
-      fieldRef:
-        fieldPath: metadata.name
-  - name: VALIDATOR_POD_NAMESPACE
-    valueFrom:
-      fieldRef:
-        fieldPath: metadata.namespace
-```
-
 ## Use from a DebugSession
 
 The same image can back a restricted `cluster-validation` DebugSession
@@ -147,15 +124,12 @@ read-only RBAC, exact-image, and mode requirements.
 ## Real-cluster integration contract
 
 Run `make test-validator-integration` on a Linux host with Docker, kind,
-kubectl, jq, and Go. The harness builds
-`utils/cluster-validator/Dockerfile`, creates a disposable pinned-node-image
-kind cluster, runs the image as the restricted
+kubectl, jq, and Go. The harness builds `Dockerfile.validator`, creates a
+disposable pinned-node-image kind cluster, runs the image as the restricted
 ServiceAccount, and executes every built-in check in both `one-time` and
 `post-upgrade` modes. It also runs the extension contract probe through the
-same read-only facades. It also creates an unhealthy disposable pod to prove
-the built image returns exit code `1` with a `not-ready` report. The contract
-asserts sorted deterministic reports, the documented exit codes `1` for an
-unhealthy cluster and `2` for an invalid mode, denied config-map mutation,
+same read-only facades. The contract asserts sorted deterministic reports,
+the documented exit code `2` for an invalid mode, denied config-map mutation,
 denied Secret access, no marker/token leakage into reports or logs, and
 removal of all test RBAC and namespace resources before the cluster is
 deleted.
@@ -164,9 +138,6 @@ The machine-readable intent and expected check/tool contract is kept in
 [`hack/cluster-validator-integration.contract.json`](../hack/cluster-validator-integration.contract.json);
 the executable harness is
 [`hack/cluster-validator-integration.sh`](../hack/cluster-validator-integration.sh).
-The harness proves the contract from reports, exit codes, and cluster
-behavior emitted by the built image; it does not load the JSON file as a
-pass/fail oracle.
 The CI job is intentionally self-contained so it can be moved into a
 consolidated utility-integration workflow without changing the contract.
 
@@ -186,7 +157,7 @@ wrapper when redistributing.
 
 ## Multi-architecture, signing, and SBOM
 
-`utils/cluster-validator/Dockerfile` is pinned to digest-addressed Go and distroless base
+`Dockerfile.validator` is pinned to digest-addressed Go and distroless base
 images and is designed for `linux/amd64` and `linux/arm64`:
 
 ```bash
@@ -204,7 +175,7 @@ publishes BuildKit provenance and an SPDX SBOM, and signs the resulting digest
 with Sigstore keyless signing. Verify a release before use:
 
 ```bash
-cosign verify ghcr.io/telekom/k8s-breakglass/cluster-validator:v0.1.0 \
+cosign verify ghcr.io/telekom/k8s-breakglass-cluster-validator:v0.1.0 \
   --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/.github/workflows/cluster-validator-image.yml@refs/tags/v.*' \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com
 ```

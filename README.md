@@ -31,9 +31,7 @@ This repository also publishes a provider-neutral, read-only
 reports. It uses only public Kubernetes APIs, has no T-CaaS-specific checks or
 assumptions, and supports `linux/amd64` and `linux/arm64`. See the
 [cluster-validator contract and image guide](./docs/cluster-validator.md) and
-the [post-upgrade runbook](./docs/runbooks/cluster-validator.md). The image's
-in-container operator bundle is in
-[`utils/cluster-validator`](./utils/cluster-validator/).
+the [post-upgrade runbook](./docs/runbooks/cluster-validator.md).
 
 ## 🎬 User-flow recordings
 

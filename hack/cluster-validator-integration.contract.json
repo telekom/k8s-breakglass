@@ -3,7 +3,7 @@
   "kind": "ClusterValidatorIntegrationContract",
   "intent": "real-kind-read-only-readiness",
   "image": {
-    "dockerfile": "utils/cluster-validator/Dockerfile",
+    "dockerfile": "Dockerfile.validator",
     "platform": "linux/amd64",
     "entrypoint": "/cluster-validator"
   },
@@ -11,12 +11,6 @@
     "provider": "kind",
     "disposable": true,
     "readOnlyServiceAccount": "validator-integration/cluster-validator"
-  },
-  "selfPodIdentity": {
-    "nameEnvironment": "VALIDATOR_POD_NAME",
-    "namespaceEnvironment": "VALIDATOR_POD_NAMESPACE",
-    "source": "Downward API metadata.name and metadata.namespace",
-    "incompleteIdentity": "exclude nothing"
   },
   "builtInChecks": [
     "api-discovery",
@@ -43,12 +37,6 @@
       "mode": "post-upgrade",
       "expectedExitCode": 0,
       "deterministic": true
-    },
-    {
-      "name": "not-ready",
-      "mode": "one-time",
-      "expectedExitCode": 1,
-      "deterministic": false
     },
     {
       "name": "invalid-mode",

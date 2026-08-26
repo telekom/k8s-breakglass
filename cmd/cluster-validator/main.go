@@ -8,7 +8,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
@@ -50,7 +49,7 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	opts, err := parseOptions(args)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
+		fmt.Fprintln(stderr, "cluster-validator:", err)
 		return 2
 	}
 
@@ -73,28 +72,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return writeResult(report, opts.reportPath, stdout, stderr, 2)
 	}
 
-	report := clustervalidator.NewValidator(clustervalidator.BuiltinChecks(opts.skipPods)...).ValidateWithPodIdentity(
-		ctx,
-		client,
-		discoveryClient,
-		opts.mode,
-		opts.includeTimestamp,
-		clustervalidator.PodIdentity{
-			Name:      os.Getenv("VALIDATOR_POD_NAME"),
-			Namespace: os.Getenv("VALIDATOR_POD_NAMESPACE"),
-		},
-	)
+	report := clustervalidator.NewValidator(clustervalidator.BuiltinChecks(opts.skipPods)...).Validate(ctx, client, discoveryClient, opts.mode, opts.includeTimestamp)
 	if err := writeReport(report, opts.reportPath); err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
+		fmt.Fprintln(stderr, "cluster-validator:", err)
 		return 2
 	}
 	data, err := clustervalidator.MarshalReport(report)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
+		fmt.Fprintln(stderr, "cluster-validator:", err)
 		return 2
 	}
 	if _, err := stdout.Write(data); err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator: write report to stdout:", err)
+		fmt.Fprintln(stderr, "cluster-validator: write report to stdout:", err)
 		return 2
 	}
 	if report.Status != clustervalidator.StatusReady {
@@ -163,7 +152,6 @@ func parseOptions(args []string) (options, error) {
 func clientConfig(opts options) (*rest.Config, error) {
 	if opts.kubeconfig == "" {
 		if config, err := rest.InClusterConfig(); err == nil {
-			config.UserAgent = buildUserAgent()
 			return config, nil
 		}
 	}
@@ -172,123 +160,34 @@ func clientConfig(opts options) (*rest.Config, error) {
 		loadingRules.ExplicitPath = opts.kubeconfig
 	}
 	overrides := &clientcmd.ConfigOverrides{CurrentContext: opts.contextName}
-	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
-	if err != nil {
-		return nil, err
-	}
-	config.UserAgent = buildUserAgent()
-	return config, nil
-}
-
-func buildUserAgent() string {
-	return fmt.Sprintf("cluster-validator/%s (%s; %s)", version, gitCommit, buildDate)
+	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
 }
 
 func writeReport(report clustervalidator.Report, path string) error {
 	if path == "-" || path == "" {
 		return nil
 	}
-	return writeReportAtRoot(report, path, defaultReportDirectory)
-}
-
-func writeReportAtRoot(report clustervalidator.Report, path, root string) error {
-	rootPath, relativePath, err := safeReportPath(path, root)
-	if err != nil {
-		return err
-	}
 	data, err := clustervalidator.MarshalReport(report)
 	if err != nil {
 		return err
 	}
-	rootHandle, err := os.OpenRoot(rootPath)
-	if err != nil {
-		return fmt.Errorf("open report root: %w", err)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create report directory: %w", err)
 	}
-	defer func() { _ = rootHandle.Close() }()
-	directory := filepath.Dir(relativePath)
-	if directory != "." {
-		if err := rootHandle.MkdirAll(directory, 0o700); err != nil {
-			return fmt.Errorf("create report directory: %w", err)
-		}
-	}
-	if info, statErr := rootHandle.Lstat(relativePath); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("report path must not be a symlink")
-	}
-	temporaryName, temporary, err := createTemporaryReport(rootHandle, directory)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = rootHandle.Remove(temporaryName) // best effort cleanup after a failed write
-	}()
-	if _, err := temporary.Write(data); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("write report: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close temporary report: %w", err)
-	}
-	// os.Root performs every path traversal relative to one open directory
-	// descriptor and refuses symlink escapes, including concurrent replacements.
-	if err := rootHandle.Rename(temporaryName, relativePath); err != nil {
-		return fmt.Errorf("install report %q: %w", relativePath, err)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write report %q: %w", path, err)
 	}
 	return nil
 }
 
-func createTemporaryReport(root *os.Root, directory string) (string, *os.File, error) {
-	for range 10 {
-		var suffix [16]byte
-		if _, err := rand.Read(suffix[:]); err != nil {
-			return "", nil, fmt.Errorf("generate temporary report name: %w", err)
-		}
-		name := filepath.Join(directory, fmt.Sprintf(".cluster-validator-report-%x", suffix))
-		file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if err == nil {
-			return name, file, nil
-		}
-		if !errors.Is(err, os.ErrExist) {
-			return "", nil, fmt.Errorf("create temporary report: %w", err)
-		}
-	}
-	return "", nil, fmt.Errorf("create temporary report: exhausted unique names")
-}
-
-// safeReportPath converts report output to a path local to root. os.Root then
-// provides descriptor-relative traversal and rejects symlink escapes without a
-// time-of-check/time-of-use gap.
-func safeReportPath(path, root string) (string, string, error) {
-	root, err := filepath.Abs(filepath.Clean(root))
-	if err != nil {
-		return "", "", fmt.Errorf("resolve report root: %w", err)
-	}
-	if info, statErr := os.Lstat(root); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", "", fmt.Errorf("report root must not be a symlink")
-	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return "", "", fmt.Errorf("create report directory: %w", err)
-	}
-	relativePath := filepath.Clean(path)
-	if filepath.IsAbs(relativePath) {
-		relativePath, err = filepath.Rel(root, relativePath)
-		if err != nil {
-			return "", "", fmt.Errorf("resolve report path: %w", err)
-		}
-	}
-	if !filepath.IsLocal(relativePath) || relativePath == "." {
-		return "", "", fmt.Errorf("report path must remain below %s", root)
-	}
-	return root, relativePath, nil
-}
-
 func writeResult(report clustervalidator.Report, path string, stdout, stderr io.Writer, exitCode int) int {
 	if err := writeReport(report, path); err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
+		fmt.Fprintln(stderr, "cluster-validator:", err)
 		return 2
 	}
 	data, err := clustervalidator.MarshalReport(report)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
+		fmt.Fprintln(stderr, "cluster-validator:", err)
 		return 2
 	}
 	if _, err := stdout.Write(data); err != nil {
