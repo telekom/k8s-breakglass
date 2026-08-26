@@ -5,6 +5,12 @@ SPDX-License-Identifier: CC-BY-4.0
 
 # Network-debug runbook
 
+The runtime is inherited from the immutable netshoot v0.16 multi-architecture
+manifest. Its overlapping network tools are retained as shipped by netshoot;
+this image adds only the bounded `net-debug`/`net-report` contract, pinned
+`kubestr` and `pwru`, and the documentation mounted under
+`/usr/share/network-debug`.
+
 Use `net-report` for a deterministic overview, then invoke only the helper
 needed for the incident. `net-debug --help` and `net-debug tools` list the
 supported commands; `curl`, `nc`, `dig`, `ip`, `ss`, `tcpdump`, `mtr`, and the

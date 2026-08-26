@@ -1,9 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-# Alpine publishes this digest as a multi-platform image. Keep the digest and
-# the release tag together: changing either requires a deliberate image review.
-FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS runtime
+# netshoot v0.16 supplies the overlapping network troubleshooting tools. Keep
+# the release tag and immutable multi-architecture manifest digest together.
+# The upstream package set is inherited as a unit; only the kubestr/pwru
+# binaries and the contract/docs below are added here.
+FROM ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70 AS runtime
 
 ARG VERSION=0.1.0
 ARG VCS_REF=unknown
@@ -65,38 +67,12 @@ LABEL org.opencontainers.image.title="Network Debug Utility" \
 	org.opencontainers.image.version="${VERSION}" \
 	org.opencontainers.image.revision="${VCS_REF}" \
 	org.opencontainers.image.created="${BUILD_DATE}" \
-	org.opencontainers.image.base.name="docker.io/library/alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b" \
-	org.opencontainers.image.base.digest="sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b" \
+	org.opencontainers.image.base.name="ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70" \
+	org.opencontainers.image.base.digest="sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70" \
 	org.opencontainers.image.vendor="Deutsche Telekom AG" \
 	io.telekom.breakglass.intent="network-diagnostics" \
 	io.telekom.breakglass.image.role="debug-network" \
 	io.telekom.breakglass.security.capabilities="NET_RAW,NET_ADMIN,BPF,PERFMON"
-
-# Keep this list intentionally focused. APK resolves dependencies for the
-# digest-pinned Alpine release; versions are recorded in versions.env and
-# refreshed together with the base digest by the image maintainer.
-RUN apk add --no-cache \
-	bash=5.3.9-r1 \
-	bind-tools=9.20.26-r0 \
-	busybox-extras=1.37.0-r31 \
-	ca-certificates=20260611-r0 \
-	coreutils=9.11-r0 \
-	curl=8.21.0-r0 \
-	ethtool=7.0-r0 \
-	iproute2=7.0.0-r0 \
-	iputils=20250605-r2 \
-	iputils-ping=20250605-r2 \
-	iputils-tracepath=20250605-r2 \
-	jq=1.8.1-r0 \
-	mtr=0.96-r2 \
-	ncurses-terminfo=6.6_p20260516-r0 \
-	openssl=3.5.7-r0 \
-	netcat-openbsd=1.234.1-r0 \
-	procps=4.0.6-r0 \
-	tcpdump=4.99.6-r1 \
-	traceroute=2.1.6-r0 \
-	&& update-ca-certificates \
-	&& rm -rf /var/cache/apk/*
 
 COPY --from=tools /go/bin/kubestr /usr/local/bin/kubestr
 COPY --from=tools /go/bin/pwru /usr/local/bin/pwru

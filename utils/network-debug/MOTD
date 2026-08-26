@@ -3,6 +3,8 @@ SPDX-License-Identifier: Apache-2.0
 
 Network Debug Utility
 
+Runtime toolset: netshoot v0.16 (immutable manifest)
+
 Start with:  net-report
 Help:        net-debug --help
 Tool list:   net-debug tools

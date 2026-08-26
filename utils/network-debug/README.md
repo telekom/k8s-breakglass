@@ -5,11 +5,21 @@ SPDX-License-Identifier: Apache-2.0
 
 # Network Debug Utility Image
 
-`network-debug` is a generic, standalone toolbox for investigating connectivity
-from a Kubernetes pod or node network namespace. It is intentionally free of
-cluster names, cloud credentials, private registries, and organization-specific
-assumptions. The image is published as a multi-architecture artifact for
+`network-debug` is a generic toolbox for investigating connectivity from a
+Kubernetes pod or node network namespace. It inherits the runtime toolset from
+the immutable multi-architecture `ghcr.io/nicolaka/netshoot:v0.16` manifest and
+adds a bounded command/report contract, `kubestr`, `pwru`, and the local
+runbook/docs. It is free of cluster names, cloud credentials, private
+registries, and organization-specific assumptions. The image is published for
 `linux/amd64` and `linux/arm64`.
+
+The pinned netshoot release already provides every overlapping command used by
+this contract: `bash`, `bind-tools` (`dig`, `host`, `nslookup`), `busybox-extras`,
+`curl`, `ethtool`, `iproute2` (`ip`, `ss`), `iputils` (`ping`, `tracepath`),
+`jq`, `mtr`, `netcat-openbsd`, `tcpdump`, and the `util-linux` helpers used by
+the proofs. We deliberately do not reinstall or independently pin those
+packages. The upstream netshoot package set is part of the digest-pinned base;
+the additions are listed in [`IMAGE-METADATA.yaml`](./IMAGE-METADATA.yaml).
 
 ## Included capabilities
 
@@ -49,9 +59,11 @@ Kubernetes distributions and admission policies.
 
 ## Reproducibility and supply chain
 
-The runtime and Go build images are pinned by immutable OCI manifest digest.
-kubestr and pwru are built from exact upstream release tags. `versions.env`
-is the human-readable lock record and the image carries OCI version, revision,
+The netshoot runtime and Go build image are pinned by immutable OCI manifest
+digests. The netshoot v0.16 release is the source of the inherited runtime
+packages; `kubestr` is built from a verified upstream commit and `pwru` is
+downloaded for each architecture with a checksum. `versions.env` is the
+human-readable lock record and the image carries OCI version, revision,
 creation, source, license, and base-digest labels. The multi-architecture Make
 target enables BuildKit SBOM and SLSA provenance attestations; signing is
 performed by the publishing pipeline, not by a Dockerfile secret.
