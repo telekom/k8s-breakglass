@@ -10,6 +10,8 @@ test_dir=$(mktemp -d "${TMPDIR:-/tmp}/dump-reader-test.XXXXXX")
 outside_dir=$(mktemp -d "${TMPDIR:-/tmp}/dump-reader-outside.XXXXXX")
 trap 'rm -rf "$test_dir" "$outside_dir"' EXIT HUP INT TERM
 mkdir "$test_dir/output"
+mkdir "$test_dir/output/sub" "$test_dir/output/nested"
+ln -s "$test_dir/output" "$test_dir/output/nested/path-link"
 printf '%s\n' 'existing artifact' >"$test_dir/source.dump"
 printf '%s\n' 'outside artifact' >"$outside_dir/outside.dump"
 
@@ -59,6 +61,11 @@ rm "$test_dir/output/dangling-check"
 ln -s "$test_dir/missing.dump" "$test_dir/output/dangling-check"
 if DUMP_INPUT_DIR="$test_dir" DUMP_OUTPUT_DIR="$test_dir/output" $reader copy "$test_dir/source.dump" dangling-check >/dev/null 2>&1; then
     echo "dangling output symlink unexpectedly accepted" >&2
+    exit 1
+fi
+if DUMP_INPUT_DIR="$test_dir" DUMP_OUTPUT_DIR="$test_dir/output/nested/path-link/sub" \
+    $reader copy "$test_dir/source.dump" nested-link.dump >/dev/null 2>&1; then
+    echo "nested output symlink unexpectedly accepted" >&2
     exit 1
 fi
 ln -s "$test_dir/output" "$test_dir/output-link"

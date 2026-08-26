@@ -106,6 +106,31 @@ bounded_uint "$SIZE_MB" 1 1024 "--size-mb"
 bounded_uint "$RUNTIME_SECONDS" 1 60 "--runtime-seconds"
 bounded_uint "$IOPING_COUNT" 1 20 "--ioping-count"
 
+reject_symlink_components() {
+    path=$1
+    current=/
+    remainder=${path#/}
+    while [ -n "$remainder" ]; do
+        component=${remainder%%/*}
+        if [ "$remainder" = "$component" ]; then
+            remainder=
+        else
+            remainder=${remainder#*/}
+        fi
+        [ -n "$component" ] || continue
+        current=$current$component
+        if [ -L "$current" ]; then
+            # macOS exposes temporary directories through /var and /tmp
+            # symlinks; those host aliases are not mount escapes.
+            case "$current" in
+                /var|/tmp) ;;
+                *) echo "path may not contain symbolic links: $path" >&2; exit 1 ;;
+            esac
+        fi
+        current=$current/
+    done
+}
+
 test_path_check=${TEST_PATH%/}
 [ -n "$test_path_check" ] || test_path_check=/
 [ ! -L "$test_path_check" ] || { echo "test path may not be a symbolic link: $TEST_PATH" >&2; exit 1; }
@@ -132,6 +157,7 @@ trap cleanup EXIT HUP INT TERM
 
 if [ "$DRY_RUN" = true ]; then
     [ -d "$TEST_PATH" ] || { echo "test path does not exist: $TEST_PATH" >&2; exit 1; }
+    reject_symlink_components "$TEST_PATH"
     printf '%s\n' \
         "schema_version=storage-debug/v1" \
         "path=$TEST_PATH" \
@@ -142,6 +168,7 @@ if [ "$DRY_RUN" = true ]; then
 fi
 
 [ -d "$TEST_PATH" ] || { echo "test path does not exist: $TEST_PATH" >&2; exit 1; }
+reject_symlink_components "$TEST_PATH"
 [ -w "$TEST_PATH" ] || { echo "test path is not writable: $TEST_PATH" >&2; exit 1; }
 command -v fio >/dev/null 2>&1 || { echo "fio is not installed" >&2; exit 1; }
 command -v ioping >/dev/null 2>&1 || { echo "ioping is not installed" >&2; exit 1; }
@@ -192,11 +219,13 @@ if [ -n "$OUTPUT" ]; then
     output_dir=${OUTPUT%/*}
     [ "$output_dir" != "$OUTPUT" ] || output_dir=/
     [ -d "$output_dir" ] || { echo "report directory does not exist: $output_dir" >&2; exit 1; }
+    reject_symlink_components "$output_dir"
     case "$REPORT_DIR" in
         /*) ;;
         *) echo "STORAGE_REPORT_DIR must be an absolute path" >&2; exit 2 ;;
     esac
     [ -d "$REPORT_DIR" ] || { echo "report directory does not exist: $REPORT_DIR" >&2; exit 1; }
+    reject_symlink_components "$REPORT_DIR"
     report_dir_check=${REPORT_DIR%/}
     [ -n "$report_dir_check" ] || report_dir_check=/
     [ ! -L "$report_dir_check" ] || { echo "STORAGE_REPORT_DIR may not be a symbolic link: $REPORT_DIR" >&2; exit 2; }

@@ -11,6 +11,8 @@ outside_dir=$(mktemp -d "${TMPDIR:-/tmp}/storage-debug-outside.XXXXXX")
 fake_bin="$test_dir/bin"
 trap 'rm -rf "$test_dir" "$outside_dir"' EXIT HUP INT TERM
 mkdir "$fake_bin"
+mkdir "$test_dir/target" "$test_dir/nested"
+ln -s "$test_dir" "$test_dir/nested/path-link"
 printf '%s\n' 'do not remove' >"$test_dir/.storage-debug-fio"
 
 printf '%s\n' '#!/bin/sh' 'exit 0' >"$fake_bin/fio"
@@ -59,6 +61,10 @@ if PATH="$fake_bin:$PATH" $report --path "$test_dir/path-link" --dry-run >/dev/n
 fi
 if PATH="$fake_bin:$PATH" $report --path "$test_dir/path-link/" --dry-run >/dev/null 2>&1; then
     echo "trailing symbolic-link test path unexpectedly accepted" >&2
+    exit 1
+fi
+if PATH="$fake_bin:$PATH" $report --path "$test_dir/nested/path-link/target" --dry-run >/dev/null 2>&1; then
+    echo "nested symbolic-link test path unexpectedly accepted" >&2
     exit 1
 fi
 if PATH="$fake_bin:$PATH" $report --path "$test_dir/../etc" --dry-run >/dev/null 2>&1; then
