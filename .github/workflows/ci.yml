@@ -403,7 +403,7 @@ jobs:
       - name: Run helper tests
         run: make -C "${{ matrix.image }}" test
       - name: ShellCheck helpers
-        run: shellcheck "${{ matrix.image }}"/scripts/* "${{ matrix.image }}"/tests/*
+        run: shellcheck "${{ matrix.image }}"/scripts/* "${{ matrix.image }}"/tests/*.sh
       - name: Hadolint Dockerfile
         uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
         with:
@@ -413,7 +413,6 @@ jobs:
           IMAGE_METADATA: ${{ matrix.image }}/IMAGE-METADATA.yaml
         run: |
           ruby -e 'require "yaml"; YAML.load_file(ENV.fetch("IMAGE_METADATA"), aliases: true)'
-
   build-image:
     name: Build Image
     runs-on: ubuntu-latest
