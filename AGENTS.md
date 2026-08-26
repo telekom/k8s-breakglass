@@ -152,6 +152,25 @@ separate workflow for every image. BuildKit SBOM/provenance requests and
 Cosign signing/SBOM attestation are release concerns and must be wired to the
 same digest rather than a mutable tag.
 
+## Node-Maintenance Utility
+
+The standalone `utils/node-maintenance/` image is intentionally separate from
+the Breakglass controller image. Keep its runtime limited to the fixed
+`node-recovery` and `network-repair` dispatchers; do not add an
+unrestricted shell, package manager, compiler, packet capture, scanner, or
+general-purpose network toolbox. The Alpine base manifest and direct APK
+dependencies are pinned in `Dockerfile` and `deps.lock`.
+
+Every helper must require an explicit target node, interface, evidence
+directory, and command-specific confirmation token. Repair actions must be
+allowlisted and record protected before/after evidence, including failure
+statuses. Update the utility README and both runbooks for behavior changes.
+
+Use `make -C utils/node-maintenance test` and `shellcheck` for helper changes;
+`make -C utils/node-maintenance build` validates the pinned single-platform
+image and `build-multiarch` requests BuildKit provenance and SBOM metadata.
+Signing and SBOM attestation target an immutable registry digest only.
+
 ## Reusable Prompts (19 total)
 
 Prompts are in [`.github/prompts/`](.github/prompts/) and can be invoked by name:
