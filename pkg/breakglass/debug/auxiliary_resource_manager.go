@@ -34,6 +34,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
@@ -144,9 +145,14 @@ func (m *AuxiliaryResourceManager) deployAuxiliaryResources(
 
 		status, err := m.deployResource(ctx, targetClient, targetNamespace, auxRes, renderCtx, session)
 		statuses = append(statuses, status)
+		// Keep the status tracker in the same durable write as the inventory. This
+		// is required for deleteAfter=false: after a crash, cleanup must know that
+		// the resource is intentionally retained rather than treating an old
+		// auxiliary inventory entry as controller-owned.
+		session.Status.AuxiliaryResourceStatuses = append(session.Status.AuxiliaryResourceStatuses, status)
 		// Add every successfully applied document before evaluating failure policy.
 		// This preserves partial multi-document deployments for crash recovery.
-		AddAuxiliaryResourceToDeployedResources(session, status)
+		AddAuxiliaryResourceToDeployedResourcesFromClient(ctx, targetClient, session, status)
 		if m.persistInventory != nil && status.Created {
 			if persistErr := m.persistInventory(ctx, session); persistErr != nil {
 				return statuses, fmt.Errorf("persist auxiliary resource inventory for %s: %w", auxRes.Name, persistErr)
@@ -739,9 +745,10 @@ func (m *AuxiliaryResourceManager) deleteResource(
 	obj.SetKind(status.Kind)
 	obj.SetName(status.ResourceName)
 	obj.SetNamespace(status.Namespace)
+	deleteOptions := auxiliaryDeleteOptions(session, status.APIVersion, status.Kind, status.ResourceName, status.Namespace)
 
 	// Delete the resource
-	if err := targetClient.Delete(ctx, obj); err != nil {
+	if err := targetClient.Delete(ctx, obj, deleteOptions...); err != nil {
 		if apierrors.IsNotFound(err) {
 			// Already deleted, that's fine
 			m.log.Debugw("Auxiliary resource already deleted",
@@ -916,7 +923,6 @@ func AddAuxiliaryResourceToDeployedResources(
 		APIVersion: status.APIVersion,
 		Name:       status.ResourceName,
 		Namespace:  status.Namespace,
-		UID:        "", // UID populated later when we fetch the created resource
 		Source:     fmt.Sprintf("auxiliary:%s", status.Name),
 	})
 
@@ -927,10 +933,72 @@ func AddAuxiliaryResourceToDeployedResources(
 			APIVersion: addlRes.APIVersion,
 			Name:       addlRes.ResourceName,
 			Namespace:  addlRes.Namespace,
-			UID:        "",
 			Source:     fmt.Sprintf("auxiliary:%s", status.Name),
 		})
 	}
+}
+
+// AddAuxiliaryResourceToDeployedResourcesFromClient records applied auxiliary
+// resources and enriches each identity with the UID currently returned by the
+// spoke API. UID preconditions prevent cleanup from deleting a replacement that
+// reused a name after a controller restart.
+func AddAuxiliaryResourceToDeployedResourcesFromClient(
+	ctx context.Context,
+	targetClient client.Client,
+	session *breakglassv1alpha1.DebugSession,
+	status breakglassv1alpha1.AuxiliaryResourceStatus,
+) {
+	if !status.Created {
+		return
+	}
+	source := fmt.Sprintf("auxiliary:%s", status.Name)
+	addRef := func(apiVersion, kind, name, namespace string) {
+		uid := ""
+		if targetClient != nil {
+			obj := &unstructured.Unstructured{}
+			obj.SetAPIVersion(apiVersion)
+			obj.SetKind(kind)
+			if err := targetClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, obj); err == nil {
+				uid = string(obj.GetUID())
+			}
+		}
+		addDeployedResourceRef(session, breakglassv1alpha1.DeployedResourceRef{
+			APIVersion: apiVersion,
+			Kind:       kind,
+			Name:       name,
+			Namespace:  namespace,
+			UID:        uid,
+			Source:     source,
+		})
+	}
+	addRef(status.APIVersion, status.Kind, status.ResourceName, status.Namespace)
+	for _, additional := range status.AdditionalResources {
+		addRef(additional.APIVersion, additional.Kind, additional.ResourceName, additional.Namespace)
+	}
+}
+
+func addDeployedResourceRef(session *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) {
+	for i := range session.Status.DeployedResources {
+		existing := &session.Status.DeployedResources[i]
+		if existing.APIVersion == ref.APIVersion && existing.Kind == ref.Kind &&
+			existing.Name == ref.Name && existing.Namespace == ref.Namespace {
+			if existing.UID == "" {
+				existing.UID = ref.UID
+			}
+			return
+		}
+	}
+	session.Status.DeployedResources = append(session.Status.DeployedResources, ref)
+}
+
+func auxiliaryDeleteOptions(session *breakglassv1alpha1.DebugSession, apiVersion, kind, name, namespace string) []client.DeleteOption {
+	for _, ref := range session.Status.DeployedResources {
+		if ref.APIVersion == apiVersion && ref.Kind == kind && ref.Name == name && ref.Namespace == namespace && ref.UID != "" {
+			uid := types.UID(ref.UID)
+			return []client.DeleteOption{client.Preconditions{UID: &uid}}
+		}
+	}
+	return nil
 }
 
 // CheckAuxiliaryResourcesReadiness checks the readiness status of all auxiliary resources

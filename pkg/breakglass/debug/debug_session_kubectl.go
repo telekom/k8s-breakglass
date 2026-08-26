@@ -28,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -198,11 +199,15 @@ func addAllowedPodIfMissing(status *breakglassv1alpha1.DebugSessionStatus, ref b
 }
 
 func addDeployedResourceIfMissing(status *breakglassv1alpha1.DebugSessionStatus, ref breakglassv1alpha1.DeployedResourceRef) {
-	for _, existing := range status.DeployedResources {
+	for i := range status.DeployedResources {
+		existing := &status.DeployedResources[i]
 		if existing.APIVersion == ref.APIVersion &&
 			existing.Kind == ref.Kind &&
 			existing.Namespace == ref.Namespace &&
 			existing.Name == ref.Name {
+			if existing.UID == "" {
+				existing.UID = ref.UID
+			}
 			return
 		}
 	}
@@ -549,6 +554,14 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		}
 
 		addAllowedPodIfMissing(status, allowedPod)
+		addDeployedResourceIfMissing(status, breakglassv1alpha1.DeployedResourceRef{
+			APIVersion: "v1",
+			Kind:       "Pod",
+			Name:       copyName,
+			Namespace:  targetNs,
+			Source:     "kubectl-debug:pod-copy",
+			UID:        string(copyPod.GetUID()),
+		})
 	}); err != nil {
 		// The pod exists on the spoke but is absent from the status lists that
 		// cleanup iterates, so it would never be reclaimed. Delete it so
@@ -707,6 +720,7 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 		Kind:       "Pod",
 		Name:       podName,
 		Namespace:  namespace,
+		UID:        string(debugPod.GetUID()),
 	}
 
 	if err := h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
@@ -753,7 +767,7 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 				Namespace: cp.CopyNamespace,
 			},
 		}
-		if err := targetClient.Delete(ctx, pod); err != nil && !apierrors.IsNotFound(err) {
+		if err := targetClient.Delete(ctx, pod, kubectlCopiedPodDeleteOptions(ds, cp)...); err != nil && !apierrors.IsNotFound(err) {
 			remainingCopiedPods = append(remainingCopiedPods, cp)
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("delete copied pod %s/%s: %w", cp.CopyNamespace, cp.CopyName, err))
 			continue
@@ -776,6 +790,16 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 	return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.KubectlDebugStatus = nil
 	})
+}
+
+func kubectlCopiedPodDeleteOptions(ds *breakglassv1alpha1.DebugSession, cp breakglassv1alpha1.CopiedPodRef) []ctrlclient.DeleteOption {
+	for _, ref := range ds.Status.DeployedResources {
+		if ref.APIVersion == "v1" && ref.Kind == "Pod" && ref.Namespace == cp.CopyNamespace && ref.Name == cp.CopyName && ref.UID != "" {
+			uid := types.UID(ref.UID)
+			return []ctrlclient.DeleteOption{ctrlclient.Preconditions{UID: &uid}}
+		}
+	}
+	return nil
 }
 
 // Helper functions

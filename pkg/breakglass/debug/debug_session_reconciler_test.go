@@ -4867,7 +4867,7 @@ func TestDebugSessionController_FailSession(t *testing.T) {
 func TestDebugSessionController_CleanupResources(t *testing.T) {
 	scheme := testScheme()
 
-	t.Run("cleanup_with_nil_ccProvider_returns_nil", func(t *testing.T) {
+	t.Run("cleanup_with_nil_ccProvider_retains_inventory", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-session", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
 			{Kind: "DaemonSet", Name: "test-ds", Namespace: "breakglass-debug", Source: "debug-pod"},
@@ -4886,8 +4886,8 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		assert.NoError(t, err, "cleanupResources with nil ccProvider should return nil")
-		// Resources remain in status since we couldn't actually clean them up
+		assert.Error(t, err, "unreachable provider must report cleanup failure")
+		// Resources remain in status since we couldn't actually clean them up.
 		assert.NotNil(t, session.Status.DeployedResources)
 	})
 
@@ -4931,7 +4931,8 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		assert.NoError(t, err, "Should return nil with nil ccProvider even with auxiliary resources")
+		assert.Error(t, err, "unreachable provider must report cleanup failure")
+		assert.NotEmpty(t, session.Status.AuxiliaryResourceStatuses)
 	})
 
 	t.Run("cleanup_with_nil_ccProvider_and_pod_template_resources", func(t *testing.T) {
@@ -4955,7 +4956,8 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		assert.NoError(t, err, "Should return nil with nil ccProvider even with pod template resources")
+		assert.Error(t, err, "unreachable provider must report cleanup failure")
+		assert.NotEmpty(t, session.Status.PodTemplateResourceStatuses)
 	})
 
 	t.Run("empty_kubectl_cleanup_skips_target_cluster_client", func(t *testing.T) {
@@ -4988,7 +4990,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		assert.Nil(t, current.Status.KubectlDebugStatus)
 	})
 
-	t.Run("missing_cluster_config_clears_kubectl_debug_status", func(t *testing.T) {
+	t.Run("missing_cluster_config_retains_kubectl_debug_status", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-missing-cluster-kubectl", "test-template", "missing-cluster", "user@example.com")
 		session.Generation = 3
 		session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{
@@ -5027,20 +5029,21 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		require.NoError(t, err)
+		require.Error(t, err)
 
 		var updated breakglassv1alpha1.DebugSession
 		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
 		require.NoError(t, err)
-		assert.Empty(t, updated.Status.DeployedResources)
-		assert.Empty(t, updated.Status.AllowedPods)
-		assert.Nil(t, updated.Status.KubectlDebugStatus)
-		assert.Empty(t, updated.Status.AuxiliaryResourceStatuses)
-		assert.Empty(t, updated.Status.PodTemplateResourceStatuses)
+		assert.NotEmpty(t, updated.Status.DeployedResources)
+		assert.NotEmpty(t, updated.Status.AllowedPods)
+		assert.NotNil(t, updated.Status.KubectlDebugStatus)
+		assert.NotEmpty(t, updated.Status.AuxiliaryResourceStatuses)
+		assert.NotEmpty(t, updated.Status.PodTemplateResourceStatuses)
+		assert.Contains(t, updated.Status.Message, "clusterconfig")
 		assert.Equal(t, session.Generation, updated.Status.ObservedGeneration)
 	})
 
-	t.Run("missing_rest_config_clears_deployed_tracking", func(t *testing.T) {
+	t.Run("missing_rest_config_retains_deployed_tracking", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-missing-cluster-rest", "test-template", "missing-cluster", "user@example.com")
 		session.Generation = 5
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
@@ -5069,16 +5072,16 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		require.NoError(t, err)
+		require.Error(t, err)
 
 		var updated breakglassv1alpha1.DebugSession
 		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
 		require.NoError(t, err)
-		assert.Empty(t, updated.Status.DeployedResources)
-		assert.Empty(t, updated.Status.AllowedPods)
-		assert.Nil(t, updated.Status.KubectlDebugStatus)
-		assert.Empty(t, updated.Status.AuxiliaryResourceStatuses)
-		assert.Empty(t, updated.Status.PodTemplateResourceStatuses)
+		assert.NotEmpty(t, updated.Status.DeployedResources)
+		assert.NotEmpty(t, updated.Status.AllowedPods)
+		assert.NotNil(t, updated.Status.AuxiliaryResourceStatuses)
+		assert.NotEmpty(t, updated.Status.PodTemplateResourceStatuses)
+		assert.Contains(t, updated.Status.Message, "REST config")
 		assert.Equal(t, session.Generation, updated.Status.ObservedGeneration)
 	})
 }
@@ -5235,8 +5238,8 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 		assert.Equal(t, "failed-delete-pod", session.Status.AllowedPods[0].Name)
 	})
 
-	t.Run("cleans up supported Job resource", func(t *testing.T) {
-		session := newTestDebugSession("cleanup-job-kind", "test-template", "test-cluster", "user@example.com")
+	t.Run("cleans arbitrary inventory resource kinds generically", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-unsupported-kind", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
 			{APIVersion: "batch/v1", Kind: "Job", Name: "job-resource", Namespace: "default", Source: "workload"},
 		}
@@ -5263,10 +5266,8 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
 		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, false, false)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), `unsupported deployed resource kind "ConfigMap"`)
-		require.Len(t, session.Status.DeployedResources, 1)
-		assert.Equal(t, "unknown-resource", session.Status.DeployedResources[0].Name)
+		require.NoError(t, err)
+		assert.Empty(t, session.Status.DeployedResources)
 	})
 }
 

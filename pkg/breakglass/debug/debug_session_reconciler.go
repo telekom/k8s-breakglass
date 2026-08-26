@@ -445,6 +445,9 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 // but reconciliation keeps retrying the delete until the status lists are empty.
 func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	if !hasTrackedSpokeResources(ds) {
+		if err := c.clearCleanupFailure(ctx, ds); err != nil {
+			return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, err
+		}
 		releaseSessionMetricSeries(ds.Name)
 		return ctrl.Result{}, nil // Nothing left on the spoke: genuinely terminal.
 	}

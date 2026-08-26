@@ -348,25 +348,13 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		if hasTrackedSpokeResources(ds) {
 			return c.recordCleanupFailure(ctx, ds, fmt.Errorf("target cluster provider is unavailable"))
 		}
-		return nil
+		return c.clearCleanupFailure(ctx, ds)
 	}
 
 	// Clean up kubectl-debug resources (if any)
 	kubectlHandler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
 	var cleanupErrors []error
 	if err := kubectlHandler.CleanupKubectlDebugResources(ctx, ds); err != nil {
-		// Check if the error is due to missing ClusterConfig - if so, treat as cleanup complete
-		if errors.Is(err, cluster.ErrClusterConfigNotFound) {
-			log.Warnw("ClusterConfig no longer exists, treating cleanup as complete (orphaned session)",
-				"cluster", ds.Spec.Cluster)
-			// Clear deployed resources since we can't clean them up anyway
-			ds.Status.DeployedResources = nil
-			ds.Status.AllowedPods = nil
-			ds.Status.KubectlDebugStatus = nil
-			ds.Status.AuxiliaryResourceStatuses = nil
-			ds.Status.PodTemplateResourceStatuses = nil
-			return c.patchDebugSessionCleanupStatus(ctx, ds)
-		}
 		log.Errorw("Failed to cleanup kubectl-debug resources", "error", err)
 		cleanupErrors = append(cleanupErrors, err)
 	}
@@ -388,18 +376,6 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	// Get spoke cluster client for cleanup
 	restCfg, err := c.ccProvider.GetRESTConfig(ctx, ds.Spec.Cluster)
 	if err != nil {
-		// Check if the error is due to missing ClusterConfig - if so, treat as cleanup complete
-		if errors.Is(err, cluster.ErrClusterConfigNotFound) {
-			log.Warnw("ClusterConfig no longer exists, treating cleanup as complete (orphaned session)",
-				"cluster", ds.Spec.Cluster)
-			// Clear deployed resources since we can't clean them up anyway
-			ds.Status.DeployedResources = nil
-			ds.Status.AllowedPods = nil
-			ds.Status.KubectlDebugStatus = nil
-			ds.Status.AuxiliaryResourceStatuses = nil
-			ds.Status.PodTemplateResourceStatuses = nil
-			return c.patchDebugSessionCleanupStatus(ctx, ds)
-		}
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to get REST config: %w", err))
 		return c.recordCleanupFailure(ctx, ds, errors.Join(cleanupErrors...))
 	}
@@ -587,6 +563,10 @@ func (c *DebugSessionController) cleanupDeployedResources(
 				continue
 			}
 			if auxiliaryResourceDeleted(ds, ref) || !auxiliaryResourceRequiresCleanup(ds, ref) {
+				if !auxiliaryResourceStatusKnown(ds, ref) {
+					remainingDeployedResources = append(remainingDeployedResources, ref)
+					cleanupErrors = append(cleanupErrors, fmt.Errorf("missing auxiliary cleanup status for %s %s/%s; retaining inventory", ref.Kind, ref.Namespace, ref.Name))
+				}
 				continue
 			}
 		}
@@ -680,9 +660,26 @@ func auxiliaryResourceRequiresCleanup(ds *breakglassv1alpha1.DebugSession, ref b
 			}
 		}
 	}
-	// Old inventory entries without auxiliary status metadata are safest to
-	// delete: they predate the deleteAfter bookkeeping and were controller-owned.
-	return true
+	// Without the durable status metadata, deleteAfter cannot be determined.
+	// Retain the inventory and surface the ambiguity rather than guessing that
+	// the resource was controller-owned.
+	return false
+}
+
+func auxiliaryResourceStatusKnown(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
+	for _, status := range ds.Status.AuxiliaryResourceStatuses {
+		if status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
+			status.ResourceName == ref.Name && status.Namespace == ref.Namespace {
+			return true
+		}
+		for _, additional := range status.AdditionalResources {
+			if additional.Kind == ref.Kind && additional.APIVersion == ref.APIVersion &&
+				additional.ResourceName == ref.Name && additional.Namespace == ref.Namespace {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func allowedPodsForRemainingDeployedPods(
@@ -753,43 +750,8 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 		obj.SetGroupVersionKind(gvk)
 		obj.SetName(status.ResourceName)
 		obj.SetNamespace(status.Namespace)
+		deleteOptions := trackedResourceDeleteOptions(ds, status.APIVersion, status.Kind, status.ResourceName, status.Namespace)
 
-		existing := &unstructured.Unstructured{}
-		existing.SetGroupVersionKind(gvk)
-		existing.SetName(status.ResourceName)
-		existing.SetNamespace(status.Namespace)
-		if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(existing), existing); err != nil {
-			if apierrors.IsNotFound(err) {
-				log.Debugw("Pod template resource already deleted",
-					"kind", status.Kind,
-					"name", status.ResourceName)
-				status.Deleted = true
-				now := time.Now().UTC().Format(time.RFC3339)
-				status.DeletedAt = &now
-				continue
-			}
-			status.Error = fmt.Sprintf("get failed: %v", err)
-			remainingStatuses = append(remainingStatuses, *status)
-			cleanupErrors = append(cleanupErrors, fmt.Errorf("get pod template resource %s %s/%s: %w", status.Kind, status.Namespace, status.ResourceName, err))
-			continue
-		}
-		// UID-bearing resources are fenced against replacement by an exact
-		// session identity. Resources written by older releases predate the UID
-		// marker, but their session name/namespace markers still provide safe
-		// ownership proof and must remain cleanable during an upgrade. A resource
-		// with no ownership metadata retains the historical status-based cleanup.
-		if !resourceMayBeDeletedByDebugSession(existing, ds) {
-			status.Error = "ownership precondition failed: resource was replaced or belongs to another session"
-			remainingStatuses = append(remainingStatuses, *status)
-			cleanupErrors = append(cleanupErrors, fmt.Errorf("refusing to delete pod template resource %s %s/%s: ownership precondition failed", status.Kind, status.Namespace, status.ResourceName))
-			continue
-		}
-
-		deleteOptions := []ctrlclient.DeleteOption{}
-		if existing.GetUID() != "" {
-			uid := existing.GetUID()
-			deleteOptions = append(deleteOptions, ctrlclient.Preconditions{UID: &uid})
-		}
 		if err := targetClient.Delete(ctx, obj, deleteOptions...); err != nil {
 			if apierrors.IsNotFound(err) {
 				log.Debugw("Pod template resource already deleted",
@@ -819,6 +781,16 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 
 	ds.Status.PodTemplateResourceStatuses = remainingStatuses
 	return errors.Join(cleanupErrors...)
+}
+
+func trackedResourceDeleteOptions(ds *breakglassv1alpha1.DebugSession, apiVersion, kind, name, namespace string) []ctrlclient.DeleteOption {
+	for _, ref := range ds.Status.DeployedResources {
+		if ref.APIVersion == apiVersion && ref.Kind == kind && ref.Name == name && ref.Namespace == namespace && ref.UID != "" {
+			uid := types.UID(ref.UID)
+			return []ctrlclient.DeleteOption{ctrlclient.Preconditions{UID: &uid}}
+		}
+	}
+	return nil
 }
 
 // parseDuration parses the requested duration with template constraints.

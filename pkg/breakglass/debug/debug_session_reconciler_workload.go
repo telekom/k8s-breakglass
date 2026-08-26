@@ -8,7 +8,6 @@ import (
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -16,6 +15,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/util/retry"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -156,6 +156,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				Kind:       gvk.Kind,
 				Name:       rq.Name,
 				Namespace:  rq.Namespace,
+				UID:        appliedObjectUID(ctx, targetClient, rq),
 				Source:     "debug-resourcequota",
 			})
 			if err := c.persistDeployedResourceInventory(ctx, ds); err != nil {
@@ -181,6 +182,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				Kind:       gvk.Kind,
 				Name:       pdb.Name,
 				Namespace:  pdb.Namespace,
+				UID:        appliedObjectUID(ctx, targetClient, pdb),
 				Source:     "debug-pdb",
 			})
 			if err := c.persistDeployedResourceInventory(ctx, ds); err != nil {
@@ -236,6 +238,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		Kind:       gvk.Kind,
 		Name:       workload.GetName(),
 		Namespace:  targetNs,
+		UID:        appliedObjectUID(ctx, targetClient, workload),
 		Source:     "debug-pod",
 	})
 	if err := c.persistDeployedResourceInventory(ctx, ds); err != nil {
@@ -259,6 +262,19 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	return nil
 }
 
+func appliedObjectUID(ctx context.Context, targetClient ctrlclient.Client, obj ctrlclient.Object) string {
+	if obj.GetUID() != "" {
+		return string(obj.GetUID())
+	}
+	if targetClient == nil || obj.GetName() == "" {
+		return ""
+	}
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: obj.GetName(), Namespace: obj.GetNamespace()}, obj); err != nil {
+		return ""
+	}
+	return string(obj.GetUID())
+}
+
 func startAuxiliaryStatusTracking(ds *breakglassv1alpha1.DebugSession, auxiliaryResourcesConfigured bool) []breakglassv1alpha1.AuxiliaryResourceStatus {
 	if !auxiliaryResourcesConfigured {
 		return nil
@@ -272,11 +288,90 @@ func startAuxiliaryStatusTracking(ds *breakglassv1alpha1.DebugSession, auxiliary
 // spoke apply. A later controller restart can therefore clean up resources
 // even when activation never reaches its final status update.
 func (c *DebugSessionController) persistDeployedResourceInventory(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
-	return breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
-		status.DeployedResources = ds.Status.DeployedResources
-		status.AuxiliaryResourceStatuses = ds.Status.AuxiliaryResourceStatuses
-		status.PodTemplateResourceStatuses = ds.Status.PodTemplateResourceStatuses
-	})
+	desired := ds.Status.DeepCopy()
+	var patchedStatus breakglassv1alpha1.DebugSessionStatus
+	var patchedResourceVersion string
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := &breakglassv1alpha1.DebugSession{}
+		if err := c.client.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), current); err != nil {
+			return err
+		}
+		base := current.DeepCopy()
+		current.Status.DeployedResources = mergeDeployedResourceRefs(current.Status.DeployedResources, desired.DeployedResources)
+		current.Status.AuxiliaryResourceStatuses = mergeAuxiliaryResourceStatuses(current.Status.AuxiliaryResourceStatuses, desired.AuxiliaryResourceStatuses)
+		current.Status.PodTemplateResourceStatuses = mergePodTemplateResourceStatuses(current.Status.PodTemplateResourceStatuses, desired.PodTemplateResourceStatuses)
+		if err := c.client.Status().Patch(ctx, current, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
+			return err
+		}
+		patchedStatus = current.Status
+		patchedResourceVersion = current.ResourceVersion
+		return nil
+	}); err != nil {
+		return fmt.Errorf("persist deployed resource inventory: %w", err)
+	}
+	ds.Status = patchedStatus
+	ds.ResourceVersion = patchedResourceVersion
+	return nil
+}
+
+func mergeDeployedResourceRefs(current, desired []breakglassv1alpha1.DeployedResourceRef) []breakglassv1alpha1.DeployedResourceRef {
+	merged := append([]breakglassv1alpha1.DeployedResourceRef(nil), current...)
+	for _, ref := range desired {
+		found := false
+		for i := range merged {
+			if merged[i].APIVersion == ref.APIVersion && merged[i].Kind == ref.Kind &&
+				merged[i].Name == ref.Name && merged[i].Namespace == ref.Namespace {
+				if merged[i].UID == "" {
+					merged[i].UID = ref.UID
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			merged = append(merged, ref)
+		}
+	}
+	return merged
+}
+
+func mergeAuxiliaryResourceStatuses(current, desired []breakglassv1alpha1.AuxiliaryResourceStatus) []breakglassv1alpha1.AuxiliaryResourceStatus {
+	merged := append([]breakglassv1alpha1.AuxiliaryResourceStatus(nil), current...)
+	for _, status := range desired {
+		found := false
+		for i := range merged {
+			if merged[i].Name == status.Name && merged[i].APIVersion == status.APIVersion &&
+				merged[i].Kind == status.Kind && merged[i].ResourceName == status.ResourceName &&
+				merged[i].Namespace == status.Namespace {
+				merged[i] = status
+				found = true
+				break
+			}
+		}
+		if !found {
+			merged = append(merged, status)
+		}
+	}
+	return merged
+}
+
+func mergePodTemplateResourceStatuses(current, desired []breakglassv1alpha1.PodTemplateResourceStatus) []breakglassv1alpha1.PodTemplateResourceStatus {
+	merged := append([]breakglassv1alpha1.PodTemplateResourceStatus(nil), current...)
+	for _, status := range desired {
+		found := false
+		for i := range merged {
+			if merged[i].APIVersion == status.APIVersion && merged[i].Kind == status.Kind &&
+				merged[i].ResourceName == status.ResourceName && merged[i].Namespace == status.Namespace {
+				merged[i] = status
+				found = true
+				break
+			}
+		}
+		if !found {
+			merged = append(merged, status)
+		}
+	}
+	return merged
 }
 
 // buildWorkload creates the DaemonSet or Deployment for debug pods.
@@ -709,6 +804,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		Source:       "podTemplateString",
 		Created:      true,
 	}
+	uid := appliedObjectUID(ctx, targetClient, obj)
 	now := time.Now().UTC().Format(time.RFC3339)
 	status.CreatedAt = &now
 	ds.Status.PodTemplateResourceStatuses = append(ds.Status.PodTemplateResourceStatuses, status)
@@ -719,6 +815,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		Kind:       obj.GetKind(),
 		Name:       obj.GetName(),
 		Namespace:  obj.GetNamespace(),
+		UID:        uid,
 		Source:     "pod-template",
 	})
 

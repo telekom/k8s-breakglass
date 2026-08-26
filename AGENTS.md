@@ -224,9 +224,10 @@ cluster) created by that invocation.
 ### DebugSession cleanup invariants
 
 - `status.deployedResources` is the durable spoke-cluster cleanup inventory. Add
-  each identity immediately after a successful apply and preserve residual refs
+  each identity immediately after a successful apply and capture its UID from
+  the returned object whenever the API provides one. Preserve residual refs
   when the spoke API is unavailable or a delete fails; never infer completion
-  from a controller restart or a transient `GetRESTConfig` error.
+  from a controller restart or a transient `GetRESTConfig`/ClusterConfig error.
 - Cleanup deletes inventory entries generically by GVK, name, namespace, and
   optional UID. Treat `NotFound` as success, retain entries while finalizers
   are pending, and use UID preconditions when available so a reused name is
@@ -234,6 +235,10 @@ cluster) created by that invocation.
 - Cleanup failures set the `CleanupFailed` condition and retain residual
   identities. Terminal sessions must requeue until the inventory and auxiliary
   status trackers are empty; a later successful pass clears the condition.
+- Every create path, including auxiliary resources, pod-template documents,
+  copied pods, and node-debug pods, must update the inventory and its auxiliary
+  tracker in the same durable status write. Status writes must merge on
+  resource-version conflicts so concurrent reconciles cannot lose identities.
 
 ## Build Tags
 
