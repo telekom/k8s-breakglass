@@ -1,0 +1,78 @@
+{{/*
+SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+SPDX-License-Identifier: Apache-2.0
+*/}}
+{{- if .Values.enabled }}
+{{- range $name, $profile := .Values.profiles }}
+{{- if $profile.enabled }}
+{{- if and $profile.requiredElevation (not $profile.elevated) }}
+{{- fail (printf "profiles.%s requires explicit elevated: true when enabled" $name) }}
+{{- end }}
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: {{ printf "%s-%s" (include "debug-session-catalogue.fullname" $) $name | replace "_" "-" | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "debug-session-catalogue.labels" $ | nindent 4 }}
+    breakglass.t-caas.telekom.com/catalogue-profile: {{ $name | quote }}
+    breakglass.t-caas.telekom.com/elevated: {{ $profile.elevated | default false | quote }}
+spec:
+  displayName: {{ required (printf "profiles.%s.displayName is required" $name) $profile.displayName | quote }}
+  description: {{ required (printf "profiles.%s.description is required" $name) $profile.description | quote }}
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: {{ if $profile.elevated }}false{{ else }}true{{ end }}
+        {{- if not $profile.elevated }}
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        {{- end }}
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: debug
+          image: {{ include "debug-session-catalogue.image" (dict "root" $ "key" $profile.imageKey) | quote }}
+          imagePullPolicy: {{ $.Values.imagePullPolicy }}
+          command:
+{{ toYaml $profile.command | nindent 12 }}
+          args:
+{{ toYaml $profile.args | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: {{ if $profile.elevated }}true{{ else }}false{{ end }}
+            privileged: {{ if $profile.elevated }}{{ $profile.privileged | default false }}{{ else }}false{{ end }}
+            capabilities:
+              drop: [ALL]
+              {{- if and $profile.elevated $profile.capabilities }}
+              add:
+{{ toYaml $profile.capabilities | nindent 16 }}
+              {{- end }}
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          {{- with $profile.volumeMounts }}
+          volumeMounts:
+{{ toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with $profile.volumes }}
+      volumes:
+{{ toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      hostNetwork: {{ if $profile.elevated }}{{ $profile.hostNetwork | default false }}{{ else }}false{{ end }}
+      hostPID: {{ if $profile.elevated }}{{ $profile.hostPID | default false }}{{ else }}false{{ end }}
+      hostIPC: {{ if $profile.elevated }}{{ $profile.hostIPC | default false }}{{ else }}false{{ end }}
+      {{- with $profile.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | nindent 8 }}
+      {{- end }}
+      restartPolicy: Never
+---
+{{- end }}
+{{- end }}
+{{- end }}

@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now accepts both explicit and implicit `:latest` containerd references and
   deduplicates by manifest digest before creating the immutable local image
   reference.
+- **Standalone debug-session catalogue**: Added the OCI-ready
+  `debug-session-catalogue` Helm chart with neutral workload, network,
+  storage, packet-capture, network-repair, node-recovery, and cluster-validation
+  profiles. Requesters, approvers, targets, images, and the target namespace are
+  configurable; elevated profiles are disabled and require explicit opt-in.
 
 ## [0.1.0-rc.8] - 2026-08-22
 
