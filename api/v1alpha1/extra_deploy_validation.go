@@ -54,12 +54,42 @@ func CoerceExtraDeployValues(
 			result[name] = jsonVal
 			continue
 		}
-
 		coerced := coerceJSONValue(jsonVal, varDef.InputType)
 		result[name] = coerced
 	}
 
 	return result
+}
+
+// ValidateExtraDeployValueNames rejects values that are outside a binding's
+// effective request surface. Unknown values remain supported for templates
+// without binding constraints for backwards compatibility; callers should set
+// rejectUnknown only when a binding explicitly narrows variables.
+func ValidateExtraDeployValueNames(
+	values map[string]apiextensionsv1.JSON,
+	variables []ExtraDeployVariable,
+	rejectUnknown bool,
+	fldPath *field.Path,
+) field.ErrorList {
+	if !rejectUnknown {
+		return nil
+	}
+	defined := make(map[string]ExtraDeployVariable, len(variables))
+	for _, variable := range variables {
+		defined[variable.Name] = variable
+	}
+	var errs field.ErrorList
+	for name := range values {
+		variable, ok := defined[name]
+		if !ok {
+			errs = append(errs, field.Forbidden(fldPath.Key(name),
+				fmt.Sprintf("variable %q is not allowed by the binding", name)))
+		} else if variable.Disabled {
+			errs = append(errs, field.Forbidden(fldPath.Key(name),
+				fmt.Sprintf("variable %q is disabled", name)))
+		}
+	}
+	return errs
 }
 
 // coerceJSONValue converts a JSON value to the correct type for the given inputType.
@@ -179,6 +209,11 @@ func validateExtraDeployValues(
 		if !defined {
 			// Unknown variable - not necessarily an error, but warn
 			// (some templates may accept arbitrary variables)
+			continue
+		}
+		if varDef.Disabled {
+			allErrs = append(allErrs, field.Forbidden(valuePath,
+				fmt.Sprintf("variable %q is disabled", name)))
 			continue
 		}
 

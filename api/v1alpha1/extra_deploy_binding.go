@@ -75,10 +75,23 @@ func applyExtraDeployVariableConstraint(variable *ExtraDeployVariable, constrain
 			variable.Disabled = true
 		}
 	}
+	if variable.Disabled {
+		if constraint.Required != nil && *constraint.Required {
+			return fmt.Errorf("disabled variable cannot be required")
+		}
+		variable.Required = false
+		// A disabled variable is not part of the binding's request surface.
+		// In particular, never carry a template default into a disabled
+		// definition where it could still be rendered by a controller.
+		if constraint.Default != nil {
+			return fmt.Errorf("disabled variable cannot define a default")
+		}
+		variable.Default = nil
+	}
 
 	constraintOptions := constraint.Options
-	if len(constraint.AllowedValues) > 0 {
-		if len(constraint.Options) > 0 {
+	if constraint.AllowedValues != nil {
+		if constraint.Options != nil {
 			return fmt.Errorf("options and allowedValues are mutually exclusive")
 		}
 		constraintOptions = make([]SelectOption, 0, len(constraint.AllowedValues))
@@ -86,7 +99,7 @@ func applyExtraDeployVariableConstraint(variable *ExtraDeployVariable, constrain
 			constraintOptions = append(constraintOptions, SelectOption{Value: value})
 		}
 	}
-	if len(constraintOptions) > 0 || (constraint.Options != nil && len(constraint.Options) == 0) || len(constraint.AllowedValues) > 0 {
+	if constraint.Options != nil || constraint.AllowedValues != nil {
 		if variable.InputType != InputTypeSelect && variable.InputType != InputTypeMultiSelect {
 			return fmt.Errorf("options are only valid for select and multiSelect variables")
 		}
@@ -123,6 +136,15 @@ func applyExtraDeployVariableConstraint(variable *ExtraDeployVariable, constrain
 			}
 		}
 		variable.Options = options
+		selectable := 0
+		for _, option := range options {
+			if !option.Disabled {
+				selectable++
+			}
+		}
+		if selectable == 0 {
+			return fmt.Errorf("constraint leaves no selectable options")
+		}
 	}
 
 	if constraint.Default != nil {
@@ -139,6 +161,17 @@ func applyExtraDeployVariableConstraint(variable *ExtraDeployVariable, constrain
 			return fmt.Errorf("default does not satisfy effective validation: %s", errs[0].Error())
 		}
 		variable.Default = constraint.Default.DeepCopy()
+	}
+	if variable.Default != nil && !variable.Disabled {
+		candidate := ExtraDeployVariable{
+			Name:       variable.Name,
+			InputType:  variable.InputType,
+			Options:    variable.Options,
+			Validation: variable.Validation,
+		}
+		if errs := validateVariableValue(*variable.Default, candidate, nil, false, field.NewPath("default")); len(errs) > 0 {
+			return fmt.Errorf("template default does not satisfy effective validation: %s", errs[0].Error())
+		}
 	}
 	return nil
 }
@@ -191,6 +224,32 @@ func mergeVariableValidation(base, narrow *VariableValidation) (*VariableValidat
 	if merged.MinLength != nil && merged.MaxLength != nil && *merged.MinLength > *merged.MaxLength ||
 		merged.MinItems != nil && merged.MaxItems != nil && *merged.MinItems > *merged.MaxItems {
 		return nil, fmt.Errorf("validation bounds are contradictory")
+	}
+	if merged.Min != "" && merged.Max != "" {
+		min, err := strconv.ParseFloat(merged.Min, 64)
+		if err != nil {
+			return nil, fmt.Errorf("min: %w", err)
+		}
+		max, err := strconv.ParseFloat(merged.Max, 64)
+		if err != nil {
+			return nil, fmt.Errorf("max: %w", err)
+		}
+		if min > max {
+			return nil, fmt.Errorf("validation bounds are contradictory")
+		}
+	}
+	if merged.MinStorage != "" && merged.MaxStorage != "" {
+		min, err := resource.ParseQuantity(merged.MinStorage)
+		if err != nil {
+			return nil, fmt.Errorf("minStorage: %w", err)
+		}
+		max, err := resource.ParseQuantity(merged.MaxStorage)
+		if err != nil {
+			return nil, fmt.Errorf("maxStorage: %w", err)
+		}
+		if min.Cmp(max) > 0 {
+			return nil, fmt.Errorf("validation bounds are contradictory")
+		}
 	}
 	return merged, nil
 }

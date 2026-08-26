@@ -289,6 +289,9 @@ func filterExtraDeployVariablesForRequester(vars []breakglassv1alpha1.ExtraDeplo
 
 	filtered := make([]breakglassv1alpha1.ExtraDeployVariable, 0, len(vars))
 	for _, variable := range vars {
+		if variable.Disabled {
+			continue
+		}
 		if !userHasAnyExactGroup(requester.groups, variable.AllowedGroups) {
 			continue
 		}
@@ -694,6 +697,11 @@ func (c *DebugSessionAPIController) resolveTemplateClusters(template *breakglass
 	// Collect all bindings for each cluster
 	for i := range bindings {
 		binding := &bindings[i]
+		if _, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, binding.Spec.ExtraDeployVariables); err != nil {
+			c.log.Warnw("resolveTemplateClusters: skipping binding with invalid extra deploy variable constraints",
+				"binding", fmt.Sprintf("%s/%s", binding.Namespace, binding.Name), "error", err)
+			continue
+		}
 		if !requester.canRequest(effectiveDebugSessionAllowed(template, binding)) {
 			continue
 		}

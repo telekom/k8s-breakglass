@@ -28,6 +28,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -59,6 +60,33 @@ var _ = func(scheme *runtime.Scheme, objects ...client.Object) client.Client {
 		}
 	}
 	return builder.Build()
+}
+
+func TestEffectiveTemplateForBindingUsesNarrowedRenderingSurface(t *testing.T) {
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
+				{Name: "mode", InputType: breakglassv1alpha1.InputTypeSelect, Options: []breakglassv1alpha1.SelectOption{{Value: "safe"}, {Value: "power"}}, Default: &apiextensionsv1.JSON{Raw: []byte(`"power"`)}},
+			},
+		},
+	}
+	disabled := true
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariableConstraint{{Name: "mode", Options: []breakglassv1alpha1.SelectOption{{Value: "safe"}}, Disabled: &disabled}},
+		},
+	}
+
+	effective, err := effectiveTemplateForBinding(template, binding, nil)
+	require.NoError(t, err)
+	assert.NotSame(t, template, effective)
+	assert.True(t, effective.Spec.ExtraDeployVariables[0].Disabled)
+	assert.Nil(t, effective.Spec.ExtraDeployVariables[0].Default)
+	assert.Equal(t, template.Spec.ExtraDeployVariables[0].Default.Raw, template.Spec.ExtraDeployVariables[0].Default.Raw)
+
+	values := map[string]apiextensionsv1.JSON{"other": {Raw: []byte(`"x"`)}}
+	_, err = effectiveTemplateForBinding(template, binding, values)
+	require.Error(t, err)
 }
 
 // Helper to create a basic DebugPodTemplate

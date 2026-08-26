@@ -609,9 +609,17 @@ async function handleSubmit() {
       request.selectedSchedulingOption = form.selectedSchedulingOption;
     }
 
-    // Include extraDeployValues if the template has variables and user has provided values
-    if (effectiveExtraDeployVariables.value.length && Object.keys(form.extraDeployValues).length > 0) {
-      request.extraDeployValues = form.extraDeployValues;
+    // Include only values in the selected binding's effective request surface.
+    // A user can change bindings after entering values; stale values must not
+    // be sent to a narrower binding (the API rejects them as well).
+    const allowedVariableNames = new Set(
+      effectiveExtraDeployVariables.value.filter((variable) => !variable.disabled).map((variable) => variable.name),
+    );
+    const effectiveValues = Object.fromEntries(
+      Object.entries(form.extraDeployValues).filter(([name]) => allowedVariableNames.has(name)),
+    );
+    if (allowedVariableNames.size > 0 && Object.keys(effectiveValues).length > 0) {
+      request.extraDeployValues = effectiveValues;
     }
 
     const session = await debugSessionService.createSession(request);

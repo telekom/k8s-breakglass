@@ -36,9 +36,11 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -236,9 +238,14 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 				"namespace", binding.Namespace)
 		}
 	}
+	effectiveTemplate, err := effectiveTemplateForBinding(template, binding, ds.Spec.ExtraDeployValues)
+	if err != nil {
+		log.Warnw("Rejecting session because binding variable constraints are invalid", "error", err)
+		return c.failSession(ctx, ds, "invalid binding extra deploy variable constraints")
+	}
 
 	// Cache the resolved template in status after applying binding-level duration overrides.
-	resolvedTemplate := template.Spec.DeepCopy()
+	resolvedTemplate := effectiveTemplate.Spec.DeepCopy()
 	resolvedTemplate.Constraints = effectiveDebugSessionConstraints(template, binding)
 	ds.Status.ResolvedTemplate = resolvedTemplate
 
@@ -513,6 +520,12 @@ func releaseSessionMetricSeries(sessionName string) {
 // activateSession deploys debug resources and marks session as active
 func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
+	effectiveTemplate, err := effectiveTemplateForBinding(template, binding, ds.Spec.ExtraDeployValues)
+	if err != nil {
+		log.Warnw("Rejecting session because binding variable constraints are invalid", "error", err)
+		return c.failSession(ctx, ds, "invalid binding extra deploy variable constraints")
+	}
+	template = effectiveTemplate
 
 	// Only deploy workloads for workload or hybrid mode
 	mode := template.Spec.Mode
@@ -579,6 +592,32 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		"terminalSharing", ds.Status.TerminalSharing != nil)
 
 	return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
+}
+
+// effectiveTemplateForBinding applies binding variable constraints at the
+// controller boundary as well as at API admission. Sessions can be approved
+// or reconciled after either object changes, so rendering must fail closed and
+// use the same narrowed definition that was used for request validation.
+func effectiveTemplateForBinding(
+	template *breakglassv1alpha1.DebugSessionTemplate,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
+	values map[string]apiextensionsv1.JSON,
+) (*breakglassv1alpha1.DebugSessionTemplate, error) {
+	var constraints []breakglassv1alpha1.ExtraDeployVariableConstraint
+	if binding != nil {
+		constraints = binding.Spec.ExtraDeployVariables
+	}
+	effectiveVariables, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, constraints)
+	if err != nil {
+		return nil, err
+	}
+	nameErrs := breakglassv1alpha1.ValidateExtraDeployValueNames(values, effectiveVariables, len(constraints) > 0, field.NewPath("extraDeployValues"))
+	if len(nameErrs) > 0 {
+		return nil, fmt.Errorf("extra deploy values are not allowed by binding: %s", nameErrs[0].Error())
+	}
+	result := template.DeepCopy()
+	result.Spec.ExtraDeployVariables = effectiveVariables
+	return result, nil
 }
 
 // failSession marks a session as failed and logs the failure

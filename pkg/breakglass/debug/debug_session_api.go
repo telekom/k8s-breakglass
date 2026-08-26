@@ -1179,6 +1179,22 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}
+	if resolvedBinding != nil {
+		nameErrs := breakglassv1alpha1.ValidateExtraDeployValueNames(
+			req.ExtraDeployValues,
+			effectiveVariables,
+			len(resolvedBinding.Spec.ExtraDeployVariables) > 0,
+			field.NewPath("extraDeployValues"),
+		)
+		if len(nameErrs) > 0 {
+			messages := make([]string, 0, len(nameErrs))
+			for _, validationErr := range nameErrs {
+				messages = append(messages, validationErr.Error())
+			}
+			apiresponses.RespondBadRequestWithDetails(ctx, "extraDeployValues validation failed", strings.Join(messages, "; "))
+			return
+		}
+	}
 
 	// Coerce extraDeployValues types based on the effective variable definitions.
 	// HTML form inputs and YAML defaults can produce string-encoded numbers/booleans
@@ -1188,14 +1204,18 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		req.ExtraDeployValues = breakglassv1alpha1.CoerceExtraDeployValues(req.ExtraDeployValues, effectiveVariables)
 	}
 	// Binding defaults are persisted in the session input so rendering remains
-	// self-contained even if the binding changes after session creation.
-	if req.ExtraDeployValues == nil {
-		req.ExtraDeployValues = make(map[string]apiextensionsv1.JSON)
-	}
-	for _, variable := range effectiveVariables {
-		if variable.Default != nil {
-			if _, provided := req.ExtraDeployValues[variable.Name]; !provided {
-				req.ExtraDeployValues[variable.Name] = *variable.Default.DeepCopy()
+	// self-contained even if the binding changes after session creation. Keep
+	// the historical no-binding behavior, where template defaults are applied
+	// by the renderer rather than copied into the session spec.
+	if resolvedBinding != nil && len(resolvedBinding.Spec.ExtraDeployVariables) > 0 {
+		if req.ExtraDeployValues == nil {
+			req.ExtraDeployValues = make(map[string]apiextensionsv1.JSON)
+		}
+		for _, variable := range effectiveVariables {
+			if !variable.Disabled && variable.Default != nil {
+				if _, provided := req.ExtraDeployValues[variable.Name]; !provided {
+					req.ExtraDeployValues[variable.Name] = *variable.Default.DeepCopy()
+				}
 			}
 		}
 	}
