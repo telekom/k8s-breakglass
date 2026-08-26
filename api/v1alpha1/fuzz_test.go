@@ -13,13 +13,13 @@ import (
 func FuzzEffectiveExtraDeployVariables(f *testing.F) {
 	f.Add("^[a-z]+$", "1", "10", "safe")
 	f.Add("[", "not-a-number", "", "unknown")
-	f.Fuzz(func(t *testing.T, pattern, min, max, option string) {
+	f.Fuzz(func(t *testing.T, pattern, minInput, maxInput, option string) {
 		_, _ = EffectiveExtraDeployVariables(
 			[]ExtraDeployVariable{{Name: "value", InputType: InputTypeText, Options: []SelectOption{{Value: "safe"}}}},
 			[]ExtraDeployVariableConstraint{{
 				Name:       "value",
 				Options:    []SelectOption{{Value: option}},
-				Validation: &VariableValidation{Pattern: pattern, Min: min, Max: max},
+				Validation: &VariableValidation{Pattern: pattern, Min: minInput, Max: maxInput},
 			}},
 		)
 	})

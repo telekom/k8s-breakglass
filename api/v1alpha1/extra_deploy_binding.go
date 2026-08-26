@@ -226,28 +226,28 @@ func mergeVariableValidation(base, narrow *VariableValidation) (*VariableValidat
 		return nil, fmt.Errorf("validation bounds are contradictory")
 	}
 	if merged.Min != "" && merged.Max != "" {
-		min, err := strconv.ParseFloat(merged.Min, 64)
+		minValue, err := strconv.ParseFloat(merged.Min, 64)
 		if err != nil {
 			return nil, fmt.Errorf("min: %w", err)
 		}
-		max, err := strconv.ParseFloat(merged.Max, 64)
+		maxValue, err := strconv.ParseFloat(merged.Max, 64)
 		if err != nil {
 			return nil, fmt.Errorf("max: %w", err)
 		}
-		if min > max {
+		if minValue > maxValue {
 			return nil, fmt.Errorf("validation bounds are contradictory")
 		}
 	}
 	if merged.MinStorage != "" && merged.MaxStorage != "" {
-		min, err := resource.ParseQuantity(merged.MinStorage)
+		minQuantity, err := resource.ParseQuantity(merged.MinStorage)
 		if err != nil {
 			return nil, fmt.Errorf("minStorage: %w", err)
 		}
-		max, err := resource.ParseQuantity(merged.MaxStorage)
+		maxQuantity, err := resource.ParseQuantity(merged.MaxStorage)
 		if err != nil {
 			return nil, fmt.Errorf("maxStorage: %w", err)
 		}
-		if min.Cmp(max) > 0 {
+		if minQuantity.Cmp(maxQuantity) > 0 {
 			return nil, fmt.Errorf("validation bounds are contradictory")
 		}
 	}
