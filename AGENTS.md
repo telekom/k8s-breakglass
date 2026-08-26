@@ -128,6 +128,30 @@ values, `reuse lint` in CI, and package/render the chart with a clean build
 context. Helm list profiles cannot be patched reliably with dotted map-style
 `--set` paths; use a values fixture when testing a profile item.
 
+## Utility Images
+
+Standalone diagnostic and maintenance images live under `utils/<image-name>/`.
+Each image directory owns its Dockerfile, pinned dependency inventory, helper
+tests, README, MOTD, and a Makefile with `test`, `build`, and
+`build-multiarch` targets. Keep image names and examples stable across utility
+images; use the shared DebugSession intent `workload-diagnostics` for workload
+diagnostics instead of inventing per-image intent names.
+
+Runtime images must pin the base manifest by digest and pin every explicitly
+installed APK package to a version recorded in `deps.lock` and
+`IMAGE-METADATA.yaml`. Keep runtime users non-root with no capabilities unless
+the operation demonstrably needs more privilege. Helpers must use bounded
+timeouts/output, avoid implicit credentials or controller metadata, and never
+write secrets to logs or command-line arguments. `build-multiarch` must produce
+a usable OCI archive locally (or explicitly push in a publishing workflow),
+and release automation signs and attests the immutable manifest digest only.
+
+The root CI should run each utility's helper tests, ShellCheck, Hadolint, and
+metadata/YAML validation through one shared matrix job; do not duplicate a
+separate workflow for every image. BuildKit SBOM/provenance requests and
+Cosign signing/SBOM attestation are release concerns and must be wired to the
+same digest rather than a mutable tag.
+
 ## Reusable Prompts (19 total)
 
 Prompts are in [`.github/prompts/`](.github/prompts/) and can be invoked by name:
