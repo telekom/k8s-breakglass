@@ -16,7 +16,7 @@ checks:
     operation: loopback-and-fixture-traffic
     tools: [curl, nc, ping, tracepath, traceroute, mtr, ethtool]
   - id: dns-tls-http
-    operation: fixture-dns-and-http-plus-local-tls
+    operation: fixture-dns-and-http-plus-public-tls
     tools: [dig, host, nslookup, curl]
   - id: packet-capture
     operation: capture-generated-http-packets
@@ -25,11 +25,11 @@ checks:
   - id: kernel-packet-tracing
     operation: observe-generated-packets
     tools: [pwru]
-    requirements: [linux-kernel, kernel-btf, debugfs, tracefs, securityfs, CAP_BPF, CAP_PERFMON, CAP_NET_ADMIN, CAP_NET_RAW, CAP_SYS_RESOURCE, ephemeral-network-namespace]
+    requirements: [linux-kernel, kernel-btf, CAP_BPF, PERFMON, ephemeral-network-namespace]
   - id: kubernetes-storage
     operation: provision-and-run-disposable-fio
     tools: [kubestr]
-    requirements: [docker, kind, kubectl, disposable-storage-class, disposable-kubernetes-cluster]
+    requirements: [docker, kind, kubectl, default-storage-class, disposable-kubernetes-cluster]
 bounded:
   commandTimeoutSeconds: 20
   packetTraceTimeoutSeconds: 20

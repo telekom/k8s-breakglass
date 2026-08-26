@@ -65,3 +65,16 @@ human-readable selectors, while the digest is the reproducible artifact.
 
 See [`utils/network-debug/README.md`](../utils/network-debug/README.md) for the
 tool lock record, license notices, and BuildKit SBOM/provenance commands.
+
+## Release integration proofs
+
+The image has a fail-closed integration harness at
+[`utils/network-debug/tests/integration.sh`](../utils/network-debug/tests/integration.sh).
+It generates disposable HTTP traffic, verifies the shipped connectivity, DNS,
+TLS, socket, and routing helpers, reads a real tcpdump pcap, observes generated
+packets with `pwru`, and runs `kubestr fio` with a pinned disposable fio
+fixture against a kind cluster and its default `standard` StorageClass. Missing BTF/BPF/PERFMON,
+Docker capabilities, kind, or storage support emits an actionable
+`REQUIREMENT:` message and fails the dedicated compatible-runner job rather
+than reporting a partial pass. The operation and prerequisite contract is
+tracked in [`tool-contract.yaml`](../utils/network-debug/tests/tool-contract.yaml).
