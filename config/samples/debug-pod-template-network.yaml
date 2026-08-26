@@ -1,18 +1,20 @@
 # Network Debug Pod Template
-# Pre-built template for network troubleshooting with netshoot tools
+# Pre-built template for network troubleshooting with the standalone
+# network-diagnostics image. Pin the reviewed release manifest by digest in
+# production; the version tag is kept here so this sample follows releases.
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugPodTemplate
 metadata:
   name: network-debug
 spec:
   displayName: "Network Debug"
-  description: "Network troubleshooting tools (netshoot) with NET_ADMIN and NET_RAW capabilities"
+  description: "Network diagnostics with NET_ADMIN and NET_RAW"
   template:
     metadata:
       labels:
         breakglass.t-caas.telekom.com/debug-type: network
       annotations:
-        breakglass.t-caas.telekom.com/purpose: "Network debugging and troubleshooting"
+        breakglass.t-caas.telekom.com/purpose: "Network troubleshooting"
     spec:
       hostNetwork: false
       automountServiceAccountToken: false
@@ -22,10 +24,10 @@ spec:
         kubernetes.io/os: linux
       containers:
       - name: netdebug
-        image: nicolaka/netshoot:latest
+        image: ghcr.io/telekom/k8s-breakglass-network-debug:0.1.0
         imagePullPolicy: IfNotPresent
-        command: ["/bin/bash"]
-        args: ["-c", "trap : TERM INT; sleep infinity & wait"]
+        command: ["/usr/local/bin/net-debug"]
+        args: ["shell"]
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: false
