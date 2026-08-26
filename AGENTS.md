@@ -167,14 +167,6 @@ cluster) created by that invocation.
 
 All PRs must pass: golangci-lint, unit tests, frontend tests (Vitest), Helm lint, Docker build, manifest validation, REUSE compliance, Trivy scan, OpenSSF Scorecard.
 
-Tests must prove observable behavior. Do not add assertions that merely search
-source files, workflows, manifests, or documentation for expected strings or
-check that an implementation file exists. Exercise the public command, API,
-rendering, release script, or controller transition and assert its output,
-failure mode, security boundary, and cleanup. If the behavior cannot be
-executed reliably in the available test environment, document the missing
-acceptance gate instead of adding a presence-only test.
-
 ## Debug Session Catalogue
 
 The standalone `charts/debug-session-catalogue` chart renders paired,
@@ -197,83 +189,6 @@ restricted security. Also run ShellCheck on the validator, `yamllint` on chart
 values, `reuse lint` in CI, and package/render the chart with a clean build
 context. Helm list profiles cannot be patched reliably with dotted map-style
 `--set` paths; use a values fixture when testing a profile item.
-
-## Utility Images
-
-Standalone diagnostic and maintenance images live under `utils/<image-name>/`.
-Each image directory owns its Dockerfile, pinned dependency inventory, helper
-tests, README, MOTD, and a Makefile with `test`, `build`, and
-`build-multiarch` targets. Keep image names and examples stable across utility
-images; use the shared DebugSession intent `workload-diagnostics` for workload
-diagnostics instead of inventing per-image intent names.
-
-Runtime images must pin the base manifest by digest and pin every explicitly
-installed APK package to a version recorded in `deps.lock` and
-`IMAGE-METADATA.yaml`. Keep runtime users non-root with no capabilities unless
-the operation demonstrably needs more privilege. Helpers must use bounded
-timeouts/output, avoid implicit credentials or controller metadata, and never
-write secrets to logs or command-line arguments. `build-multiarch` must produce
-a usable OCI archive locally (or explicitly push in a publishing workflow),
-and release automation signs and attests the immutable manifest digest only.
-
-The root CI should run each utility's helper tests, ShellCheck, Hadolint, and
-metadata/YAML validation through one shared matrix job; do not duplicate a
-separate workflow for every image. BuildKit SBOM/provenance requests and
-Cosign signing/SBOM attestation are release concerns and must be wired to the
-same digest rather than a mutable tag.
-
-## Node-Maintenance Utility
-
-The standalone `utils/node-maintenance/` image is intentionally separate from
-the Breakglass controller image. Keep its runtime limited to the fixed
-`node-recovery` and `network-repair` dispatchers; do not add an
-unrestricted shell, package manager, compiler, packet capture, scanner, or
-general-purpose network toolbox. The Alpine base manifest and direct APK
-dependencies are pinned in `Dockerfile` and `deps.lock`.
-
-Every helper must require an explicit target node, interface, evidence
-directory, and command-specific confirmation token. Repair actions must be
-allowlisted and record protected before/after evidence, including failure
-statuses. Update the utility README and both runbooks for behavior changes.
-
-Use `make -C utils/node-maintenance test` and `shellcheck` for helper changes;
-use `make -C utils/node-maintenance integration` on a Linux Docker runner for
-the real-tool proof. The integration harness must use `--network none`, a
-disposable evidence volume, `--read-only`, `--cap-drop ALL`, `--cap-add
-NET_ADMIN`, and `no-new-privileges`; it must fail when Docker or any required
-security feature is unavailable rather than skip. Never join or mutate the
-runner host network. Every fixture must remove its container and volume and
-verify cleanup. Keep `tests/integration-contract.json` in sync with the
-commands, expected evidence, and security boundary.
-`make -C utils/node-maintenance build` validates the pinned single-platform
-image and `build-multiarch` requests BuildKit provenance and SBOM metadata.
-Signing and SBOM attestation target an immutable registry digest only.
-
-## Catalogue Supply Chain
-
-Catalogue utility images and the standalone OCI chart are release artifacts,
-not unverified Helm defaults. Release gates must resolve immutable digests,
-require linux/amd64 and linux/arm64 manifests for utility images, and fail
-closed unless keyless Cosign signatures, SPDX SBOM attestations, and SLSA
-provenance are present. Keep this gate separate from ordinary unit, lint, and
-image build jobs.
-The consolidated `.github/workflows/catalogue-utility-integration.yml` is the
-separate real-tool proof for `network-debug` and `node-maintenance`; keep its
-matrix entries as distinct required checks and do not copy those tests into
-the ordinary CI suite.
-
-For workload diagnostics, `make -C utils/workload-debug integration-test` is
-the required upstream proof. It builds the image and runs it as UID 65532 with
-a read-only root filesystem, all capabilities dropped, and privilege
-escalation disabled. The proof uses disposable DNS, TLS, and HTTP fixtures and
-a disposable kind service account; it must fail clearly when Docker, kind, or
-kubectl is unavailable rather than silently skipping. The fixture namespace,
-processes, containers, and temporary credentials are removed in an EXIT trap,
-and the test verifies the kind cluster is gone. Keep the JSON report stable and
-never place service-account tokens in argv or captured output. Assert only
-runtime behavior or rendered public output: do not replace integration checks
-with source/file-presence tests, host-network fixtures, or host-privileged
-containers.
 
 ## Reusable Prompts (19 total)
 

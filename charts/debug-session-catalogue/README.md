@@ -43,20 +43,21 @@ The chart includes these profiles:
 
 | Profile | Default | Purpose |
 | --- | --- | --- |
-| `workload` | enabled | Isolated workload diagnostics |
-| `network` | enabled | Isolated DNS/network diagnostics |
-| `storage` | enabled | Ephemeral storage inspection |
+| `workload-diagnostics` | enabled | Isolated workload diagnostics |
+| `network-diagnostics` | enabled | Isolated DNS/network diagnostics |
+| `storage-diagnostics` | enabled | Ephemeral storage inspection |
 | `cluster-validation` | enabled | Isolated read-only validation checks |
 | `dump-access` | disabled | Host-network packet capture |
 | `network-repair` | disabled | Host-network network repair |
 | `node-recovery` | disabled | Host-network/host-PID node recovery |
 
-The last three profiles are elevated. Enable them only with an explicit
+The node-oriented profiles are elevated. Enable them only with an explicit
 two-part opt-in, for example:
 
 ```yaml
 profiles:
-  dump-access:
+  - name: dump-access
+    intent: dump-access
     enabled: true
     elevated: true
 ```
@@ -78,6 +79,40 @@ provide the command in its profile's `command`/`args` values and should be
 reviewed for the capabilities requested by that profile. The defaults are
 deliberately neutral and do not claim to include specialized tools such as
 `tcpdump` or `kubectl`.
+
+### Adding profiles and upgrading from the map format
+
+`profiles` is an ordered list so installations can add profiles without a
+chart change. Every item needs a unique DNS-safe `name`, stable `intent`,
+display metadata, `enabled`/`elevated`, a command and args, and either an
+`imageKey` from `images` or a direct `image` reference. Optional `preset`,
+capabilities, and narrow pod overrides (mounts, volumes, and node selectors)
+are generic; restricted security invariants cannot be weakened by overrides.
+The list order is preserved in rendered output.
+
+Versions before 0.2.0 accepted a map keyed by profile name. Convert each map
+entry to an item and move its key into `name`; for example:
+
+```yaml
+# old
+profiles:
+  workload: {enabled: true, imageKey: workload}
+# new
+profiles:
+  - name: workload-diagnostics
+    intent: workload-diagnostics
+    enabled: true
+    elevated: false
+    imageKey: workload
+    displayName: Workload diagnostics
+    description: Inspect a workload.
+    command: ["sh"]
+    args: []
+```
+
+The chart rejects map-shaped profiles, duplicate or invalid names, unresolved
+image references, and enabled profiles that require elevation without an
+explicit `elevated: true` opt-in.
 
 ## Interface report
 

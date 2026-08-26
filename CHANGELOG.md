@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The standalone debug-session catalogue now uses an ordered, extensible
+  profile list with DNS-safe names and stable generic intent names. Existing
+  map-shaped profile values must be converted before upgrading; the chart
+  rejects duplicate/invalid names, unresolved image references, and missing
+  explicit elevated opt-in.
+
 ### Added
 
 - **Standalone debug-session catalogue**: Added the OCI-ready

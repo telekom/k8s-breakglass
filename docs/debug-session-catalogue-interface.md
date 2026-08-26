@@ -15,12 +15,15 @@ The `charts/debug-session-catalogue` chart renders one cluster-scoped
 profile. Both names are deterministic:
 
 ```text
-<release fullname>-<profile key>
+<release fullname>-<profile name>
 ```
 
 The session template's `podTemplateRef.name` is the matching pod template name.
-Profile keys are `workload`, `network`, `storage`, `dump-access`,
-`network-repair`, `node-recovery`, and `cluster-validation`.
+The shipped intent names are `workload-diagnostics`, `network-diagnostics`,
+`storage-diagnostics`, `dump-access`, `network-repair`, `node-recovery`, and
+`cluster-validation`. Profile names are DNS-safe, unique list item names and
+may be extended without chart changes; intent names remain stable across
+platform and tenant values.
 
 ## Access and targets
 
@@ -50,13 +53,18 @@ and target-cluster permissions before enabling any elevated profile.
 
 ## Image contract
 
-Each profile selects `images.<profile imageKey>` and runs the profile's
-`command`/`args`. Images are configurable and should be pinned by digest in
-production. The chart's neutral `busybox:1.36.1` defaults are intentionally
-minimal; specialized image work may replace them without changing CR names or
-the catalogue interface. In particular, the default dump, repair, and recovery
-profiles are disabled and must not be treated as shipping packet-capture or
-node-recovery tooling.
+Each profile selects `images.<profile imageKey>` or supplies a direct `image`
+reference and runs its `command`/`args`. Images are configurable and should be
+pinned by digest in production. The chart's neutral `busybox:1.36.1` defaults
+are intentionally minimal; specialized image work may replace them without
+changing CR names or the catalogue interface. In particular, the default
+dump, repair, and recovery profiles are disabled and must not be treated as
+shipping packet-capture or node-recovery tooling.
+
+Profile items are concise: shared authorization, lifecycle, audit, image
+resolution, workload wiring, pod hardening, and resource defaults are named
+Helm helpers. Generic `preset` classes (restricted, elevated, elevated-node)
+provide extension points without hard-coding platform or tenant profile names.
 
 ## OCI and release integration
 
