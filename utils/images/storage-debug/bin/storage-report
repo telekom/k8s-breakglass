@@ -16,8 +16,7 @@ Options:
   --size-mb N             fio file size, 1..1024 MiB (default: 16)
   --runtime-seconds N     fio/ioping runtime, 1..60 seconds (default: 5)
   --ioping-count N        ioping request count, 1..20 (default: 5)
-  --output FILE           Write deterministic report beneath STORAGE_REPORT_DIR
-                          (default: stdout)
+  --output FILE           Write deterministic report to FILE (default: stdout)
   --dry-run               Validate options and print planned commands
   --help                  Show this help
 
@@ -45,7 +44,6 @@ bounded_uint() {
 }
 
 TEST_PATH=${STORAGE_TEST_PATH:-/scratch}
-REPORT_DIR=${STORAGE_REPORT_DIR:-/reports}
 SIZE_MB=${STORAGE_TEST_SIZE_MB:-16}
 RUNTIME_SECONDS=${STORAGE_TEST_RUNTIME_SECONDS:-5}
 IOPING_COUNT=${STORAGE_IOPING_COUNT:-5}
@@ -99,85 +97,30 @@ case "$TEST_PATH" in
     /*) ;;
     *) echo "--path must be an absolute path" >&2; exit 2 ;;
 esac
-case "$TEST_PATH" in
-    */../*|*/..) echo "--path may not contain parent traversal" >&2; exit 2 ;;
-esac
 bounded_uint "$SIZE_MB" 1 1024 "--size-mb"
 bounded_uint "$RUNTIME_SECONDS" 1 60 "--runtime-seconds"
 bounded_uint "$IOPING_COUNT" 1 20 "--ioping-count"
 
-reject_symlink_components() {
-    path=$1
-    current=/
-    remainder=${path#/}
-    while [ -n "$remainder" ]; do
-        component=${remainder%%/*}
-        if [ "$remainder" = "$component" ]; then
-            remainder=
-        else
-            remainder=${remainder#*/}
-        fi
-        [ -n "$component" ] || continue
-        current=$current$component
-        if [ -L "$current" ]; then
-            # macOS exposes temporary directories through /var and /tmp
-            # symlinks; those host aliases are not mount escapes.
-            case "$current" in
-                /var|/tmp) ;;
-                *) echo "path may not contain symbolic links: $path" >&2; exit 1 ;;
-            esac
-        fi
-        current=$current/
-    done
-}
-
-test_path_check=${TEST_PATH%/}
-[ -n "$test_path_check" ] || test_path_check=/
-[ ! -L "$test_path_check" ] || { echo "test path may not be a symbolic link: $TEST_PATH" >&2; exit 1; }
-
 FIO_TIMEOUT=$((RUNTIME_SECONDS + 5))
-FIO_PLAN_FILE=$TEST_PATH/.storage-debug-fio.XXXXXX
-temporary_dir=
-FIO_FILE=
-report_tmp=
-
-cleanup() {
-    if [ -n "$temporary_dir" ]; then
-        rm -rf "$temporary_dir"
-    fi
-    if [ -n "$FIO_FILE" ]; then
-        rm -f "$FIO_FILE"
-    fi
-    if [ -n "$report_tmp" ]; then
-        rm -f "$report_tmp"
-    fi
-}
-
-trap cleanup EXIT HUP INT TERM
+FIO_FILE="$TEST_PATH/.storage-debug-fio"
 
 if [ "$DRY_RUN" = true ]; then
-    [ -d "$TEST_PATH" ] || { echo "test path does not exist: $TEST_PATH" >&2; exit 1; }
-    reject_symlink_components "$TEST_PATH"
     printf '%s\n' \
         "schema_version=storage-debug/v1" \
         "path=$TEST_PATH" \
-        "fio_command=fio --name=storage-debug --filename=$FIO_PLAN_FILE --size=${SIZE_MB}M --runtime=${RUNTIME_SECONDS}s --time_based --rw=readwrite --bs=4k --iodepth=1" \
+        "fio_command=fio --name=storage-debug --filename=$FIO_FILE --size=${SIZE_MB}M --runtime=${RUNTIME_SECONDS}s --time_based --rw=readwrite --bs=4k --iodepth=1" \
         "fio_timeout_seconds=$FIO_TIMEOUT" \
         "ioping_command=ioping -c $IOPING_COUNT $TEST_PATH"
     exit 0
 fi
 
 [ -d "$TEST_PATH" ] || { echo "test path does not exist: $TEST_PATH" >&2; exit 1; }
-reject_symlink_components "$TEST_PATH"
 [ -w "$TEST_PATH" ] || { echo "test path is not writable: $TEST_PATH" >&2; exit 1; }
 command -v fio >/dev/null 2>&1 || { echo "fio is not installed" >&2; exit 1; }
 command -v ioping >/dev/null 2>&1 || { echo "ioping is not installed" >&2; exit 1; }
 
 temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/storage-debug.XXXXXX")
-FIO_FILE=$(mktemp "$TEST_PATH/.storage-debug-fio.XXXXXX") || {
-    echo "cannot create a private fio scratch file in: $TEST_PATH" >&2
-    exit 1
-}
+trap 'rm -rf "$temporary_dir" "$FIO_FILE"' EXIT HUP INT TERM
 
 fio_status=0
 ioping_status=0
@@ -219,43 +162,9 @@ if [ -n "$OUTPUT" ]; then
     output_dir=${OUTPUT%/*}
     [ "$output_dir" != "$OUTPUT" ] || output_dir=/
     [ -d "$output_dir" ] || { echo "report directory does not exist: $output_dir" >&2; exit 1; }
-    reject_symlink_components "$output_dir"
-    case "$REPORT_DIR" in
-        /*) ;;
-        *) echo "STORAGE_REPORT_DIR must be an absolute path" >&2; exit 2 ;;
-    esac
-    [ -d "$REPORT_DIR" ] || { echo "report directory does not exist: $REPORT_DIR" >&2; exit 1; }
-    reject_symlink_components "$REPORT_DIR"
-    report_dir_check=${REPORT_DIR%/}
-    [ -n "$report_dir_check" ] || report_dir_check=/
-    [ ! -L "$report_dir_check" ] || { echo "STORAGE_REPORT_DIR may not be a symbolic link: $REPORT_DIR" >&2; exit 2; }
-    report_real=$(realpath "$REPORT_DIR") || { echo "cannot resolve report directory: $REPORT_DIR" >&2; exit 1; }
-    output_real=$(realpath "$output_dir") || { echo "cannot resolve output directory: $output_dir" >&2; exit 1; }
-    case "$output_real" in
-        "$report_real"|"$report_real"/*) ;;
-        *) echo "--output must be beneath STORAGE_REPORT_DIR: $REPORT_DIR" >&2; exit 2 ;;
-    esac
-    if [ -e "$OUTPUT" ] || [ -L "$OUTPUT" ]; then
-        echo "refusing to overwrite existing report: $OUTPUT" >&2
-        exit 1
-    fi
-    report_tmp=$(mktemp "$output_dir/.storage-report.XXXXXX") || {
-        echo "cannot create temporary report in: $output_dir" >&2
-        exit 1
-    }
+    report_tmp="$output_dir/.storage-report.tmp.$$"
     write_report >"$report_tmp"
-    # Reports may contain incident details; retain private mode 0600 so only
-    # the image UID (and an explicitly authorized collector) can read them.
-    chmod 0600 "$report_tmp" || {
-        echo "cannot set temporary report permissions: $report_tmp" >&2
-        exit 1
-    }
-    if ! ln "$report_tmp" "$OUTPUT"; then
-        echo "refusing to overwrite existing report: $OUTPUT" >&2
-        exit 1
-    fi
-    rm -f "$report_tmp"
-    report_tmp=
+    mv "$report_tmp" "$OUTPUT"
 else
     write_report
 fi

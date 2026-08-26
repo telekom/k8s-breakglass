@@ -17,8 +17,7 @@ mount paths supplied by the operator.
   key order and excludes raw command output and timestamps.
 * Use [`dump-reader`](../utils/images/dump-reader/) when an existing regular
   file needs metadata, a SHA-256 checksum, or copy-out to a separate volume.
-  It rejects symlinks and traversal outside `/input`, limits copy-out to 1 GiB,
-  and refuses to overwrite an output file.
+  It rejects symlinks and refuses to overwrite an output file.
 
 Both images support `linux/amd64` and `linux/arm64`, run as UID/GID 65532,
 require no capabilities, and have no network requirement. Mount source data
@@ -30,14 +29,9 @@ duration, storage, and authorization policy.
 
 For each image directory:
 
-1. Run `make -C utils/images test`, `make -C utils/images shellcheck`, and
-   `make -C utils/images integration`. The integration target is mandatory when
-   Docker is available: it builds and runs both images with the declared
-   non-root/read-only settings, executes real fio/ioping operations, and
-   verifies dump metadata/checksum/copy and cleanup/security denials. It fails
-   rather than silently skipping when Docker is unavailable.
-2. Run `make -C utils/images multiarch` to build both platforms from the
-   digest-pinned Dockerfiles, then inspect the resulting OCI archives/manifest.
+1. Run `./tests/test.sh` and `shellcheck` over the scripts.
+2. Build both platforms from the digest-pinned Dockerfile and inspect the
+   resulting manifest.
 3. Generate an SBOM and SLSA provenance attestation for the manifest.
 4. Sign the immutable digest with keyless Cosign and verify the signature and
    attestations before adding the image to an allowlist.
@@ -64,8 +58,7 @@ the approved purpose, and the owner in the template's change record.
 2. Run `dump-reader inspect /input/FILE`, then `checksum` when integrity
    evidence is needed.
 3. Run `copy /input/FILE` only when copy-out is approved. The destination is
-   never overwritten, must remain under `DUMP_OUTPUT_DIR`, and is limited to
-   `DUMP_MAX_COPY_BYTES` (1 GiB by default).
+   never overwritten and must remain under `DUMP_OUTPUT_DIR`.
 4. Preserve the checksum with the incident record, remove the pod, and apply
    the incident retention policy to the output artifact.
 

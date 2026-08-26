@@ -3,13 +3,9 @@
 
 Dump reader utilities
 
-Helper: /usr/local/bin/dump-reader help
-
 This image reads existing regular files only. It can inspect metadata, compute
 SHA-256 checksums, and copy a selected file to a separate output mount. It
-does not generate dumps or alter source files. Copy-out is limited to 1 GiB,
-stays beneath /input and /output, and never overwrites an existing file.
+does not generate dumps or alter source files.
 
 Read the runbook before use:
-/usr/share/dump-reader/RUNBOOK.md
-README: /usr/share/dump-reader/README.md
+https://github.com/telekom/k8s-breakglass/tree/main/utils/images/dump-reader

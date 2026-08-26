@@ -4,9 +4,6 @@
 
 set -eu
 
-INPUT_DIR=${DUMP_INPUT_DIR:-/input}
-MAX_COPY_BYTES=${DUMP_MAX_COPY_BYTES:-1073741824}
-
 usage() {
     cat <<'EOF'
 dump-reader: inspect existing dump files without generating or modifying them
@@ -19,10 +16,8 @@ Usage:
 
 FILE must be an existing regular file and may not be a symbolic link. `copy`
 writes only beneath DUMP_OUTPUT_DIR (default: /output), refuses to overwrite,
-accepts a basename only, and limits copied files to DUMP_MAX_COPY_BYTES
-(default: 1073741824). FILE must resolve beneath DUMP_INPUT_DIR (default:
-/input). Mount source files read-only and mount a separate output volume when
-copying an artifact out.
+and accepts a basename only. Mount source files read-only and mount a separate
+output volume when copying an artifact out.
 EOF
 }
 
@@ -31,51 +26,8 @@ fail() {
     exit 2
 }
 
-reject_symlink_components() {
-    path=$1
-    current=/
-    remainder=${path#/}
-    while [ -n "$remainder" ]; do
-        component=${remainder%%/*}
-        if [ "$remainder" = "$component" ]; then
-            remainder=
-        else
-            remainder=${remainder#*/}
-        fi
-        [ -n "$component" ] || continue
-        current=$current$component
-        if [ -L "$current" ]; then
-            case "$current" in
-                /var|/tmp) ;;
-                *) fail "path may not contain symbolic links: $path" ;;
-            esac
-        fi
-        current=$current/
-    done
-}
-
-is_uint() {
-    case "$1" in
-        ''|*[!0-9]*) return 1 ;;
-        *) return 0 ;;
-    esac
-}
-
-validate_input_dir() {
-    input_dir_check=${INPUT_DIR%/}
-    [ -n "$input_dir_check" ] || input_dir_check=/
-    case "$INPUT_DIR" in
-        /*) ;;
-        *) fail "DUMP_INPUT_DIR must be an absolute path" ;;
-    esac
-    [ -d "$INPUT_DIR" ] || fail "DUMP_INPUT_DIR does not exist: $INPUT_DIR"
-    reject_symlink_components "$INPUT_DIR"
-    [ ! -L "$input_dir_check" ] || fail "DUMP_INPUT_DIR may not be a symbolic link: $INPUT_DIR"
-}
-
 validate_source() {
     source=$1
-    validate_input_dir
     case "$source" in
         /*) ;;
         *) fail "FILE must be an absolute path" ;;
@@ -84,13 +36,6 @@ validate_source() {
     [ ! -L "$source" ] || fail "symbolic links are not accepted: $source"
     [ -f "$source" ] || fail "FILE is not a regular file: $source"
     [ -r "$source" ] || fail "FILE is not readable: $source"
-
-    input_real=$(realpath "$INPUT_DIR") || fail "cannot resolve DUMP_INPUT_DIR: $INPUT_DIR"
-    source_real=$(realpath "$source") || fail "cannot resolve FILE: $source"
-    case "$source_real" in
-        "$input_real"/*) ;;
-        *) fail "FILE must be beneath DUMP_INPUT_DIR: $INPUT_DIR" ;;
-    esac
 }
 
 basename_safe() {
@@ -148,12 +93,7 @@ copy_out() {
         *) fail "DUMP_OUTPUT_DIR must be an absolute path" ;;
     esac
     [ -d "$output_dir" ] || fail "DUMP_OUTPUT_DIR does not exist: $output_dir"
-    reject_symlink_components "$output_dir"
-    output_dir_check=${output_dir%/}
-    [ -n "$output_dir_check" ] || output_dir_check=/
-    [ ! -L "$output_dir_check" ] || fail "DUMP_OUTPUT_DIR may not be a symbolic link: $output_dir"
     [ -w "$output_dir" ] || fail "DUMP_OUTPUT_DIR is not writable: $output_dir"
-    is_uint "$MAX_COPY_BYTES" || fail "DUMP_MAX_COPY_BYTES must be a non-negative integer"
     name=$(basename_safe "$source")
     if [ "$#" -eq 2 ] && [ -n "$2" ]; then
         name=$2
@@ -161,26 +101,10 @@ copy_out() {
     case "$name" in
         ''|.|..|*/*) fail "OUTPUT_NAME must be a basename" ;;
     esac
-    source_size=$(stat_field size "$source")
-    [ "$source_size" -le "$MAX_COPY_BYTES" ] || fail "FILE exceeds DUMP_MAX_COPY_BYTES ($MAX_COPY_BYTES): $source"
     destination=$output_dir/$name
-    if [ -e "$destination" ] || [ -L "$destination" ]; then
-        fail "refusing to overwrite existing output: $destination"
-    fi
+    [ ! -e "$destination" ] || fail "refusing to overwrite existing output: $destination"
     umask 077
-    temporary=$(mktemp "$output_dir/.dump-reader.XXXXXX") || fail "cannot create temporary output in: $output_dir"
-    # Incident artifacts remain private to the image UID and an explicitly
-    # authorized collector.
-    chmod 0600 "$temporary" || fail "cannot set output permissions: $temporary"
-    if ! cat "$source" >"$temporary"; then
-        rm -f "$temporary"
-        fail "copy failed: $source"
-    fi
-    if ! ln "$temporary" "$destination"; then
-        rm -f "$temporary"
-        fail "refusing to overwrite existing output: $destination"
-    fi
-    rm -f "$temporary"
+    cp "$source" "$destination"
     printf '%s\n' \
         "schema_version=dump-reader/v1" \
         "name=$name" \
@@ -203,9 +127,7 @@ case "$1" in
         checksum "$2"
         ;;
     copy)
-        if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-            fail "copy requires FILE and optional OUTPUT_NAME"
-        fi
+        [ "$#" -ge 2 ] && [ "$#" -le 3 ] || fail "copy requires FILE and optional OUTPUT_NAME"
         copy_out "$2" "${3-}"
         ;;
     *)

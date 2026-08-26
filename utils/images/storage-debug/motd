@@ -1,22 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-Storage diagnostics utilities
+Storage debug utilities
 
-Intent help: storage-diagnostics help
-Mounted volume: storage-diagnostics mounted-volume --help
-Cluster plan: storage-diagnostics plan performance --storage-class NAME
-
-This image runs bounded checks against an attached volume and bounded,
-non-interactive kubestr workflows through controller-owned RBAC. Read the
-runbook before use:
-/usr/share/breakglass/runbooks/upstream/storage-diagnostics/RUNBOOK.md
-README: /usr/share/breakglass/runbooks/upstream/storage-diagnostics/README.md
-Internal: /usr/share/breakglass/runbooks/internal (optional read-only mount)
+This image runs bounded fio and ioping checks against an existing writable
+mount. It never uses an unbounded workload. Read the runbook before use:
+https://github.com/telekom/k8s-breakglass/tree/main/utils/images/storage-debug
 
 Defaults: 16 MiB, 5 seconds, 5 ioping requests. Configure STORAGE_TEST_PATH
 and the STORAGE_TEST_* variables for a generic mount appropriate to your pod.
-Cluster workflows require POD_NAMESPACE and an immutable provider-owned
-STORAGE_DEBUG_WORKLOAD_IMAGE. They never accept a user-selected command,
-image, namespace, ServiceAccount, capability, or RBAC object.
-Internal runbook bundles are documentation only: never source or execute them.
