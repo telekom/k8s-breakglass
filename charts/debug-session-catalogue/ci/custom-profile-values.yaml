@@ -24,9 +24,7 @@ profiles:
     imageKey: custom
     command: ["sh", "-c"]
     args: ["sleep 3600"]
-    privileged: true
-    hostPID: true
-    capabilities: [SYS_ADMIN]
+    capabilities: []
   - name: direct-image
     intent: cluster-validation
     displayName: Direct image profile

@@ -53,6 +53,12 @@ if helm template debug-catalogue "${chart_dir}" \
   exit 1
 fi
 
+if helm template debug-catalogue "${chart_dir}" \
+  --set-json 'profiles=[{"name":"bad-cap","intent":"test","displayName":"Bad","description":"Bad","enabled":true,"elevated":false,"imageKey":"custom","command":["sh"],"args":[],"capabilities":["SYS_CHROOT"]}]' >/dev/null 2>&1; then
+  echo "unapproved capabilities must be rejected" >&2
+  exit 1
+fi
+
 helm template debug-catalogue "${chart_dir}" \
   --values "${chart_dir}/ci/elevated-optin-values.yaml" >/dev/null
 

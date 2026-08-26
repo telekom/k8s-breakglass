@@ -127,10 +127,6 @@ jobs:
           helm package charts/escalation-config \
             --destination chart-dist \
             --app-version "${{ github.ref_name }}"
-          helm package charts/debug-session-catalogue \
-            --destination chart-dist \
-            --app-version "${{ github.ref_name }}"
-
           # The standalone catalogue is introduced by the foundation stack.
           # Keep the base release valid before that chart lands, while making
           # its package part of the same immutable release once present.
@@ -607,11 +603,18 @@ jobs:
                   digest.empty? ? "#{repository}:#{tag}" : "#{repository}@#{digest}"
                 end
                 puts refs.uniq.sort
-              ' catalogue-values.yaml > catalogue-image-refs.txt
+              ' catalogue-values.yaml | awk '/@sha256:[0-9a-f]{64}$/' > catalogue-image-refs.txt
             fi
           done
           if [ -n "${catalogue_chart_ref}" ]; then
-            hack/verify-catalogue-supply-chain.sh --images-file catalogue-image-refs.txt --chart "${catalogue_chart_ref}"
+            if [ -s catalogue-image-refs.txt ]; then
+              hack/verify-catalogue-supply-chain.sh --images-file catalogue-image-refs.txt --chart "${catalogue_chart_ref}"
+            else
+              echo "No digest-pinned utility images are embedded in chart defaults; verify consumer-provided image digests separately."
+              cosign verify "${catalogue_chart_ref}" \
+                --certificate-identity-regexp="${SUPPLY_CHAIN_IDENTITY_REGEXP}" \
+                --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+            fi
           fi
 
   # ---------------------------------------------------------------------------

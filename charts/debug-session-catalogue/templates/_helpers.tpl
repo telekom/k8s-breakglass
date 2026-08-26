@@ -51,6 +51,10 @@ securityContext:
 {{- $profile := .profile -}}
 {{- $elevated := default false $profile.elevated -}}
 {{- $caps := default (list) $profile.capabilities -}}
+{{- $allowedCaps := list "AUDIT_CONTROL" "BPF" "NET_ADMIN" "NET_RAW" "PERFMON" "SYS_ADMIN" "SYS_PTRACE" -}}
+{{- range $cap := $caps }}{{- if not (has $cap $allowedCaps) }}{{ fail (printf "profiles[%s] capability %s is not permitted by the catalogue security contract" $profile.name $cap) }}{{ end }}{{- end }}
+{{- if and $profile.privileged (ne (default "restricted" $profile.preset) "elevated-node") }}{{ fail (printf "profiles[%s] privileged pods require preset elevated-node" $profile.name) }}{{ end }}
+{{- if and $profile.hostPID (ne (default "restricted" $profile.preset) "elevated-node") }}{{ fail (printf "profiles[%s] hostPID requires preset elevated-node" $profile.name) }}{{ end }}
 securityContext:
   allowPrivilegeEscalation: {{ $elevated }}
   privileged: {{ if $elevated }}{{ default false $profile.privileged }}{{ else }}false{{ end }}
