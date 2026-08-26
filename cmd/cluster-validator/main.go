@@ -49,7 +49,7 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	opts, err := parseOptions(args)
 	if err != nil {
-		fmt.Fprintln(stderr, "cluster-validator:", err)
+		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
 		return 2
 	}
 
@@ -74,16 +74,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	report := clustervalidator.NewValidator(clustervalidator.BuiltinChecks(opts.skipPods)...).Validate(ctx, client, discoveryClient, opts.mode, opts.includeTimestamp)
 	if err := writeReport(report, opts.reportPath); err != nil {
-		fmt.Fprintln(stderr, "cluster-validator:", err)
+		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
 		return 2
 	}
 	data, err := clustervalidator.MarshalReport(report)
 	if err != nil {
-		fmt.Fprintln(stderr, "cluster-validator:", err)
+		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
 		return 2
 	}
 	if _, err := stdout.Write(data); err != nil {
-		fmt.Fprintln(stderr, "cluster-validator: write report to stdout:", err)
+		_, _ = fmt.Fprintln(stderr, "cluster-validator: write report to stdout:", err)
 		return 2
 	}
 	if report.Status != clustervalidator.StatusReady {
@@ -152,6 +152,7 @@ func parseOptions(args []string) (options, error) {
 func clientConfig(opts options) (*rest.Config, error) {
 	if opts.kubeconfig == "" {
 		if config, err := rest.InClusterConfig(); err == nil {
+			config.UserAgent = buildUserAgent()
 			return config, nil
 		}
 	}
@@ -160,7 +161,16 @@ func clientConfig(opts options) (*rest.Config, error) {
 		loadingRules.ExplicitPath = opts.kubeconfig
 	}
 	overrides := &clientcmd.ConfigOverrides{CurrentContext: opts.contextName}
-	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
+	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
+	if err != nil {
+		return nil, err
+	}
+	config.UserAgent = buildUserAgent()
+	return config, nil
+}
+
+func buildUserAgent() string {
+	return fmt.Sprintf("cluster-validator/%s (%s; %s)", version, gitCommit, buildDate)
 }
 
 func writeReport(report clustervalidator.Report, path string) error {
@@ -182,12 +192,12 @@ func writeReport(report clustervalidator.Report, path string) error {
 
 func writeResult(report clustervalidator.Report, path string, stdout, stderr io.Writer, exitCode int) int {
 	if err := writeReport(report, path); err != nil {
-		fmt.Fprintln(stderr, "cluster-validator:", err)
+		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
 		return 2
 	}
 	data, err := clustervalidator.MarshalReport(report)
 	if err != nil {
-		fmt.Fprintln(stderr, "cluster-validator:", err)
+		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
 		return 2
 	}
 	if _, err := stdout.Write(data); err != nil {
