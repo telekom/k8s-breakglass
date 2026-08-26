@@ -154,6 +154,27 @@ The harness must also exercise exit code 1 with an unhealthy disposable
 resource, and cleanup may delete only resources (including the image and kind
 cluster) created by that invocation.
 
+## Utility images (`utils/network-debug/`)
+
+- Keep the network-debug image standalone and distribution-neutral: no internal
+  cluster names, private registries, credentials, cloud settings, or T-CaaS/TDG
+  assumptions belong in the image, helpers, MOTD, or runbook.
+- Pin the base and build images by OCI digest, pin direct Alpine packages, and
+  record every upstream tool release, source commit, checksum, and license in
+  `utils/network-debug/versions.env` and `LICENSES/THIRD_PARTY.md`. Verify
+  downloaded archives before copying them into the runtime stage.
+- The supported platforms are `linux/amd64` and `linux/arm64`; test both with
+  BuildKit before changing release metadata. Use
+  `make -C utils/network-debug test` (helper determinism), ShellCheck,
+  Hadolint, and a local Docker build as the minimum image checks.
+- Image changes must preserve OCI source/revision/version/base labels and the
+  SBOM/provenance flags in the image Makefile. Release automation signs the
+  final manifest digest; do not put signing keys or registry credentials in a
+  Dockerfile.
+- `net-report` output must not include timestamps, hostnames, credentials, or
+  random IDs. Changes to tools or permissions require an update to the image
+  README, `docs/network-debug-image.md`, and the Unreleased changelog entry.
+
 ## Build Tags
 
 - `//go:build e2e` — E2E tests (compiled with `-tags=e2e`; at runtime, tests skip unless `E2E_TEST=true`)

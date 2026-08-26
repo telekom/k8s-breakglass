@@ -24,9 +24,9 @@ assumptions. The image is published as a multi-architecture artifact for
   the capabilities described by `pwru --help`. `pwru` is present for both
   supported architectures; kernel support is evaluated at runtime.
 
-The image runs as root because packet capture and eBPF tracing require kernel
-access. Grant only the network namespace and Linux capabilities needed for the
-specific investigation. Do not add `privileged: true` by default.
+The image runs as root because packet capture and eBPF tracing are privileged
+operations. Grant only the network namespace and Linux capabilities needed for
+the specific investigation. Do not add `privileged: true` by default.
 
 ## Usage
 
@@ -35,7 +35,7 @@ short, neutral MOTD. Helpers are deterministic and do not include timestamps,
 hostnames, or command history:
 
 ```console
-$ docker run --rm -it --net=container:app ghcr.io/telekom/k8s-breakglass/network-debug:0.1.0
+$ docker run --rm -it --net=container:app ghcr.io/telekom/k8s-breakglass-network-debug:0.1.0
 /work # net-debug --help
 /work # net-report
 /work # tcpdump -ni any -w /work/capture.pcap
@@ -67,37 +67,8 @@ generated SBOM and sign the final manifest digest with the approved policy.
 make -C utils/network-debug test
 make -C utils/network-debug build
 make -C utils/network-debug build-multiarch
-# Linux only: disposable Docker + kind integration proofs
-make -C utils/network-debug integration
 ```
 
-The integration target is intentionally fail-closed. It generates loopback
-HTTP traffic and proves curl, netcat, DNS, TLS, ping, tracepath, traceroute,
-mtr, ethtool, routing, sockets, deterministic reporting, and tcpdump capture.
-It then runs `pwru` against that traffic in an ephemeral network namespace with
-explicit BPF/PERFMON capabilities and executes `kubestr fio` with a pinned, disposable fio fixture
-image against a uniquely named disposable StorageClass in a kind cluster. It never reuses a
-production namespace or PVC. A missing Docker capability, Linux BTF/BPF
-support, kind cluster, or StorageClass prints a `REQUIREMENT:` diagnostic and
-fails; it does not silently skip a proof. When only the kernel tracing
-prerequisites are unavailable, all userspace, packet-capture, and `kubestr`
-proofs still run before the final fail-closed `pwru` requirement. See
-[`tests/tool-contract.yaml`](./tests/tool-contract.yaml) for the machine-readable
-operation and prerequisite contract.
-
-The integration target creates and owns a uniquely named disposable kind
-cluster, including its kubeconfig, storage class, PV, namespace, and PVC. It
-never reads or mutates the caller's kubeconfig. The generated name is
-preflight-checked; a failed bootstrap cleans only that attempted name and any
-matching labeled node containers, while a pre-existing name is rejected. The
-dedicated CI job runs this target on a Linux runner with Docker and kind.
-The `pwru` portion requires readable `/sys/kernel/btf/vmlinux`, debugfs,
-tracefs, securityfs, and BPF/PERFMON support. Local macOS/Windows Docker Desktop or a
-non-kind Kubernetes context is not a substitute for that job.
-
-`build-multiarch` writes a local OCI archive and never pushes a mutable tag.
-Publish the reviewed manifest, resolve its immutable digest, then run
-`make sbom IMAGE=... DIGEST=... SBOM=...` and
-`make sign IMAGE=... DIGEST=...`. Set `IMAGE`, `VERSION`, `VCS_REF`, and
-`BUILD_DATE` explicitly in release automation. `IMAGE-METADATA.yaml` records
-the shared `network-diagnostics` intent and the expected attestation policy.
+`build-multiarch` pushes the requested tag because a local Docker image cannot
+represent a complete manifest list. Set `IMAGE`, `VERSION`, `VCS_REF`, and
+`BUILD_DATE` explicitly in release automation.
