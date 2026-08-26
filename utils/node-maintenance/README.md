@@ -19,9 +19,16 @@ The image exposes exactly two supported commands:
 
 There is no supported unrestricted shell, package manager, compiler, packet
 capture tool, port scanner, or general-purpose network toolbox. The entrypoint
+<<<<<<< HEAD
 dispatches only the two fixed command names. It does not support kexec or
 reboot, crashdump collection, packet capture, arbitrary commands, sysctl
 changes, route replacement, or node discovery.
+=======
+dispatches only the two fixed command names. The image must run as UID 0 in a
+host-networked pod with only the `NET_ADMIN` capability for repairs; blanket
+privileged mode is not required. Preflight is read-only but still requires the
+same explicit target and confirmation gates.
+>>>>>>> 274c1668 (fix(node-maintenance): document and lint explicit root)
 
 ## Guardrails
 

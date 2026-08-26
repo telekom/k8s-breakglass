@@ -51,10 +51,16 @@ LABEL org.opencontainers.image.title="Kubernetes node maintenance" \
       io.telekom.breakglass.node-maintenance.shell="not-supported" \
       io.telekom.breakglass.node-maintenance.capabilities="NET_ADMIN"
 
+<<<<<<< HEAD
 # The image is root only for the explicitly allowlisted host-network operation.
 # Controller-owned immutable templates must use a no-capabilities preflight
 # context and a separate NET_ADMIN-only repair context; privileged is not part
 # of this image contract. The dispatcher rejects every other helper name.
+=======
+# Network repair runs as UID 0 in a host-networked pod with only NET_ADMIN. The
+# chart declares this identity explicitly; the dispatcher is the sole entrypoint.
+# UID 0 is required for the narrow NET_ADMIN helper.
+>>>>>>> 274c1668 (fix(node-maintenance): document and lint explicit root)
 # hadolint ignore=DL3002
 USER 0
 ENTRYPOINT ["/usr/local/bin/node-maintenance"]
