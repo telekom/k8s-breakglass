@@ -5,8 +5,7 @@ set -u
 
 usage() {
     cat <<'EOF'
-Usage: debug-report [--json] [--dns NAME] [--dns-server SERVER[#PORT]]
-                    [--tls HOST[:PORT]] [--tls-ca FILE] [--http URL] [--kube PATH]
+Usage: debug-report [--dns NAME] [--tls HOST[:PORT]] [--http URL] [--kube PATH]
 
 The report writes only to stdout/stderr. It does not inspect controller
 metadata, mutate the filesystem, or print service-account tokens.
@@ -14,22 +13,16 @@ EOF
 }
 
 dns_name=
-dns_server=
 tls_endpoint=
-tls_ca=
 http_url=
 kube_path=
-json=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --json) json=1; shift ;;
-        --dns|--dns-server|--tls|--tls-ca|--http|--kube)
+        --dns|--tls|--http|--kube)
             [ "$#" -ge 2 ] || { usage >&2; exit 2; }
             case "$1" in
                 --dns) dns_name=$2 ;;
-                --dns-server) dns_server=$2 ;;
                 --tls) tls_endpoint=$2 ;;
-                --tls-ca) tls_ca=$2 ;;
                 --http) http_url=$2 ;;
                 --kube) kube_path=$2 ;;
             esac
@@ -38,30 +31,6 @@ while [ "$#" -gt 0 ]; do
         *) printf 'debug-report: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
     esac
 done
-
-if [ "$json" -eq 1 ]; then
-    checks='[]'
-    failures=0
-    add_check() {
-        title=$1
-        shift
-        if "$@" >/dev/null 2>&1; then success=true; else success=false; failures=$((failures + 1)); fi
-        checks=$(printf '%s' "$checks" | jq -c --arg name "$title" --argjson success "$success" '. + [{name: $name, success: $success}]')
-    }
-    if [ -n "$dns_name" ]; then
-        if [ -n "$dns_server" ]; then add_check "DNS $dns_name" debug-dns --server "$dns_server" "$dns_name"; else add_check "DNS $dns_name" debug-dns "$dns_name"; fi
-    fi
-    if [ -n "$tls_endpoint" ]; then
-        if [ -n "$tls_ca" ]; then add_check "TLS $tls_endpoint" debug-tls --ca "$tls_ca" "$tls_endpoint"; else add_check "TLS $tls_endpoint" debug-tls "$tls_endpoint"; fi
-    fi
-    [ -z "$http_url" ] || add_check "HTTP $http_url" debug-http "$http_url"
-    [ -z "$kube_path" ] || add_check "Kubernetes API $kube_path" debug-kube-api "$kube_path"
-	status=ready
-	[ "$failures" -eq 0 ] || status=not-ready
-	jq -ncS --arg status "$status" --argjson checks "$checks" --argjson failures "$failures" \
-		'{schema_version: 1, status: $status, checks: $checks, checks_failed: $failures}'
-    exit 0
-fi
 
 printf '%s\n' '=== workload-debug report ==='
 printf 'timestamp: '; date -u '+%Y-%m-%dT%H:%M:%SZ'
@@ -79,8 +48,8 @@ run_check() {
     "$@" || failures=$((failures + 1))
 }
 
-[ -z "$dns_name" ] || { if [ -n "$dns_server" ]; then run_check "DNS $dns_name" debug-dns --server "$dns_server" "$dns_name"; else run_check "DNS $dns_name" debug-dns "$dns_name"; fi; }
-[ -z "$tls_endpoint" ] || { if [ -n "$tls_ca" ]; then run_check "TLS $tls_endpoint" debug-tls --ca "$tls_ca" "$tls_endpoint"; else run_check "TLS $tls_endpoint" debug-tls "$tls_endpoint"; fi; }
+[ -z "$dns_name" ] || run_check "DNS $dns_name" debug-dns "$dns_name"
+[ -z "$tls_endpoint" ] || run_check "TLS $tls_endpoint" debug-tls "$tls_endpoint"
 [ -z "$http_url" ] || run_check "HTTP $http_url" debug-http "$http_url"
 [ -z "$kube_path" ] || run_check "Kubernetes API $kube_path" debug-kube-api "$kube_path"
 
