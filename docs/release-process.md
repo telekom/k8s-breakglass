@@ -45,6 +45,8 @@ ordinary controller CI suite.
 7. **Helm chart publication**
    - `charts/escalation-config` and `charts/debug-session-catalogue` are packaged during release preparation.
    - Each packaged chart is pushed to GHCR as a Helm OCI artifact below `oci://ghcr.io/telekom/k8s-breakglass/charts/<chart-name>`.
+   - Published catalogue charts are keylessly Cosign-signed and carry SPDX
+     SBOM plus SLSA provenance attestations on the OCI manifest digest.
    - Chart `.tgz` packages are attached to the GitHub Release assets and included in release checksums.
    - Every release tag that changes a packaged chart `appVersion` must use a unique chart `version` in that chart's `Chart.yaml`. Release reruns may skip an already-published chart only when the remote chart `appVersion` matches the release tag.
 
@@ -73,6 +75,9 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 - Bump the applicable chart's `version` before cutting a release whose chart `appVersion` has not already been published under that chart version. The catalogue's map-to-list migration is a breaking values-interface change recorded by its `0.2.0` chart version.
 - Generate artifacts via the release workflow.
 - Verify both chart publications in GHCR (`.../charts/escalation-config` and `.../charts/debug-session-catalogue`).
+- For a catalogue release, verify every rendered utility image is a
+  linux/amd64 + linux/arm64 digest reference and run
+  `hack/verify-catalogue-supply-chain.sh` against the published chart digest.
 - Publish checksums and update release notes.
 - Verify provenance attestation was pushed to the registry.
 - Verify SBOM is attached to the GitHub Release.

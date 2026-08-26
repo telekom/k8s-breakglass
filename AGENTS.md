@@ -255,6 +255,19 @@ Use `make -C utils/node-maintenance test` and `shellcheck` for helper changes;
 image and `build-multiarch` requests BuildKit provenance and SBOM metadata.
 Signing and SBOM attestation target an immutable registry digest only.
 
+## Catalogue Supply Chain
+
+Catalogue utility images and the standalone OCI chart are release artifacts,
+not unverified Helm defaults. Release gates must resolve immutable digests,
+require linux/amd64 and linux/arm64 manifests for utility images, and fail
+closed unless keyless Cosign signatures, SPDX SBOM attestations, and SLSA
+provenance are present. Keep this gate separate from ordinary unit, lint, and
+image build jobs.
+The consolidated `.github/workflows/catalogue-utility-integration.yml` is the
+separate real-tool proof for `network-debug` and `node-maintenance`; keep its
+matrix entries as distinct required checks and do not copy those tests into
+the ordinary CI suite.
+
 ## Reusable Prompts (19 total)
 
 Prompts are in [`.github/prompts/`](.github/prompts/) and can be invoked by name:

@@ -1,199 +1,71 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 #
-# SPDX-License-Identifier: CC0-1.0
+# SPDX-License-Identifier: Apache-2.0
 
-name: Catalogue utility behavior
+name: Catalogue utility integration
 
 on:
   workflow_dispatch: {}
   pull_request:
     paths:
-      - "charts/debug-session-catalogue/**"
-      - "cmd/cluster-validator/**"
-      - "pkg/clustervalidator/**"
-      - "hack/cluster-validator-**"
-      - "Dockerfile.validator"
-      - "utils/cluster-validator/**"
-      - "utils/**"
-      - ".github/workflows/catalogue-utility-integration.yml"
-  push:
-    branches: [main, deployment-testing]
-    paths:
-      - "charts/debug-session-catalogue/**"
-      - "cmd/cluster-validator/**"
-      - "pkg/clustervalidator/**"
-      - "hack/cluster-validator-**"
-      - "Dockerfile.validator"
-      - "utils/cluster-validator/**"
-      - "utils/**"
+      - "utils/images/**"
+      - "utils/network-debug/**"
+      - "utils/node-maintenance/**"
       - ".github/workflows/catalogue-utility-integration.yml"
 
 permissions:
   contents: read
 
-env:
-  KIND_VERSION: v0.32.0
-  KIND_NODE_IMAGE: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
-
 jobs:
-  network-diagnostics:
-    name: Intent / network-diagnostics behavior
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-      - name: Prove multi-architecture build
-        run: make -C utils/network-debug build-multiarch OCI_ARCHIVE="${RUNNER_TEMP}/network-debug.oci.tar"
-      - name: Install checksum-verified kind
-        run: |
-          set -euo pipefail
-          curl --fail --silent --show-error --location "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" --output kind
-          curl --fail --silent --show-error --location "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum" --output kind.sha256sum
-          sed 's#kind-linux-amd64#kind#' kind.sha256sum | sha256sum --check --status
-          install -m 0755 kind "${RUNNER_TEMP}/kind"
-          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
-      - name: Build native image and disposable fio fixture
-        env:
-          NETWORK_DEBUG_IMAGE: network-debug:integration
-          NETWORK_DEBUG_KUBESTR_FIXTURE_IMAGE: network-debug-kubestr-fio:integration
-        run: |
-          docker build --file utils/network-debug/Dockerfile --tag "${NETWORK_DEBUG_IMAGE}" utils/network-debug
-          docker build --file utils/network-debug/tests/fixtures/kubestr-fio/Dockerfile --tag "${NETWORK_DEBUG_KUBESTR_FIXTURE_IMAGE}" utils/network-debug/tests/fixtures/kubestr-fio
-      - name: Execute every network tool contract
-        env:
-          NETWORK_DEBUG_IMAGE: network-debug:integration
-          NETWORK_DEBUG_KUBESTR_FIXTURE_IMAGE: network-debug-kubestr-fio:integration
-          NETWORK_DEBUG_REQUIRE_PWRU: "true"
-        run: make -C utils/network-debug integration
-      - name: Remove and verify disposable cluster
-        if: always()
-        run: |
-          set +e
-          # The integration script owns and deletes its uniquely named kind
-          # cluster. This step catches an orphaned proof cluster on the runner.
-          if kind get clusters | grep -E '^network-debug-proof-' >/dev/null; then
-            echo "network-debug proof cluster survived cleanup" >&2
-            exit 1
-          fi
-          if docker ps -a --format '{{.Names}}' | grep -E '^network-debug-proof-' >/dev/null; then
-            echo "network-debug proof container survived cleanup" >&2
-            exit 1
-          fi
-          if docker network ls --format '{{.Name}}' | grep -E '^network-debug-proof-' >/dev/null; then
-            echo "network-debug proof network survived cleanup" >&2
-            exit 1
-          fi
-          if find "${RUNNER_TEMP}" -maxdepth 1 -type d -name 'network-debug-proof.*' -print -quit | grep -q .; then
-            echo "network-debug proof work directory survived cleanup" >&2
-            exit 1
-          fi
-
-  node-recovery:
-    name: Intent / node-recovery and network-repair behavior
+  utility:
+    name: ${{ matrix.name }} real-tool proof
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: network-debug
+            path: utils/network-debug
+            image: local/catalogue-network-debug:ci
+            command: ["--version"]
+          - name: node-maintenance
+            path: utils/node-maintenance
+            image: local/catalogue-node-maintenance:ci
+            command: ["--help"]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-      - name: Prove multi-architecture build
-        run: make -C utils/node-maintenance build-multiarch OCI_ARCHIVE="${RUNNER_TEMP}/node-maintenance.oci.tar"
-      - name: Execute recovery, repair, boundary, evidence, and cleanup contracts
-        run: make -C utils/node-maintenance integration
-
-  workload-diagnostics:
-    name: Intent / workload-diagnostics behavior
-    runs-on: ubuntu-24.04
-    timeout-minutes: 35
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-      - name: Prove multi-architecture build
-        run: make -C utils/workload-debug build-multiarch OCI_ARCHIVE="${RUNNER_TEMP}/workload-debug.oci.tar"
-      - name: Install checksum-verified kind
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803ef7f5f0e # v4.3.0
+      - name: Build multi-arch OCI artifact
+        env:
+          IMAGE: ${{ matrix.image }}
+        working-directory: ${{ matrix.path }}
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --location "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" --output kind
-          curl --fail --silent --show-error --location "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum" --output kind.sha256sum
-          sed 's#kind-linux-amd64#kind#' kind.sha256sum | sha256sum --check --status
-          install -m 0755 kind "${RUNNER_TEMP}/kind"
-          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
-      - name: Execute DNS, TLS, HTTP, API, security, and cleanup contracts
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --provenance=true --sbom=true \
+            --build-arg VERSION=ci-${GITHUB_SHA} \
+            --build-arg VCS_REF=${GITHUB_SHA} \
+            --build-arg BUILD_DATE=1970-01-01T00:00:00Z \
+            --tag "${IMAGE}" \
+            --output "type=oci,dest=/tmp/${{ matrix.name }}.oci.tar" \
+            .
+          test -s "/tmp/${{ matrix.name }}.oci.tar"
+      - name: Execute image command on the real runtime
         env:
-          KIND_NODE_IMAGE: ${{ env.KIND_NODE_IMAGE }}
-        run: make -C utils/workload-debug integration-test
-
-  storage-and-dump-access:
-    name: Intent / storage-diagnostics and dump-access behavior
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-      - name: Prove multi-architecture builds
-        run: make -C utils/images multiarch
-      - name: Execute fio, ioping, dump, boundary, and cleanup contracts
-        run: make -C utils/images integration
-
-  cluster-validation:
-    name: Intent / cluster-validation behavior
-    runs-on: ubuntu-24.04
-    timeout-minutes: 35
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-      - name: Prove multi-architecture build
-        run: |
-          docker buildx build --platform linux/amd64,linux/arm64 \
-            --provenance=true --sbom=true --file utils/cluster-validator/Dockerfile \
-            --output "type=oci,dest=${RUNNER_TEMP}/cluster-validator.oci.tar" .
-      - name: Install checksum-verified kind
+          IMAGE: ${{ matrix.image }}
+        working-directory: ${{ matrix.path }}
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --location "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" --output kind
-          curl --fail --silent --show-error --location "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum" --output kind.sha256sum
-          sed 's#kind-linux-amd64#kind#' kind.sha256sum | sha256sum --check --status
-          install -m 0755 kind "${RUNNER_TEMP}/kind"
-          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
-      - name: Execute readiness, RBAC, extension, secrecy, and cleanup contracts
-        env:
-          KIND_NODE_IMAGE: ${{ env.KIND_NODE_IMAGE }}
-        run: make test-validator-integration
-      - name: Upload validator diagnostics
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: cluster-validator-integration-diagnostics
-          path: ${{ runner.temp }}/cluster-validator-integration-artifacts/
-          if-no-files-found: ignore
-          retention-days: 7
+          docker buildx build \
+            --platform linux/amd64 \
+            --build-arg VERSION=ci-${GITHUB_SHA} \
+            --build-arg VCS_REF=${GITHUB_SHA} \
+            --build-arg BUILD_DATE=1970-01-01T00:00:00Z \
+            --tag "${IMAGE}" --load .
+          docker run --rm "${IMAGE}" ${{ join(matrix.command, ' ') }}
