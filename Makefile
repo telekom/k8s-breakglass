@@ -69,11 +69,18 @@ lint-new: golangci-lint ## Run golangci-lint only on new/changed code (requires 
 lint-strict: golangci-lint ## Run golangci-lint with extended timeout (CI-friendly).
 	$(GOLANGCI_LINT) run --timeout 10m
 
-.PHONY: verify-release-provenance
-verify-release-provenance: ## Verify release image provenance signs the registry digest.
-	bash hack/verify-release-provenance.sh
-	bash hack/verify-slsa-provenance.sh
+.PHONY: verify-release-publication
+verify-release-publication: ## Verify release publication behavior without registry credentials.
+	bash hack/verify-helm-publication.sh
+	bash hack/verify-registry-digest-resolution.sh
 	bash hack/verify-release-values.sh
+
+.PHONY: verify-slsa-provenance
+verify-slsa-provenance: ## Verify decoded SLSA provenance behavior with local Cosign.
+	bash hack/verify-slsa-provenance.sh
+
+.PHONY: verify-release-provenance
+verify-release-provenance: verify-release-publication verify-slsa-provenance ## Verify release publication and provenance behavior.
 
 .PHONY: verify-generated
 verify-generated: generate manifests ## Verify generated API and manifest artifacts are checked in.

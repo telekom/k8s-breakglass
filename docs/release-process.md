@@ -12,11 +12,13 @@ Development image publication is a separate, opt-in path. Pushes to a
 repository-owned, protected `dev-images/*` branch run
 `utility-dev-publish.yml`; ordinary branches and forks cannot publish to the
 canonical GHCR namespace. Repository administrators must configure the
-`UTILITY_DEV_ALLOWED_ACTORS`, `UTILITY_DEV_ENVIRONMENT_REVIEWERS`, and
-`UTILITY_DEV_PREVENT_SELF_REVIEW=true` repository variables and the protected
-`utility-development` environment before using it. The environment must have
-required reviewers configured, self-review prevention enabled, and the
-publisher must not be one of its reviewers. The workflow builds all six utility
+`UTILITY_DEV_ALLOWED_ACTORS` repository variable and the protected
+`utility-development` environment before using it. The environment itself
+must have one or more required reviewers configured and GitHub's prevent
+self-review setting enabled; these controls are not represented by repository
+variables. An administrator can verify the live settings with
+`GH_REPO=telekom/k8s-breakglass GH_TOKEN=... hack/verify-github-environment.sh utility-development`.
+The workflow builds all six utility
 images as multi-architecture manifests, uses a tag that
 contains the complete source SHA and GitHub run identity, refuses to overwrite
 an existing tag, and records the manifest digest in an uploaded reference
@@ -29,6 +31,12 @@ The workflow's exact GitHub OIDC certificate identity is recorded in the
 reference manifest and is required when verifying the source signature. The
 publication approval environment must be configured with required reviewers
 and must not permit the initiating publisher to approve their own run.
+
+On a rerun, `github.actor` identifies the original event actor while
+`github.triggering_actor` identifies the person requesting the rerun. Both must
+be in `UTILITY_DEV_ALLOWED_ACTORS`; GitHub's protected environment performs the
+independent approval check for the current run. An approval cannot be inferred
+from either actor value or from repository variables.
 
 ## Goals
 

@@ -53,8 +53,6 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
           ALLOWED_ACTORS: ${{ vars.UTILITY_DEV_ALLOWED_ACTORS }}
-          ENVIRONMENT_REVIEWERS: ${{ vars.UTILITY_DEV_ENVIRONMENT_REVIEWERS }}
-          PREVENT_SELF_REVIEW: ${{ vars.UTILITY_DEV_PREVENT_SELF_REVIEW }}
           # This is a repository identity, not an environment or customer
           # assumption. A fork cannot publish to the canonical GHCR namespace.
           REPO_EXPECTED: telekom/k8s-breakglass
@@ -80,12 +78,8 @@ jobs:
             echo "event sender and actor do not match" >&2
             exit 1
           }
-          [[ -n "${TRIGGERING_ACTOR}" && -n "${ALLOWED_ACTORS}" && -n "${ENVIRONMENT_REVIEWERS}" ]] || {
-            echo "publisher and environment reviewer allowlists are required" >&2
-            exit 1
-          }
-          [[ "${PREVENT_SELF_REVIEW}" == true ]] || {
-            echo "environment self-review prevention must be explicitly enabled" >&2
+          [[ -n "${TRIGGERING_ACTOR}" && -n "${ALLOWED_ACTORS}" ]] || {
+            echo "publisher allowlist and triggering actor are required" >&2
             exit 1
           }
           for candidate in "${ACTOR}" "${TRIGGERING_ACTOR}"; do
@@ -94,12 +88,6 @@ jobs:
               *) echo "actor ${candidate} is not an approved development publisher" >&2; exit 1 ;;
             esac
           done
-          case ",${ENVIRONMENT_REVIEWERS}," in
-            *,"${ACTOR}",*)
-              echo "publisher must not be an environment reviewer" >&2
-              exit 1
-              ;;
-          esac
 
   publication-approval:
     name: Approve development publication
@@ -204,7 +192,7 @@ jobs:
           # A failed registry probe is an acceptable absence only when the
           # registry returned a manifest-not-found response. Authentication,
           # rate-limit, DNS, TLS, and all other failures fail closed.
-          if ! grep -Eiq '(^|[^0-9])404([^0-9]|$)|MANIFEST_UNKNOWN|manifest unknown' "${probe_error}"; then
+          if ! grep -Eiq 'manifest unknown|MANIFEST_UNKNOWN|no such manifest|status code:[[:space:]]*404|unexpected status from HEAD request.*404' "${probe_error}"; then
             echo "could not prove that ${image}:${tag} is absent; refusing publication" >&2
             cat "${probe_error}" >&2
             exit 1
@@ -297,8 +285,8 @@ jobs:
           [[ "${SUBJECT}" == "${IMAGE}@${DIGEST}" ]] || { echo "subject mismatch" >&2; exit 1; }
           cosign sign --yes "${SUBJECT}"
           cosign attest --yes --type spdxjson --predicate "${{ matrix.name }}.spdx.json" "${SUBJECT}"
-          jq -n --arg sha "${GITHUB_SHA}" \
-            '{buildDefinition:{buildType:"https://github.com/telekom/k8s-breakglass/.github/workflows/utility-dev-publish.yml",externalParameters:{source:{uri:"https://github.com/telekom/k8s-breakglass",digest:{sha1:$sha}}},resolvedDependencies:[]},runDetails:{builder:{id:"github-actions"}}}' \
+          jq -n --arg sha "${SOURCE_SHA}" --arg workflow "${WORKFLOW_IDENTITY}" \
+            '{buildDefinition:{buildType:"https://github.com/telekom/k8s-breakglass/.github/workflows/utility-dev-publish.yml",externalParameters:{source:{uri:"https://github.com/telekom/k8s-breakglass",digest:{sha1:$sha}}},resolvedDependencies:[]},runDetails:{builder:{id:$workflow}}}' \
             >"${{ matrix.name }}.provenance.json"
           cosign attest --yes --type slsaprovenance1 --predicate "${{ matrix.name }}.provenance.json" "${SUBJECT}"
           cosign verify "${SUBJECT}" \
@@ -314,7 +302,10 @@ jobs:
             --certificate-identity="${WORKFLOW_IDENTITY}" \
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
             --output json >"${{ matrix.name }}.slsa-attestation.json"
-          hack/verify-slsa-provenance.sh "${{ matrix.name }}.slsa-attestation.json" "${SUBJECT}"
+          hack/verify-slsa-provenance.sh "${{ matrix.name }}.slsa-attestation.json" "${SUBJECT}" \
+            "https://github.com/telekom/k8s-breakglass/.github/workflows/utility-dev-publish.yml" \
+            "https://github.com/telekom/k8s-breakglass" "${SOURCE_SHA}" \
+            "${WORKFLOW_IDENTITY}"
           printf '%s|%s|%s\n' '${{ matrix.name }}' "${IMAGE}" "${DIGEST}" >"${{ matrix.name }}.ref"
           jq -n \
             --arg name '${{ matrix.name }}' \
@@ -394,7 +385,7 @@ jobs:
             utility-dev/*.metadata.json >utility-dev/references.json
           jq -e --arg source "${SOURCE_SHA}" --arg workflow "${WORKFLOW_REF}" \
             --arg identity "https://github.com/${WORKFLOW_REF}" \
-            '.sourceSha == $source and .workflowRef == $workflow and .workflowIdentity == $identity and (.images | length == 6) and all(.images[]; (.digest | test("^sha256:[0-9a-f]{64}$")))' \
+            '.sourceSha == $source and .workflowRef == $workflow and .workflowIdentity == $identity and (.images | length == 6) and (([.images[].name] | sort | join(",")) == "cluster-validator,dump-reader,network-debug,node-maintenance,storage-debug,workload-debug") and (([.images[].name] | unique | length) == 6) and all(.images[]; (.digest | test("^sha256:[0-9a-f]{64}$")))' \
             utility-dev/references.json >/dev/null
 
       - name: Upload immutable development reference manifest

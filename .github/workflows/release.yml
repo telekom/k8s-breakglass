@@ -129,18 +129,9 @@ jobs:
           IMAGE: ghcr.io/telekom/k8s-breakglass/${{ matrix.image }}
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 30); do
-            digest="$(docker buildx imagetools inspect "${IMAGE}:${GITHUB_REF_NAME}" 2>/dev/null | awk '/^Digest:[[:space:]]+sha256:[0-9a-f]{64}$/ {print $2; exit}')"
-            if [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-              echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
-              echo "subject=${IMAGE}@${digest}" >> "${GITHUB_OUTPUT}"
-              echo "Resolved ${IMAGE}:${GITHUB_REF_NAME} to ${digest} after ${attempt} attempt(s)."
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "Could not resolve an immutable digest for ${IMAGE}:${GITHUB_REF_NAME} after push" >&2
-          exit 1
+          digest="$(hack/resolve-registry-digest.sh "${IMAGE}:${GITHUB_REF_NAME}")"
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          echo "subject=${IMAGE}@${digest}" >> "${GITHUB_OUTPUT}"
       - name: Generate SPDX SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
@@ -162,13 +153,17 @@ jobs:
           cosign sign --yes "${subject}"
           cosign attest --yes --type spdxjson --predicate "${{ matrix.name }}.spdx.json" "${subject}"
           jq -n --arg sha "${GITHUB_SHA}" \
-            '{buildDefinition:{buildType:"https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml",externalParameters:{source:{uri:"https://github.com/telekom/k8s-breakglass",digest:{sha1:$sha}}},resolvedDependencies:[]},runDetails:{builder:{id:"github-actions"}}}' > "${{ matrix.name }}.provenance.json"
+            --arg workflow "https://github.com/${GITHUB_WORKFLOW_REF}" \
+            '{buildDefinition:{buildType:"https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml",externalParameters:{source:{uri:"https://github.com/telekom/k8s-breakglass",digest:{sha1:$sha}}},resolvedDependencies:[]},runDetails:{builder:{id:$workflow}}}' > "${{ matrix.name }}.provenance.json"
           cosign attest --yes --type slsaprovenance1 --predicate "${{ matrix.name }}.provenance.json" "${subject}"
           cosign verify "${subject}" --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
           cosign verify-attestation "${subject}" --type spdxjson --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
           cosign verify-attestation "${subject}" --type slsaprovenance1 --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
           cosign verify-attestation "${subject}" --type slsaprovenance1 --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*' --certificate-oidc-issuer='https://token.actions.githubusercontent.com' --output json > "${{ matrix.name }}.slsa-attestation.json"
-          hack/verify-slsa-provenance.sh "${{ matrix.name }}.slsa-attestation.json" "${subject}"
+          hack/verify-slsa-provenance.sh "${{ matrix.name }}.slsa-attestation.json" "${subject}" \
+            "https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml" \
+            "https://github.com/telekom/k8s-breakglass" "${GITHUB_SHA}" \
+            "https://github.com/${GITHUB_WORKFLOW_REF}"
           printf '%s|%s|%s\n' '${{ matrix.name }}' "${IMAGE}" "${digest}" > '${{ matrix.name }}.ref'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -513,30 +508,7 @@ jobs:
         run: |
           set -euo pipefail
           IMG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
-
-          INSPECT_OUTPUT=""
-          DIGEST=""
-          for i in $(seq 1 30); do
-            if INSPECT_OUTPUT="$(docker buildx imagetools inspect "${IMG}" 2>/tmp/imagetools-inspect.err)"; then
-              DIGEST="$(printf '%s\n' "${INSPECT_OUTPUT}" | awk '/^Digest:[[:space:]]+sha256:[0-9a-f]{64}$/ {print $2; exit}')"
-              if [ -n "${DIGEST}" ]; then
-                echo "Registry digest resolved after ${i} attempt(s)"
-                break
-              fi
-              echo "Attempt ${i}/30: manifest is available but no registry digest was reported, retrying in 10s..."
-            else
-              echo "Attempt ${i}/30: manifest not available yet, retrying in 10s..."
-              cat /tmp/imagetools-inspect.err || true
-            fi
-            sleep 10
-          done
-
-          if [ -z "${DIGEST}" ]; then
-            echo "::error::Could not determine registry digest for ${IMG}; provenance signing and attestations would have an unverifiable subject."
-            exit 1
-          fi
-
-          echo "${INSPECT_OUTPUT}"
+          DIGEST="$(hack/resolve-registry-digest.sh "${IMG}")"
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
           echo "Multi-arch manifest digest: ${DIGEST}"
       - name: Attest provenance
@@ -708,13 +680,13 @@ jobs:
             chart_version="$(printf '%s\n' "${metadata}" | awk '/^version:/ {print $2}')"
             remote="${CHART_REPO}/${chart_name}"
             docker_remote="${remote#oci://}"
-            digest="$(docker buildx imagetools inspect "${docker_remote}:${chart_version}" | awk '/^Digest:[[:space:]]+sha256:[0-9a-f]{64}$/ {print $2; exit}')"
+            digest="$(hack/resolve-registry-digest.sh "${docker_remote}:${chart_version}")"
             [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "No immutable digest for ${remote}:${chart_version}" >&2; exit 1; }
             subject="${docker_remote}@${digest}"
             cosign sign --yes "${subject}"
             cosign attest --yes --type spdxjson --predicate chart-sbom.spdx.json "${subject}"
             jq -n --arg sha "${GITHUB_SHA}" \
-              --arg workflow "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              --arg workflow "${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}" \
               '{buildDefinition:{buildType:"https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml",externalParameters:{source:{uri:"https://github.com/telekom/k8s-breakglass",digest:{sha1:$sha}}},resolvedDependencies:[]},runDetails:{builder:{id:$workflow}}}' > chart-provenance.json
             cosign attest --yes --type slsaprovenance1 --predicate chart-provenance.json "${subject}"
             cosign verify "${subject}" \
@@ -730,7 +702,10 @@ jobs:
               --certificate-identity-regexp="${SUPPLY_CHAIN_IDENTITY_REGEXP}" \
               --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
               --output json > chart-slsa-attestation.json
-            hack/verify-slsa-provenance.sh chart-slsa-attestation.json "${subject}"
+            hack/verify-slsa-provenance.sh chart-slsa-attestation.json "${subject}" \
+              "https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml" \
+              "https://github.com/telekom/k8s-breakglass" "${GITHUB_SHA}" \
+              "${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}"
             if [ "${chart_name}" = "debug-session-catalogue" ]; then
               catalogue_chart_ref="${subject}"
               helm show values "${chart_package}" > catalogue-values.yaml

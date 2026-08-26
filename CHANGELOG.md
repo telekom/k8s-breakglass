@@ -43,8 +43,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   utility images as immutable, signed multi-architecture development artifacts
   with SBOM/SLSA v1 provenance and an auditable digest reference manifest. The
   workflow validates the decoded Cosign statement and fails closed unless its
-  protected publisher and independently reviewed, self-review-disabled approval
-  controls are configured.
+  protected publisher and independently reviewed approval environment are
+  configured. The environment settings are checked by the administrative
+  `hack/verify-github-environment.sh` preflight, not repository variables.
+
+### Fixed
+
+- Release and development digest resolution now uses bounded, fail-closed
+  retries, and provenance behavior checks run in a Cosign-provisioned CI job
+  without duplicating normal publication checks.
 - **Standalone debug-session catalogue**: Added the OCI-ready
   `debug-session-catalogue` Helm chart with neutral workload, network,
   storage, packet-capture, network-repair, node-recovery, and cluster-validation

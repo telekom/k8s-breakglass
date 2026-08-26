@@ -259,6 +259,12 @@ build jobs. The development publication workflow additionally requires a
 protected `dev-images/**` ref, an explicit publisher allowlist, and an
 independently protected approval environment; never weaken those gates to
 make a development publication proceed.
+Environment required-reviewer and prevent-self-review settings are GitHub
+environment controls, not repository variables. Administrators should run
+`hack/verify-github-environment.sh` with an admin-readable `GH_TOKEN` before
+enabling development publication. On reruns, validate both the original
+`github.actor` and `github.triggering_actor` against the publisher allowlist;
+the protected environment remains the source of truth for approval.
 The consolidated `.github/workflows/catalogue-utility-integration.yml` is the
 separate real-tool proof for `network-debug` and `node-maintenance`; keep its
 matrix entries as distinct required checks and do not copy those tests into
