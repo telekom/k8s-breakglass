@@ -72,6 +72,7 @@ lint-strict: golangci-lint ## Run golangci-lint with extended timeout (CI-friend
 .PHONY: verify-release-provenance
 verify-release-provenance: ## Verify release image provenance signs the registry digest.
 	bash hack/verify-release-provenance.sh
+	bash hack/verify-slsa-provenance.sh
 	bash hack/verify-release-values.sh
 
 .PHONY: verify-generated

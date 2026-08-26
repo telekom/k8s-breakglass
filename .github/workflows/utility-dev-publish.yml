@@ -53,6 +53,8 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
           ALLOWED_ACTORS: ${{ vars.UTILITY_DEV_ALLOWED_ACTORS }}
+          ENVIRONMENT_REVIEWERS: ${{ vars.UTILITY_DEV_ENVIRONMENT_REVIEWERS }}
+          PREVENT_SELF_REVIEW: ${{ vars.UTILITY_DEV_PREVENT_SELF_REVIEW }}
           # This is a repository identity, not an environment or customer
           # assumption. A fork cannot publish to the canonical GHCR namespace.
           REPO_EXPECTED: telekom/k8s-breakglass
@@ -78,8 +80,12 @@ jobs:
             echo "event sender and actor do not match" >&2
             exit 1
           }
-          [[ -n "${TRIGGERING_ACTOR}" && -n "${ALLOWED_ACTORS}" ]] || {
-            echo "an explicit development publisher allowlist is required" >&2
+          [[ -n "${TRIGGERING_ACTOR}" && -n "${ALLOWED_ACTORS}" && -n "${ENVIRONMENT_REVIEWERS}" ]] || {
+            echo "publisher and environment reviewer allowlists are required" >&2
+            exit 1
+          }
+          [[ "${PREVENT_SELF_REVIEW}" == true ]] || {
+            echo "environment self-review prevention must be explicitly enabled" >&2
             exit 1
           }
           for candidate in "${ACTOR}" "${TRIGGERING_ACTOR}"; do
@@ -88,6 +94,12 @@ jobs:
               *) echo "actor ${candidate} is not an approved development publisher" >&2; exit 1 ;;
             esac
           done
+          case ",${ENVIRONMENT_REVIEWERS}," in
+            *,"${ACTOR}",*)
+              echo "publisher must not be an environment reviewer" >&2
+              exit 1
+              ;;
+          esac
 
   publication-approval:
     name: Approve development publication
@@ -178,8 +190,23 @@ jobs:
           }
           tag="dev-${SOURCE_SHA}-${RUN_ID}-${RUN_ATTEMPT}"
           image="${REGISTRY}/${REPOSITORY}/${IMAGE_NAME}"
-          if docker buildx imagetools inspect "${image}:${tag}" >/dev/null 2>&1; then
+          probe_output="$(mktemp)"
+          probe_error="$(mktemp)"
+          trap 'rm -f "${probe_output}" "${probe_error}"' EXIT
+          set +e
+          docker buildx imagetools inspect "${image}:${tag}" >"${probe_output}" 2>"${probe_error}"
+          probe_status=$?
+          set -e
+          if [[ "${probe_status}" -eq 0 ]]; then
             echo "refusing to overwrite existing development tag ${image}:${tag}" >&2
+            exit 1
+          fi
+          # A failed registry probe is an acceptable absence only when the
+          # registry returned a manifest-not-found response. Authentication,
+          # rate-limit, DNS, TLS, and all other failures fail closed.
+          if ! grep -Eiq '(^|[^0-9])404([^0-9]|$)|MANIFEST_UNKNOWN|manifest unknown' "${probe_error}"; then
+            echo "could not prove that ${image}:${tag} is absent; refusing publication" >&2
+            cat "${probe_error}" >&2
             exit 1
           fi
           {
@@ -219,7 +246,19 @@ jobs:
           set -Eeuo pipefail
           digest=""
           for attempt in $(seq 1 30); do
-            digest="$(docker buildx imagetools inspect "${IMAGE}:${TAG}" 2>/dev/null | awk '/^Digest:[[:space:]]+sha256:[0-9a-f]{64}$/ {print $2; exit}')"
+            inspect_output="$(mktemp)"
+            inspect_error="$(mktemp)"
+            set +e
+            docker buildx imagetools inspect "${IMAGE}:${TAG}" >"${inspect_output}" 2>"${inspect_error}"
+            inspect_status=$?
+            set -e
+            if [[ "${inspect_status}" -eq 0 ]]; then
+              digest="$(awk '/^Digest:[[:space:]]+sha256:[0-9a-f]{64}$/ {print $2; exit}' "${inspect_output}")"
+            else
+              echo "registry digest probe failed on attempt ${attempt}; retrying" >&2
+              cat "${inspect_error}" >&2
+            fi
+            rm -f "${inspect_output}" "${inspect_error}"
             [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] && break
             sleep 2
           done
@@ -261,16 +300,21 @@ jobs:
           jq -n --arg subject "${IMAGE}" --arg digest "${DIGEST#sha256:}" --arg sha "${GITHUB_SHA}" \
             '{_type:"https://in-toto.io/Statement/v1",subject:[{name:$subject,digest:{sha256:$digest}}],predicateType:"https://slsa.dev/provenance/v1",predicate:{buildDefinition:{buildType:"https://github.com/telekom/k8s-breakglass/.github/workflows/utility-dev-publish.yml",externalParameters:{source:{uri:"https://github.com/telekom/k8s-breakglass",digest:{sha1:$sha}}},resolvedDependencies:[]},runDetails:{builder:{id:"github-actions"}}}}' \
             >"${{ matrix.name }}.provenance.json"
-          cosign attest --yes --type slsaprovenance --predicate "${{ matrix.name }}.provenance.json" "${SUBJECT}"
+          cosign attest --yes --type slsaprovenance1 --predicate "${{ matrix.name }}.provenance.json" "${SUBJECT}"
           cosign verify "${SUBJECT}" \
             --certificate-identity="${WORKFLOW_IDENTITY}" \
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com
           cosign verify-attestation "${SUBJECT}" --type spdxjson \
             --certificate-identity="${WORKFLOW_IDENTITY}" \
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com
-          cosign verify-attestation "${SUBJECT}" --type slsaprovenance \
+          cosign verify-attestation "${SUBJECT}" --type slsaprovenance1 \
             --certificate-identity="${WORKFLOW_IDENTITY}" \
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+          cosign verify-attestation "${SUBJECT}" --type slsaprovenance1 \
+            --certificate-identity="${WORKFLOW_IDENTITY}" \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+            --output json >"${{ matrix.name }}.slsa-attestation.json"
+          hack/verify-slsa-provenance.sh "${{ matrix.name }}.slsa-attestation.json" "${SUBJECT}"
           printf '%s|%s|%s\n' '${{ matrix.name }}' "${IMAGE}" "${DIGEST}" >"${{ matrix.name }}.ref"
           jq -n \
             --arg name '${{ matrix.name }}' \
@@ -299,6 +343,7 @@ jobs:
             ${{ matrix.name }}.metadata.json
             ${{ matrix.name }}.spdx.json
             ${{ matrix.name }}.provenance.json
+            ${{ matrix.name }}.slsa-attestation.json
           if-no-files-found: error
 
   utility-reference:
@@ -323,18 +368,26 @@ jobs:
           set -Eeuo pipefail
           refs=(utility-dev/*.ref)
           [[ "${#refs[@]}" -eq 6 ]] || { echo "expected six utility references" >&2; exit 1; }
+          collected_names=()
           for ref in "${refs[@]}"; do
             IFS='|' read -r name image digest remainder <"${ref}"
             [[ -z "${remainder:-}" ]] || { echo "malformed reference ${ref}" >&2; exit 1; }
             [[ "${name}" =~ ^(workload-debug|network-debug|storage-debug|dump-reader|node-maintenance|cluster-validator)$ ]] || exit 1
             [[ "${image}" == "ghcr.io/telekom/k8s-breakglass/${name}" ]] || exit 1
             [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+            collected_names+=("${name}")
             metadata="utility-dev/${name}.metadata.json"
             jq -e --arg name "${name}" --arg image "${image}" --arg digest "${digest}" \
               --arg source "${SOURCE_SHA}" --arg workflow "${WORKFLOW_REF}" \
               '.name == $name and .image == $image and .digest == $digest and .sourceSha == $source and .workflowRef == $workflow' \
               "${metadata}" >/dev/null
           done
+          actual_names="$(printf '%s\n' "${collected_names[@]}" | sort -u | paste -sd, -)"
+          expected_names="cluster-validator,dump-reader,network-debug,node-maintenance,storage-debug,workload-debug"
+          [[ "${actual_names}" == "${expected_names}" ]] || {
+            echo "utility reference set mismatch: ${actual_names}" >&2
+            exit 1
+          }
           jq -s --arg source "${SOURCE_SHA}" --arg workflow "${WORKFLOW_REF}" \
             --arg identity "https://github.com/${WORKFLOW_REF}" \
             '{sourceSha:$source,workflowRef:$workflow,workflowIdentity:$identity,images:sort_by(.name)}' \

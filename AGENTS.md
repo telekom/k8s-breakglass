@@ -252,8 +252,13 @@ Catalogue utility images and the standalone OCI chart are release artifacts,
 not unverified Helm defaults. Release gates must resolve immutable digests,
 require linux/amd64 and linux/arm64 manifests for utility images, and fail
 closed unless keyless Cosign signatures, SPDX SBOM attestations, and SLSA
-provenance are present. Keep this gate separate from ordinary unit, lint, and
-image build jobs.
+provenance v1 attestations are present. Use Cosign's `slsaprovenance1` type
+for the bare SLSA v1 predicate and verify the decoded in-toto subject and
+predicate fields. Keep this gate separate from ordinary unit, lint, and image
+build jobs. The development publication workflow additionally requires a
+protected `dev-images/**` ref, an explicit publisher allowlist, and an
+independently protected approval environment; never weaken those gates to
+make a development publication proceed.
 The consolidated `.github/workflows/catalogue-utility-integration.yml` is the
 separate real-tool proof for `network-debug` and `node-maintenance`; keep its
 matrix entries as distinct required checks and do not copy those tests into

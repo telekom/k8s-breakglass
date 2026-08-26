@@ -12,16 +12,22 @@ Development image publication is a separate, opt-in path. Pushes to a
 repository-owned, protected `dev-images/*` branch run
 `utility-dev-publish.yml`; ordinary branches and forks cannot publish to the
 canonical GHCR namespace. Repository administrators must configure the
-`UTILITY_DEV_ALLOWED_ACTORS` repository variable and the protected
-`utility-development` environment before using it. The workflow builds all
-six utility images as multi-architecture manifests, uses a tag that
+`UTILITY_DEV_ALLOWED_ACTORS`, `UTILITY_DEV_ENVIRONMENT_REVIEWERS`, and
+`UTILITY_DEV_PREVENT_SELF_REVIEW=true` repository variables and the protected
+`utility-development` environment before using it. The environment must have
+required reviewers configured, self-review prevention enabled, and the
+publisher must not be one of its reviewers. The workflow builds all six utility
+images as multi-architecture manifests, uses a tag that
 contains the complete source SHA and GitHub run identity, refuses to overwrite
 an existing tag, and records the manifest digest in an uploaded reference
-manifest. Each digest is keylessly signed and carries SPDX and SLSA
-attestations. Consumers must mirror and deploy the digest reference, not the
-development tag. The workflow's exact GitHub OIDC certificate identity is
-recorded in the reference manifest and is required when verifying the source
-signature.
+manifest. Each digest is keylessly signed and carries SPDX and SLSA v1
+attestations (`slsaprovenance1`). The workflow decodes and validates the signed
+in-toto statement's exact subject and predicate before uploading the reference.
+Consumers must mirror and deploy the digest reference, not the development tag.
+The workflow's exact GitHub OIDC certificate identity is recorded in the
+reference manifest and is required when verifying the source signature. The
+publication approval environment must be configured with required reviewers
+and must not permit the initiating publisher to approve their own run.
 
 ## Goals
 
@@ -45,7 +51,8 @@ signature.
    - Include a summary of changes, security notes, and upgrade guidance.
 
 4. **Provenance**
-   - SLSA-compatible provenance is generated for every release image using `actions/attest-build-provenance` in the assemble job.
+   - SLSA v1 provenance is generated for every release image using
+     `actions/attest-build-provenance` and Cosign `slsaprovenance1` attestations.
    - Provenance attestations are pushed to the container registry alongside the image.
 
 5. **SBOM**

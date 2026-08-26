@@ -41,7 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reference.
 - A protected `dev-images/*` push workflow publishes all six standalone
   utility images as immutable, signed multi-architecture development artifacts
-  with SBOM/provenance and an auditable digest reference manifest.
+  with SBOM/SLSA v1 provenance and an auditable digest reference manifest. The
+  workflow validates the decoded Cosign statement and fails closed unless its
+  protected publisher and independently reviewed, self-review-disabled approval
+  controls are configured.
 - **Standalone debug-session catalogue**: Added the OCI-ready
   `debug-session-catalogue` Helm chart with neutral workload, network,
   storage, packet-capture, network-repair, node-recovery, and cluster-validation

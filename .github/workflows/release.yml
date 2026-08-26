@@ -163,10 +163,12 @@ jobs:
           cosign attest --yes --type spdxjson --predicate "${{ matrix.name }}.spdx.json" "${subject}"
           jq -n --arg subject "${IMAGE}" --arg digest "${digest#sha256:}" --arg sha "${GITHUB_SHA}" \
             '{_type:"https://in-toto.io/Statement/v1",subject:[{name:$subject,digest:{sha256:$digest}}],predicateType:"https://slsa.dev/provenance/v1",predicate:{buildDefinition:{buildType:"https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml",externalParameters:{source:{uri:"https://github.com/telekom/k8s-breakglass",digest:{sha1:$sha}}},resolvedDependencies:[]},runDetails:{builder:{id:"github-actions"}}}}' > "${{ matrix.name }}.provenance.json"
-          cosign attest --yes --type slsaprovenance --predicate "${{ matrix.name }}.provenance.json" "${subject}"
+          cosign attest --yes --type slsaprovenance1 --predicate "${{ matrix.name }}.provenance.json" "${subject}"
           cosign verify "${subject}" --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
           cosign verify-attestation "${subject}" --type spdxjson --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
-          cosign verify-attestation "${subject}" --type slsaprovenance --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
+          cosign verify-attestation "${subject}" --type slsaprovenance1 --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
+          cosign verify-attestation "${subject}" --type slsaprovenance1 --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*' --certificate-oidc-issuer='https://token.actions.githubusercontent.com' --output json > "${{ matrix.name }}.slsa-attestation.json"
+          hack/verify-slsa-provenance.sh "${{ matrix.name }}.slsa-attestation.json" "${subject}"
           printf '%s|%s|%s\n' '${{ matrix.name }}' "${IMAGE}" "${digest}" > '${{ matrix.name }}.ref'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -654,6 +656,8 @@ jobs:
       id-token: write
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout release helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Download chart artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -713,16 +717,21 @@ jobs:
             jq -n --arg subject "${remote#oci://}" --arg digest "${digest_hex}" --arg sha "${GITHUB_SHA}" \
               --arg workflow "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
               '{_type:"https://in-toto.io/Statement/v1",subject:[{name:$subject,digest:{sha256:$digest}}],predicateType:"https://slsa.dev/provenance/v1",predicate:{buildDefinition:{buildType:"https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml",externalParameters:{source:{uri:"https://github.com/telekom/k8s-breakglass",digest:{sha1:$sha}}},resolvedDependencies:[]},runDetails:{builder:{id:$workflow}}}}' > chart-provenance.json
-            cosign attest --yes --type slsaprovenance --predicate chart-provenance.json "${subject}"
+            cosign attest --yes --type slsaprovenance1 --predicate chart-provenance.json "${subject}"
             cosign verify "${subject}" \
               --certificate-identity-regexp="${SUPPLY_CHAIN_IDENTITY_REGEXP}" \
               --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
             cosign verify-attestation "${subject}" --type spdxjson \
               --certificate-identity-regexp="${SUPPLY_CHAIN_IDENTITY_REGEXP}" \
               --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
-            cosign verify-attestation "${subject}" --type slsaprovenance \
+            cosign verify-attestation "${subject}" --type slsaprovenance1 \
               --certificate-identity-regexp="${SUPPLY_CHAIN_IDENTITY_REGEXP}" \
               --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+            cosign verify-attestation "${subject}" --type slsaprovenance1 \
+              --certificate-identity-regexp="${SUPPLY_CHAIN_IDENTITY_REGEXP}" \
+              --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+              --output json > chart-slsa-attestation.json
+            hack/verify-slsa-provenance.sh chart-slsa-attestation.json "${subject}"
             if [ "${chart_name}" = "debug-session-catalogue" ]; then
               catalogue_chart_ref="${subject}"
               helm show values "${chart_package}" > catalogue-values.yaml

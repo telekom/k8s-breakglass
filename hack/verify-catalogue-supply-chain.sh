@@ -72,7 +72,7 @@ verify_attestations() {
     --certificate-identity-regexp="$IDENTITY_REGEXP" \
     --certificate-oidc-issuer="$OIDC_ISSUER" >/dev/null
   printf 'Verifying %s SLSA provenance attestation\n' "$label"
-  cosign verify-attestation "$subject" --type slsaprovenance \
+  cosign verify-attestation "$subject" --type slsaprovenance1 \
     --certificate-identity-regexp="$IDENTITY_REGEXP" \
     --certificate-oidc-issuer="$OIDC_ISSUER" >/dev/null
 }
