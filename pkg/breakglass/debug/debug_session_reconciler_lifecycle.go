@@ -623,6 +623,12 @@ func (c *DebugSessionController) cleanupDeployedResources(
 				continue
 			}
 			log.Infow("Deleted debug resource", "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace)
+			if c.shouldEmitAudit(ds) {
+				if auditManager := c.currentAuditManager(); auditManager != nil {
+					auditManager.DebugSessionResourceCleanup(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster,
+						ref.Kind, ref.Name, ref.Namespace)
+				}
+			}
 		}
 	}
 

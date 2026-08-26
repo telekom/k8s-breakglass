@@ -341,33 +341,49 @@ func (c *DebugSessionAPIController) sendDebugSessionCreatedEmail(ctx context.Con
 
 // emitDebugSessionAuditEvent emits an audit event for debug session lifecycle changes
 func (c *DebugSessionAPIController) emitDebugSessionAuditEvent(ctx context.Context, eventType audit.EventType, session *breakglassv1alpha1.DebugSession, user string, message string) {
+	c.emitDebugSessionAuditDetails(ctx, eventType, session, user, map[string]interface{}{"message": message})
+}
+
+// emitDebugSessionAuditDetails emits only structured, bounded lifecycle
+// metadata. Request bodies, credentials, commands, and raw Kubernetes errors
+// are intentionally excluded from the generic audit sink payload.
+func (c *DebugSessionAPIController) emitDebugSessionAuditDetails(ctx context.Context, eventType audit.EventType, session *breakglassv1alpha1.DebugSession, user string, details map[string]interface{}) {
 	if c.auditService == nil || !c.auditService.IsEnabled() {
 		return
 	}
+	if session == nil {
+		return
+	}
+	if details == nil {
+		details = make(map[string]interface{})
+	}
+	for key, value := range details {
+		if text, ok := value.(string); ok {
+			details[key] = audit.SanitizeDebugSessionAuditDetail(text)
+		}
+	}
+	details["cluster"] = audit.SanitizeDebugSessionAuditDetail(session.Spec.Cluster)
+	details["templateRef"] = audit.SanitizeDebugSessionAuditDetail(session.Spec.TemplateRef)
+	details["requestedBy"] = audit.SanitizeDebugSessionAuditDetail(session.Spec.RequestedBy)
+	details["state"] = audit.SanitizeDebugSessionAuditDetail(string(session.Status.State))
 
 	event := &audit.Event{
 		Type:      eventType,
-		Timestamp: time.Now(),
+		Timestamp: time.Now().UTC(),
 		Actor: audit.Actor{
-			User:   user,
+			User:   audit.SanitizeDebugSessionAuditDetail(user),
 			Groups: nil, // Groups not available in this context
 		},
 		Target: audit.Target{
 			Kind:      "DebugSession",
-			Name:      session.Name,
-			Namespace: session.Namespace,
-			Cluster:   session.Spec.Cluster,
+			Name:      audit.SanitizeDebugSessionAuditDetail(session.Name),
+			Namespace: audit.SanitizeDebugSessionAuditDetail(session.Namespace),
+			Cluster:   audit.SanitizeDebugSessionAuditDetail(session.Spec.Cluster),
 		},
 		RequestContext: &audit.RequestContext{
 			SessionName: session.Name,
 		},
-		Details: map[string]interface{}{
-			"message":     message,
-			"cluster":     session.Spec.Cluster,
-			"templateRef": session.Spec.TemplateRef,
-			"requestedBy": session.Spec.RequestedBy,
-			"state":       string(session.Status.State),
-		},
+		Details: details,
 	}
 
 	c.auditService.Emit(ctx, event)

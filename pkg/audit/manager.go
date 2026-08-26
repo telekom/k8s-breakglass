@@ -19,6 +19,8 @@ package audit
 import (
 	"context"
 	"errors"
+	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +30,51 @@ import (
 
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
+
+const maxDebugSessionAuditDetailLength = 256
+
+var debugSessionAuditSecretPattern = regexp.MustCompile(`(?i)(authorization\s*:\s*bearer\s+|bearer\s+|(?:token|password|secret|client_secret)\s*[=:]\s*)[^\s,;]+`)
+
+// SanitizeDebugSessionAuditDetail removes control characters, redacts common
+// credential-shaped values, and bounds user-controlled audit detail. Audit
+// sinks are intentionally unaware of these policy details; every sink receives
+// the same safe event.
+func SanitizeDebugSessionAuditDetail(value string) string {
+	value = strings.TrimSpace(value)
+	value = debugSessionAuditSecretPattern.ReplaceAllString(value, "[REDACTED]")
+	value = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, value)
+	if len(value) > maxDebugSessionAuditDetailLength {
+		value = value[:maxDebugSessionAuditDetailLength]
+	}
+	return value
+}
+
+func debugSessionAuditDetails(values map[string]interface{}) map[string]interface{} {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make(map[string]interface{}, len(values))
+	for key, value := range values {
+		switch typed := value.(type) {
+		case string:
+			result[key] = SanitizeDebugSessionAuditDetail(typed)
+		case []string:
+			bounded := make([]string, 0, min(len(typed), 16))
+			for _, item := range typed[:min(len(typed), 16)] {
+				bounded = append(bounded, SanitizeDebugSessionAuditDetail(item))
+			}
+			result[key] = bounded
+		default:
+			result[key] = value
+		}
+	}
+	return result
+}
 
 // Manager coordinates audit event creation and distribution.
 // Designed for EXTREMELY granular audit trails with non-blocking operation.
@@ -691,9 +738,9 @@ func (m *Manager) DebugSessionCreated(ctx context.Context, sessionName, user, cl
 			Name:    sessionName,
 			Cluster: cluster,
 		},
-		Details: map[string]interface{}{
+		Details: debugSessionAuditDetails(map[string]interface{}{
 			"templateName": templateName,
-		},
+		}),
 		RequestContext: &RequestContext{
 			DebugSessionName: sessionName,
 		},
@@ -710,9 +757,9 @@ func (m *Manager) DebugSessionTerminated(ctx context.Context, sessionName, user,
 			Kind: "DebugSession",
 			Name: sessionName,
 		},
-		Details: map[string]interface{}{
+		Details: debugSessionAuditDetails(map[string]interface{}{
 			"reason": reason,
-		},
+		}),
 		RequestContext: &RequestContext{
 			DebugSessionName: sessionName,
 		},
@@ -721,11 +768,12 @@ func (m *Manager) DebugSessionTerminated(ctx context.Context, sessionName, user,
 
 // DebugSessionFailed emits an audit event when a debug session fails.
 func (m *Manager) DebugSessionFailed(ctx context.Context, sessionName, namespace, cluster, reason string, details map[string]interface{}) {
-	if details == nil {
-		details = make(map[string]interface{})
+	boundedDetails := debugSessionAuditDetails(details)
+	if boundedDetails == nil {
+		boundedDetails = make(map[string]interface{})
 	}
-	details["reason"] = reason
-	details["cluster"] = cluster
+	boundedDetails["reason"] = SanitizeDebugSessionAuditDetail(reason)
+	boundedDetails["cluster"] = SanitizeDebugSessionAuditDetail(cluster)
 
 	m.Emit(ctx, &Event{
 		Type:     EventDebugSessionFailed,
@@ -736,7 +784,7 @@ func (m *Manager) DebugSessionFailed(ctx context.Context, sessionName, namespace
 			Name:      sessionName,
 			Namespace: namespace,
 		},
-		Details: details,
+		Details: boundedDetails,
 		RequestContext: &RequestContext{
 			DebugSessionName: sessionName,
 		},
@@ -754,9 +802,9 @@ func (m *Manager) DebugSessionExpired(ctx context.Context, sessionName, namespac
 			Name:      sessionName,
 			Namespace: namespace,
 		},
-		Details: map[string]interface{}{
+		Details: debugSessionAuditDetails(map[string]interface{}{
 			"cluster": cluster,
-		},
+		}),
 		RequestContext: &RequestContext{
 			DebugSessionName: sessionName,
 		},
@@ -821,12 +869,12 @@ func (m *Manager) DebugSessionPodFailed(ctx context.Context, sessionName, namesp
 			Name:      podName,
 			Namespace: podNamespace,
 		},
-		Details: map[string]interface{}{
+		Details: debugSessionAuditDetails(map[string]interface{}{
 			"debug_session":  sessionName,
 			"session_ns":     namespace,
 			"failure_reason": reason,
 			"message":        message,
-		},
+		}),
 		RequestContext: &RequestContext{
 			DebugSessionName: sessionName,
 		},
@@ -897,5 +945,132 @@ func (m *Manager) DebugSessionResourceCleanup(ctx context.Context, sessionName, 
 		RequestContext: &RequestContext{
 			DebugSessionName: sessionName,
 		},
+	})
+}
+
+// DebugSessionRequested records an accepted API request. Request reasons are
+// deliberately treated as untrusted text and are redacted/bounded before they
+// reach any sink.
+func (m *Manager) DebugSessionRequested(ctx context.Context, sessionName, namespace, user, cluster, templateName, requestedDuration, reason string) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionRequested,
+		Severity: SeverityInfo,
+		Actor:    Actor{User: SanitizeDebugSessionAuditDetail(user)},
+		Target:   Target{Kind: "DebugSession", Name: SanitizeDebugSessionAuditDetail(sessionName), Namespace: SanitizeDebugSessionAuditDetail(namespace), Cluster: SanitizeDebugSessionAuditDetail(cluster)},
+		Details: debugSessionAuditDetails(map[string]interface{}{
+			"templateRef":       templateName,
+			"requestedDuration": requestedDuration,
+			"reason":            reason,
+		}),
+		RequestContext: &RequestContext{DebugSessionName: sessionName},
+	})
+}
+
+// DebugSessionValidated records that all API-side validation and authorization
+// checks passed before the DebugSession object was persisted.
+func (m *Manager) DebugSessionValidated(ctx context.Context, sessionName, namespace, user, cluster, templateName string) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionValidated,
+		Severity: SeverityInfo,
+		Actor:    Actor{User: SanitizeDebugSessionAuditDetail(user)},
+		Target:   Target{Kind: "DebugSession", Name: SanitizeDebugSessionAuditDetail(sessionName), Namespace: SanitizeDebugSessionAuditDetail(namespace), Cluster: SanitizeDebugSessionAuditDetail(cluster)},
+		Details: debugSessionAuditDetails(map[string]interface{}{
+			"templateRef": templateName,
+			"outcome":     "passed",
+		}),
+		RequestContext: &RequestContext{DebugSessionName: sessionName},
+	})
+}
+
+// DebugSessionValidationFailed records a stable validation category. It does
+// not include raw admission errors, request bodies, or template values.
+func (m *Manager) DebugSessionValidationFailed(ctx context.Context, sessionName, namespace, user, cluster, reason string) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionValidationFailed,
+		Severity: SeverityWarning,
+		Actor:    Actor{User: SanitizeDebugSessionAuditDetail(user)},
+		Target:   Target{Kind: "DebugSession", Name: SanitizeDebugSessionAuditDetail(sessionName), Namespace: SanitizeDebugSessionAuditDetail(namespace), Cluster: SanitizeDebugSessionAuditDetail(cluster)},
+		Details: debugSessionAuditDetails(map[string]interface{}{
+			"outcome": "failed",
+			"reason":  reason,
+		}),
+		RequestContext: &RequestContext{DebugSessionName: sessionName},
+	})
+}
+
+// DebugSessionApproved records an approval decision separately from activation.
+func (m *Manager) DebugSessionApproved(ctx context.Context, sessionName, namespace, approver, requestedBy, reason string) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionApproved,
+		Severity: SeverityInfo,
+		Actor:    Actor{User: SanitizeDebugSessionAuditDetail(approver)},
+		Target:   Target{Kind: "DebugSession", Name: SanitizeDebugSessionAuditDetail(sessionName), Namespace: SanitizeDebugSessionAuditDetail(namespace)},
+		Details: debugSessionAuditDetails(map[string]interface{}{
+			"requestedBy": requestedBy,
+			"reason":      reason,
+		}),
+		RequestContext: &RequestContext{DebugSessionName: sessionName},
+	})
+}
+
+// DebugSessionRejected records a rejection decision separately from terminal cleanup.
+func (m *Manager) DebugSessionRejected(ctx context.Context, sessionName, namespace, rejector, requestedBy, reason string) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionRejected,
+		Severity: SeverityWarning,
+		Actor:    Actor{User: SanitizeDebugSessionAuditDetail(rejector)},
+		Target:   Target{Kind: "DebugSession", Name: SanitizeDebugSessionAuditDetail(sessionName), Namespace: SanitizeDebugSessionAuditDetail(namespace)},
+		Details: debugSessionAuditDetails(map[string]interface{}{
+			"requestedBy": requestedBy,
+			"reason":      reason,
+		}),
+		RequestContext: &RequestContext{DebugSessionName: sessionName},
+	})
+}
+
+// DebugSessionRenewed records a successful lifetime extension.
+func (m *Manager) DebugSessionRenewed(ctx context.Context, sessionName, namespace, user, cluster string, extension time.Duration, expiresAt time.Time, renewalCount int32) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionRenewed,
+		Severity: SeverityInfo,
+		Actor:    Actor{User: SanitizeDebugSessionAuditDetail(user)},
+		Target:   Target{Kind: "DebugSession", Name: SanitizeDebugSessionAuditDetail(sessionName), Namespace: SanitizeDebugSessionAuditDetail(namespace), Cluster: SanitizeDebugSessionAuditDetail(cluster)},
+		Details: map[string]interface{}{
+			"extension":    extension.String(),
+			"expiresAt":    expiresAt.UTC().Format(time.RFC3339),
+			"renewalCount": renewalCount,
+		},
+		RequestContext: &RequestContext{DebugSessionName: sessionName},
+	})
+}
+
+// DebugSessionAttached records a participant attachment/join without recording
+// terminal command contents or other terminal-recorder data.
+func (m *Manager) DebugSessionAttached(ctx context.Context, sessionName, namespace, user, cluster, operation string) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionAttached,
+		Severity: SeverityInfo,
+		Actor:    Actor{User: SanitizeDebugSessionAuditDetail(user)},
+		Target:   Target{Kind: "DebugSession", Name: SanitizeDebugSessionAuditDetail(sessionName), Namespace: SanitizeDebugSessionAuditDetail(namespace), Cluster: SanitizeDebugSessionAuditDetail(cluster)},
+		Details: debugSessionAuditDetails(map[string]interface{}{
+			"operation": operation,
+		}),
+		RequestContext: &RequestContext{DebugSessionName: sessionName},
+	})
+}
+
+// DebugSessionCleanupFailed records a bounded failure category and resource
+// count. Raw Kubernetes errors may contain object data and are not forwarded.
+func (m *Manager) DebugSessionCleanupFailed(ctx context.Context, sessionName, namespace, cluster, reason string, remaining int) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionCleanupFailed,
+		Severity: SeverityWarning,
+		Actor:    Actor{User: "system"},
+		Target:   Target{Kind: "DebugSession", Name: SanitizeDebugSessionAuditDetail(sessionName), Namespace: SanitizeDebugSessionAuditDetail(namespace), Cluster: SanitizeDebugSessionAuditDetail(cluster)},
+		Details: debugSessionAuditDetails(map[string]interface{}{
+			"reason":    reason,
+			"remaining": remaining,
+		}),
+		RequestContext: &RequestContext{DebugSessionName: sessionName},
 	})
 }

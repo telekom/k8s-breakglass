@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -181,6 +182,11 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		breakglass.SetDebugSessionRetainedUntil(ds, time.Now())
 		if statusErr := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); statusErr != nil {
 			log.Errorw("Failed to update DebugSession status after validation failure", "error", statusErr)
+		}
+		if c.shouldEmitAudit(ds) {
+			if auditManager := c.currentAuditManager(); auditManager != nil {
+				auditManager.DebugSessionValidationFailed(ctx, ds.Name, ds.Namespace, ds.Spec.RequestedBy, ds.Spec.Cluster, "structural_validation_failed")
+			}
 		}
 
 		// Return nil error to skip requeue - malformed resource won't fix itself
@@ -415,6 +421,11 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 			return ctrl.Result{}, err
 		}
 		log.Info("Debug session expired")
+		if c.shouldEmitAudit(ds) {
+			if auditManager := c.currentAuditManager(); auditManager != nil {
+				auditManager.DebugSessionExpired(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+			}
+		}
 		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
@@ -457,6 +468,7 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 	if err := c.cleanupResources(ctx, ds); err != nil {
 		log.Warnw("Retrying cleanup of spoke resources for a failed debug session",
 			"error", err)
+		c.emitCleanupFailureAudit(ctx, ds, err)
 		// Requeue rather than returning the error: the reason for the failure is
 		// already recorded in status and a hard error would only add log noise on a
 		// path that is expected to retry.
@@ -492,6 +504,7 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 
 	if err := c.cleanupResources(ctx, ds); err != nil {
 		log.Errorw("Failed to cleanup debug session resources", "error", err)
+		c.emitCleanupFailureAudit(ctx, ds, err)
 		// Requeue to retry cleanup
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
@@ -550,6 +563,30 @@ func releaseSessionMetricSeries(sessionName string) {
 	}
 }
 
+func (c *DebugSessionController) emitCleanupFailureAudit(ctx context.Context, ds *breakglassv1alpha1.DebugSession, cause error) {
+	if !c.shouldEmitAudit(ds) {
+		return
+	}
+	auditManager := c.currentAuditManager()
+	if auditManager == nil {
+		return
+	}
+	reason := "cleanup_failed"
+	if errors.Is(cause, cluster.ErrClusterConfigNotFound) {
+		reason = "cluster_config_not_found"
+	} else if errors.Is(cause, context.DeadlineExceeded) {
+		reason = "timeout"
+	}
+	auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, reason, trackedResourceCount(ds))
+}
+
+func trackedResourceCount(ds *breakglassv1alpha1.DebugSession) int {
+	return len(ds.Status.DeployedResources) +
+		len(ds.Status.AuxiliaryResourceStatuses) +
+		len(ds.Status.PodTemplateResourceStatuses) +
+		len(ds.Status.AllowedPods)
+}
+
 // activateSession deploys debug resources and marks session as active
 func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
@@ -570,6 +607,19 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		if err := c.deployDebugResources(ctx, ds, template); err != nil {
 			log.Errorw("Failed to deploy debug resources", "error", err)
 			return c.failSession(ctx, ds, fmt.Sprintf("failed to deploy resources: %v", err))
+		}
+	}
+	if c.shouldEmitAudit(ds) {
+		if auditManager := c.currentAuditManager(); auditManager != nil {
+			for _, resource := range ds.Status.DeployedResources {
+				// Auxiliary resources emit their own resource-level event at the
+				// point of deployment. Avoid duplicate records here.
+				if strings.HasPrefix(resource.Source, "auxiliary:") {
+					continue
+				}
+				auditManager.DebugSessionResourceDeployed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster,
+					resource.Kind, resource.Name, resource.Namespace)
+			}
 		}
 	}
 
@@ -625,6 +675,22 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		"duration", duration.String(),
 		"mode", mode,
 		"terminalSharing", ds.Status.TerminalSharing != nil)
+	if c.shouldEmitAudit(ds) {
+		if auditManager := c.currentAuditManager(); auditManager != nil {
+			auditManager.Emit(ctx, &audit.Event{
+				Type:     audit.EventDebugSessionStarted,
+				Severity: audit.SeverityInfo,
+				Actor:    audit.Actor{User: "system"},
+				Target:   audit.Target{Kind: "DebugSession", Name: ds.Name, Namespace: ds.Namespace, Cluster: ds.Spec.Cluster},
+				Details: map[string]interface{}{
+					"mode":          mode,
+					"duration":      duration.String(),
+					"resourceCount": len(ds.Status.DeployedResources),
+				},
+				RequestContext: &audit.RequestContext{DebugSessionName: ds.Name},
+			})
+		}
+	}
 
 	return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
 }
@@ -685,7 +751,7 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglass
 	// Emit audit event if audit is enabled for this session
 	if c.shouldEmitAudit(ds) {
 		if auditManager := c.currentAuditManager(); auditManager != nil {
-			auditManager.DebugSessionFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, reason, map[string]interface{}{
+			auditManager.DebugSessionFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, failureAuditCategory(reason), map[string]interface{}{
 				"template":       ds.Spec.TemplateRef,
 				"requested_by":   ds.Spec.RequestedBy,
 				"previous_state": string(ds.Status.State),
@@ -695,7 +761,7 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglass
 				"session":   ds.Name,
 				"namespace": ds.Namespace,
 				"cluster":   ds.Spec.Cluster,
-				"reason":    reason,
+				"reason":    failureAuditCategory(reason),
 			})
 		}
 	}
@@ -714,6 +780,25 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglass
 	releaseSessionMetricSeries(ds.Name)
 
 	return ctrl.Result{}, breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+}
+
+// failureAuditCategory keeps raw Kubernetes/client errors out of audit sinks.
+// Operators can correlate the bounded category with controller logs using the
+// DebugSession name without duplicating error payloads in durable audit data.
+func failureAuditCategory(reason string) string {
+	lower := strings.ToLower(reason)
+	switch {
+	case strings.Contains(lower, "template"):
+		return "template_unavailable"
+	case strings.Contains(lower, "deploy") || strings.Contains(lower, "resource"):
+		return "deployment_failed"
+	case strings.Contains(lower, "approval"):
+		return "approval_failed"
+	case strings.Contains(lower, "binding"):
+		return "binding_unavailable"
+	default:
+		return "reconciliation_failed"
+	}
 }
 
 // sendDebugSessionFailedEmail sends email notification to requester when a debug session fails

@@ -123,6 +123,10 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	}
 
 	reqLog.Infow("User joined debug session", "session", name, "user", username, "role", role)
+	c.emitDebugSessionAuditDetails(apiCtx, audit.EventDebugSessionAttached, session, username, map[string]interface{}{
+		"operation": "participant_join",
+		"role":      string(role),
+	})
 	metrics.DebugSessionParticipants.WithLabelValues(session.Spec.Cluster, name).Set(float64(len(session.Status.Participants)))
 
 	ctx.JSON(http.StatusOK, gin.H{"message": "successfully joined session", "role": role})
@@ -255,6 +259,11 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		"extendBy", extendBy,
 		"newExpiry", newExpiry.Time,
 		"renewalCount", session.Status.RenewalCount)
+	c.emitDebugSessionAuditDetails(apiCtx, audit.EventDebugSessionRenewed, session, identity.username, map[string]interface{}{
+		"extension":    extendBy.String(),
+		"expiresAt":    newExpiry.Time.UTC().Format(time.RFC3339),
+		"renewalCount": newRenewalCount,
+	})
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"message":      "session renewed successfully",
@@ -493,8 +502,11 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	// Send approval email to requester
 	c.sendDebugSessionApprovalEmail(apiCtx, session)
 
-	// Emit audit event for session approval
-	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionStarted, session, currentUser, "Debug session approved")
+	// Approval and activation are separate lifecycle transitions. The
+	// reconciler emits `started` once deployment and status activation succeed.
+	c.emitDebugSessionAuditDetails(apiCtx, audit.EventDebugSessionApproved, session, currentUser, map[string]interface{}{
+		"reason": req.Reason,
+	})
 
 	reqLog.Infow("Debug session approved", "session", name, "approver", currentUser)
 	metrics.DebugSessionApproved.WithLabelValues(session.Spec.Cluster, "user").Inc()
@@ -605,8 +617,11 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	// Send rejection email to requester
 	c.sendDebugSessionRejectionEmail(apiCtx, session)
 
-	// Emit audit event for session rejection
-	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionTerminated, session, currentUser, fmt.Sprintf("Debug session rejected: %s", req.Reason))
+	// Rejection is distinct from an owner termination, even though both leave the
+	// object in a terminal state.
+	c.emitDebugSessionAuditDetails(apiCtx, audit.EventDebugSessionRejected, session, currentUser, map[string]interface{}{
+		"reason": req.Reason,
+	})
 
 	reqLog.Infow("Debug session rejected", "session", name, "rejector", currentUser, "reason", req.Reason)
 	metrics.DebugSessionRejected.WithLabelValues(session.Spec.Cluster, "user_rejected").Inc()

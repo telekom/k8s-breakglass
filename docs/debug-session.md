@@ -1608,11 +1608,16 @@ audit:
         memory: 64Mi
 ```
 
-The DebugSession reconciler emits lifecycle audit events through configured
-`AuditConfig` sinks for approval timeouts, session failures, pod failures,
-container restarts, and auxiliary resource deploy/cleanup operations. Failure
-notifications to the requester use the configured `MailProvider` and honor
-`--disable-email`.
+The DebugSession API and reconciler emit lifecycle audit events through the
+generic configured `AuditConfig` sinks. Events cover accepted requests and
+validation, approval/rejection, activation and workload deployment,
+participant attachment, renewal, expiry, termination, resource cleanup, and
+cleanup failures (as well as approval timeouts, session failures, pod
+failures, and container restarts). Lifecycle details are structured and
+bounded; request reasons and error-shaped text are redacted, and raw request
+bodies, credentials, commands, and internal sink or terminal-recorder data are
+not sent to sinks. Audit filtering, sampling, queueing, and delivery remain
+the responsibility of the generic audit service.
 
 ## API Endpoints
 

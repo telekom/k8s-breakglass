@@ -240,6 +240,20 @@ cluster) created by that invocation.
   tracker in the same durable status write. Status writes must merge on
   resource-version conflicts so concurrent reconciles cannot lose identities.
 
+## DebugSession Audit Conventions
+
+DebugSession lifecycle audit events use the generic `pkg/audit` sink path and
+must remain usable by every configured sink. Keep request/validation,
+approval/rejection, activation/deployment, attachment, renewal,
+expiry/termination, cleanup, and cleanup-failure transitions distinct so
+consumers can reconstruct the lifecycle without relying on logs or internal
+terminal/CDI/SOCT implementations. Event details must be structured,
+bounded, and redacted: include stable categories, counts, durations, and
+resource identity only; never include request bodies, credentials, command
+contents, or raw Kubernetes errors. Add new lifecycle event types to
+`pkg/audit/types.go`, mark sensitive transitions non-sampleable, and test both
+sink-neutral emission and redaction/bounds when extending this taxonomy.
+
 ## Build Tags
 
 - `//go:build e2e` — E2E tests (compiled with `-tags=e2e`; at runtime, tests skip unless `E2E_TEST=true`)

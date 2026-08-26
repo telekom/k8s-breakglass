@@ -1381,6 +1381,17 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// Send confirmation email to requester
 	c.sendDebugSessionCreatedEmail(apiCtx, session, template, resolvedBinding)
 
+	// Emit the accepted request, validation result, and persisted object as
+	// separate lifecycle events. Details are limited to safe metadata; request
+	// variables and credentials never enter the generic audit sink.
+	c.emitDebugSessionAuditDetails(apiCtx, audit.EventDebugSessionRequested, session, currentUserStr, map[string]interface{}{
+		"requestedDuration": req.RequestedDuration,
+		"reason":            req.Reason,
+		"bindingRef":        req.BindingRef,
+	})
+	c.emitDebugSessionAuditDetails(apiCtx, audit.EventDebugSessionValidated, session, currentUserStr, map[string]interface{}{
+		"outcome": "passed",
+	})
 	// Emit audit event for session creation
 	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionCreated, session, currentUserStr, "Debug session created")
 

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -30,7 +31,10 @@ var allSensitiveEventTypes = []EventType{
 	EventAccessDenied, EventAccessDeniedPolicy,
 	EventPolicyViolation, EventSecretAccessed, EventSecretCreated,
 	EventSecretUpdated, EventSecretDeleted, EventAuthFailure,
-	EventDebugSessionCreated, EventDebugSessionStarted,
+	EventDebugSessionRequested, EventDebugSessionValidated, EventDebugSessionValidationFailed,
+	EventDebugSessionCreated, EventDebugSessionApproved, EventDebugSessionRejected, EventDebugSessionStarted,
+	EventDebugSessionRenewed, EventDebugSessionAttached, EventDebugSessionResourceDeploy,
+	EventDebugSessionResourceCleanup, EventDebugSessionCleanupFailed,
 	EventDebugSessionTerminated, EventDebugSessionFailed,
 	EventDebugSessionExpired, EventDebugSessionApprovalTimeout,
 	EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
@@ -1734,6 +1738,49 @@ func TestManager_DebugSessionEvents(t *testing.T) {
 	assert.Equal(t, "Pod", cleanupEvents[0].Target.Kind)
 
 	_ = manager.Close()
+}
+
+func TestSanitizeDebugSessionAuditDetail(t *testing.T) {
+	input := "Authorization: Bearer top-secret\n" + strings.Repeat("x", 400)
+	result := SanitizeDebugSessionAuditDetail(input)
+	assert.NotContains(t, result, "top-secret")
+	assert.NotContains(t, result, "\n")
+	assert.LessOrEqual(t, len(result), maxDebugSessionAuditDetailLength)
+}
+
+func TestManager_DebugSessionLifecycleEventsAreStructuredAndBounded(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	var events []*Event
+	var mu sync.Mutex
+	sink := &testSink{name: "test", writeFunc: func(event *Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, event)
+	}}
+	manager := NewManager(sink, DefaultManagerConfig(), logger)
+	ctx := context.Background()
+	longReason := strings.Repeat("reason ", 100)
+	manager.DebugSessionRequested(ctx, "session", "ns", "requester", "cluster", "template", "1h", longReason)
+	manager.DebugSessionValidated(ctx, "session", "ns", "requester", "cluster", "template")
+	manager.DebugSessionApproved(ctx, "session", "ns", "approver", "requester", longReason)
+	manager.DebugSessionRejected(ctx, "session", "ns", "approver", "requester", longReason)
+	manager.DebugSessionRenewed(ctx, "session", "ns", "requester", "cluster", time.Hour, time.Now(), 1)
+	manager.DebugSessionAttached(ctx, "session", "ns", "requester", "cluster", "participant_join")
+	manager.DebugSessionCleanupFailed(ctx, "session", "ns", "cluster", longReason, 2)
+	time.Sleep(100 * time.Millisecond)
+	_ = manager.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, events, 7)
+	for _, event := range events {
+		assert.NotNil(t, event.Details)
+		for _, value := range event.Details {
+			if text, ok := value.(string); ok {
+				assert.LessOrEqual(t, len(text), maxDebugSessionAuditDetailLength)
+			}
+		}
+	}
 }
 
 func TestSyncWriteDirect_AllSinksFail(t *testing.T) {

@@ -108,23 +108,30 @@ const (
 	EventPodSecurityOverride  EventType = "pod_security.override"
 
 	// === Debug session events ===
-	EventDebugSessionCreated         EventType = "debug_session.created"
-	EventDebugSessionStarted         EventType = "debug_session.started"
-	EventDebugSessionTerminated      EventType = "debug_session.terminated"
-	EventDebugSessionFailed          EventType = "debug_session.failed"
-	EventDebugSessionExpired         EventType = "debug_session.expired"
-	EventDebugSessionApprovalTimeout EventType = "debug_session.approval_timeout"
-	EventDebugSessionAttached        EventType = "debug_session.attached"
-	EventDebugSessionDetached        EventType = "debug_session.detached"
-	EventDebugSessionCommand         EventType = "debug_session.command"
-	EventDebugSessionOutput          EventType = "debug_session.output"
-	EventDebugSessionFileAccess      EventType = "debug_session.file_access"
-	EventDebugSessionNetAccess       EventType = "debug_session.net_access"
-	EventDebugSessionProcAccess      EventType = "debug_session.proc_access"
-	EventDebugSessionPodFailed       EventType = "debug_session.pod_failed"
-	EventDebugSessionPodRestarted    EventType = "debug_session.pod_restarted"
-	EventDebugSessionResourceDeploy  EventType = "debug_session.resource_deployed"
-	EventDebugSessionResourceCleanup EventType = "debug_session.resource_cleanup"
+	EventDebugSessionRequested        EventType = "debug_session.requested"
+	EventDebugSessionValidated        EventType = "debug_session.validated"
+	EventDebugSessionValidationFailed EventType = "debug_session.validation_failed"
+	EventDebugSessionCreated          EventType = "debug_session.created"
+	EventDebugSessionApproved         EventType = "debug_session.approved"
+	EventDebugSessionRejected         EventType = "debug_session.rejected"
+	EventDebugSessionStarted          EventType = "debug_session.started"
+	EventDebugSessionRenewed          EventType = "debug_session.renewed"
+	EventDebugSessionTerminated       EventType = "debug_session.terminated"
+	EventDebugSessionFailed           EventType = "debug_session.failed"
+	EventDebugSessionExpired          EventType = "debug_session.expired"
+	EventDebugSessionApprovalTimeout  EventType = "debug_session.approval_timeout"
+	EventDebugSessionAttached         EventType = "debug_session.attached"
+	EventDebugSessionDetached         EventType = "debug_session.detached"
+	EventDebugSessionCommand          EventType = "debug_session.command"
+	EventDebugSessionOutput           EventType = "debug_session.output"
+	EventDebugSessionFileAccess       EventType = "debug_session.file_access"
+	EventDebugSessionNetAccess        EventType = "debug_session.net_access"
+	EventDebugSessionProcAccess       EventType = "debug_session.proc_access"
+	EventDebugSessionPodFailed        EventType = "debug_session.pod_failed"
+	EventDebugSessionPodRestarted     EventType = "debug_session.pod_restarted"
+	EventDebugSessionResourceDeploy   EventType = "debug_session.resource_deployed"
+	EventDebugSessionResourceCleanup  EventType = "debug_session.resource_cleanup"
+	EventDebugSessionCleanupFailed    EventType = "debug_session.cleanup_failed"
 	// EventDebugSessionBindingUnresolved is emitted when a DebugSession names an
 	// explicit BindingRef that cannot be resolved. The binding carries the approver
 	// configuration, so an unresolvable ref means the approval requirement is
@@ -339,7 +346,8 @@ func SeverityForEventType(eventType EventType) Severity {
 		EventEscalationRejected, EventPolicyViolation, EventAdmissionDenied,
 		EventSecretAccessed, EventSecretUpdated, EventResourceExec, EventResourceDelete,
 		EventPodExec, EventPodAttach, EventResourceImpersonate, EventWebhookTimeout,
-		EventDebugSessionCommand, EventAuditBackpressure, EventPodSecurityWarning,
+		EventDebugSessionCommand, EventDebugSessionValidationFailed, EventDebugSessionRejected,
+		EventDebugSessionCleanupFailed, EventAuditBackpressure, EventPodSecurityWarning,
 		EventDebugSessionBindingUnresolved:
 		return SeverityWarning
 
@@ -478,9 +486,13 @@ func IsSensitiveEvent(eventType EventType) bool {
 		EventAccessDenied, EventAccessDeniedPolicy,
 		EventPolicyViolation, EventSecretAccessed, EventSecretCreated,
 		EventSecretUpdated, EventSecretDeleted, EventAuthFailure,
-		EventDebugSessionCreated, EventDebugSessionStarted,
+		EventDebugSessionRequested, EventDebugSessionValidated, EventDebugSessionValidationFailed,
+		EventDebugSessionCreated, EventDebugSessionApproved, EventDebugSessionRejected,
+		EventDebugSessionStarted, EventDebugSessionRenewed,
 		EventDebugSessionTerminated, EventDebugSessionFailed,
 		EventDebugSessionExpired, EventDebugSessionApprovalTimeout,
+		EventDebugSessionAttached, EventDebugSessionResourceDeploy,
+		EventDebugSessionResourceCleanup, EventDebugSessionCleanupFailed,
 		EventDebugSessionBindingUnresolved,
 		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
 		EventResourceImpersonate, EventPolicyBypassed,
