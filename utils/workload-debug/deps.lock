@@ -4,7 +4,7 @@
 # Runtime dependency inventory for Dockerfile. The base manifest digest and
 # Alpine release are immutable; refresh this inventory and the generated SBOM
 # together when the package repository is refreshed.
-base=alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8
+base=alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 repository=https://dl-cdn.alpinelinux.org/alpine/v3.24/main
 repository=https://dl-cdn.alpinelinux.org/alpine/v3.24/community
 bash=5.3.9-r1
