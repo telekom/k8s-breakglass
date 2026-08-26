@@ -257,6 +257,16 @@ separate real-tool proof for `network-debug` and `node-maintenance`; keep its
 matrix entries as distinct required checks and do not copy those tests into
 the ordinary CI suite.
 
+For workload diagnostics, `make -C utils/workload-debug integration-test` is
+the required upstream proof. It builds the image and runs it as UID 65532 with
+a read-only root filesystem, all capabilities dropped, and privilege
+escalation disabled. The proof uses disposable DNS, TLS, and HTTP fixtures and
+a disposable kind service account; it must fail clearly when Docker, kind, or
+kubectl is unavailable rather than silently skipping. The fixture namespace,
+processes, containers, and temporary credentials are removed in an EXIT trap,
+and the test verifies the kind cluster is gone. Keep the JSON report stable and
+never place service-account tokens in argv or captured output.
+
 ## Reusable Prompts (19 total)
 
 Prompts are in [`.github/prompts/`](.github/prompts/) and can be invoked by name:
