@@ -26,7 +26,7 @@ targetNamespace: breakglass-debug
 ```bash
 helm install debug-catalogue \
   oci://ghcr.io/telekom/k8s-breakglass/charts/debug-session-catalogue \
-  --version 0.1.0 \
+  --version 0.2.0 \
   -f access-values.yaml
 ```
 
@@ -49,7 +49,11 @@ The chart includes these profiles:
 | `dump-access` | disabled | Host-network packet capture |
 | `network-repair` | disabled | Host-network network repair |
 | `node-recovery` | disabled | Host-network/host-PID node recovery |
-| `cluster-validation` | enabled | Isolated read-only validation checks |
+| `cluster-validation` | disabled | Isolated read-only validation checks (explicit RBAC opt-in) |
+
+Bounded reports use `workloadType: Job`, so a completed diagnostic is retained
+for inspection and is not restarted by the controller's Deployment/DaemonSet
+normalization. Interactive `dump-access` remains a long-running Deployment.
 
 The node-oriented profiles are elevated. Enable them only with an explicit
 two-part opt-in, for example:
@@ -82,12 +86,32 @@ capabilities. The network utility is therefore elevated and disabled by
 default because its packet and node inspection tools require root/capability
 access. Pin each image to its release digest in production.
 
-The `storage-diagnostics` profile mounts the image's `/scratch` and `/reports`
-paths. The `dump-access` profile mounts `/input` read-only and `/output`
-writable, matching the dump-reader image contract. Replace the empty volumes
-with approved sources in a reviewed overlay; hostPath and projected
-service-account-token volume overrides are rejected unless the profile is
-explicitly elevated with `preset: elevated-node`.
+The `storage-diagnostics` profile mounts the image's `/scratch`, `/reports`,
+and writable `/tmp` paths. The `dump-access` profile mounts `/input` read-only
+and `/output` writable, matching the dump-reader image contract. Replace the
+empty input volume in a reviewed elevated overlay with an approved read-only
+source, for example:
+
+```yaml
+profiles:
+  - name: dump-access
+    enabled: true
+    elevated: true
+    preset: elevated-node
+    pod:
+      volumes:
+        - name: input
+          hostPath:
+            path: /var/lib/approved-dumps/incident-123
+            type: Directory
+        - name: output
+          emptyDir: {}
+```
+
+The administrator must constrain that host path and its retention separately;
+the image still rejects symlinks and traversal. Restricted profiles accept only
+`emptyDir`, `configMap`, and `downwardAPI` volumes; Secret, projected-token,
+PVC, CSI, and hostPath sources require explicit elevated node opt-in.
 
 `cluster-validation` does not receive a service-account token by default. To
 run API checks, explicitly set both `serviceAccountName` and
@@ -131,6 +155,14 @@ profiles:
     command: ["sh"]
     args: []
 ```
+
+For `network-repair` and `node-recovery`, the shipped profiles require the
+per-session `targetNode`, `interface`, and exact confirmation variables. Repair
+also requires an allowlisted `action`; the generated pod is scheduled to the
+selected node and writes evidence beneath `/evidence`. The node-maintenance
+profiles disable `exec`; use their fixed operation entrypoints and retrieve
+logs/evidence after completion. Keep these variables bound to the approved
+binding and scheduling policy.
 
 The chart rejects map-shaped profiles, duplicate or invalid names, unresolved
 image references, and enabled profiles that require elevation without an

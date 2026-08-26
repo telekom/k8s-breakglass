@@ -18,6 +18,7 @@ profiles:
     enabled: true
     elevated: false
     imageKey: workload
+    workloadType: Job
     command: ["/usr/local/bin/workload-debug"]
     args: ["report"]
   - name: network-diagnostics
@@ -32,6 +33,7 @@ profiles:
     command: ["/usr/local/bin/net-debug"]
     args: ["report"]
     capabilities: [NET_ADMIN, NET_RAW, BPF, PERFMON]
+    workloadType: Job
   - name: storage-diagnostics
     intent: storage-diagnostics
     displayName: Storage diagnostics
@@ -39,6 +41,7 @@ profiles:
     enabled: true
     elevated: false
     imageKey: storage
+    workloadType: Job
     command: ["/usr/local/bin/storage-report"]
     args: ["--path", "/scratch"]
     pod:
@@ -47,10 +50,17 @@ profiles:
           mountPath: /scratch
         - name: reports
           mountPath: /reports
+        - name: tmp
+          mountPath: /tmp
+      env:
+        - name: TMPDIR
+          value: /tmp
       volumes:
         - name: scratch
           emptyDir: {}
         - name: reports
+          emptyDir: {}
+        - name: tmp
           emptyDir: {}
   - name: dump-access
     intent: dump-access
@@ -84,9 +94,18 @@ profiles:
     requiredElevation: true
     preset: elevated-node
     imageKey: networkRepair
+    workloadType: Job
+    allowExec: false
     command: ["/usr/local/bin/node-maintenance"]
-    args: ["network-repair"]
+    args: ["network-repair", "--target-node", "fixture-node", "--interface", "eth0", "--action", "link-cycle", "--evidence-dir", "/evidence", "--confirm", "NETWORK-REPAIR"]
     capabilities: [NET_ADMIN]
+    pod:
+      volumeMounts:
+        - name: evidence
+          mountPath: /evidence
+      volumes:
+        - name: evidence
+          emptyDir: {}
   - name: node-recovery
     intent: node-recovery
     displayName: Node recovery
@@ -96,10 +115,19 @@ profiles:
     requiredElevation: true
     preset: elevated-node
     imageKey: nodeRecovery
+    workloadType: Job
+    allowExec: false
     command: ["/usr/local/bin/node-maintenance"]
-    args: ["node-recovery"]
+    args: ["node-recovery", "--target-node", "fixture-node", "--interface", "eth0", "--evidence-dir", "/evidence", "--confirm", "NODE-RECOVERY-PREFLIGHT"]
     capabilities: [NET_ADMIN]
     hostPID: true
+    pod:
+      volumeMounts:
+        - name: evidence
+          mountPath: /evidence
+      volumes:
+        - name: evidence
+          emptyDir: {}
   - name: cluster-validation
     intent: cluster-validation
     displayName: Cluster validation
@@ -107,6 +135,7 @@ profiles:
     enabled: true
     elevated: false
     imageKey: clusterValidation
+    workloadType: Job
     command: ["/cluster-validator"]
     args: ["--mode", "one-time", "--report", "-"]
     serviceAccountName: cluster-validator

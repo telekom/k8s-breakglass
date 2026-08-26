@@ -810,7 +810,7 @@ func ValidateDebugPodTemplate(template *DebugPodTemplate) *ValidationResult {
 				fmt.Sprintf("invalid Go template syntax: %v", err)))
 		}
 
-		// Validate the first-document format (must be bare PodSpec, Pod, Deployment, or DaemonSet)
+		// Validate the first-document format (must be bare PodSpec, Pod, Deployment, DaemonSet, or Job)
 		result.Errors = append(result.Errors, validateTemplateStringFormat(template.Spec.TemplateString, specPath.Child("templateString"))...)
 
 		// Dry-run render for templates with Go directives to catch execution issues early
@@ -878,7 +878,7 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 				fmt.Sprintf("invalid Go template syntax: %v", err)))
 		}
 
-		// Validate the first-document format (must be bare PodSpec, Pod, Deployment, or DaemonSet)
+		// Validate the first-document format (must be bare PodSpec, Pod, Deployment, DaemonSet, or Job)
 		result.Errors = append(result.Errors, validateTemplateStringFormat(template.Spec.PodTemplateString, specPath.Child("podTemplateString"))...)
 
 		// Warn if workload kind doesn't match configured workloadType
@@ -1132,7 +1132,7 @@ func tryRenderTemplateString(templateStr string, vars map[string]string) []strin
 }
 
 // validateTemplateStringFormat validates the first YAML document in a templateString
-// to ensure it uses a supported format: bare PodSpec, Pod, Deployment, or DaemonSet.
+// to ensure it uses a supported format: bare PodSpec, Pod, Deployment, DaemonSet, or Job.
 // This validation is best-effort because Go templates may produce dynamic content,
 // so it only checks templates where the first document can be statically analyzed.
 // yamlDocSeparator matches a YAML document separator line (--- optionally followed by whitespace).
@@ -1194,9 +1194,14 @@ func validateTemplateStringFormat(templateStr string, fldPath *field.Path) field
 			errs = append(errs, field.Invalid(fldPath, apiVersionStr,
 				fmt.Sprintf("%s requires apiVersion apps/v1, got %q", kindStr, apiVersionStr)))
 		}
+	case "Job":
+		if apiVersionStr != "batch/v1" {
+			errs = append(errs, field.Invalid(fldPath, apiVersionStr,
+				fmt.Sprintf("Job requires apiVersion batch/v1, got %q", apiVersionStr)))
+		}
 	default:
 		errs = append(errs, field.Invalid(fldPath, kindStr,
-			fmt.Sprintf("unsupported kind %q: only bare PodSpec, Pod, Deployment, and DaemonSet are supported", kindStr)))
+			fmt.Sprintf("unsupported kind %q: only bare PodSpec, Pod, Deployment, DaemonSet, and Job are supported", kindStr)))
 	}
 
 	return errs
@@ -1226,8 +1231,8 @@ func warnTemplateStringWorkloadMismatch(templateStr string, workloadType DebugWo
 	}
 
 	kindStr, _ := kind.(string)
-	// Only check for Deployment/DaemonSet manifests
-	if kindStr != "Deployment" && kindStr != "DaemonSet" {
+	// Only check for workload manifests
+	if kindStr != "Deployment" && kindStr != "DaemonSet" && kindStr != "Job" {
 		return warnings
 	}
 

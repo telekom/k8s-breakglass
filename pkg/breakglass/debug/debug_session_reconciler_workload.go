@@ -10,6 +10,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -258,7 +259,7 @@ func startAuxiliaryStatusTracking(ds *breakglassv1alpha1.DebugSession, auxiliary
 // It also returns any additional resources from multi-document pod templates
 // that should be deployed alongside the workload.
 // Supports three templateString formats:
-//   - Bare PodSpec: wrapped into the workloadType (DaemonSet/Deployment)
+//   - Bare PodSpec: wrapped into the workloadType (DaemonSet/Deployment/Job)
 //   - Full Pod manifest (kind: Pod): PodSpec extracted, wrapped into workloadType
 //   - Full workload manifest (kind: Deployment/DaemonSet): used directly with breakglass labels merged
 func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, podTemplate *breakglassv1alpha1.DebugPodTemplate, targetNs string) (ctrlclient.Object, []*unstructured.Unstructured, error) {
@@ -319,7 +320,8 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 		return c.useTemplateWorkload(renderResult, workloadType, workloadName, targetNs, ds, template, labels, annotations)
 	}
 
-	// Enforce RestartPolicy: Always for DaemonSets and Deployments
+	// Enforce RestartPolicy: Always for DaemonSets and Deployments. Jobs retain
+	// Never so bounded diagnostics are not restarted after completion.
 	// These workload types require Always restart policy
 	if workloadType == breakglassv1alpha1.DebugWorkloadDaemonSet || workloadType == breakglassv1alpha1.DebugWorkloadDeployment {
 		if podSpec.RestartPolicy != corev1.RestartPolicyAlways {
@@ -393,6 +395,25 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 						Annotations: annotations,
 					},
 					Spec: podSpec,
+				},
+			},
+		}, renderResult.AdditionalResources, nil
+
+	case breakglassv1alpha1.DebugWorkloadJob:
+		if podSpec.RestartPolicy != corev1.RestartPolicyNever && podSpec.RestartPolicy != corev1.RestartPolicyOnFailure {
+			podSpec.RestartPolicy = corev1.RestartPolicyNever
+		}
+		backoffLimit := int32(0)
+		return &batchv1.Job{
+			TypeMeta: metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: workloadName, Namespace: targetNs, Labels: labels, Annotations: annotations,
+			},
+			Spec: batchv1.JobSpec{
+				BackoffLimit: &backoffLimit,
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
+					Spec:       podSpec,
 				},
 			},
 		}, renderResult.AdditionalResources, nil
@@ -483,6 +504,23 @@ func (c *DebugSessionController) useTemplateWorkload(
 			w.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyAlways
 		}
 
+		return w, renderResult.AdditionalResources, nil
+
+	case *batchv1.Job:
+		w.Name = workloadName
+		w.Namespace = targetNs
+		w.Labels = labels
+		w.Annotations = annotations
+		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels)
+		w.Spec.Template.Annotations = mergeStringMaps(w.Spec.Template.Annotations, annotations)
+		w.Spec.Template.Spec = renderResult.PodSpec
+		if w.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyNever && w.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyOnFailure {
+			w.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyNever
+		}
+		if w.Spec.BackoffLimit == nil {
+			backoffLimit := int32(0)
+			w.Spec.BackoffLimit = &backoffLimit
+		}
 		return w, renderResult.AdditionalResources, nil
 
 	default:

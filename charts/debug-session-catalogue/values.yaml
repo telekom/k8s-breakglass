@@ -43,6 +43,7 @@ profiles:
     enabled: true
     elevated: false
     imageKey: workload
+    workloadType: Job
     command: ["/usr/local/bin/workload-debug"]
     args: ["report"]
   - name: network-diagnostics
@@ -57,6 +58,7 @@ profiles:
     args: ["report"]
     preset: elevated-node
     capabilities: [NET_ADMIN, NET_RAW, BPF, PERFMON]
+    workloadType: Job
   - name: storage-diagnostics
     intent: storage-diagnostics
     displayName: Storage diagnostics
@@ -64,6 +66,7 @@ profiles:
     enabled: true
     elevated: false
     imageKey: storage
+    workloadType: Job
     command: ["/usr/local/bin/storage-report"]
     args: ["--path", "/scratch"]
     pod:
@@ -72,10 +75,17 @@ profiles:
           mountPath: /scratch
         - name: reports
           mountPath: /reports
+        - name: tmp
+          mountPath: /tmp
+      env:
+        - name: TMPDIR
+          value: /tmp
       volumes:
         - name: scratch
           emptyDir: {}
         - name: reports
+          emptyDir: {}
+        - name: tmp
           emptyDir: {}
   - name: dump-access
     intent: dump-access
@@ -115,10 +125,68 @@ profiles:
     elevated: false
     requiredElevation: true
     imageKey: networkRepair
+    workloadType: Job
     command: ["/usr/local/bin/node-maintenance"]
     args: ["network-repair"]
     preset: elevated-node
     capabilities: [NET_ADMIN]
+    allowExec: false
+    extraDeployVariables:
+      - name: targetNode
+        displayName: Target node
+        description: Exact Kubernetes node name to inspect and schedule onto.
+        inputType: text
+        required: true
+        validation:
+          pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+          maxLength: 253
+      - name: interface
+        displayName: Network interface
+        description: Exact interface name on the target node.
+        inputType: text
+        required: true
+        validation:
+          pattern: '^[a-zA-Z0-9_.-]{1,15}$'
+      - name: action
+        displayName: Repair action
+        description: One allowlisted, reversible network repair action.
+        inputType: select
+        required: true
+        options:
+          - value: link-cycle
+          - value: flush-neighbors
+          - value: restart-autonegotiation
+      - name: confirmation
+        displayName: Confirmation
+        description: Type NETWORK-REPAIR to authorize the selected operation.
+        inputType: text
+        required: true
+        validation:
+          pattern: '^NETWORK-REPAIR$'
+    podOverridesTemplate: |
+      nodeSelector:
+        kubernetes.io/hostname: {{ .vars.targetNode | yamlQuote }}
+      containers:
+        - name: debug
+          args:
+            - network-repair
+            - --target-node
+            - {{ .vars.targetNode | yamlQuote }}
+            - --interface
+            - {{ .vars.interface | yamlQuote }}
+            - --action
+            - {{ .vars.action | yamlQuote }}
+            - --evidence-dir
+            - /evidence
+            - --confirm
+            - {{ .vars.confirmation | yamlQuote }}
+    pod:
+      volumeMounts:
+        - name: evidence
+          mountPath: /evidence
+      volumes:
+        - name: evidence
+          emptyDir: {}
   - name: node-recovery
     intent: node-recovery
     displayName: Node recovery (opt-in)
@@ -127,18 +195,66 @@ profiles:
     elevated: false
     requiredElevation: true
     imageKey: nodeRecovery
+    workloadType: Job
     command: ["/usr/local/bin/node-maintenance"]
     args: ["node-recovery"]
     preset: elevated-node
     capabilities: [NET_ADMIN]
     hostPID: true
+    allowExec: false
+    extraDeployVariables:
+      - name: targetNode
+        displayName: Target node
+        description: Exact Kubernetes node name to inspect and schedule onto.
+        inputType: text
+        required: true
+        validation:
+          pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+          maxLength: 253
+      - name: interface
+        displayName: Network interface
+        description: Exact interface name on the target node.
+        inputType: text
+        required: true
+        validation:
+          pattern: '^[a-zA-Z0-9_.-]{1,15}$'
+      - name: confirmation
+        displayName: Confirmation
+        description: Type NODE-RECOVERY-PREFLIGHT to authorize read-only collection.
+        inputType: text
+        required: true
+        validation:
+          pattern: '^NODE-RECOVERY-PREFLIGHT$'
+    podOverridesTemplate: |
+      nodeSelector:
+        kubernetes.io/hostname: {{ .vars.targetNode | yamlQuote }}
+      containers:
+        - name: debug
+          args:
+            - node-recovery
+            - --target-node
+            - {{ .vars.targetNode | yamlQuote }}
+            - --interface
+            - {{ .vars.interface | yamlQuote }}
+            - --evidence-dir
+            - /evidence
+            - --confirm
+            - {{ .vars.confirmation | yamlQuote }}
+    pod:
+      volumeMounts:
+        - name: evidence
+          mountPath: /evidence
+      volumes:
+        - name: evidence
+          emptyDir: {}
   - name: cluster-validation
     intent: cluster-validation
     displayName: Cluster validation
     description: Run read-only cluster validation checks from an isolated pod.
-    enabled: true
+    enabled: false
     elevated: false
     imageKey: clusterValidation
+    workloadType: Job
     command: ["/cluster-validator"]
     args: ["--mode", "one-time"]
     pod:
