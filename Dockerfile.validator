@@ -3,8 +3,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Build with: docker buildx build --platform linux/amd64,linux/arm64
-#             -f Dockerfile.validator .
+# Compatibility entrypoint for callers that still pass -f Dockerfile.validator.
+# New builds should use utils/cluster-validator/Dockerfile; both definitions
+# package the same in-image documentation and keep the Go sources in place.
+# Build with: docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.validator .
 FROM golang:1.27@sha256:c5b07c17f54c5f22230c4b4da6e90249165cf55368e01a52808cb92064e18836 AS builder
 ARG TARGETOS=linux
 ARG TARGETARCH
@@ -29,12 +31,14 @@ ARG BUILD_DATE=unknown
 COPY --from=builder /out/cluster-validator /cluster-validator
 COPY LICENSE /licenses/PROJECT_LICENSE
 COPY LICENSES /licenses/
-COPY motd/cluster-validator.motd /etc/motd
+COPY utils/cluster-validator/MOTD /etc/motd
+COPY utils/cluster-validator/README.md /usr/share/cluster-validator/README.md
+COPY utils/cluster-validator/RUNBOOK.md /usr/share/cluster-validator/RUNBOOK.md
 
 LABEL org.opencontainers.image.title="Kubernetes Cluster Validator"
 LABEL org.opencontainers.image.description="Provider-neutral, read-only Kubernetes readiness reports for one-time and post-upgrade validation"
 LABEL org.opencontainers.image.url="https://github.com/telekom/k8s-breakglass"
-LABEL org.opencontainers.image.documentation="https://github.com/telekom/k8s-breakglass/blob/main/docs/cluster-validator.md"
+LABEL org.opencontainers.image.documentation="https://github.com/telekom/k8s-breakglass/tree/main/utils/cluster-validator"
 LABEL org.opencontainers.image.source="https://github.com/telekom/k8s-breakglass"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL org.opencontainers.image.vendor="Deutsche Telekom"
