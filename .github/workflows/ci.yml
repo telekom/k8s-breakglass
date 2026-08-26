@@ -389,30 +389,60 @@ jobs:
           helm template test-release charts/debug-session-catalogue --values charts/debug-session-catalogue/ci/test-values.yaml --debug
 
   utility-image-tests:
-    name: Utility image checks (${{ matrix.image }})
+    name: Utility image checks (${{ matrix.name }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         # Keep this as one matrix so new utility images do not add duplicate
         # workflows or diverging lint/build contracts.
-        image:
-          - utils/workload-debug
+        include:
+          - name: network-diagnostics
+            make_dir: utils/network-debug
+            target: test
+            dockerfile: utils/network-debug/Dockerfile
+            shell_paths: utils/network-debug/scripts/*.sh utils/network-debug/tests/*.sh
+            metadata: utils/network-debug/IMAGE-METADATA.yaml
+          - name: node-recovery-and-network-repair
+            make_dir: utils/node-maintenance
+            target: test
+            dockerfile: utils/node-maintenance/Dockerfile
+            shell_paths: utils/node-maintenance/bin/* utils/node-maintenance/lib/*.sh utils/node-maintenance/tests/*.sh
+            metadata: ""
+          - name: workload-diagnostics
+            make_dir: utils/workload-debug
+            target: test
+            dockerfile: utils/workload-debug/Dockerfile
+            shell_paths: utils/workload-debug/scripts/* utils/workload-debug/tests/*.sh
+            metadata: utils/workload-debug/IMAGE-METADATA.yaml
+          - name: storage-diagnostics
+            make_dir: utils/images
+            target: storage-test
+            dockerfile: utils/images/storage-debug/Dockerfile
+            shell_paths: utils/images/storage-debug/bin/* utils/images/storage-debug/tests/*.sh
+            metadata: ""
+          - name: dump-access
+            make_dir: utils/images
+            target: dump-test
+            dockerfile: utils/images/dump-reader/Dockerfile
+            shell_paths: utils/images/dump-reader/bin/* utils/images/dump-reader/tests/*.sh
+            metadata: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run helper tests
-        run: make -C "${{ matrix.image }}" test
+        run: make -C "${{ matrix.make_dir }}" "${{ matrix.target }}"
       - name: ShellCheck helpers
-        run: shellcheck "${{ matrix.image }}"/scripts/* "${{ matrix.image }}"/tests/*.sh
+        run: shellcheck ${{ matrix.shell_paths }}
       - name: Hadolint Dockerfile
         uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
         with:
-          dockerfile: ${{ matrix.image }}/Dockerfile
+          dockerfile: ${{ matrix.dockerfile }}
       - name: Validate image metadata
+        if: matrix.metadata != ''
         env:
-          IMAGE_METADATA: ${{ matrix.image }}/IMAGE-METADATA.yaml
+          IMAGE_METADATA: ${{ matrix.metadata }}
         run: |
-          ruby -e 'require "yaml"; YAML.load_file(ENV.fetch("IMAGE_METADATA"), aliases: true)'
+          ruby -e 'require "yaml"; YAML.safe_load(File.read(ENV.fetch("IMAGE_METADATA")), aliases: true)'
   build-image:
     name: Build Image
     runs-on: ubuntu-latest

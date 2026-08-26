@@ -2,7 +2,7 @@ include versions.env
 
 # Image URL to use all building/pushing image targets
 IMG ?= ghcr.io/telekom/k8s-breakglass:latest
-VALIDATOR_IMG ?= ghcr.io/telekom/k8s-breakglass-cluster-validator:latest
+VALIDATOR_IMG ?= ghcr.io/telekom/k8s-breakglass/cluster-validator:dev
 
 # ENVTEST_K8S_VERSION is defined as a Make variable in versions.env (included above)
 

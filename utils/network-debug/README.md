@@ -35,7 +35,7 @@ short, neutral MOTD. Helpers are deterministic and do not include timestamps,
 hostnames, or command history:
 
 ```console
-$ docker run --rm -it --net=container:app ghcr.io/telekom/k8s-breakglass-network-debug:0.1.0
+$ docker run --rm -it --net=container:app ghcr.io/telekom/k8s-breakglass/network-debug:0.1.0
 /work # net-debug --help
 /work # net-report
 /work # tcpdump -ni any -w /work/capture.pcap
