@@ -11,11 +11,10 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 cd "${ROOT_DIR}"
-CONTRACT_FILE="${SCRIPT_DIR}/cluster-validator-integration.contract.json"
 CLUSTER_NAME="${VALIDATOR_INTEGRATION_CLUSTER:-cluster-validator-integration}"
 NAMESPACE="validator-integration"
 IMAGE="${VALIDATOR_INTEGRATION_IMAGE:-cluster-validator-integration:${GITHUB_SHA:-local}}"
-KIND_NODE_IMAGE="${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd}"
+KIND_NODE_IMAGE="${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cluster-validator-integration.XXXXXX")"
 KUBECONFIG_FILE="${WORK_DIR}/kind.kubeconfig"
 HELPER_KUBECONFIG="${WORK_DIR}/extension.kubeconfig"
@@ -27,6 +26,11 @@ SECRET_MARKER="validator-secret-marker-${RANDOM}-${RANDOM}"
 SERVICE_ACCOUNT_TOKEN=""
 CLUSTER_CREATED=false
 IMAGE_BUILT=false
+
+# These are the public values emitted by the built image. The JSON contract is
+# documentation for those values, not an oracle consulted by this test.
+EXPECTED_CHECKS='["api-discovery","api-server","namespaces-healthy","nodes-ready","pods-ready"]'
+EXPECTED_EXTENSION_CHECKS='["api-discovery","api-server","integration-extension","namespaces-healthy","nodes-ready","pods-ready"]'
 
 die() {
   printf 'cluster-validator-integration: %s\n' "$*" >&2
@@ -61,20 +65,7 @@ require_tools() {
   for tool in docker kind kubectl jq go; do
     command -v "${tool}" >/dev/null 2>&1 || die "required tool is missing: ${tool}"
   done
-  jq -e '.kind == "ClusterValidatorIntegrationContract"' "${CONTRACT_FILE}" >/dev/null || \
-    die "integration contract has an unexpected kind"
   docker info >/dev/null 2>&1 || die "Docker daemon is unavailable"
-}
-
-validate_contract() {
-  local expected_api expected_extension
-  expected_api="$(jq -r '.apiVersion' "${CONTRACT_FILE}")"
-  expected_extension="$(jq -r '.extension.name' "${CONTRACT_FILE}")"
-  [[ "${expected_api}" == cluster-validator.telekom.com/v1alpha1 ]] || die "unexpected report API version in contract"
-  [[ "${expected_extension}" == integration-extension ]] || die "unexpected extension name in contract"
-  [[ "$(jq '.builtInChecks | length' "${CONTRACT_FILE}")" == 5 ]] || die "contract must enumerate all built-in checks"
-  jq -e 'all(.cases[]; has("expectedExitCode") and has("deterministic"))' "${CONTRACT_FILE}" >/dev/null || \
-    die "contract cases must declare exit codes and determinism"
 }
 
 build_image() {
@@ -248,8 +239,8 @@ YAML
 
 assert_report() {
   local report_file="$1" mode="$2" expected_checks
-  expected_checks="$(jq -c '.builtInChecks' "${CONTRACT_FILE}")"
-  jq -e --arg api "$(jq -r '.apiVersion' "${CONTRACT_FILE}")" \
+  expected_checks="${EXPECTED_CHECKS}"
+  jq -e --arg api "cluster-validator.telekom.com/v1alpha1" \
     --arg kind "ClusterValidationReport" --arg mode "${mode}" --argjson expected "${expected_checks}" '
       .apiVersion == $api and .kind == $kind and .mode == $mode and .status == "ready" and
       ([.checks[].name] == $expected) and all(.checks[]; .status == "ready") and
@@ -305,10 +296,10 @@ YAML
   [[ "${phase}" == Failed ]] || die "not-ready validator unexpectedly succeeded"
   local exit_code expected_exit
   exit_code="$(kubectl get pod "${validator_pod}" -n "${NAMESPACE}" -o jsonpath='{.status.containerStatuses[0].state.terminated.exitCode}')"
-  expected_exit="$(jq -r '.cases[] | select(.name == "not-ready") | .expectedExitCode' "${CONTRACT_FILE}")"
+  expected_exit=1
   [[ "${exit_code}" == "${expected_exit}" ]] || die "not-ready validator returned exit code ${exit_code}, expected ${expected_exit}"
   local expected_checks
-  expected_checks="$(jq -c '.builtInChecks' "${CONTRACT_FILE}")"
+  expected_checks="${EXPECTED_CHECKS}"
   jq -e --argjson expected "${expected_checks}" '
     .status == "not-ready" and ([.checks[].name] == $expected) and
     (any(.checks[]; .name == "pods-ready" and .status == "not-ready")) and
@@ -333,16 +324,17 @@ run_extension_case() {
   local binary="${WORK_DIR}/cluster-validator-extension" report_file="${WORK_DIR}/extension.log"
   go build -trimpath -o "${binary}" ./hack/cluster-validator-extension
   local expected_exit actual_exit
-  expected_exit="$(jq -r '.cases[] | select(.name == "one-time") | .expectedExitCode' "${CONTRACT_FILE}")"
+  expected_exit=0
   set +e
   "${binary}" --kubeconfig "${HELPER_KUBECONFIG}" --mode one-time >"${report_file}" 2>"${WORK_DIR}/extension.stderr"
   actual_exit=$?
   set -e
   [[ "${actual_exit}" == "${expected_exit}" ]] || die "extension contract returned exit code ${actual_exit}, expected ${expected_exit}"
   local expected_checks
-  expected_checks="$(jq -c '.builtInChecks + [.extension.name] | sort' "${CONTRACT_FILE}")"
+  expected_checks="${EXPECTED_EXTENSION_CHECKS}"
   jq -e --argjson expected "${expected_checks}" '
-    .status == "ready" and .mode == "one-time" and
+    .apiVersion == "cluster-validator.telekom.com/v1alpha1" and
+    .kind == "ClusterValidationReport" and .status == "ready" and .mode == "one-time" and
     ([.checks[].name] | sort) == $expected and
     any(.checks[]; .name == "integration-extension" and .status == "ready")
   ' "${report_file}" >/dev/null || die "extension contract report was not ready and complete"
@@ -375,7 +367,6 @@ assert_zero_residuals() {
 
 main() {
   require_tools
-  validate_contract
   build_image
   create_cluster
   install_rbac

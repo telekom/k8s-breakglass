@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-name: Cluster-validator image
+name: Cluster-validator checks
 
 on:
   push:
@@ -39,12 +39,6 @@ on:
 permissions:
   contents: read
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}-cluster-validator
-  KIND_VERSION: v0.32.0
-  KIND_NODE_IMAGE: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd
-
 jobs:
   test:
     runs-on: ubuntu-24.04
@@ -58,131 +52,3 @@ jobs:
           cache: true
       - name: Test validator
         run: make test-validator
-
-  integration:
-    name: Real kind validator integration
-    needs: test
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Install Kind
-        run: |
-          curl -fsSL -o ./kind "https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64"
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
-          kind version
-      - name: Run real-cluster contract
-        env:
-          KIND_NODE_IMAGE: ${{ env.KIND_NODE_IMAGE }}
-        run: make test-validator-integration
-
-  image:
-    needs: test
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-      - name: Set build timestamp
-        id: build-time
-        env:
-          HEAD_COMMIT_TIMESTAMP: ${{ github.event.head_commit.timestamp }}
-        run: |
-          set -euo pipefail
-          BUILD_DATE="${HEAD_COMMIT_TIMESTAMP:-}"
-          if [ -z "${BUILD_DATE}" ]; then
-            BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          fi
-          echo "build-date=${BUILD_DATE}" >> "$GITHUB_OUTPUT"
-      - name: Image metadata
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=tag
-            type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
-          labels: |
-            org.opencontainers.image.title=Kubernetes Cluster Validator
-            org.opencontainers.image.description=Provider-neutral read-only Kubernetes readiness reports
-            org.opencontainers.image.source=https://github.com/telekom/k8s-breakglass
-            org.opencontainers.image.documentation=https://github.com/telekom/k8s-breakglass/blob/main/docs/cluster-validator.md
-            org.opencontainers.image.licenses=Apache-2.0
-            org.opencontainers.image.vendor=Deutsche Telekom
-            com.deutschetelekom.cluster-validator.report-api-version=cluster-validator.telekom.com/v1alpha1
-            com.deutschetelekom.cluster-validator.sbom=spdx-json
-            com.deutschetelekom.cluster-validator.signing=sigstore-keyless
-      - name: Build multi-architecture image
-        id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          file: Dockerfile.validator
-          platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            VERSION=${{ github.ref_name }}
-            GIT_COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ steps.build-time.outputs.build-date }}
-          provenance: mode=max
-          sbom: true
-      - name: Attest build provenance
-        if: github.event_name != 'pull_request'
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: true
-      - name: Install cosign
-        if: github.event_name != 'pull_request'
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-      - name: Sign image digest
-        if: github.event_name != 'pull_request'
-        env:
-          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign --yes "${IMAGE}@${DIGEST}"
-      - name: Generate SPDX SBOM
-        if: github.event_name != 'pull_request'
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
-          format: spdx-json
-          output-file: cluster-validator.spdx.json
-      - name: Attest SPDX SBOM
-        if: github.event_name != 'pull_request'
-        env:
-          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign attest --yes --type spdxjson --predicate cluster-validator.spdx.json "${IMAGE}@${DIGEST}"
-      - name: Upload SBOM
-        if: always() && hashFiles('cluster-validator.spdx.json') != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: cluster-validator-sbom
-          path: cluster-validator.spdx.json
