@@ -39,7 +39,12 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
 {{- $node := and $elevated (eq (default "restricted" $profile.preset) "elevated-node") -}}
 securityContext:
   runAsNonRoot: {{ not $elevated }}
-  {{- if not $elevated }}
+  {{- if $elevated }}
+  # Elevated utility images are deliberately root-based; make this explicit
+  # for admission policies and avoid relying on image USER metadata.
+  runAsUser: 0
+  runAsGroup: 0
+  {{- else }}
   runAsUser: 65532
   runAsGroup: 65532
   fsGroup: 65532
@@ -73,7 +78,10 @@ securityContext:
 {{- $elevatedNode := and (default false $profile.elevated) (eq (default "restricted" $profile.preset) "elevated-node") -}}
 {{- with $profile.pod }}
 {{- range $volume := (default (list) .volumes) }}
-{{- if and (hasKey $volume "hostPath") (not $elevatedNode) }}{{ fail (printf "profiles[%s] hostPath volume overrides require explicit elevated: true and preset elevated-node" $profile.name) }}{{ end }}
+{{- if not $elevatedNode }}
+{{- $safe := or (hasKey $volume "emptyDir") (hasKey $volume "configMap") (hasKey $volume "downwardAPI") }}
+{{- if not $safe }}{{ fail (printf "profiles[%s] restricted volume %s must use emptyDir, configMap, or downwardAPI; sensitive or unbounded sources require explicit elevated: true and preset elevated-node" $profile.name $volume.name) }}{{ end }}
+{{- end }}
 {{- $serviceAccountToken := false -}}
 {{- with $volume.projected }}
 {{- range (default (list) .sources) }}
@@ -165,6 +173,8 @@ namespaceConstraints:
 failMode: closed
 {{- end -}}
 {{- define "debug-session-catalogue.audit" -}}
+{{- $allowExec := true -}}
+{{- if hasKey .profile "allowExec" }}{{ $allowExec = .profile.allowExec }}{{ end }}
 requestReason:
   mandatory: true
   minLength: 10
@@ -173,7 +183,7 @@ requestReason:
 audit:
   enabled: true
 allowedPodOperations:
-  exec: true
+  exec: {{ $allowExec }}
   attach: false
   logs: true
   portForward: false

@@ -42,11 +42,11 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	// These values are collected from the user at session request time
 	// and made available as {{ .vars.<name> }} in all templates.
 	ExtraDeployVariables []ExtraDeployVariableApplyConfiguration `json:"extraDeployVariables,omitempty"`
-	// workloadType specifies the type of workload to create (DaemonSet or Deployment).
+	// workloadType specifies the type of workload to create (DaemonSet, Deployment, or Job).
 	// Required when mode is "workload" or "hybrid".
 	WorkloadType *apiv1alpha1.DebugWorkloadType `json:"workloadType,omitempty"`
 	// replicas specifies the number of replicas for Deployment workloads.
-	// Defaults to 1. Ignored for DaemonSet workloads.
+	// Defaults to 1. Ignored for DaemonSet and Job workloads.
 	Replicas *int32 `json:"replicas,omitempty"`
 	// podOverrides allows overriding specific fields in the referenced pod template.
 	// Merged with the base template using strategic merge patch.

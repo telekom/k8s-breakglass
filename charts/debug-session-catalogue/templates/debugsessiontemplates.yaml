@@ -28,6 +28,14 @@ spec:
   mode: workload
   podTemplateRef:
     name: {{ include "debug-session-catalogue.profileName" (dict "root" $ "profile" $profile) }}
+  {{- with $profile.podOverridesTemplate }}
+  podOverridesTemplate: |
+{{ . | nindent 4 }}
+  {{- end }}
+  {{- with $profile.extraDeployVariables }}
+  extraDeployVariables:
+{{ toYaml . | nindent 4 }}
+  {{- end }}
   {{- include "debug-session-catalogue.workload" (dict "profile" $profile) | nindent 2 }}
   {{- include "debug-session-catalogue.authorization" (dict "root" $ "profile" $profile) | nindent 2 }}
   {{- include "debug-session-catalogue.lifecycle" (dict "root" $ "profile" $profile) | nindent 2 }}

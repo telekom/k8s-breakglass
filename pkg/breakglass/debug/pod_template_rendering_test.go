@@ -26,6 +26,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -1799,6 +1800,30 @@ spec:
 	assert.Equal(t, int32(3), *deploy.Spec.Replicas)
 	assert.Equal(t, "pod-to-deploy", deploy.Name)
 	assert.Equal(t, corev1.RestartPolicyAlways, deploy.Spec.Template.Spec.RestartPolicy)
+}
+
+func TestBuildWorkload_JobRetainsNeverAndDoesNotRestart(t *testing.T) {
+	controller := newBuildWorkloadController()
+	ds := newBuildWorkloadSession("one-shot")
+	template := &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+		WorkloadType: breakglassv1alpha1.DebugWorkloadJob,
+		PodTemplateString: `apiVersion: v1
+kind: Pod
+spec:
+  containers:
+    - name: debug
+      image: busybox:1.36
+      command: ["/bin/true"]
+`,
+	}}
+
+	workload, _, err := controller.buildWorkload(ds, template, nil, nil, "target-ns")
+	require.NoError(t, err)
+	job, ok := workload.(*batchv1.Job)
+	require.True(t, ok, "bounded diagnostics must be represented by a Job")
+	assert.Equal(t, corev1.RestartPolicyNever, job.Spec.Template.Spec.RestartPolicy)
+	require.NotNil(t, job.Spec.BackoffLimit)
+	assert.Zero(t, *job.Spec.BackoffLimit)
 }
 
 func TestBuildWorkload_FullDeploymentTemplate(t *testing.T) {

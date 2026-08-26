@@ -34,7 +34,7 @@ import (
 type DebugSessionTemplateMode string
 
 const (
-	// DebugSessionModeWorkload deploys debug pods (DaemonSet/Deployment) to target cluster.
+	// DebugSessionModeWorkload deploys debug pods (DaemonSet/Deployment/Job) to target cluster.
 	DebugSessionModeWorkload DebugSessionTemplateMode = "workload"
 	// DebugSessionModeKubectlDebug allows ephemeral container injection via kubectl debug.
 	DebugSessionModeKubectlDebug DebugSessionTemplateMode = "kubectl-debug"
@@ -43,7 +43,7 @@ const (
 )
 
 // DebugWorkloadType defines the type of workload to deploy.
-// +kubebuilder:validation:Enum=DaemonSet;Deployment
+// +kubebuilder:validation:Enum=DaemonSet;Deployment;Job
 type DebugWorkloadType string
 
 const (
@@ -51,6 +51,8 @@ const (
 	DebugWorkloadDaemonSet DebugWorkloadType = "DaemonSet"
 	// DebugWorkloadDeployment deploys a specified number of debug pods.
 	DebugWorkloadDeployment DebugWorkloadType = "Deployment"
+	// DebugWorkloadJob runs a bounded diagnostic once and retains its logs until cleanup.
+	DebugWorkloadJob DebugWorkloadType = "Job"
 )
 
 // DebugSessionTemplateConditionType defines condition types for DebugSessionTemplate.
@@ -104,13 +106,13 @@ type DebugSessionTemplateSpec struct {
 	// +optional
 	ExtraDeployVariables []ExtraDeployVariable `json:"extraDeployVariables,omitempty"`
 
-	// workloadType specifies the type of workload to create (DaemonSet or Deployment).
+	// workloadType specifies the type of workload to create (DaemonSet, Deployment, or Job).
 	// Required when mode is "workload" or "hybrid".
 	// +optional
 	WorkloadType DebugWorkloadType `json:"workloadType,omitempty"`
 
 	// replicas specifies the number of replicas for Deployment workloads.
-	// Defaults to 1. Ignored for DaemonSet workloads.
+	// Defaults to 1. Ignored for DaemonSet and Job workloads.
 	// +optional
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=1
@@ -421,6 +423,10 @@ type DebugPodOverrides struct {
 
 // DebugPodSpecOverrides defines overridable pod spec fields.
 type DebugPodSpecOverrides struct {
+	// nodeSelector adds mandatory scheduling constraints to the pod.
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
 	// hostNetwork overrides the hostNetwork setting.
 	// +optional
 	HostNetwork *bool `json:"hostNetwork,omitempty"`
@@ -443,6 +449,16 @@ type DebugContainerOverride struct {
 	// name is the name of the container to override.
 	// +required
 	Name string `json:"name"`
+
+	// command replaces the container command when an administrator-authored
+	// podOverridesTemplate deliberately binds it to a session variable.
+	// +optional
+	Command []string `json:"command,omitempty"`
+
+	// args replaces the container arguments when an administrator-authored
+	// podOverridesTemplate deliberately binds them to session variables.
+	// +optional
+	Args []string `json:"args,omitempty"`
 
 	// securityContext overrides the container's security context.
 	// +optional

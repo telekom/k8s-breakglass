@@ -36,6 +36,12 @@ spec:
 {{ toYaml $profile.command | nindent 12 }}
           args:
 {{ toYaml $profile.args | nindent 12 }}
+          {{- with $profile.pod }}
+          {{- with .env }}
+          env:
+{{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- end }}
           {{- include "debug-session-catalogue.containerSecurity" (dict "profile" $profile) | nindent 10 }}
           {{- include "debug-session-catalogue.resources" $ | nindent 10 }}
           {{- with $profile.pod }}

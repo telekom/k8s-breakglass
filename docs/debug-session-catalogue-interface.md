@@ -25,6 +25,10 @@ The shipped intent names, in list order, are `workload-diagnostics`,
 list item names and may be extended without chart changes; these intent names
 remain stable across deployment values.
 
+Bounded report profiles use `workloadType: Job`; this is important because the
+controller normalizes Deployments and DaemonSets to `restartPolicy: Always`.
+Interactive profiles may use `Deployment` and must keep their process alive.
+
 ## Access and targets
 
 `requesters.groups/users`, `approvers.groups/users`, and
@@ -54,7 +58,11 @@ an explicit paired opt-in: set a constrained `serviceAccountName` together
 with `automountServiceAccountToken: true`; the chart does not create the
 ServiceAccount or grant its read-only RBAC.
 
-The chart does not create RBAC. Cluster administrators must review controller
+Node maintenance profiles expose constrained per-session variables for an exact
+target node, interface, evidence directory, confirmation token, and (for repair)
+an allowlisted action. They are scheduled to the selected node, mount an
+ephemeral `/evidence` directory, and disable `exec`; operation logs are the
+supported output channel. The chart does not create RBAC. Cluster administrators must review controller
 and target-cluster permissions before enabling any elevated profile.
 
 ## Image contract

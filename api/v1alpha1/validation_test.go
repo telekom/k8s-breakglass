@@ -3307,7 +3307,7 @@ spec:
 		template := &DebugPodTemplate{
 			Spec: DebugPodTemplateSpec{
 				TemplateString: `apiVersion: batch/v1
-kind: Job
+kind: CronJob
 metadata:
   name: test
 spec:
@@ -3322,7 +3322,7 @@ spec:
 		result := ValidateDebugPodTemplate(template)
 		assert.False(t, result.IsValid())
 		assert.Contains(t, result.ErrorMessage(), "unsupported kind")
-		assert.Contains(t, result.ErrorMessage(), "Job")
+		assert.Contains(t, result.ErrorMessage(), "CronJob")
 	})
 
 	t.Run("wrong apiVersion for Pod is rejected", func(t *testing.T) {
