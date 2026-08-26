@@ -10,13 +10,15 @@ SPDX-License-Identifier: Apache-2.0
 auth-operator, k8s-breakglass, and debug-session-catalogue artifacts. It creates
 a clean kind cluster, installs the three upstream artifacts, configures
 separate requester and approver identities, and proves both the normal
-restricted lifecycle and a real catalogue DebugSession:
+restricted lifecycle and real catalogue DebugSessions:
 
 - access is denied before approval and requester self-approval is rejected;
 - a distinct approver activates a bounded session;
 - a second request is denied by an approver;
 - a catalogue DebugSession is requested and approved by the distinct approver;
-- a restricted catalogue workload runs a representative `kubectl exec` command;
+- a restricted catalogue Job runs the packaged workload-debug command;
+- an opt-in node repair Job runs the fixed node-maintenance dispatcher without
+  allowing pod exec;
 - audit recording contains request, start, deployment, termination, and cleanup events;
 - the session is terminated and its workload/policy resources are removed.
 
@@ -42,11 +44,12 @@ CATALOGUE_CHART_DIGEST=sha256:<published-chart-digest> \
   REFERENCE_MODE=published ./examples/reference-usage/reference-usage.sh
 ```
 
-The script uses the existing `e2e/kind-setup-single.sh` stack for Keycloak,
-OIDC test users, the audit receiver, and the simulated tenant. It does not
-accept credentials or print tokens. The default test identities are local
-Keycloak fixtures created by that setup; override the `REFERENCE_*` identity
-variables only when using an equivalent public fixture.
+The workflow supplies a disposable bootstrap and token helper for its own
+fixtures. Standalone consumers can set `REFERENCE_SETUP_SCRIPT` (or provide
+`REFERENCE_API_BASE` and `REFERENCE_KUBECONFIG`), `REFERENCE_ENV_FILE`, and
+`REFERENCE_TOKEN_HELPER` for equivalent upstream fixtures. The executable does
+not require a checked-out chart or audit YAML. It does not accept credentials
+or print tokens; identity values are supplied through the selected fixture.
 
 ## Catalogue release contract
 
@@ -54,8 +57,11 @@ The catalogue branch publishes the `charts/debug-session-catalogue` Helm chart
 at version `0.2.0`. The reference flow does not require that source branch to
 be merged: source mode builds the checked-out Breakglass image and consumes
 the public OCI chart. Published mode verifies the chart's signed immutable
-reference. To exercise a chart checkout explicitly, set
-`REFERENCE_CATALOGUE_SOURCE=true` and optionally `CATALOGUE_SOURCE_DIR`.
+reference. Both modes consume the OCI chart, keeping the reference check
+independent of chart source files and chart-runtime work in progress.
+The executable's opt-in repair case requires the published catalogue contract
+that supports `Job` workloads, deployment variables, and per-profile
+`allowExec`; run it only after that chart runtime is released.
 Published mode installs the public OCI chart at:
 
 `oci://ghcr.io/telekom/k8s-breakglass/charts/debug-session-catalogue`
@@ -65,12 +71,12 @@ uses the OCI reference and `--version ${CATALOGUE_VERSION}`. Override
 `CATALOGUE_CHART` and `CATALOGUE_VERSION` only for another public chart
 publication; no private registry login or secret is part of the contract.
 
-The chart is configured by the executable with the local requester group,
+The chart is configured by the executable with the selected requester group,
 approver email, tenant cluster, and a pre-created debug namespace. The
-consumer-defined `network-diagnostics` profile is the restricted case. Setting
-`REFERENCE_RUN_ELEVATED=true` additionally enables and exercises the chart's
-explicit `network-repair` and `node-recovery` elevated profiles, including
-their workloads and representative commands.
+consumer-defined `workload-diagnostics` profile is the restricted case.
+Setting `REFERENCE_RUN_ELEVATED=true` additionally enables and exercises the
+chart's explicit `network-repair` profile with its fixed command, target
+variables, evidence volume, and no-exec boundary.
 
 This README intentionally points to the executable flow rather than copying
 its Kubernetes YAML, so examples cannot drift from the tested path.
