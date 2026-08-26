@@ -53,17 +53,52 @@ securityContext:
 {{- $caps := default (list) $profile.capabilities -}}
 {{- $allowedCaps := list "AUDIT_CONTROL" "BPF" "NET_ADMIN" "NET_RAW" "PERFMON" "SYS_ADMIN" "SYS_PTRACE" -}}
 {{- range $cap := $caps }}{{- if not (has $cap $allowedCaps) }}{{ fail (printf "profiles[%s] capability %s is not permitted by the catalogue security contract" $profile.name $cap) }}{{ end }}{{- end }}
+{{- if and (not $elevated) $caps }}{{ fail (printf "profiles[%s] restricted profiles may not add capabilities" $profile.name) }}{{ end }}
+{{- if and (not $elevated) $profile.allowPrivilegeEscalation }}{{ fail (printf "profiles[%s] restricted profiles may not allow privilege escalation" $profile.name) }}{{ end }}
 {{- if and $profile.privileged (ne (default "restricted" $profile.preset) "elevated-node") }}{{ fail (printf "profiles[%s] privileged pods require preset elevated-node" $profile.name) }}{{ end }}
 {{- if and $profile.hostPID (ne (default "restricted" $profile.preset) "elevated-node") }}{{ fail (printf "profiles[%s] hostPID requires preset elevated-node" $profile.name) }}{{ end }}
 securityContext:
-  allowPrivilegeEscalation: {{ $elevated }}
+  allowPrivilegeEscalation: {{ if $elevated }}{{ default false $profile.allowPrivilegeEscalation }}{{ else }}false{{ end }}
   privileged: {{ if $elevated }}{{ default false $profile.privileged }}{{ else }}false{{ end }}
+  readOnlyRootFilesystem: {{ not $elevated }}
   capabilities:
     drop: [ALL]
     {{- if and $elevated $caps }}
     add:
 {{ toYaml $caps | nindent 6 }}
     {{- end }}
+{{- end -}}
+{{- define "debug-session-catalogue.validatePodOverrides" -}}
+{{- $profile := .profile -}}
+{{- $elevatedNode := and (default false $profile.elevated) (eq (default "restricted" $profile.preset) "elevated-node") -}}
+{{- with $profile.pod }}
+{{- range $volume := (default (list) .volumes) }}
+{{- if and (hasKey $volume "hostPath") (not $elevatedNode) }}{{ fail (printf "profiles[%s] hostPath volume overrides require explicit elevated: true and preset elevated-node" $profile.name) }}{{ end }}
+{{- $serviceAccountToken := false -}}
+{{- with $volume.projected }}
+{{- range (default (list) .sources) }}
+{{- if hasKey . "serviceAccountToken" }}{{ $serviceAccountToken = true }}{{ end }}
+{{- end }}
+{{- end }}
+{{- if and $serviceAccountToken (not $elevatedNode) }}{{ fail (printf "profiles[%s] projected serviceAccountToken volume overrides require explicit elevated: true and preset elevated-node" $profile.name) }}{{ end }}
+{{- end }}
+{{- end }}
+{{- end -}}
+{{- define "debug-session-catalogue.serviceAccount" -}}
+{{- $profile := .profile -}}
+{{- $name := default "" $profile.serviceAccountName -}}
+{{- $automount := default false $profile.automountServiceAccountToken -}}
+{{- if or $name $automount }}
+{{- if ne $profile.intent "cluster-validation" }}{{ fail (printf "profiles[%s] serviceAccountName and automountServiceAccountToken are reserved for cluster-validation" $profile.name) }}{{ end }}
+{{- if not $name }}{{ fail "cluster-validation automountServiceAccountToken requires serviceAccountName" }}{{ end }}
+{{- if not $automount }}{{ fail "cluster-validation serviceAccountName requires automountServiceAccountToken: true" }}{{ end }}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $name) }}{{ fail "serviceAccountName must be DNS-safe" }}{{ end }}
+{{- if eq $name "default" }}{{ fail "cluster-validation must use a dedicated serviceAccountName" }}{{ end }}
+{{- end }}
+automountServiceAccountToken: {{ $automount }}
+{{- if $name }}
+serviceAccountName: {{ $name | quote }}
+{{- end }}
 {{- end -}}
 {{- define "debug-session-catalogue.resources" -}}
 resources:

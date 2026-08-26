@@ -44,12 +44,12 @@ The chart includes these profiles:
 | Profile | Default | Purpose |
 | --- | --- | --- |
 | `workload-diagnostics` | enabled | Isolated workload diagnostics |
-| `network-diagnostics` | enabled | Isolated DNS/network diagnostics |
+| `network-diagnostics` | disabled | Elevated node-network diagnostics |
 | `storage-diagnostics` | enabled | Ephemeral storage inspection |
-| `cluster-validation` | enabled | Isolated read-only validation checks |
 | `dump-access` | disabled | Host-network packet capture |
 | `network-repair` | disabled | Host-network network repair |
 | `node-recovery` | disabled | Host-network/host-PID node recovery |
+| `cluster-validation` | enabled | Isolated read-only validation checks |
 
 The node-oriented profiles are elevated. Enable them only with an explicit
 two-part opt-in, for example:
@@ -74,12 +74,26 @@ images:
     digest: sha256:...
 ```
 
-Images are an interface, not a dependency of this chart: each image should
+Images are an interface, not a dependency of this chart: each image must
 provide the command in its profile's `command`/`args` values and should be
-reviewed for the capabilities requested by that profile. The defaults point at
-the independently published upstream utility images and invoke their
-intent-specific entrypoints. Pin each image to its release digest in
-production.
+reviewed for the capabilities requested by that profile. Restricted profiles
+run as UID/GID 65532 with a read-only root filesystem and no added
+capabilities. The network utility is therefore elevated and disabled by
+default because its packet and node inspection tools require root/capability
+access. Pin each image to its release digest in production.
+
+The `storage-diagnostics` profile mounts the image's `/scratch` and `/reports`
+paths. The `dump-access` profile mounts `/input` read-only and `/output`
+writable, matching the dump-reader image contract. Replace the empty volumes
+with approved sources in a reviewed overlay; hostPath and projected
+service-account-token volume overrides are rejected unless the profile is
+explicitly elevated with `preset: elevated-node`.
+
+`cluster-validation` does not receive a service-account token by default. To
+run API checks, explicitly set both `serviceAccountName` and
+`automountServiceAccountToken: true` on that profile, and bind the named
+ServiceAccount to narrowly scoped read-only discovery, node, namespace, and
+pod permissions. The chart does not create that ServiceAccount or its RBAC.
 
 Platform-specific controls (SR-IOV, admission protections, NetworkPolicies,
 Kyverno PolicyExceptions, node labels, and tenant/session policy) remain
@@ -93,8 +107,9 @@ does not name a platform, tenant, or policy engine.
 chart change. Every item needs a unique DNS-safe `name`, stable `intent`,
 display metadata, `enabled`/`elevated`, a command and args, and either an
 `imageKey` from `images` or a direct `image` reference. Optional `preset`,
-capabilities, and narrow pod overrides (mounts, volumes, and node selectors)
-are generic; restricted security invariants cannot be weakened by overrides.
+capabilities, service-account opt-in, and narrow pod overrides (mounts, volumes,
+and node selectors) are generic; restricted security invariants cannot be
+weakened by overrides.
 The list order is preserved in rendered output.
 
 Versions before 0.2.0 accepted a map keyed by profile name. Convert each map

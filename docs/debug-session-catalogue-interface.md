@@ -19,11 +19,11 @@ profile. Both names are deterministic:
 ```
 
 The session template's `podTemplateRef.name` is the matching pod template name.
-The shipped intent names are `workload-diagnostics`, `network-diagnostics`,
-`storage-diagnostics`, `dump-access`, `network-repair`, `node-recovery`, and
-`cluster-validation`. Profile names are DNS-safe, unique list item names and
-may be extended without chart changes; intent names remain stable across
-platform and tenant values.
+The shipped intent names, in list order, are `workload-diagnostics`,
+`network-diagnostics`, `storage-diagnostics`, `dump-access`, `network-repair`,
+`node-recovery`, and `cluster-validation`. Profile names are DNS-safe, unique
+list item names and may be extended without chart changes; these intent names
+remain stable across deployment values.
 
 ## Access and targets
 
@@ -40,13 +40,19 @@ namespace separately.
 
 ## Security contract
 
-All profiles use a non-root pod, RuntimeDefault seccomp, dropped capabilities,
-no service-account token, disabled service links, bounded CPU/memory, closed
-failure mode, mandatory request reasons, one-hour maximum duration, no renewal,
-and only exec/log operations by default. Elevated profiles are absent from the
-rendered output unless `enabled: true`, and the chart requires a second explicit
-`elevated: true` setting. Only then can host namespaces, privileged mode, or
-additional capabilities be rendered.
+Restricted profiles use a non-root pod, read-only root filesystem,
+RuntimeDefault seccomp, dropped capabilities, no service-account token,
+disabled service links, bounded CPU/memory, closed failure mode, mandatory
+request reasons, one-hour maximum duration, no renewal, and only exec/log
+operations by default. Elevated profiles are absent from the rendered output
+unless `enabled: true`, and the chart requires a second explicit `elevated: true`
+setting. Only an explicit `preset: elevated-node` may use host namespaces or
+sensitive hostPath/projected service-account-token volume overrides.
+
+The `cluster-validation` profile remains restricted by default. API access is
+an explicit paired opt-in: set a constrained `serviceAccountName` together
+with `automountServiceAccountToken: true`; the chart does not create the
+ServiceAccount or grant its read-only RBAC.
 
 The chart does not create RBAC. Cluster administrators must review controller
 and target-cluster permissions before enabling any elevated profile.
@@ -55,11 +61,11 @@ and target-cluster permissions before enabling any elevated profile.
 
 Each profile selects `images.<profile imageKey>` or supplies a direct `image`
 reference and runs its `command`/`args`. Images are configurable and should be
-pinned by digest in production. The chart's neutral `busybox:1.36.1` defaults
-are intentionally minimal; specialized image work may replace them without
-changing CR names or the catalogue interface. In particular, the default
-dump, repair, and recovery profiles are disabled and must not be treated as
-shipping packet-capture or node-recovery tooling.
+pinned by digest in production. The storage and dump mounts match the
+`/scratch`, `/reports`, `/input`, and `/output` paths consumed by their images.
+The elevated network, dump, repair, and recovery profiles are disabled by
+default and must not be treated as shipping node tooling until explicitly
+approved.
 
 Profile items are concise: shared authorization, lifecycle, audit, image
 resolution, workload wiring, pod hardening, and resource defaults are named
