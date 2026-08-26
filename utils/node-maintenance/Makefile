@@ -11,10 +11,13 @@ VCS_REF ?= $(shell git rev-parse --short HEAD 2>/dev/null || printf unknown)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 OCI_ARCHIVE ?= node-maintenance.oci.tar
 
-.PHONY: test build build-multiarch sbom sign
+.PHONY: test integration build build-multiarch sbom sign
 
 test:
 	./tests/test-helpers.sh
+
+integration:
+	./tests/integration.sh
 
 build:
 	docker build --pull=false \

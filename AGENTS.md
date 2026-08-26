@@ -263,6 +263,14 @@ allowlisted and record protected before/after evidence, including failure
 statuses. Update the utility README and both runbooks for behavior changes.
 
 Use `make -C utils/node-maintenance test` and `shellcheck` for helper changes;
+use `make -C utils/node-maintenance integration` on a Linux Docker runner for
+the real-tool proof. The integration harness must use `--network none`, a
+disposable evidence volume, `--read-only`, `--cap-drop ALL`, `--cap-add
+NET_ADMIN`, and `no-new-privileges`; it must fail when Docker or any required
+security feature is unavailable rather than skip. Never join or mutate the
+runner host network. Every fixture must remove its container and volume and
+verify cleanup. Keep `tests/integration-contract.json` in sync with the
+commands, expected evidence, and security boundary.
 `make -C utils/node-maintenance build` validates the pinned single-platform
 image and `build-multiarch` requests BuildKit provenance and SBOM metadata.
 Signing and SBOM attestation target an immutable registry digest only.

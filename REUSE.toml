@@ -48,6 +48,13 @@ path = ["utils/workload-debug/**.md", "utils/workload-debug/MOTD"]
 SPDX-FileCopyrightText = "2026 Deutsche Telekom AG"
 SPDX-License-Identifier = "CC-BY-4.0"
 
+# Node-maintenance integration contract
+[[annotations]]
+precedence = "aggregate"
+path = ["utils/node-maintenance/tests/**.json"]
+SPDX-FileCopyrightText = "2026 Deutsche Telekom AG"
+SPDX-License-Identifier = "Apache-2.0"
+
 # Documentation
 [[annotations]]
 precedence = "aggregate"

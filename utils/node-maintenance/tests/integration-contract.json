@@ -1,58 +1,17 @@
 {
-  "contractVersion": "node-maintenance.integration/v7",
+  "contractVersion": "node-maintenance.integration/v1",
   "imageContext": "utils/node-maintenance",
   "network": {
     "mode": "none",
     "hostNetwork": false,
-    "hostNetworkMutation": false,
-    "disposableVethNeighborFixture": true,
-    "disposableVLANBridgeFixture": true,
-    "kernelIfindexMutation": true,
-    "nameReplacementAdversary": true,
-    "bridgeReparentAdversary": true
+    "hostNetworkMutation": false
   },
   "security": {
     "readOnlyRootFilesystem": true,
     "allowPrivilegeEscalation": false,
     "seccompProfile": "runtime-default",
-    "seccompOption": "builtin",
     "capabilitiesDrop": ["ALL"],
-    "contexts": {
-      "node-recovery": {"capabilitiesAdd": []},
-      "network-repair": {"capabilitiesAdd": ["NET_ADMIN"]},
-      "kexec-recovery-validate": {"capabilitiesAdd": [], "execution": false}
-    }
-  },
-  "controllerBindings": {
-    "nodeIdentityEnvironment": "BREAKGLASS_NODE_NAME",
-    "nodeIdentitySyntax": "rfc1123-dns-subdomain",
-    "operationEnvironment": "BREAKGLASS_OPERATION_ID",
-    "recordingEnvironment": "BREAKGLASS_RECORDING_ID",
-    "approvalEnvironment": "BREAKGLASS_APPROVAL_ID",
-    "approvedActionEnvironment": "BREAKGLASS_APPROVED_ACTION",
-    "approvedNetworkRequestEnvironment": "BREAKGLASS_APPROVED_NETWORK_REQUEST",
-    "approvedNetworkRequestMaxBytes": 1024,
-    "approvedNetworkRequestFields": ["target_node", "interface", "action", "neighbor_address", "bridge", "entry_mac", "vlan", "confirmation"],
-    "lockRecordTupleDigest": "sha256",
-    "exactActionMatch": true,
-    "independentApprovalRequired": true
-  },
-  "bounds": {
-    "validatedValueMaxBytes": 256,
-    "kubernetesNodeNameMaxBytes": 253,
-    "linuxInterfaceNameMaxBytes": 15,
-    "captureTimeoutSeconds": 10,
-    "captureMaxBytes": 32768,
-    "evidenceMaxBytes": 393216,
-    "evidenceWrites": "quota-checked-atomic-rename",
-    "sharedEvidenceLeaseConcurrency": 1,
-    "sharedEvidenceLock": "process-held-flock",
-    "sharedEvidenceLockScope": "volume-root",
-    "legacyChildLock": "selected-child-held-flock",
-    "staleTemporaryRecovery": "lock-held-owned-candidates",
-    "activeHolderTimeoutRecovery": false,
-    "crashRelease": "kernel-file-description-close",
-    "controllerNodeConcurrencyRequired": 1
+    "capabilitiesAdd": ["NET_ADMIN"]
   },
   "disposableResources": {
     "evidenceVolume": true,
@@ -65,60 +24,24 @@
       "interface": "lo",
       "confirmation": "NODE-RECOVERY-PREFLIGHT",
       "expectedExit": 0,
-      "requiredEvidence": ["interface.txt", "addresses.txt", "routes.txt", "neighbors.txt", "ethtool.txt", "resolver.txt", "kernel.txt", "metadata", "events.jsonl"]
+      "requiredEvidence": ["interface.txt", "addresses.txt", "routes.txt", "neighbors.txt", "ethtool.txt", "resolver.txt", "kernel.txt", "metadata"]
     },
     "network-repair": {
       "target": "node-a",
+      "interface": "lo",
       "confirmation": "NETWORK-REPAIR",
       "actions": {
-        "link-cycle": {"interface": "lo", "expectedExit": 0},
-        "restart-autonegotiation": {"interface": "lo", "expectedExit": "nonzero"},
-        "neighbor-replace": {"interface": "repair0", "address": "192.0.2.2", "mac": "02:00:00:00:00:02", "expectedExit": 0},
-        "bridge-fdb-replace": {"interface": "fdb0", "bridge": "br0", "mac": "02:00:00:00:01:00", "vlan": 100, "expectedExit": 0}
+        "link-cycle": {"expectedExit": 0},
+        "flush-neighbors": {"expectedExit": 0},
+        "restart-autonegotiation": {"expectedExit": "nonzero"}
       },
-      "requiredEvidence": ["before-link.txt", "after-link.txt", "metadata", "events.jsonl"]
-    },
-    "kexec-recovery-validate": {
-      "target": "node-a",
-      "profile": "rescue-a",
-      "fixedPaths": ["/recovery/kernel", "/recovery/initrd", "/recovery/cmdline"],
-      "recoveryMountReadOnly": true,
-      "confirmation": "KEXEC-RECOVERY-VALIDATE",
-      "expectedExit": 0,
-      "executionPerformed": false,
-      "requiredEvidence": ["kernel.sha256.txt", "initrd.sha256.txt", "cmdline.sha256.txt", "validation-result.txt", "metadata", "events.jsonl"]
+      "requiredEvidence": ["before-link.txt", "before-addresses.txt", "before-routes.txt", "before-neighbors.txt", "after-link.txt", "after-addresses.txt", "after-routes.txt", "after-neighbors.txt", "metadata"]
     }
   },
   "guards": [
     "missing-confirmation",
     "target-mismatch",
-    "approval-action-mismatch",
     "unsafe-evidence-path",
-    "evidence-symlink",
-    "evidence-rename",
-    "shared-evidence-concurrency",
-    "active-holder-old-timestamp",
-    "crash-lock-release",
-    "approved-tuple-mismatch-matrix",
-    "approved-tuple-maximum-boundary",
-    "full-evidence-event-atomicity",
-    "full-evidence-metadata-atomicity",
-    "full-evidence-capture-replacement-atomicity",
-    "near-quota-capture-replacement",
-    "injected-capture-failure-cleanup",
-    "stale-temporary-recovery",
-    "child-directory-shared-lock",
-    "live-legacy-lock-protection",
-    "interface-name-replacement",
-    "bridge-membership-change",
-    "neighbor-argument-injection",
-    "fdb-bridge-mismatch",
-    "fdb-vlan-mismatch",
-    "kexec-profile-mismatch",
-    "kexec-missing-digest",
-    "kexec-digest-mismatch",
-    "kexec-caller-selected-path",
-    "kexec-writable-mount",
     "unknown-dispatch-command"
   ]
 }

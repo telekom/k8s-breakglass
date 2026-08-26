@@ -95,3 +95,23 @@ Release automation must resolve and retain the immutable registry digest, then
 run `make sign DIGEST=...` and `make sbom DIGEST=... SBOM=...`. The Makefile
 refuses signing or attestation without a digest, so a mutable tag is never the
 signing subject. Package versions and the base manifest are in [`deps.lock`](deps.lock).
+
+## Integration proof
+
+`make integration` is a real-tool proof, not a help/argument smoke test. On a
+Linux Docker runner it builds the image and runs every command in disposable
+containers with `--network none`, a read-only root filesystem, all capabilities
+dropped except `NET_ADMIN`, and a disposable evidence volume. It exercises
+`node-recovery`, all three repair actions, failure evidence, confirmation and
+target guards, unsafe-path rejection, dispatcher rejection, and explicit
+container/volume cleanup. The loopback interface is used so no runner host
+network namespace is joined or modified; auto-negotiation is expected to fail
+and its evidence is required.
+
+The harness refuses to skip when Docker, Linux namespaces, or required Docker
+security flags are unavailable. Run it with `NODE_MAINTENANCE_TEST_IMAGE`
+to test an already-built image, or inspect the machine-readable
+[`integration-contract.json`](tests/integration-contract.json) used by
+aggregate CI/reference jobs. A macOS/Windows developer machine should run the
+unit helper tests locally and use the Linux integration workflow; the workflow
+failure is intentional rather than a feature skip.
