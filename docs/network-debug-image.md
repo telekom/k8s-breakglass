@@ -5,6 +5,13 @@ SPDX-License-Identifier: Apache-2.0
 
 # Network debug image runbook
 
+The image inherits the runtime toolset from the immutable
+`ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70`
+manifest. Netshoot provides the overlapping network commands used below; this
+project adds the bounded `net-debug`/`net-report` contract, pinned `kubestr`
+and `pwru` binaries, and the local runbook/docs. The base is not reinstalled
+or independently APK-pinned in this image.
+
 Use the network-debug utility image when a connectivity problem must be
 observed from the same network namespace as a workload or node. Start with
 `net-report`, then narrow the investigation to one question: name resolution,
