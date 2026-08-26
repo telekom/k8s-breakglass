@@ -39,6 +39,12 @@
       "deterministic": true
     },
     {
+      "name": "not-ready",
+      "mode": "one-time",
+      "expectedExitCode": 1,
+      "deterministic": false
+    },
+    {
       "name": "invalid-mode",
       "mode": "unsupported",
       "expectedExitCode": 2,

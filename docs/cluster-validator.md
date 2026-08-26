@@ -128,8 +128,10 @@ kubectl, jq, and Go. The harness builds `Dockerfile.validator`, creates a
 disposable pinned-node-image kind cluster, runs the image as the restricted
 ServiceAccount, and executes every built-in check in both `one-time` and
 `post-upgrade` modes. It also runs the extension contract probe through the
-same read-only facades. The contract asserts sorted deterministic reports,
-the documented exit code `2` for an invalid mode, denied config-map mutation,
+same read-only facades. It also creates an unhealthy disposable pod to prove
+the built image returns exit code `1` with a `not-ready` report. The contract
+asserts sorted deterministic reports, the documented exit codes `1` for an
+unhealthy cluster and `2` for an invalid mode, denied config-map mutation,
 denied Secret access, no marker/token leakage into reports or logs, and
 removal of all test RBAC and namespace resources before the cluster is
 deleted.
