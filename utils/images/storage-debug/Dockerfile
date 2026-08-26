@@ -19,10 +19,11 @@ RUN apk add --no-cache \
       "ioping=${IOPING_VERSION}" \
     && addgroup -S -g 65532 debug \
     && adduser -S -D -H -u 65532 -G debug debug \
-    && install -d -o debug -g debug /scratch /reports
+    && install -d -o debug -g debug /scratch /reports /usr/share/storage-debug
 
 COPY --chmod=0755 bin/storage-report /usr/local/bin/storage-report
 COPY --chmod=0644 motd /etc/motd
+COPY --chmod=0644 README.md RUNBOOK.md /usr/share/storage-debug/
 
 USER 65532:65532
 WORKDIR /scratch

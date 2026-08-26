@@ -225,7 +225,7 @@ docker-build-dev: ## Build docker image with controller.
 .PHONY: docker-build-validator
 docker-build-validator: ## Build the provider-neutral cluster-validator image for the host architecture.
 	docker build \
-		-f Dockerfile.validator \
+		-f utils/cluster-validator/Dockerfile \
 		--build-arg VERSION=$(VERSION) \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
@@ -235,7 +235,7 @@ docker-build-validator: ## Build the provider-neutral cluster-validator image fo
 docker-build-validator-multiarch: ## Build the cluster-validator image for amd64 and arm64 (no push).
 	docker buildx build \
 		--platform linux/amd64,linux/arm64 \
-		-f Dockerfile.validator \
+		-f utils/cluster-validator/Dockerfile \
 		--build-arg VERSION=$(VERSION) \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \

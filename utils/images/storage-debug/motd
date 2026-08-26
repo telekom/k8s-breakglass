@@ -3,9 +3,12 @@
 
 Storage debug utilities
 
+Helper: /usr/local/bin/storage-report --help
+
 This image runs bounded fio and ioping checks against an existing writable
 mount. It never uses an unbounded workload. Read the runbook before use:
-https://github.com/telekom/k8s-breakglass/tree/main/utils/images/storage-debug
+/usr/share/storage-debug/RUNBOOK.md
+README: /usr/share/storage-debug/README.md
 
 Defaults: 16 MiB, 5 seconds, 5 ioping requests. Configure STORAGE_TEST_PATH
 and the STORAGE_TEST_* variables for a generic mount appropriate to your pod.

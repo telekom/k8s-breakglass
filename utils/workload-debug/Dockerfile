@@ -28,13 +28,16 @@ RUN apk add --no-cache \
 
 COPY scripts/ /usr/local/bin/
 COPY MOTD /usr/local/share/workload-debug/MOTD
+COPY README.md RUNBOOK.md /usr/local/share/workload-debug/
 COPY MOTD /etc/motd
 COPY LICENSE /licenses/PROJECT_LICENSE
 COPY LICENSES/ /licenses/
 
 RUN chmod 0555 /usr/local/bin/debug-* /usr/local/bin/workload-debug \
       /usr/local/bin/workload-debug-entrypoint \
-    && chmod 0444 /usr/local/share/workload-debug/MOTD /etc/motd \
+    && chmod 0444 /usr/local/share/workload-debug/MOTD \
+      /usr/local/share/workload-debug/README.md \
+      /usr/local/share/workload-debug/RUNBOOK.md /etc/motd \
     && printf '%s\n' \
       "export PATH=\"/usr/local/bin:\$PATH\"" \
       'if [ -t 1 ] && [ -r /usr/local/share/workload-debug/MOTD ]; then cat /usr/local/share/workload-debug/MOTD; fi' \

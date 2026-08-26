@@ -10,8 +10,6 @@ SPDX-License-Identifier: CC-BY-4.0
 client. It runs the `one-time` or `post-upgrade` mode and writes a stable
 `cluster-validator.telekom.com/v1alpha1` report to stdout and, by default,
 `/reports/{mode}.json`.
-Custom report paths must remain below `/reports`; traversal and symlink
-escapes are rejected, and persisted reports are owner-readable only.
 
 The built-in checks cover API discovery, API-server reachability, nodes,
 terminating namespaces, and active pods. Use `--skip-pods` only when the

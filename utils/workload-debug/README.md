@@ -20,8 +20,9 @@ Included helpers:
 | `debug-report` | Non-invasive host and optional target checks |
 
 `workload-debug <command>` is a convenient dispatcher. The shell remains the
-default command for interactive sessions. See the [runbook](../../docs/runbooks/workload-debug.md)
-for build, signing, SBOM, and deployment guidance.
+default command for interactive sessions. In a built image, read
+`/usr/local/share/workload-debug/RUNBOOK.md` for operator guidance; the source
+tree copy is [`RUNBOOK.md`](RUNBOOK.md).
 
 HTTP and Kubernetes API helpers only allow GET, HEAD, and OPTIONS requests,
 do not follow redirects, and cap each response at 1 MiB by default. Set

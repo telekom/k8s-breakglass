@@ -27,6 +27,7 @@ Complete documentation for the breakglass privilege escalation system.
 - **[Rate Limiting](./rate-limiting.md)** - Multi-tier rate limiting architecture, tiers, and troubleshooting
 - **[Logging and Debugging](./logging-and-debugging.md)** - Frontend and backend logging infrastructure, debugging tips
 - **[Generic Debug Utility Images](./debug-images.md)** - Bounded storage checks and read-only dump inspection images
+- **[Cluster-validator image](./cluster-validator.md)** - Provider-neutral, read-only readiness reports
 - **[CI Logs and Artifacts](./ci-logs.md)** - Retrieve CI logs and artifacts with gh CLI
 
 ## Identity & Authentication

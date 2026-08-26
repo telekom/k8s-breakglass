@@ -22,11 +22,15 @@ COPY lib/common.sh /usr/local/libexec/node-maintenance/common.sh
 COPY lib/network-repair.sh /usr/local/libexec/node-maintenance/network-repair
 COPY lib/node-recovery-preflight.sh /usr/local/libexec/node-maintenance/node-recovery
 COPY MOTD /etc/motd
+COPY README.md RUNBOOK.md /usr/share/node-maintenance/
+COPY runbooks/ /usr/share/node-maintenance/runbooks/
 
 RUN chmod 0555 /usr/local/bin/node-maintenance \
         /usr/local/libexec/node-maintenance/network-repair \
         /usr/local/libexec/node-maintenance/node-recovery \
     && chmod 0444 /usr/local/libexec/node-maintenance/common.sh /etc/motd \
+        /usr/share/node-maintenance/README.md /usr/share/node-maintenance/RUNBOOK.md \
+        /usr/share/node-maintenance/runbooks/*.md \
     && mkdir -p /evidence \
     && chmod 0700 /evidence
 
