@@ -1,0 +1,16 @@
+<!--
+SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+
+SPDX-License-Identifier: CC-BY-4.0
+-->
+
+KUBERNETES CLUSTER VALIDATOR (read-only)
+
+Run:     cluster-validator --mode one-time
+Upgrade: cluster-validator --mode post-upgrade
+Help:    cluster-validator --help
+Docs:    /usr/share/cluster-validator/README.md
+Runbook: /usr/share/cluster-validator/RUNBOOK.md
+
+Exit 0 = ready, 1 = not-ready, 2 = usage/configuration error.
+Report: cluster-validator.telekom.com/v1alpha1. No remediation is performed.

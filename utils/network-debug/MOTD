@@ -6,6 +6,8 @@ Network Debug Utility
 Start with:  net-report
 Help:        net-debug --help
 Tool list:   net-debug tools
+Docs:        /usr/share/network-debug/README.md
+Runbook:     /usr/share/network-debug/RUNBOOK.md
 
 This container reports only the current network namespace. Do not paste
 reports containing addresses or packet data into public issue trackers.
