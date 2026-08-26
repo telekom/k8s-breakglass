@@ -30,7 +30,12 @@ on:
       catalogue_version:
         description: Public debug-session-catalogue chart version
         required: true
-        default: '0.1.0'
+        default: '0.2.0'
+        type: string
+      catalogue_digest:
+        description: Immutable OCI digest for the signed debug-session-catalogue chart
+        required: false
+        default: ''
         type: string
 
 permissions:
@@ -59,23 +64,30 @@ jobs:
       - name: Install Kind
         run: |
           curl -fsSL -o ./kind "https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64"
+          curl -fsSL -o ./kind.sha256sum "https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64.sha256sum"
+          grep 'kind-linux-amd64$' ./kind.sha256sum | sha256sum --check
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
           kind version
       - name: Set up Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.2
       - name: Install reference tools
         run: |
           make kustomize
           echo "${{ github.workspace }}/bin" >> "$GITHUB_PATH"
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.2
       - name: Run source reference flow
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'source' }}
         env:
           REFERENCE_MODE: source
           REFERENCE_RUN_ELEVATED: ${{ github.event_name == 'workflow_dispatch' && inputs.elevated || 'false' }}
-          CATALOGUE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.catalogue_version || '0.1.0' }}
+          REFERENCE_CATALOGUE_SOURCE: ${{ hashFiles('charts/debug-session-catalogue/Chart.yaml') != '' }}
+          CATALOGUE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.catalogue_version || '0.2.0' }}
           KIND_NODE_IMAGE: ${{ env.KIND_NODE_IMAGE }}
         run: ./examples/reference-usage/reference-usage.sh
       - name: Run published reference flow
@@ -84,5 +96,6 @@ jobs:
           REFERENCE_MODE: published
           REFERENCE_RUN_ELEVATED: ${{ inputs.elevated }}
           CATALOGUE_VERSION: ${{ inputs.catalogue_version }}
+          CATALOGUE_CHART_DIGEST: ${{ inputs.catalogue_digest }}
           KIND_NODE_IMAGE: ${{ env.KIND_NODE_IMAGE }}
         run: ./examples/reference-usage/reference-usage.sh

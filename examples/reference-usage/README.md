@@ -34,10 +34,12 @@ REFERENCE_MODE=source ./examples/reference-usage/reference-usage.sh
 
 Published mode pulls the public release image and verifies its keyless Cosign
 signature, SPDX SBOM attestation, and SLSA provenance before creating the
-cluster:
+cluster. It also requires `CATALOGUE_CHART_DIGEST` and verifies the chart's
+keyless signature, SPDX SBOM, and SLSA provenance:
 
 ```sh
-REFERENCE_MODE=published ./examples/reference-usage/reference-usage.sh
+CATALOGUE_CHART_DIGEST=sha256:<published-chart-digest> \
+  REFERENCE_MODE=published ./examples/reference-usage/reference-usage.sh
 ```
 
 The script uses the existing `e2e/kind-setup-single.sh` stack for Keycloak,
@@ -48,13 +50,17 @@ variables only when using an equivalent public fixture.
 
 ## Catalogue release contract
 
-The catalogue branch publishes the `charts/debug-session-catalogue` Helm chart.
+The catalogue branch publishes the `charts/debug-session-catalogue` Helm chart
+at version `0.2.0`. The reference flow does not require that source branch to
+be merged: source mode builds the checked-out Breakglass image and consumes
+the public OCI chart. Published mode verifies the chart's signed immutable
+reference. To exercise a chart checkout explicitly, set
+`REFERENCE_CATALOGUE_SOURCE=true` and optionally `CATALOGUE_SOURCE_DIR`.
 Published mode installs the public OCI chart at:
 
 `oci://ghcr.io/telekom/k8s-breakglass/charts/debug-session-catalogue`
 
-`CATALOGUE_VERSION` defaults to the chart's stable `0.1.0` version. Source mode
-installs the local `charts/debug-session-catalogue` chart, while published mode
+`CATALOGUE_VERSION` defaults to the chart's `0.2.0` version. Published mode
 uses the OCI reference and `--version ${CATALOGUE_VERSION}`. Override
 `CATALOGUE_CHART` and `CATALOGUE_VERSION` only for another public chart
 publication; no private registry login or secret is part of the contract.

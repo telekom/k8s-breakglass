@@ -22,10 +22,13 @@ IMAGE="${REFERENCE_IMAGE:-reference-breakglass:local}"
 # newer public release; credentials are intentionally not accepted here.
 AUTH_OPERATOR_VERSION="${AUTH_OPERATOR_VERSION:-v0.5.0-rc.2}"
 BREAKGLASS_VERSION="${BREAKGLASS_VERSION:-v0.1.0-rc.7}"
-CATALOGUE_VERSION="${CATALOGUE_VERSION:-0.1.0}" # charts/debug-session-catalogue contract
+CATALOGUE_VERSION="${CATALOGUE_VERSION:-0.2.0}" # charts/debug-session-catalogue contract
 AUTH_OPERATOR_CHART="${AUTH_OPERATOR_CHART:-oci://ghcr.io/telekom/charts/auth-operator}"
 PUBLISHED_IMAGE="${PUBLISHED_IMAGE:-ghcr.io/telekom/k8s-breakglass:${BREAKGLASS_VERSION}}"
 CATALOGUE_CHART="${CATALOGUE_CHART:-oci://ghcr.io/telekom/k8s-breakglass/charts/debug-session-catalogue}"
+CATALOGUE_CHART_DIGEST="${CATALOGUE_CHART_DIGEST:-}"
+CATALOGUE_SOURCE_MODE="${REFERENCE_CATALOGUE_SOURCE:-false}"
+CATALOGUE_SOURCE_DIR="${CATALOGUE_SOURCE_DIR:-${ROOT_DIR}/charts/debug-session-catalogue}"
 DEBUG_NAMESPACE="${REFERENCE_DEBUG_NAMESPACE:-reference-debug}"
 CATALOGUE_RELEASE="${REFERENCE_CATALOGUE_RELEASE:-debug-catalogue}"
 CATALOGUE_VALUES_FILE=""
@@ -39,6 +42,7 @@ APPROVER_EMAIL="${REFERENCE_APPROVER_EMAIL:-complete-flow-approver@example.com}"
 LABEL="reference-usage.example.telekom.com/run"
 RUN_ELEVATED="${REFERENCE_RUN_ELEVATED:-false}"
 VERIFY_SUPPLY_CHAIN="${REFERENCE_VERIFY_SUPPLY_CHAIN:-true}"
+PUBLISHED_IMAGE_DIGEST_REF=""
 
 E2E_ENV_FILE="${ROOT_DIR}/e2e/kind-setup-single-tdir/e2e-env.sh"
 KUBECONFIG_FILE="${ROOT_DIR}/e2e/kind-setup-single-hub-kubeconfig.yaml"
@@ -62,6 +66,22 @@ require_commands() {
   if [[ "${MODE}" == source ]]; then
     command -v kustomize >/dev/null 2>&1 || die "kustomize is required in source mode"
   fi
+}
+
+validate_inputs() {
+  local value name
+  for name in NAMESPACE TENANT DEBUG_NAMESPACE CATALOGUE_RELEASE; do
+    value="${!name}"
+    if [[ ! "${value}" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || (( ${#value} > 63 )); then
+      die "${name} must be a DNS-safe Kubernetes name (max 63 characters)"
+    fi
+  done
+  [[ "${RUN_ELEVATED}" == true || "${RUN_ELEVATED}" == false ]] || \
+    die "REFERENCE_RUN_ELEVATED must be true or false"
+  [[ "${CATALOGUE_SOURCE_MODE}" == true || "${CATALOGUE_SOURCE_MODE}" == false ]] || \
+    die "REFERENCE_CATALOGUE_SOURCE must be true or false"
+  [[ "${APPROVER_EMAIL}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] || \
+    die "REFERENCE_APPROVER_EMAIL must be a simple email address"
 }
 
 cleanup() {
@@ -99,21 +119,38 @@ verify_public_artifacts() {
   [[ "${MODE}" == published ]] || return 0
   command -v cosign >/dev/null 2>&1 || die "cosign is required for published artifact verification"
   local identity="https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@.*"
-  log "Verifying keyless signature for ${PUBLISHED_IMAGE}"
-  cosign verify "${PUBLISHED_IMAGE}" \
+  [[ -n "${PUBLISHED_IMAGE_DIGEST_REF}" ]] || die "published image was not resolved to an immutable digest"
+  log "Verifying keyless signature for ${PUBLISHED_IMAGE_DIGEST_REF}"
+  cosign verify "${PUBLISHED_IMAGE_DIGEST_REF}" \
     --certificate-identity-regexp="${identity}" \
     --certificate-oidc-issuer="https://token.actions.githubusercontent.com" >/dev/null
   log "Verifying SPDX SBOM attestation"
-  cosign verify-attestation "${PUBLISHED_IMAGE}" --type spdxjson \
+  cosign verify-attestation "${PUBLISHED_IMAGE_DIGEST_REF}" --type spdxjson \
     --certificate-identity-regexp="${identity}" \
     --certificate-oidc-issuer="https://token.actions.githubusercontent.com" >/dev/null
   log "Verifying SLSA provenance attestation"
-  cosign verify-attestation "${PUBLISHED_IMAGE}" --type slsaprovenance \
+  cosign verify-attestation "${PUBLISHED_IMAGE_DIGEST_REF}" --type slsaprovenance \
     --certificate-identity-regexp="${identity}" \
     --certificate-oidc-issuer="https://token.actions.githubusercontent.com" >/dev/null
   if command -v gh >/dev/null 2>&1; then
-    gh attestation verify "${PUBLISHED_IMAGE}" --repo telekom/k8s-breakglass >/dev/null
+    gh attestation verify "${PUBLISHED_IMAGE_DIGEST_REF}" --repo telekom/k8s-breakglass >/dev/null
   fi
+
+  [[ "${CATALOGUE_CHART_DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]] || \
+    die "CATALOGUE_CHART_DIGEST must be a sha256 digest when published supply-chain verification is enabled"
+  local chart_subject="${CATALOGUE_CHART#oci://}@${CATALOGUE_CHART_DIGEST}"
+  log "Verifying keyless signature for ${chart_subject}"
+  cosign verify "${chart_subject}" \
+    --certificate-identity-regexp="${identity}" \
+    --certificate-oidc-issuer="https://token.actions.githubusercontent.com" >/dev/null
+  log "Verifying chart SPDX SBOM attestation"
+  cosign verify-attestation "${chart_subject}" --type spdxjson \
+    --certificate-identity-regexp="${identity}" \
+    --certificate-oidc-issuer="https://token.actions.githubusercontent.com" >/dev/null
+  log "Verifying chart SLSA provenance attestation"
+  cosign verify-attestation "${chart_subject}" --type slsaprovenance \
+    --certificate-identity-regexp="${identity}" \
+    --certificate-oidc-issuer="https://token.actions.githubusercontent.com" >/dev/null
 }
 
 prepare_image() {
@@ -123,12 +160,15 @@ prepare_image() {
   else
     log "Pulling public release image ${PUBLISHED_IMAGE}"
     docker pull "${PUBLISHED_IMAGE}"
+    PUBLISHED_IMAGE_DIGEST_REF="$(docker image inspect "${PUBLISHED_IMAGE}" \
+      --format '{{index .RepoDigests 0}}')"
+    [[ "${PUBLISHED_IMAGE_DIGEST_REF}" == *@sha256:* ]] || \
+      die "docker did not resolve ${PUBLISHED_IMAGE} to a registry digest"
     docker tag "${PUBLISHED_IMAGE}" "${IMAGE}"
   fi
 }
 
 install_stack() {
-  prepare_image
   log "Creating clean kind cluster ${CLUSTER_NAME}"
   IMAGE="${IMAGE}" SKIP_BUILD=true CLUSTER_NAME="${CLUSTER_NAME}" \
     KIND_RETAIN_ON_FAILURE=false bash "${ROOT_DIR}/e2e/kind-setup-single.sh"
@@ -203,11 +243,11 @@ YAML
   local catalogue_source="${CATALOGUE_CHART}"
   local -a chart_args=(upgrade --install "${CATALOGUE_RELEASE}" "${catalogue_source}" \
     --namespace "${DEBUG_NAMESPACE}" --values "${CATALOGUE_VALUES_FILE}" --wait --timeout 5m)
-  if [[ "${MODE}" == published ]]; then
+  if [[ "${MODE}" == published || "${CATALOGUE_SOURCE_MODE}" != true ]]; then
     chart_args+=(--version "${CATALOGUE_VERSION}")
-  else
-    catalogue_source="${ROOT_DIR}/charts/debug-session-catalogue"
-    [[ -d "${catalogue_source}" ]] || die "source catalogue chart is missing: ${catalogue_source}"
+  elif [[ "${CATALOGUE_SOURCE_MODE}" == true ]]; then
+    catalogue_source="${CATALOGUE_SOURCE_DIR}"
+    [[ -d "${catalogue_source}" ]] || die "source catalogue chart is missing: ${catalogue_source} (set CATALOGUE_SOURCE_DIR or use the published chart contract)"
     chart_args[3]="${catalogue_source}"
   fi
   helm "${chart_args[@]}"
@@ -496,7 +536,9 @@ assert_zero_residual() {
 
 main() {
   [[ "${MODE}" == source || "${MODE}" == published ]] || die "REFERENCE_MODE must be source or published"
+  validate_inputs
   require_commands
+  prepare_image
   verify_public_artifacts
   install_stack
   configure_reference

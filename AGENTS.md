@@ -382,6 +382,11 @@ runtime behavior or rendered public output: do not replace integration checks
 with source/file-presence tests, host-network fixtures, or host-privileged
 containers.
 
+The opt-in `.github/workflows/reference-usage.yml` is a separate public-contract
+check. It must keep source image checks independent from the published OCI
+chart, use immutable signed-artifact references in published mode, and run the
+reference script's deterministic kind cleanup before reporting success.
+
 ## Reusable Prompts (19 total)
 
 Prompts are in [`.github/prompts/`](.github/prompts/) and can be invoked by name:
