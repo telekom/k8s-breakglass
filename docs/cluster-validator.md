@@ -124,8 +124,9 @@ read-only RBAC, exact-image, and mode requirements.
 ## Real-cluster integration contract
 
 Run `make test-validator-integration` on a Linux host with Docker, kind,
-kubectl, jq, and Go. The harness builds `Dockerfile.validator`, creates a
-disposable pinned-node-image kind cluster, runs the image as the restricted
+kubectl, jq, and Go. The harness builds
+`utils/cluster-validator/Dockerfile`, creates a disposable pinned-node-image
+kind cluster, runs the image as the restricted
 ServiceAccount, and executes every built-in check in both `one-time` and
 `post-upgrade` modes. It also runs the extension contract probe through the
 same read-only facades. It also creates an unhealthy disposable pod to prove
@@ -140,6 +141,9 @@ The machine-readable intent and expected check/tool contract is kept in
 [`hack/cluster-validator-integration.contract.json`](../hack/cluster-validator-integration.contract.json);
 the executable harness is
 [`hack/cluster-validator-integration.sh`](../hack/cluster-validator-integration.sh).
+The harness proves the contract from reports, exit codes, and cluster
+behavior emitted by the built image; it does not load the JSON file as a
+pass/fail oracle.
 The CI job is intentionally self-contained so it can be moved into a
 consolidated utility-integration workflow without changing the contract.
 
@@ -159,7 +163,7 @@ wrapper when redistributing.
 
 ## Multi-architecture, signing, and SBOM
 
-`Dockerfile.validator` is pinned to digest-addressed Go and distroless base
+`utils/cluster-validator/Dockerfile` is pinned to digest-addressed Go and distroless base
 images and is designed for `linux/amd64` and `linux/arm64`:
 
 ```bash
