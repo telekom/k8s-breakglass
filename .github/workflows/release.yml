@@ -116,11 +116,12 @@ jobs:
           IMAGE: ghcr.io/telekom/k8s-breakglass/${{ matrix.image }}
         run: |
           set -euo pipefail
+          build_date="$(git show -s --format=%cI "${GITHUB_SHA}")"
           docker buildx build --platform linux/amd64,linux/arm64 \
             --file "${{ matrix.path }}/${{ matrix.file }}" \
             --tag "${IMAGE}:${GITHUB_REF_NAME}" --provenance=true --sbom=true --push \
             --build-arg VERSION="${GITHUB_REF_NAME}" --build-arg VCS_REF="${GITHUB_SHA}" \
-            --build-arg GIT_COMMIT="${GITHUB_SHA}" --build-arg BUILD_DATE="${{ github.event.head_commit.timestamp }}" \
+            --build-arg GIT_COMMIT="${GITHUB_SHA}" --build-arg BUILD_DATE="${build_date}" \
             "${{ matrix.path }}"
       - name: Generate SPDX SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
@@ -174,13 +175,26 @@ jobs:
           printf '%s\n' images: >> release-values.yaml
           while IFS='|' read -r name repository digest; do
             [ -n "${name}" ] || continue
-            key="${name}"
-            [ "${name}" = dump ] && key=dumpAccess
-            [ "${name}" = node ] && key=nodeRecovery
-            [ "${name}" = node ] && printf '  networkRepair: {repository: %s, digest: %s}\n' "${repository}" "${digest}" >> release-values.yaml
-            [ "${name}" = validator ] && key=clusterValidation
+            [[ "${repository}" == ghcr.io/telekom/k8s-breakglass/* ]]
+            [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+            case "${name}" in
+              workload|network|storage) key="${name}" ;;
+              dump) key=dumpAccess ;;
+              node)
+                key=nodeRecovery
+                printf '  networkRepair: {repository: %s, digest: %s}\n' "${repository}" "${digest}" >> release-values.yaml
+                ;;
+              validator) key=clusterValidation ;;
+              *) echo "Unexpected utility release record: ${name}" >&2; exit 1 ;;
+            esac
             printf '  %s: {repository: %s, digest: %s}\n' "${key}" "${repository}" "${digest}" >> release-values.yaml
-          done < <(cat /tmp/utility-refs/*.ref)
+          done < <(cat /tmp/utility-refs/*.ref | sort)
+          ruby -ryaml -e '
+            values = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+            expected = %w[workload network storage dumpAccess networkRepair nodeRecovery clusterValidation].sort
+            actual = values.fetch("images").keys.sort
+            abort("release image set mismatch: #{actual.inspect}") unless actual == expected
+          ' release-values.yaml
           cat release-values.yaml
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -240,9 +254,21 @@ jobs:
           # Keep the base release valid before that chart lands, while making
           # its package part of the same immutable release once present.
           if [ -d charts/debug-session-catalogue ]; then
-          helm package charts/debug-session-catalogue \
-            --destination chart-dist \
-            --app-version "${{ github.ref_name }}" --values release-values.yaml
+            catalogue_stage="$(mktemp -d)/debug-session-catalogue"
+            cp -R charts/debug-session-catalogue "${catalogue_stage}"
+            ruby -ryaml -e '
+              chart = ARGV.fetch(0)
+              release = YAML.safe_load(File.read(ARGV.fetch(1)), aliases: false)
+              values_path = File.join(chart, "values.yaml")
+              values = YAML.safe_load(File.read(values_path), aliases: false)
+              values["images"] = release.fetch("images")
+              File.write(values_path, YAML.dump(values))
+            ' "${catalogue_stage}" release-values.yaml
+            helm lint "${catalogue_stage}" --strict
+            helm template release-proof "${catalogue_stage}" >/dev/null
+            helm package "${catalogue_stage}" \
+              --destination chart-dist \
+              --app-version "${{ github.ref_name }}"
           fi
 
           echo "Packaged chart artifacts:"
