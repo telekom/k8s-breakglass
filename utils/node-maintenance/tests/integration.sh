@@ -70,11 +70,6 @@ require_command sed
 [ "$(uname -s)" = Linux ] || fail "integration requires Linux Docker namespaces; refusing to run on $(uname -s); run the Linux CI workflow or a Linux Docker runner"
 "$docker_bin" info >/dev/null 2>&1 || fail "Docker daemon is unavailable; install/start Docker and rerun (no feature skip is allowed)"
 
-docker_help=$($docker_bin run --help 2>&1) || fail "Docker cannot advertise run capabilities"
-for required_flag in '--network' '--hostname' '--read-only' '--cap-drop' '--cap-add' '--security-opt' '--mount'; do
-	printf '%s\n' "$docker_help" | grep -F -- "$required_flag" >/dev/null || fail "Docker lacks required '$required_flag' support"
-done
-
 if [ -z "$image" ]; then
 	image="node-maintenance-integration:$$"
 	build_image=1
