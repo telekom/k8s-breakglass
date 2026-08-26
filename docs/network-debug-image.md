@@ -29,8 +29,9 @@ permissions or authorize network mutation.
 
 The image is root because `tcpdump` and `pwru` need kernel access. Prefer an
 ephemeral container with only `CAP_NET_RAW` and `CAP_NET_ADMIN`; eBPF tracing
-may additionally require BPF/perfmon permissions, a mounted debugfs, and a
-kernel with BTF. Follow the target cluster's Pod Security policy. Never copy a
+may additionally require explicit BPF/PERFMON permissions, read-only debugfs,
+tracefs, and securityfs mounts, and a kernel with BTF. Follow the target
+cluster's Pod Security policy. Never copy a
 capture to a public tracker without redaction.
 
 `kubestr` talks to the Kubernetes API and may create short-lived diagnostic

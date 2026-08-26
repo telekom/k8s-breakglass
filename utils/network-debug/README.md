@@ -24,9 +24,9 @@ assumptions. The image is published as a multi-architecture artifact for
   the capabilities described by `pwru --help`. `pwru` is present for both
   supported architectures; kernel support is evaluated at runtime.
 
-The image runs as root because packet capture and eBPF tracing are privileged
-operations. Grant only the network namespace and Linux capabilities needed for
-the specific investigation. Do not add `privileged: true` by default.
+The image runs as root because packet capture and eBPF tracing require kernel
+access. Grant only the network namespace and Linux capabilities needed for the
+specific investigation. Do not add `privileged: true` by default.
 
 ## Usage
 
@@ -74,8 +74,8 @@ KUBECONFIG="$HOME/.kube/config" make -C utils/network-debug integration
 The integration target is intentionally fail-closed. It generates loopback
 HTTP traffic and proves curl, netcat, DNS, TLS, ping, tracepath, traceroute,
 mtr, ethtool, routing, sockets, deterministic reporting, and tcpdump capture.
-It then runs `pwru` against that traffic in a privileged ephemeral network
-namespace and executes `kubestr fio` with a pinned, disposable fio fixture
+It then runs `pwru` against that traffic in an ephemeral network namespace with
+explicit BPF/PERFMON capabilities and executes `kubestr fio` with a pinned, disposable fio fixture
 image against the `standard` StorageClass in a kind cluster. It never reuses a
 production namespace or PVC. A missing Docker capability, Linux BTF/BPF
 support, kind cluster, or StorageClass prints a `REQUIREMENT:` diagnostic and
@@ -84,8 +84,8 @@ fails; it does not silently skip a proof. See
 operation and prerequisite contract.
 
 The dedicated CI job runs this target on a Linux runner with Docker and kind.
-The `pwru` portion requires readable `/sys/kernel/btf/vmlinux`, BPF/PERFMON
-support, and privileged access. Local macOS/Windows Docker Desktop or a
+The `pwru` portion requires readable `/sys/kernel/btf/vmlinux`, debugfs,
+tracefs, securityfs, and BPF/PERFMON support. Local macOS/Windows Docker Desktop or a
 non-kind Kubernetes context is not a substitute for that job.
 
 `build-multiarch` writes a local OCI archive and never pushes a mutable tag.
