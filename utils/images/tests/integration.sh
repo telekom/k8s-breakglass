@@ -113,12 +113,27 @@ run_storage_read_only() {
         -e STORAGE_REPORT_DIR=/reports "$storage_image" "$@"
 }
 
+read_storage_report() {
+    docker run --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
+        --security-opt=no-new-privileges --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+        --mount "type=bind,src=$storage_reports,dst=/reports,readonly" \
+        --user 65532:65532 --entrypoint /bin/sh "$storage_image" -c "$1"
+}
+
 run_dump() {
     docker run --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
         --security-opt=no-new-privileges --tmpfs /tmp:rw,nosuid,nodev,size=64m \
         --mount "type=bind,src=$dump_input,dst=/input,readonly" \
         --mount "type=bind,src=$dump_output,dst=/output" \
         "$dump_image" "$@"
+}
+
+read_dump_output() {
+    docker run --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
+        --security-opt=no-new-privileges --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+        --mount "type=bind,src=$dump_input,dst=/input,readonly" \
+        --mount "type=bind,src=$dump_output,dst=/output,readonly" \
+        --user 65532:65532 --entrypoint /bin/sh "$dump_image" -c "$1"
 }
 
 assert_no_residuals() {
@@ -144,10 +159,10 @@ printf '%s\n' "$stdout_output" | grep -F 'overall_status=pass' >/dev/null
 
 run_storage --path /scratch --size-mb 1 --runtime-seconds 1 --ioping-count 1 \
     --output /reports/storage-report.txt >/dev/null
-grep -F 'overall_status=pass' "$storage_reports/storage-report.txt" >/dev/null
-grep -Eq '^size_mib=1$' "$storage_reports/storage-report.txt"
-grep -Eq '^runtime_seconds=1$' "$storage_reports/storage-report.txt"
-grep -Eq '^ioping_count=1$' "$storage_reports/storage-report.txt"
+read_storage_report "grep -F 'overall_status=pass' /reports/storage-report.txt"
+read_storage_report "grep -Eq '^size_mib=1$' /reports/storage-report.txt"
+read_storage_report "grep -Eq '^runtime_seconds=1$' /reports/storage-report.txt"
+read_storage_report "grep -Eq '^ioping_count=1$' /reports/storage-report.txt"
 
 if run_storage_read_only --path /scratch --size-mb 1 --runtime-seconds 1 \
     --ioping-count 1 >/dev/null 2>&1; then
@@ -206,7 +221,7 @@ copy_output=$(run_dump copy /input/existing.dump copied.dump)
 printf '%s\n' "$copy_output" | grep -F 'name=copied.dump' >/dev/null
 printf '%s\n' "$copy_output" | grep -F "bytes=$dump_size" >/dev/null
 printf '%s\n' "$copy_output" | grep -F "sha256=$expected_hash" >/dev/null
-cmp "$dump_input/existing.dump" "$dump_output/copied.dump"
+read_dump_output "cmp /input/existing.dump /output/copied.dump"
 
 if run_dump generate /input/existing.dump >/dev/null 2>&1; then
     fail "dump generation command unexpectedly exists"

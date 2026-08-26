@@ -77,7 +77,15 @@ preservation. The downstream validator's storage matrix may cover StorageClass
 lifecycle and per-node smoke, but it does not replace kubestr's fio
 IOPS/latency, CSI snapshot/restore, or raw-block/PVC evidence.
 
+<<<<<<< HEAD
 ## Runbook layout
+=======
+Reports are created with mode `0600`, so only the image UID (`65532`) can read
+the incident details by default. Use an explicitly authorized same-UID
+collector or handoff when retrieving the report; it is not world-readable.
+
+## Tests and release metadata
+>>>>>>> 9e9bc785 (fix(utility-tests): harden endpoint and artifact boundaries)
 
 Generic documentation built into the image is rooted at
 `/usr/share/breakglass/runbooks/upstream/storage-diagnostics`. A deployment may
