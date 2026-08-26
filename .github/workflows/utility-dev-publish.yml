@@ -297,8 +297,8 @@ jobs:
           [[ "${SUBJECT}" == "${IMAGE}@${DIGEST}" ]] || { echo "subject mismatch" >&2; exit 1; }
           cosign sign --yes "${SUBJECT}"
           cosign attest --yes --type spdxjson --predicate "${{ matrix.name }}.spdx.json" "${SUBJECT}"
-          jq -n --arg subject "${IMAGE}" --arg digest "${DIGEST#sha256:}" --arg sha "${GITHUB_SHA}" \
-            '{_type:"https://in-toto.io/Statement/v1",subject:[{name:$subject,digest:{sha256:$digest}}],predicateType:"https://slsa.dev/provenance/v1",predicate:{buildDefinition:{buildType:"https://github.com/telekom/k8s-breakglass/.github/workflows/utility-dev-publish.yml",externalParameters:{source:{uri:"https://github.com/telekom/k8s-breakglass",digest:{sha1:$sha}}},resolvedDependencies:[]},runDetails:{builder:{id:"github-actions"}}}}' \
+          jq -n --arg sha "${GITHUB_SHA}" \
+            '{buildDefinition:{buildType:"https://github.com/telekom/k8s-breakglass/.github/workflows/utility-dev-publish.yml",externalParameters:{source:{uri:"https://github.com/telekom/k8s-breakglass",digest:{sha1:$sha}}},resolvedDependencies:[]},runDetails:{builder:{id:"github-actions"}}}' \
             >"${{ matrix.name }}.provenance.json"
           cosign attest --yes --type slsaprovenance1 --predicate "${{ matrix.name }}.provenance.json" "${SUBJECT}"
           cosign verify "${SUBJECT}" \

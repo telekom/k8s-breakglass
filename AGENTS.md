@@ -253,7 +253,7 @@ not unverified Helm defaults. Release gates must resolve immutable digests,
 require linux/amd64 and linux/arm64 manifests for utility images, and fail
 closed unless keyless Cosign signatures, SPDX SBOM attestations, and SLSA
 provenance v1 attestations are present. Use Cosign's `slsaprovenance1` type
-for the bare SLSA v1 predicate and verify the decoded in-toto subject and
+with a bare SLSA v1 predicate and verify the decoded in-toto subject and
 predicate fields. Keep this gate separate from ordinary unit, lint, and image
 build jobs. The development publication workflow additionally requires a
 protected `dev-images/**` ref, an explicit publisher allowlist, and an

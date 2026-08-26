@@ -21,8 +21,9 @@ images as multi-architecture manifests, uses a tag that
 contains the complete source SHA and GitHub run identity, refuses to overwrite
 an existing tag, and records the manifest digest in an uploaded reference
 manifest. Each digest is keylessly signed and carries SPDX and SLSA v1
-attestations (`slsaprovenance1`). The workflow decodes and validates the signed
-in-toto statement's exact subject and predicate before uploading the reference.
+attestations (`slsaprovenance1`). The workflow supplies Cosign a bare SLSA v1
+predicate, then decodes and validates the signed in-toto statement's exact
+subject and predicate before uploading the reference.
 Consumers must mirror and deploy the digest reference, not the development tag.
 The workflow's exact GitHub OIDC certificate identity is recorded in the
 reference manifest and is required when verifying the source signature. The
