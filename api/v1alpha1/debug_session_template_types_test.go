@@ -60,6 +60,7 @@ func TestDebugWorkloadType(t *testing.T) {
 	}{
 		{"DaemonSet workload", DebugWorkloadDaemonSet},
 		{"Deployment workload", DebugWorkloadDeployment},
+		{"Job workload", DebugWorkloadJob},
 	}
 
 	for _, tt := range tests {

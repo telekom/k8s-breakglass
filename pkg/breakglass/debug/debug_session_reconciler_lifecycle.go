@@ -13,6 +13,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -515,6 +516,13 @@ func (c *DebugSessionController) cleanupDeployedResources(
 			}
 		case "Deployment":
 			obj = &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ref.Name,
+					Namespace: ref.Namespace,
+				},
+			}
+		case "Job":
+			obj = &batchv1.Job{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      ref.Name,
 					Namespace: ref.Namespace,
