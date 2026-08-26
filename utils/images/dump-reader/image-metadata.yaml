@@ -9,8 +9,8 @@ platforms:
   - linux/amd64
   - linux/arm64
 base:
-  image: alpine:3.24
-  digest: sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+  image: busybox:1.37
+  digest: sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
 runtime:
   user: "65532:65532"
   writable_paths:
@@ -22,7 +22,11 @@ runtime:
   capabilities: []
   privileged: false
   network_required: false
-dependencies: []
+dependencies:
+  - name: busybox
+    version: 1.37
+    digest: sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
+    license: GPL-2.0-only
 contract:
   schema_version: dump-reader/v1
   executable: /usr/local/bin/dump-reader
