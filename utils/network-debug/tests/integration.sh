@@ -50,6 +50,13 @@ docker run --detach --name "$CONTAINER" --network "$NETWORK" \
 	--cap-add NET_RAW --cap-add NET_ADMIN \
 	"$IMAGE" sh -c '
 		mkdir -p /work/www
+		openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+			-keyout /work/tls.key -out /work/tls.crt \
+			-subj /CN=localhost \
+			-addext subjectAltName=DNS:localhost,IP:127.0.0.1 \
+			>/work/tls-cert.log 2>&1
+		openssl s_server -quiet -accept 18443 -cert /work/tls.crt -key /work/tls.key -www \
+			>/work/tls-server.log 2>&1 &
 		printf "%s\\n" network-debug-fixture > /work/www/index.html
 		while :; do
 			printf "HTTP/1.1 200 OK\\r\\nContent-Length: 22\\r\\nConnection: close\\r\\n\\r\\nnetwork-debug-fixture\\n" | nc -l -p 18080 -s 0.0.0.0
@@ -70,6 +77,17 @@ wait_for_socket() {
 	return 1
 }
 wait_for_socket || requirement "the HTTP/socket fixture did not become ready within 10 seconds"
+
+wait_for_tls_socket() {
+	for _ in $(seq 1 40); do
+		if exec_in nc -z -w 1 127.0.0.1 18443 >/dev/null 2>&1; then
+			return 0
+		fi
+		sleep 0.25
+	done
+	return 1
+}
+wait_for_tls_socket || requirement "the local TLS fixture did not become ready within 10 seconds"
 
 printf '%s\n' 'Checking packet capture denial without capabilities' >&2
 if timeout --foreground 5 docker run --rm --network "container:$CONTAINER" \
@@ -100,7 +118,11 @@ for resolver_tool in dig host nslookup; do
 	printf '%s\n' "$resolver_output" | grep -E '([0-9]{1,3}\.){3}[0-9]{1,3}' >/dev/null || requirement "$resolver_tool Docker-DNS check failed"
 done
 exec_in sh -c "dig +short $CONTAINER" | grep -E '^[0-9]+(\.[0-9]+){3}$' >/dev/null || requirement "dig did not resolve the fixture container"
-exec_in curl --fail --silent --show-error --max-time 10 https://example.com/ >/dev/null || requirement "curl TLS check failed; outbound HTTPS is required"
+tls_result=$(exec_in curl --fail --silent --show-error --max-time 10 \
+	--cacert /work/tls.crt --output /dev/null \
+	--write-out '%{http_code} %{ssl_verify_result}' https://127.0.0.1:18443/) || \
+	requirement "curl TLS check against the local fixture failed"
+test "$tls_result" = '200 0' || requirement "curl did not verify the local TLS fixture certificate"
 
 report_one=$(exec_in net-debug report)
 report_two=$(exec_in net-debug report)
@@ -115,7 +137,7 @@ fi
 tools_output=$(exec_in net-debug tools)
 for tool in curl dig host nslookup nc ping tracepath traceroute mtr ip ss tcpdump ethtool kubestr pwru; do
 	case "$tool" in
-		pwru) tool_pattern="^${tool}[[:space:]]+pwru v[0-9]+" ;;
+		kubestr|pwru) tool_pattern="^${tool}[[:space:]]+${tool} v[0-9]+" ;;
 		*) tool_pattern="^${tool}[[:space:]]+installed$" ;;
 	esac
 	printf '%s\n' "$tools_output" | grep -E "$tool_pattern" >/dev/null || requirement "$tool is not installed according to net-debug tools"

@@ -21,12 +21,12 @@ EOF
 cat >"$fixture/kubestr" <<'EOF'
 #!/bin/sh
 [ "${1:-}" = version ] || exit 2
-printf '%s\n' 'kubestr fixture-version'
+printf '%s\n' 'kubestr v0.4.49'
 EOF
 cat >"$fixture/pwru" <<'EOF'
 #!/bin/sh
 [ "${1:-}" = --version ] || exit 2
-printf '%s\n' 'pwru fixture-version'
+printf '%s\n' 'pwru v1.0.12'
 EOF
 chmod +x "$fixture/ip" "$fixture/kubestr" "$fixture/pwru"
 
@@ -55,6 +55,6 @@ test "$first" = "$second"
 printf '%s\n' "$first" | grep -F '1: lo    inet 127.0.0.1/8 scope host lo' >/dev/null
 printf '%s\n' "$first" | grep -F 'default via 192.0.2.1 dev eth0' >/dev/null
 printf '%s\n' "$first" | grep -F '0: from all lookup local' >/dev/null
-printf '%s\n' "$first" | grep -F 'kubestr' | grep -F 'kubestr fixture-version' >/dev/null
-printf '%s\n' "$first" | grep -F 'pwru' | grep -F 'pwru fixture-version' >/dev/null
+printf '%s\n' "$first" | grep -E '^kubestr[[:space:]]+kubestr v0\.4\.49$' >/dev/null
+printf '%s\n' "$first" | grep -E '^pwru[[:space:]]+pwru v1\.0\.12$' >/dev/null
 echo 'network-debug image checks passed'
