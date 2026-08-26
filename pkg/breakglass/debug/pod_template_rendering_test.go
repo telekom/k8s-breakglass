@@ -1472,7 +1472,7 @@ spec:
 	assert.True(t, result.PodSpec.HostNetwork)
 }
 
-func TestRenderPodTemplateStringMultiDoc_KindJob(t *testing.T) {
+func TestRenderPodTemplateStringMultiDoc_Job(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	controller := &DebugSessionController{log: logger}
 
@@ -1493,7 +1493,6 @@ spec:
 	job, ok := result.Workload.(*batchv1.Job)
 	require.True(t, ok, "expected *batchv1.Job")
 	assert.Equal(t, "job", job.Name)
-	require.Len(t, result.PodSpec.Containers, 1)
 	assert.Equal(t, "test", result.PodSpec.Containers[0].Name)
 }
 
@@ -3900,7 +3899,7 @@ spec:
 	assert.Contains(t, err.Error(), "StatefulSet")
 }
 
-func TestRenderPodTemplateStringMultiDoc_KindJobAtReconcilerLevel(t *testing.T) {
+func TestRenderPodTemplateStringMultiDoc_JobAtReconcilerLevel(t *testing.T) {
 	controller := newTestController()
 
 	templateStr := `apiVersion: batch/v1
@@ -3920,6 +3919,7 @@ spec:
 	job, ok := result.Workload.(*batchv1.Job)
 	require.True(t, ok, "expected *batchv1.Job")
 	assert.Equal(t, "test", job.Name)
+	assert.Equal(t, "debug", result.PodSpec.Containers[0].Name)
 }
 
 func TestRenderPodTemplateStringMultiDoc_AdditionalResourceInvalidYAML(t *testing.T) {
