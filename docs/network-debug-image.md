@@ -9,6 +9,9 @@ Use the network-debug utility image when a connectivity problem must be
 observed from the same network namespace as a workload or node. Start with
 `net-report`, then narrow the investigation to one question: name resolution,
 route selection, transport connectivity, packet capture, or kernel path.
+The image is advertised under the shared `network-diagnostics` intent; that
+intent identifies the diagnostic workflow and does not grant Kubernetes API
+permissions or authorize network mutation.
 
 ## Suggested sequence
 
@@ -34,6 +37,16 @@ capture to a public tracker without redaction.
 resources for its selected command. Use a read-only service account unless a
 specific kubestr check documents a narrower write permission. The image itself
 does not contain `kubectl`, credentials, or a kubeconfig.
+
+The image runs as UID 0 to support packet capture and eBPF tools. A workload
+or DebugSession using it must isolate the network namespace and grant only the
+capabilities required for the selected operation (`NET_RAW`/`NET_ADMIN`, and
+for `pwru`, the platform's approved BPF/perfmon permissions). Do not combine
+this image with host networking or broad write-capable service-account RBAC
+unless the incident approval explicitly requires it. The shell is an operator
+tool, not a bounded repair API: commands such as `ip route`, `ip link`, and
+`ethtool` can mutate a shared namespace. Use the dedicated node-maintenance
+repair workflow for allowlisted repairs.
 
 ## Reproducible evidence
 

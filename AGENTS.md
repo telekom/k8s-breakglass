@@ -83,6 +83,11 @@ config/                        Kustomize overlays
   SBOM/provenance flags in the image Makefile. Release automation signs the
   final manifest digest; do not put signing keys or registry credentials in a
   Dockerfile.
+- Keep `utils/network-debug/IMAGE-METADATA.yaml` synchronized with the image
+  labels, dependency lock, supported platforms, shared `network-diagnostics`
+  intent, and digest-gated `cosign` targets. Multi-architecture builds should
+  produce a reviewable local OCI archive; never push a mutable tag as an
+  implicit side effect of a local build.
 - `net-report` output must not include timestamps, hostnames, credentials, or
   random IDs. Changes to tools or permissions require an update to the image
   README, `docs/network-debug-image.md`, and the Unreleased changelog entry.

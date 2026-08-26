@@ -1,56 +1,17 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
----
-
 schemaVersion: 1
 image:
-  name: ghcr.io/telekom/k8s-breakglass/utils/network-debug
+  name: ghcr.io/telekom/k8s-breakglass-network-debug
   version: 0.1.0
   intent: network-diagnostics
   platforms:
     - linux/amd64
     - linux/arm64
   base:
-    name: ghcr.io/nicolaka/netshoot:v0.16
-    digest: sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70
-    source: https://github.com/nicolaka/netshoot/tree/v0.16
-    inheritedRuntimeTools:
-      - bash
-      - bind-tools
-      - busybox-extras
-      - curl
-      - ethtool
-      - iproute2
-      - iputils
-      - jq
-      - mtr
-      - netcat-openbsd
-      - tcpdump
-      - util-linux
-    inheritedCommands:
-      - curl
-      - dig
-      - host
-      - nslookup
-      - nc
-      - ping
-      - tracepath
-      - traceroute
-      - mtr
-      - ip
-      - ss
-      - tcpdump
-      - ethtool
-      - jq
-    additions:
-      - pwru
-      - net-debug
-      - net-report
-      - network-debug-profile.sh
-      - README.md
-      - RUNBOOK.md
-      - MOTD
+    name: alpine:3.24
+    digest: sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
   build:
     name: golang:1.27
     digest: sha256:c5b07c17f54c5f22230c4b4da6e90249165cf55368e01a52808cb92064e18836
@@ -61,13 +22,6 @@ image:
     - NET_ADMIN
     - BPF
     - PERFMON
-    - SYS_RESOURCE
-    - SYS_PTRACE
-  operationCapabilities:
-    selectedPodCapture: [NET_RAW]
-    hostNamespaceTrace: [BPF, PERFMON, NET_ADMIN, SYS_RESOURCE, SYS_PTRACE]
-  droppedCapabilities:
-    hostNamespaceTrace: [NET_RAW]
 provenance:
   source: https://github.com/telekom/k8s-breakglass/tree/main/utils/network-debug
   license: Apache-2.0
