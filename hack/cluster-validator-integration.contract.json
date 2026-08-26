@@ -1,0 +1,61 @@
+{
+  "apiVersion": "cluster-validator.telekom.com/v1alpha1",
+  "kind": "ClusterValidatorIntegrationContract",
+  "intent": "real-kind-read-only-readiness",
+  "image": {
+    "dockerfile": "Dockerfile.validator",
+    "platform": "linux/amd64",
+    "entrypoint": "/cluster-validator"
+  },
+  "cluster": {
+    "provider": "kind",
+    "disposable": true,
+    "readOnlyServiceAccount": "validator-integration/cluster-validator"
+  },
+  "builtInChecks": [
+    "api-discovery",
+    "api-server",
+    "namespaces-healthy",
+    "nodes-ready",
+    "pods-ready"
+  ],
+  "extension": {
+    "name": "integration-extension",
+    "interface": "clustervalidator.Check",
+    "clientFacade": "clustervalidator.ReadOnlyClient",
+    "discoveryFacade": "clustervalidator.ReadOnlyDiscovery"
+  },
+  "cases": [
+    {
+      "name": "one-time",
+      "mode": "one-time",
+      "expectedExitCode": 0,
+      "deterministic": true
+    },
+    {
+      "name": "post-upgrade",
+      "mode": "post-upgrade",
+      "expectedExitCode": 0,
+      "deterministic": true
+    },
+    {
+      "name": "invalid-mode",
+      "mode": "unsupported",
+      "expectedExitCode": 2,
+      "deterministic": false
+    }
+  ],
+  "negativeAssertions": [
+    "service-account-cannot-create-configmaps",
+    "service-account-cannot-read-secrets",
+    "reports-and-logs-contain-no-secret-marker-or-token",
+    "namespace-and-cluster-rbac-objects-are-removed"
+  ],
+  "requiredTools": [
+    "docker",
+    "kind",
+    "kubectl",
+    "jq",
+    "go"
+  ]
+}
