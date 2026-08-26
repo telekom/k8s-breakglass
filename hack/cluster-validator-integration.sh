@@ -70,7 +70,7 @@ require_tools() {
 
 build_image() {
   log "Building ${IMAGE} for linux/amd64"
-  docker build --pull --platform linux/amd64 --file "${ROOT_DIR}/Dockerfile.validator" --tag "${IMAGE}" "${ROOT_DIR}"
+  docker build --pull --platform linux/amd64 --file "${ROOT_DIR}/utils/cluster-validator/Dockerfile" --tag "${IMAGE}" "${ROOT_DIR}"
   IMAGE_BUILT=true
 }
 
