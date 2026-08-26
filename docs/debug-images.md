@@ -17,7 +17,8 @@ mount paths supplied by the operator.
   key order and excludes raw command output and timestamps.
 * Use [`dump-reader`](../utils/images/dump-reader/) when an existing regular
   file needs metadata, a SHA-256 checksum, or copy-out to a separate volume.
-  It rejects symlinks and refuses to overwrite an output file.
+  It rejects symlinks and traversal outside `/input`, limits copy-out to 1 GiB,
+  and refuses to overwrite an output file.
 
 Both images support `linux/amd64` and `linux/arm64`, run as UID/GID 65532,
 require no capabilities, and have no network requirement. Mount source data
@@ -58,7 +59,8 @@ the approved purpose, and the owner in the template's change record.
 2. Run `dump-reader inspect /input/FILE`, then `checksum` when integrity
    evidence is needed.
 3. Run `copy /input/FILE` only when copy-out is approved. The destination is
-   never overwritten and must remain under `DUMP_OUTPUT_DIR`.
+   never overwritten, must remain under `DUMP_OUTPUT_DIR`, and is limited to
+   `DUMP_MAX_COPY_BYTES` (1 GiB by default).
 4. Preserve the checksum with the incident record, remove the pod, and apply
    the incident retention policy to the output artifact.
 

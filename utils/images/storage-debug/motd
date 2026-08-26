@@ -9,3 +9,5 @@ https://github.com/telekom/k8s-breakglass/tree/main/utils/images/storage-debug
 
 Defaults: 16 MiB, 5 seconds, 5 ioping requests. Configure STORAGE_TEST_PATH
 and the STORAGE_TEST_* variables for a generic mount appropriate to your pod.
+Existing files are never selected as fio scratch storage and report paths are
+never overwritten. Reports stay beneath STORAGE_REPORT_DIR (default /reports).

@@ -32,6 +32,10 @@ docker run --rm --mount type=bind,src="$PWD/test-volume",dst=/scratch \
 The report has a stable schema and key order and deliberately omits raw tool
 output and timestamps. A non-zero exit status means either check failed. Use
 `--dry-run` to review the exact bounded commands without touching the mount.
+Each run creates a private, randomly named scratch file and refuses to replace
+an existing report path. `--output` must resolve beneath
+`STORAGE_REPORT_DIR` (default `/reports`), preventing report path traversal.
+The scratch file is removed on every exit path.
 
 ## Kubernetes runbook
 
