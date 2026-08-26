@@ -24,6 +24,21 @@ dependencies:
     version: 3.41-r0
   - name: ioping
     version: 1.3-r0
+contract:
+  schema_version: storage-debug/v1
+  executable: /usr/local/bin/storage-report
+  intents:
+    - bounded-storage-read-write
+    - bounded-storage-read-only-dry-run
+  modes:
+    - help
+    - dry-run
+    - stdout-report
+    - file-report
+  bounds:
+    size_mib: 1024
+    runtime_seconds: 60
+    ioping_count: 20
 attestations:
   sbom: required
   provenance: required

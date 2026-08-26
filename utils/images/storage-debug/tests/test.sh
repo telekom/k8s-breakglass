@@ -61,5 +61,9 @@ if PATH="$fake_bin:$PATH" $report --path "$test_dir/path-link/" --dry-run >/dev/
     echo "trailing symbolic-link test path unexpectedly accepted" >&2
     exit 1
 fi
+if PATH="$fake_bin:$PATH" $report --path "$test_dir/../etc" --dry-run >/dev/null 2>&1; then
+    echo "test path traversal unexpectedly accepted" >&2
+    exit 1
+fi
 
 echo "storage-debug tests passed"

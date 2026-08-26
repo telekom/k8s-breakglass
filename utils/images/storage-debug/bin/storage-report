@@ -99,6 +99,9 @@ case "$TEST_PATH" in
     /*) ;;
     *) echo "--path must be an absolute path" >&2; exit 2 ;;
 esac
+case "$TEST_PATH" in
+    */../*|*/..) echo "--path may not contain parent traversal" >&2; exit 2 ;;
+esac
 bounded_uint "$SIZE_MB" 1 1024 "--size-mb"
 bounded_uint "$RUNTIME_SECONDS" 1 60 "--runtime-seconds"
 bounded_uint "$IOPING_COUNT" 1 20 "--ioping-count"
@@ -108,6 +111,7 @@ test_path_check=${TEST_PATH%/}
 [ ! -L "$test_path_check" ] || { echo "test path may not be a symbolic link: $TEST_PATH" >&2; exit 1; }
 
 FIO_TIMEOUT=$((RUNTIME_SECONDS + 5))
+FIO_PLAN_FILE=$TEST_PATH/.storage-debug-fio.XXXXXX
 temporary_dir=
 FIO_FILE=
 report_tmp=
@@ -127,10 +131,11 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 if [ "$DRY_RUN" = true ]; then
+    [ -d "$TEST_PATH" ] || { echo "test path does not exist: $TEST_PATH" >&2; exit 1; }
     printf '%s\n' \
         "schema_version=storage-debug/v1" \
         "path=$TEST_PATH" \
-        "fio_command=fio --name=storage-debug --filename=$FIO_FILE --size=${SIZE_MB}M --runtime=${RUNTIME_SECONDS}s --time_based --rw=readwrite --bs=4k --iodepth=1" \
+        "fio_command=fio --name=storage-debug --filename=$FIO_PLAN_FILE --size=${SIZE_MB}M --runtime=${RUNTIME_SECONDS}s --time_based --rw=readwrite --bs=4k --iodepth=1" \
         "fio_timeout_seconds=$FIO_TIMEOUT" \
         "ioping_command=ioping -c $IOPING_COUNT $TEST_PATH"
     exit 0

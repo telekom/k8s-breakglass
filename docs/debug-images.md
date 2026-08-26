@@ -30,7 +30,12 @@ duration, storage, and authorization policy.
 
 For each image directory:
 
-1. Run `./tests/test.sh` and `shellcheck` over the scripts.
+1. Run `make -C utils/images test`, `make -C utils/images shellcheck`, and
+   `make -C utils/images integration`. The integration target is mandatory when
+   Docker is available: it builds and runs both images with the declared
+   non-root/read-only settings, executes real fio/ioping operations, and
+   verifies dump metadata/checksum/copy and cleanup/security denials. It fails
+   rather than silently skipping when Docker is unavailable.
 2. Build both platforms from the digest-pinned Dockerfile and inspect the
    resulting manifest.
 3. Generate an SBOM and SLSA provenance attestation for the manifest.
