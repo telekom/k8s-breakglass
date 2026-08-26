@@ -350,6 +350,8 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 	// Check session can be terminated
 	if session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
 		session.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
+		session.Status.State == breakglassv1alpha1.DebugSessionStateIdleExpired ||
+		session.Status.State == breakglassv1alpha1.DebugSessionStateRejected ||
 		session.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is already in terminal state '%s'", session.Status.State))
 		return
@@ -369,6 +371,8 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.State = breakglassv1alpha1.DebugSessionStateTerminated
 		status.Message = fmt.Sprintf("Terminated by %s", username)
+		breakglass.SetDebugSessionRetainedUntil(session, time.Now())
+		status.RetainedUntil = session.Status.RetainedUntil
 	}); err != nil {
 		respondDebugSessionStatusPatchError(ctx, reqLog, "terminate session", "failed to terminate session", name, err)
 		return
@@ -580,8 +584,10 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 
 	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.Approval = approval
-		status.State = breakglassv1alpha1.DebugSessionStateTerminated
+		status.State = breakglassv1alpha1.DebugSessionStateRejected
 		status.Message = fmt.Sprintf("Rejected by %s: %s", currentUser, sanitizedReason)
+		breakglass.SetDebugSessionRetainedUntil(session, time.Now())
+		status.RetainedUntil = session.Status.RetainedUntil
 	}); err != nil {
 		respondDebugSessionStatusPatchError(ctx, reqLog, "reject session", "failed to reject session", name, err)
 		return
@@ -601,6 +607,9 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 }
 
 func debugSessionApprovalTimedOut(session *breakglassv1alpha1.DebugSession, now time.Time) (bool, string) {
+	if session.Status.State != breakglassv1alpha1.DebugSessionStatePendingApproval {
+		return false, ""
+	}
 	if session.CreationTimestamp.IsZero() {
 		return false, ""
 	}
@@ -608,7 +617,7 @@ func debugSessionApprovalTimedOut(session *breakglassv1alpha1.DebugSession, now 
 		return false, ""
 	}
 
-	timeout := breakglass.DebugSessionApprovalTimeout
+	timeout := breakglass.DebugSessionApprovalTimeoutFor(session)
 	if !session.CreationTimestamp.Add(timeout).Before(now) {
 		return false, ""
 	}
@@ -649,6 +658,7 @@ func (c *DebugSessionAPIController) failTimedOutDebugSessionApproval(ctx context
 
 	latest.Status.State = breakglassv1alpha1.DebugSessionStateFailed
 	latest.Status.Message = reason
+	breakglass.SetDebugSessionRetainedUntil(latest, now)
 
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, latest); err != nil {
 		if apierrors.IsConflict(err) {

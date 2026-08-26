@@ -21,6 +21,10 @@ This document provides conventions specifically for AI coding agents working in 
 4. **Styling**: Use existing CSS custom properties (tokens) in `frontend/src/assets/base.css` (e.g. `var(--space-md)`) rather than hardcoding px or rem values.
 5. **Testing**: All new services and components must have accompanying unit tests in `frontend/tests/unit`. We use Vitest for testing. Run tests via `npm test`.
 
+6. **DebugSession states**: Keep terminal `Rejected` and `IdleExpired` represented in
+   the state type, browser filters, cards, and detail views. Debug scheduling options
+   are placement options only; do not add delayed-start controls to the create form.
+
 ## Architecture Notes
 - `src/services/` contains API wrappers (e.g. `breakglass.ts`). Ensure error handling uses the `handleAxiosError` utility.
 - `src/components/` contains reusable UI pieces.

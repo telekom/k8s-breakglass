@@ -36,6 +36,9 @@ type DebugSessionSummary struct {
 	StatusMessage        string                                   `json:"statusMessage,omitempty"`
 	StartsAt             *metav1.Time                             `json:"startsAt,omitempty"`
 	ExpiresAt            *metav1.Time                             `json:"expiresAt,omitempty"`
+	RetainedUntil        *metav1.Time                             `json:"retainedUntil,omitempty"`
+	LastActivity         *metav1.Time                             `json:"lastActivity,omitempty"`
+	ActivityCount        int64                                    `json:"activityCount,omitempty"`
 	Participants         int                                      `json:"participants"`
 	IsParticipant        bool                                     `json:"isParticipant"`
 	AllowedPods          int                                      `json:"allowedPods"`
@@ -100,14 +103,16 @@ var canonicalDebugSessionStates = map[string]string{
 	strings.ToLower(string(breakglassv1alpha1.DebugSessionStatePendingApproval)): string(breakglassv1alpha1.DebugSessionStatePendingApproval),
 	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateActive)):          string(breakglassv1alpha1.DebugSessionStateActive),
 	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateExpired)):         string(breakglassv1alpha1.DebugSessionStateExpired),
+	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateIdleExpired)):     string(breakglassv1alpha1.DebugSessionStateIdleExpired),
 	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateTerminated)):      string(breakglassv1alpha1.DebugSessionStateTerminated),
+	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateRejected)):        string(breakglassv1alpha1.DebugSessionStateRejected),
 	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateFailed)):          string(breakglassv1alpha1.DebugSessionStateFailed),
 }
 
 func validateDebugSessionState(state string) (string, error) {
 	canonical, ok := canonicalDebugSessionStates[strings.ToLower(state)]
 	if !ok {
-		return "", fmt.Errorf("unknown debug session state %q: supported values are Pending, PendingApproval, Active, Expired, Terminated, Failed", state)
+		return "", fmt.Errorf("unknown debug session state %q: supported values are Pending, PendingApproval, Active, Expired, IdleExpired, Terminated, Rejected, Failed", state)
 	}
 	return canonical, nil
 }

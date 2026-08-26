@@ -4,7 +4,7 @@
 
 // Debug Session states - matches backend api/v1alpha1/debug_session_types.go
 export type DebugSessionState =
-  "Pending" | "PendingApproval" | "Active" | "Expired" | "Terminated" | "Failed" | "Rejected";
+  "Pending" | "PendingApproval" | "Active" | "Expired" | "IdleExpired" | "Terminated" | "Rejected" | "Failed";
 
 // Debug Session modes
 export type DebugSessionMode = "workload" | "kubectl-debug" | "hybrid";
@@ -47,6 +47,9 @@ export interface DebugPodInfo {
 export interface SessionConstraints {
   maxDuration?: string;
   defaultDuration?: string;
+  approvalTimeout?: string;
+  idleTimeout?: string;
+  retainFor?: string;
   allowRenewal?: boolean;
   maxRenewals?: number;
   renewalDuration?: string;
@@ -86,6 +89,9 @@ export interface DebugSessionSummary {
   statusMessage?: string;
   startsAt?: string;
   expiresAt?: string;
+  retainedUntil?: string;
+  lastActivity?: string;
+  activityCount?: number;
   participants: number;
   isParticipant: boolean;
   allowedPods: number;
@@ -181,6 +187,9 @@ export interface DebugSession {
     message?: string;
     startsAt?: string;
     expiresAt?: string;
+    retainedUntil?: string;
+    lastActivity?: string;
+    activityCount?: number;
     terminatedAt?: string;
     terminatedBy?: string;
     terminationReason?: string;

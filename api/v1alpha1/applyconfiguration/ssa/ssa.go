@@ -261,6 +261,15 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	if status.ExpiresAt != nil {
 		result.WithExpiresAt(*status.ExpiresAt)
 	}
+	if status.RetainedUntil != nil {
+		result.WithRetainedUntil(*status.RetainedUntil)
+	}
+	if status.LastActivity != nil {
+		result.WithLastActivity(*status.LastActivity)
+	}
+	if status.ActivityCount > 0 {
+		result.WithActivityCount(status.ActivityCount)
+	}
 
 	// Set renewal count
 	if status.RenewalCount > 0 {

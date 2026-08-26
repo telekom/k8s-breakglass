@@ -791,6 +791,24 @@ type AutoApproveConfig struct {
 
 // DebugSessionConstraints defines limits on debug sessions.
 type DebugSessionConstraints struct {
+	// approvalTimeout is the maximum time a requested session may wait for approval.
+	// If unset, the controller-wide DEBUG_SESSION_APPROVAL_TIMEOUT is used.
+	// +optional
+	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
+	ApprovalTimeout string `json:"approvalTimeout,omitempty"`
+
+	// idleTimeout is the duration without debug-session API activity after which
+	// an active session is expired. If unset, idle expiry is disabled.
+	// +optional
+	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
+	IdleTimeout string `json:"idleTimeout,omitempty"`
+
+	// retainFor controls how long terminal session status is retained.
+	// If unset, the controller-wide DEBUG_SESSION_RETENTION_PERIOD is used.
+	// +optional
+	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
+	RetainFor string `json:"retainFor,omitempty"`
+
 	// maxDuration is the maximum allowed session duration.
 	// +optional
 	// +kubebuilder:default="4h"

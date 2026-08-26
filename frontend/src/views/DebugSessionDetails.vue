@@ -213,6 +213,7 @@ const stateVariant = computed(() => {
     case "Pending":
       return "warning";
     case "Expired":
+    case "IdleExpired":
     case "Terminated":
       return "neutral";
     case "Failed":
@@ -554,6 +555,18 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
               <span class="label">Expires At</span>
               <span class="value">{{ formatDateTime(session.status.expiresAt) }}</span>
               <span class="relative">({{ formatRelativeTime(session.status.expiresAt) }})</span>
+            </div>
+            <div v-if="session.status?.lastActivity" class="status-item">
+              <span class="label">Last Activity</span>
+              <span class="value">{{ formatDateTime(session.status.lastActivity) }}</span>
+            </div>
+            <div v-if="session.status?.activityCount" class="status-item">
+              <span class="label">Activity Count</span>
+              <span class="value">{{ session.status.activityCount }}</span>
+            </div>
+            <div v-if="session.status?.retainedUntil" class="status-item">
+              <span class="label">Retained Until</span>
+              <span class="value">{{ formatDateTime(session.status.retainedUntil) }}</span>
             </div>
             <div v-if="session.status?.renewalCount" class="status-item">
               <span class="label">Renewals</span>

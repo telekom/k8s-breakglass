@@ -215,6 +215,12 @@ The harness must also exercise exit code 1 with an unhealthy disposable
 resource, and cleanup may delete only resources (including the image and kind
 cluster) created by that invocation.
 
+12. **DebugSession lifecycle parity**: Keep `Rejected` and `IdleExpired` terminal states
+    consistent across the v1alpha1 enum, reconciler, REST state filters, `bgctl`, and
+    frontend filters/cards. Debug scheduling options control pod placement only; delayed
+    DebugSession starts are intentionally unsupported. Approval, idle, and retention
+    durations are optional template constraints with controller-wide fallback defaults.
+
 ## Build Tags
 
 - `//go:build e2e` — E2E tests (compiled with `-tags=e2e`; at runtime, tests skip unless `E2E_TEST=true`)

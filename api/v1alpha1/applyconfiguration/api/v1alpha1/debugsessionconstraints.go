@@ -13,6 +13,15 @@ package v1alpha1
 //
 // DebugSessionConstraints defines limits on debug sessions.
 type DebugSessionConstraintsApplyConfiguration struct {
+	// approvalTimeout is the maximum time a requested session may wait for approval.
+	// If unset, the controller-wide DEBUG_SESSION_APPROVAL_TIMEOUT is used.
+	ApprovalTimeout *string `json:"approvalTimeout,omitempty"`
+	// idleTimeout is the duration without debug-session API activity after which
+	// an active session is expired. If unset, idle expiry is disabled.
+	IdleTimeout *string `json:"idleTimeout,omitempty"`
+	// retainFor controls how long terminal session status is retained.
+	// If unset, the controller-wide DEBUG_SESSION_RETENTION_PERIOD is used.
+	RetainFor *string `json:"retainFor,omitempty"`
 	// maxDuration is the maximum allowed session duration.
 	MaxDuration *string `json:"maxDuration,omitempty"`
 	// defaultDuration is the default session duration if not specified.
@@ -34,6 +43,30 @@ type DebugSessionConstraintsApplyConfiguration struct {
 // apply.
 func DebugSessionConstraints() *DebugSessionConstraintsApplyConfiguration {
 	return &DebugSessionConstraintsApplyConfiguration{}
+}
+
+// WithApprovalTimeout sets the ApprovalTimeout field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ApprovalTimeout field is set to the value of the last call.
+func (b *DebugSessionConstraintsApplyConfiguration) WithApprovalTimeout(value string) *DebugSessionConstraintsApplyConfiguration {
+	b.ApprovalTimeout = &value
+	return b
+}
+
+// WithIdleTimeout sets the IdleTimeout field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the IdleTimeout field is set to the value of the last call.
+func (b *DebugSessionConstraintsApplyConfiguration) WithIdleTimeout(value string) *DebugSessionConstraintsApplyConfiguration {
+	b.IdleTimeout = &value
+	return b
+}
+
+// WithRetainFor sets the RetainFor field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RetainFor field is set to the value of the last call.
+func (b *DebugSessionConstraintsApplyConfiguration) WithRetainFor(value string) *DebugSessionConstraintsApplyConfiguration {
+	b.RetainFor = &value
+	return b
 }
 
 // WithMaxDuration sets the MaxDuration field in the declarative configuration to the given value

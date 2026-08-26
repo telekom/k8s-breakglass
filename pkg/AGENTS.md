@@ -20,3 +20,8 @@ This document provides conventions specifically for AI coding agents working in 
 3. **Event Recording**: When modifying status or reacting to significant state changes, emit a Kubernetes event using the `events.EventRecorder` (e.g., `pkg/breakglass/eventrecorder`).
 4. **Testing**: Every new package or significant functionality requires unit tests with `>70%` coverage. 
 5. **HTTP Server**: When modifying Gin endpoints in `pkg/api`, ensure you add telemetry/metrics calls where appropriate. Use standard HTTP constants (e.g., `http.MethodGet`).
+
+6. **DebugSession lifecycle**: REST handlers and reconcilers must preserve terminal
+   `Rejected` versus `Terminated` semantics, enforce approval deadlines, and stamp
+   retention/activity status using optimistic locking. Keep lifecycle state filters in
+   sync with `api/v1alpha1` and `bgctl`.

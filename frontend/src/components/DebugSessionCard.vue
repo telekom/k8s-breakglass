@@ -43,6 +43,7 @@ const stateVariant = computed(() => {
     case "Pending":
       return "warning";
     case "Expired":
+    case "IdleExpired":
     case "Terminated":
       return "neutral";
     case "Failed":

@@ -43,6 +43,12 @@ type DebugSessionStatusApplyConfiguration struct {
 	StartsAt *v1.Time `json:"startsAt,omitempty"`
 	// expiresAt is when the session will expire.
 	ExpiresAt *v1.Time `json:"expiresAt,omitempty"`
+	// retainedUntil is when the terminal session object may be removed.
+	RetainedUntil *v1.Time `json:"retainedUntil,omitempty"`
+	// lastActivity is the last API activity recorded for this session.
+	LastActivity *v1.Time `json:"lastActivity,omitempty"`
+	// activityCount counts API activities recorded for this session.
+	ActivityCount *int64 `json:"activityCount,omitempty"`
 	// renewalCount tracks how many times the session has been renewed.
 	RenewalCount *int32 `json:"renewalCount,omitempty"`
 	// conditions provide detailed status information.
@@ -168,6 +174,30 @@ func (b *DebugSessionStatusApplyConfiguration) WithStartsAt(value v1.Time) *Debu
 // If called multiple times, the ExpiresAt field is set to the value of the last call.
 func (b *DebugSessionStatusApplyConfiguration) WithExpiresAt(value v1.Time) *DebugSessionStatusApplyConfiguration {
 	b.ExpiresAt = &value
+	return b
+}
+
+// WithRetainedUntil sets the RetainedUntil field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RetainedUntil field is set to the value of the last call.
+func (b *DebugSessionStatusApplyConfiguration) WithRetainedUntil(value v1.Time) *DebugSessionStatusApplyConfiguration {
+	b.RetainedUntil = &value
+	return b
+}
+
+// WithLastActivity sets the LastActivity field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the LastActivity field is set to the value of the last call.
+func (b *DebugSessionStatusApplyConfiguration) WithLastActivity(value v1.Time) *DebugSessionStatusApplyConfiguration {
+	b.LastActivity = &value
+	return b
+}
+
+// WithActivityCount sets the ActivityCount field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ActivityCount field is set to the value of the last call.
+func (b *DebugSessionStatusApplyConfiguration) WithActivityCount(value int64) *DebugSessionStatusApplyConfiguration {
+	b.ActivityCount = &value
 	return b
 }
 

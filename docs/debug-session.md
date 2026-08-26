@@ -1440,6 +1440,11 @@ Control session duration and renewal:
 
 ```yaml
 constraints:
+  # Optional lifecycle controls. Omitted values use controller defaults.
+  approvalTimeout: "24h"
+  idleTimeout: "30m"     # no API activity after activation
+  retainFor: "168h"      # terminal status retention
+
   # Maximum total session duration
   maxDuration: "8h"
   
@@ -1463,6 +1468,12 @@ applicable binding for the target cluster, that binding's duration constraints
 override the template constraints for that session. Renewals extend the current
 expiration time, but the renewed expiration cannot move past
 `status.startsAt + maxDuration`.
+
+Debug sessions use `Rejected` for an approver decision and `Terminated` for an
+owner-initiated stop. `IdleExpired` is used when the configured idle timeout is
+reached. All terminal states receive `status.retainedUntil`; the cleanup routine
+removes the object after that deadline. `status.lastActivity` and
+`status.activityCount` record activity used for idle expiry.
 Only the requester or an active `owner`/`participant` status entry can renew a
 session; `viewer` entries and participants with `leftAt` set cannot renew.
 The active-session expiry, approval-timeout, expiring-soon message, cleanup

@@ -14,6 +14,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -310,22 +311,27 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 		routine.Log.Debugw("Checking debug session for expiration",
 			system.NamespacedFields(ds.Name, ds.Namespace)...)
 
-		// Skip sessions that are already in terminal states (Expired, Terminated, Failed)
+		// Skip sessions that are already in terminal states.
 		if ds.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
+			ds.Status.State == breakglassv1alpha1.DebugSessionStateIdleExpired ||
 			ds.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
+			ds.Status.State == breakglassv1alpha1.DebugSessionStateRejected ||
 			ds.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
-			// Check if session should be deleted after retention period
-			// Use ExpiresAt or CreationTimestamp to determine retention eligibility
-			retentionStart := ds.CreationTimestamp.Time
-			if ds.Status.ExpiresAt != nil && !ds.Status.ExpiresAt.IsZero() {
-				retentionStart = ds.Status.ExpiresAt.Time
+			retainedUntil := ds.Status.RetainedUntil
+			if retainedUntil == nil || retainedUntil.IsZero() {
+				retentionStart := ds.CreationTimestamp.Time
+				if ds.Status.ExpiresAt != nil && !ds.Status.ExpiresAt.IsZero() {
+					retentionStart = ds.Status.ExpiresAt.Time
+				}
+				fallback := metav1.NewTime(retentionStart.Add(DebugSessionRetentionFor(&ds)))
+				retainedUntil = &fallback
 			}
 
-			if now.After(retentionStart.Add(DebugSessionRetentionPeriod)) {
+			if !now.Before(retainedUntil.Time) {
 				routine.Log.Infow("Deleting debug session past retention period",
 					append(system.NamespacedFields(ds.Name, ds.Namespace),
 						"state", ds.Status.State,
-						"retentionPeriod", DebugSessionRetentionPeriod.String())...)
+						"retentionPeriod", DebugSessionRetentionFor(&ds).String())...)
 
 				if err := routine.Manager.Delete(ctx, &ds); err != nil {
 					routine.Log.Errorw("error deleting debug session past retention",
@@ -343,10 +349,30 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 
 		// Check if active session has expired
 		if ds.Status.State == breakglassv1alpha1.DebugSessionStateActive {
+			if idleTimeout := DebugSessionIdleTimeoutFor(&ds); DebugSessionIdleExpired(&ds, now) {
+				if err := PatchDebugSessionStatusWithOptimisticLock(ctx, routine.Manager, &ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+					status.State = breakglassv1alpha1.DebugSessionStateIdleExpired
+					status.Message = fmt.Sprintf("Session expired after %s of inactivity", idleTimeout)
+					SetDebugSessionRetainedUntil(&ds, now)
+					status.RetainedUntil = ds.Status.RetainedUntil
+				}); err != nil {
+					if apierrors.IsConflict(err) {
+						routine.Log.Debugw("skipping idle-expired debug session after concurrent change", "session", ds.Name, "error", err)
+						continue
+					}
+					routine.Log.Errorw("error updating idle-expired debug session", "session", ds.Name, "error", err)
+					continue
+				}
+				expiredCount++
+				metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
+				continue
+			}
 			if ds.Status.ExpiresAt != nil && now.After(ds.Status.ExpiresAt.Time) {
 				if err := PatchDebugSessionStatusWithOptimisticLock(ctx, routine.Manager, &ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 					status.State = breakglassv1alpha1.DebugSessionStateExpired
 					status.Message = "Session expired (cleanup routine)"
+					SetDebugSessionRetainedUntil(&ds, now)
+					status.RetainedUntil = ds.Status.RetainedUntil
 				}); err != nil {
 					if apierrors.IsConflict(err) {
 						routine.Log.Debugw("skipping expired debug session status update after concurrent change",
@@ -384,10 +410,12 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 		// Check pending approval sessions that have timed out
 		if ds.Status.State == breakglassv1alpha1.DebugSessionStatePendingApproval {
 			// If approval times out, mark as failed
-			if ds.Status.Approval != nil && ds.CreationTimestamp.Add(DebugSessionApprovalTimeout).Before(now) {
+			if ds.Status.Approval != nil && ds.Status.Approval.ApprovedAt == nil && ds.Status.Approval.RejectedAt == nil && ds.CreationTimestamp.Add(DebugSessionApprovalTimeoutFor(&ds)).Before(now) {
 				if err := PatchDebugSessionStatusWithOptimisticLock(ctx, routine.Manager, &ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 					status.State = breakglassv1alpha1.DebugSessionStateFailed
-					status.Message = fmt.Sprintf("Approval timed out after %s", DebugSessionApprovalTimeout)
+					status.Message = fmt.Sprintf("Approval timed out after %s", DebugSessionApprovalTimeoutFor(&ds))
+					SetDebugSessionRetainedUntil(&ds, now)
+					status.RetainedUntil = ds.Status.RetainedUntil
 				}); err != nil {
 					if apierrors.IsConflict(err) {
 						routine.Log.Debugw("skipping approval-timeout debug session status update after concurrent change",

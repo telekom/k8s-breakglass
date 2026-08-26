@@ -812,6 +812,8 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 		// Check if session is active (pending or approved, not expired/terminated/failed)
 		if session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
 			session.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
+			session.Status.State == breakglassv1alpha1.DebugSessionStateIdleExpired ||
+			session.Status.State == breakglassv1alpha1.DebugSessionStateRejected ||
 			session.Status.State == breakglassv1alpha1.DebugSessionStateFailed ||
 			isDebugSessionExpired(session, now) {
 			continue

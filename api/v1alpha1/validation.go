@@ -921,11 +921,17 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 
 	// Validate constraints if specified
 	if template.Spec.Constraints != nil {
-		if template.Spec.Constraints.MaxDuration != "" {
-			result.Errors = append(result.Errors, validateDurationFormat(template.Spec.Constraints.MaxDuration, specPath.Child("constraints").Child("maxDuration"))...)
-		}
-		if template.Spec.Constraints.DefaultDuration != "" {
-			result.Errors = append(result.Errors, validateDurationFormat(template.Spec.Constraints.DefaultDuration, specPath.Child("constraints").Child("defaultDuration"))...)
+		constraintsPath := specPath.Child("constraints")
+		for name, value := range map[string]string{
+			"maxDuration":     template.Spec.Constraints.MaxDuration,
+			"defaultDuration": template.Spec.Constraints.DefaultDuration,
+			"approvalTimeout": template.Spec.Constraints.ApprovalTimeout,
+			"idleTimeout":     template.Spec.Constraints.IdleTimeout,
+			"retainFor":       template.Spec.Constraints.RetainFor,
+		} {
+			if value != "" {
+				result.Errors = append(result.Errors, validateDurationFormat(value, constraintsPath.Child(name))...)
+			}
 		}
 	}
 

@@ -15,3 +15,7 @@ This document provides conventions specifically for AI coding agents working in 
 4. **Fuzz Testing**: Add cases to `fuzz_test.go` when adding new complex types or validations.
 5. **Backwards Compatibility**: Do not make backwards-incompatible changes to `v1alpha1` unless absolutely necessary and documented in the CHANGELOG.
 6. **Binding constraint narrowing**: Resolve `DebugSessionClusterBinding.spec.extraDeployVariables` through the shared effective-variable helper; binding options, validation, required/disabled state, and defaults must never widen the referenced template. Disabled variables must not retain defaults or accept values, unknown values must be rejected when a binding narrows variables, and discovery/rendering must fail closed if the intersection is invalid.
+
+7. **DebugSession lifecycle fields**: `Rejected` and `IdleExpired` are terminal states;
+   lifecycle duration fields on templates are optional and must retain controller-default
+   behavior when omitted. Delayed DebugSession starts are not part of this API.

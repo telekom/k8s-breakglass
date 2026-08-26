@@ -302,10 +302,22 @@ spec:
                       allowRenewal controls whether session renewal is permitted.
                       When nil, defaults to true. Set to false to disable renewals.
                     type: boolean
+                  approvalTimeout:
+                    description: |-
+                      approvalTimeout is the maximum time a requested session may wait for approval.
+                      If unset, the controller-wide DEBUG_SESSION_APPROVAL_TIMEOUT is used.
+                    pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
+                    type: string
                   defaultDuration:
                     default: 1h
                     description: defaultDuration is the default session duration if
                       not specified.
+                    pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
+                    type: string
+                  idleTimeout:
+                    description: |-
+                      idleTimeout is the duration without debug-session API activity after which
+                      an active session is expired. If unset, idle expiry is disabled.
                     pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
                     type: string
                   maxConcurrentSessions:
@@ -331,6 +343,12 @@ spec:
                       Removal target: v1beta1.'
                     format: int32
                     type: integer
+                  retainFor:
+                    description: |-
+                      retainFor controls how long terminal session status is retained.
+                      If unset, the controller-wide DEBUG_SESSION_RETENTION_PERIOD is used.
+                    pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
+                    type: string
                 type: object
               description:
                 description: description provides additional context about this binding.

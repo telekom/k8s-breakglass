@@ -172,6 +172,7 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		// Update status condition to reflect validation failure
 		ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
 		ds.Status.Message = fmt.Sprintf("Validation failed: %s", validationResult.ErrorMessage())
+		breakglass.SetDebugSessionRetainedUntil(ds, time.Now())
 		if statusErr := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); statusErr != nil {
 			log.Errorw("Failed to update DebugSession status after validation failure", "error", statusErr)
 		}
@@ -189,7 +190,8 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		return c.handlePendingApproval(ctx, ds)
 	case breakglassv1alpha1.DebugSessionStateActive:
 		return c.handleActive(ctx, ds)
-	case breakglassv1alpha1.DebugSessionStateExpired, breakglassv1alpha1.DebugSessionStateTerminated:
+	case breakglassv1alpha1.DebugSessionStateExpired, breakglassv1alpha1.DebugSessionStateIdleExpired,
+		breakglassv1alpha1.DebugSessionStateTerminated, breakglassv1alpha1.DebugSessionStateRejected:
 		return c.handleCleanup(ctx, ds)
 	case breakglassv1alpha1.DebugSessionStateFailed:
 		// Terminal state — but only once the spoke cluster is actually clean.
@@ -295,20 +297,23 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 		return c.activateSession(ctx, ds, template, binding)
 	}
 
-	// If rejected, mark as terminated
+	// If rejected, preserve the explicit rejection terminal state.
 	if ds.Status.Approval != nil && ds.Status.Approval.RejectedAt != nil {
-		ds.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+		ds.Status.State = breakglassv1alpha1.DebugSessionStateRejected
 		ds.Status.Message = fmt.Sprintf("Rejected by %s: %s", ds.Status.Approval.RejectedBy, ds.Status.Approval.Reason)
+		breakglass.SetDebugSessionRetainedUntil(ds, time.Now())
 		return ctrl.Result{}, breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
 	}
 
 	// Check if approval has timed out
-	timeout := breakglass.DebugSessionApprovalTimeout
+	timeout := breakglass.DebugSessionApprovalTimeoutFor(ds)
 	if ds.CreationTimestamp.Add(timeout).Before(time.Now()) {
 		reason := fmt.Sprintf("Approval timed out after %s", timeout)
 		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 			status.State = breakglassv1alpha1.DebugSessionStateFailed
 			status.Message = reason
+			breakglass.SetDebugSessionRetainedUntil(ds, time.Now())
+			status.RetainedUntil = ds.Status.RetainedUntil
 		}); err != nil {
 			if apierrors.IsConflict(err) {
 				c.log.Debugw("skipping approval-timeout status update after concurrent debug session change", "error", err)
@@ -359,6 +364,23 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 	}
 
 	// Check expiration
+	if idleTimeout := breakglass.DebugSessionIdleTimeoutFor(ds); breakglass.DebugSessionIdleExpired(ds, time.Now()) {
+		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+			status.State = breakglassv1alpha1.DebugSessionStateIdleExpired
+			status.Message = fmt.Sprintf("Session expired after %s of inactivity", idleTimeout)
+			breakglass.SetDebugSessionRetainedUntil(ds, time.Now())
+			status.RetainedUntil = ds.Status.RetainedUntil
+		}); err != nil {
+			if apierrors.IsConflict(err) {
+				log.Debugw("skipping idle expiration status update after concurrent debug session change", "error", err)
+				return ctrl.Result{}, nil
+			}
+			return ctrl.Result{}, err
+		}
+		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
+		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	}
+
 	if ds.Status.ExpiresAt != nil && time.Now().After(ds.Status.ExpiresAt.Time) {
 		if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.ExpirationBehavior == "notify-only" {
 			if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
@@ -377,6 +399,8 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 			status.State = breakglassv1alpha1.DebugSessionStateExpired
 			status.Message = "Session expired"
+			breakglass.SetDebugSessionRetainedUntil(ds, time.Now())
+			status.RetainedUntil = ds.Status.RetainedUntil
 		}); err != nil {
 			if apierrors.IsConflict(err) {
 				log.Debugw("skipping expiration status update after concurrent debug session change", "error", err)
@@ -548,6 +572,8 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
 	ds.Status.StartsAt = &now
 	ds.Status.ExpiresAt = &expiresAt
+	ds.Status.LastActivity = &now
+	ds.Status.ActivityCount = 1
 	ds.Status.Message = "Debug session active"
 
 	// Cache AllowedPodOperations merged from template and binding for webhook enforcement
@@ -667,6 +693,7 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglass
 
 	ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
 	ds.Status.Message = reason
+	breakglass.SetDebugSessionRetainedUntil(ds, time.Now())
 
 	// Send failure notification email to requester
 	c.sendDebugSessionFailedEmail(ds, reason)

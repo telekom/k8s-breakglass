@@ -2492,7 +2492,7 @@ func TestHandleRejectDebugSession_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 	// Response now returns the session object, verify it contains expected fields
 	assert.Contains(t, rr.Body.String(), "pending-session")
-	assert.Contains(t, rr.Body.String(), "Terminated")
+	assert.Contains(t, rr.Body.String(), "Rejected")
 	assert.Contains(t, rr.Body.String(), "Rejected by approver@example.com")
 }
 

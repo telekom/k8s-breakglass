@@ -2249,6 +2249,14 @@ func (in *DebugSessionStatus) DeepCopyInto(out *DebugSessionStatus) {
 		in, out := &in.ExpiresAt, &out.ExpiresAt
 		*out = (*in).DeepCopy()
 	}
+	if in.RetainedUntil != nil {
+		in, out := &in.RetainedUntil, &out.RetainedUntil
+		*out = (*in).DeepCopy()
+	}
+	if in.LastActivity != nil {
+		in, out := &in.LastActivity, &out.LastActivity
+		*out = (*in).DeepCopy()
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]v1.Condition, len(*in))

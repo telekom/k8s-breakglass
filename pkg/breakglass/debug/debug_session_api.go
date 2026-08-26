@@ -331,6 +331,9 @@ type DebugSessionSummary struct {
 	StatusMessage          string                                   `json:"statusMessage,omitempty"`
 	StartsAt               *metav1.Time                             `json:"startsAt,omitempty"`
 	ExpiresAt              *metav1.Time                             `json:"expiresAt,omitempty"`
+	RetainedUntil          *metav1.Time                             `json:"retainedUntil,omitempty"`
+	LastActivity           *metav1.Time                             `json:"lastActivity,omitempty"`
+	ActivityCount          int64                                    `json:"activityCount,omitempty"`
 	Participants           int                                      `json:"participants"`
 	IsParticipant          bool                                     `json:"isParticipant"`
 	AllowedPods            int                                      `json:"allowedPods"`
@@ -667,6 +670,9 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 			StatusMessage:          s.Status.Message,
 			StartsAt:               s.Status.StartsAt,
 			ExpiresAt:              s.Status.ExpiresAt,
+			RetainedUntil:          s.Status.RetainedUntil,
+			LastActivity:           s.Status.LastActivity,
+			ActivityCount:          s.Status.ActivityCount,
 			Participants:           activeParticipants,
 			IsParticipant:          isParticipant,
 			AllowedPods:            len(s.Status.AllowedPods),
@@ -1452,7 +1458,9 @@ var validDebugSessionStates = map[string]struct{}{
 	string(breakglassv1alpha1.DebugSessionStatePendingApproval): {},
 	string(breakglassv1alpha1.DebugSessionStateActive):          {},
 	string(breakglassv1alpha1.DebugSessionStateExpired):         {},
+	string(breakglassv1alpha1.DebugSessionStateIdleExpired):     {},
 	string(breakglassv1alpha1.DebugSessionStateTerminated):      {},
+	string(breakglassv1alpha1.DebugSessionStateRejected):        {},
 	string(breakglassv1alpha1.DebugSessionStateFailed):          {},
 }
 

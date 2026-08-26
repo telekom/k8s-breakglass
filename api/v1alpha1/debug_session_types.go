@@ -31,7 +31,7 @@ import (
 )
 
 // DebugSessionState represents the current state of a debug session.
-// +kubebuilder:validation:Enum=Pending;PendingApproval;Active;Expired;Terminated;Failed
+// +kubebuilder:validation:Enum=Pending;PendingApproval;Active;Expired;IdleExpired;Terminated;Rejected;Failed
 type DebugSessionState string
 
 const (
@@ -43,8 +43,12 @@ const (
 	DebugSessionStateActive DebugSessionState = "Active"
 	// DebugSessionStateExpired indicates the session has expired.
 	DebugSessionStateExpired DebugSessionState = "Expired"
+	// DebugSessionStateIdleExpired indicates the session expired after being idle.
+	DebugSessionStateIdleExpired DebugSessionState = "IdleExpired"
 	// DebugSessionStateTerminated indicates the session was manually terminated.
 	DebugSessionStateTerminated DebugSessionState = "Terminated"
+	// DebugSessionStateRejected indicates an approver rejected the session request.
+	DebugSessionStateRejected DebugSessionState = "Rejected"
 	// DebugSessionStateFailed indicates the session failed to deploy.
 	DebugSessionStateFailed DebugSessionState = "Failed"
 )
@@ -229,6 +233,18 @@ type DebugSessionStatus struct {
 	// expiresAt is when the session will expire.
 	// +optional
 	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+
+	// retainedUntil is when the terminal session object may be removed.
+	// +optional
+	RetainedUntil *metav1.Time `json:"retainedUntil,omitempty"`
+
+	// lastActivity is the last API activity recorded for this session.
+	// +optional
+	LastActivity *metav1.Time `json:"lastActivity,omitempty"`
+
+	// activityCount counts API activities recorded for this session.
+	// +optional
+	ActivityCount int64 `json:"activityCount,omitempty"`
 
 	// renewalCount tracks how many times the session has been renewed.
 	// +optional
@@ -610,6 +626,11 @@ func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) fie
 
 	checkTime(oldObj.Status.StartsAt, newObj.Status.StartsAt, statusPath.Child("startsAt"))
 	checkTime(oldObj.Status.ExpiresAt, newObj.Status.ExpiresAt, statusPath.Child("expiresAt"))
+	checkTime(oldObj.Status.RetainedUntil, newObj.Status.RetainedUntil, statusPath.Child("retainedUntil"))
+	checkTime(oldObj.Status.LastActivity, newObj.Status.LastActivity, statusPath.Child("lastActivity"))
+	if newObj.Status.ActivityCount < oldObj.Status.ActivityCount {
+		errs = append(errs, field.Invalid(statusPath.Child("activityCount"), newObj.Status.ActivityCount, "activity count must not decrease"))
+	}
 
 	if oldObj.Status.Approval != nil {
 		if newObj.Status.Approval == nil {

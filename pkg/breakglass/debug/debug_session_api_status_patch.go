@@ -25,6 +25,7 @@ import (
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -37,6 +38,11 @@ func (c *DebugSessionAPIController) patchDebugSessionStatusWithOptimisticLock(
 	mutate(&session.Status)
 	if session.Generation > 0 {
 		session.Status.ObservedGeneration = session.Generation
+	}
+	if session.Status.State == breakglassv1alpha1.DebugSessionStateActive {
+		now := metav1.Now()
+		session.Status.LastActivity = &now
+		session.Status.ActivityCount++
 	}
 
 	if err := c.client.Status().Patch(ctx, session, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
