@@ -104,7 +104,9 @@ containers with `--network none`, a read-only root filesystem, all capabilities
 dropped except `NET_ADMIN`, and a disposable evidence volume. It exercises
 `node-recovery`, all three repair actions, failure evidence, confirmation and
 target guards, unsafe-path rejection, dispatcher rejection, and explicit
-container/volume cleanup. The loopback interface is used so no runner host
+container/volume cleanup. The harness explicitly verifies Docker's built-in
+RuntimeDefault seccomp profile and the requested capability boundary from
+container metadata. The loopback interface is used so no runner host
 network namespace is joined or modified; auto-negotiation is expected to fail
 and its evidence is required.
 

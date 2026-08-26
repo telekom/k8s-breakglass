@@ -71,16 +71,16 @@ PATH="$fake_bin:$PATH" "$preflight" --target-node node-a --interface eth0 \
 	--evidence-dir "$evidence_dir" --confirm NODE-RECOVERY-PREFLIGHT >"$tmp_dir/preflight-output"
 bundle=$(sed -n 's/.*Evidence: //p' "$tmp_dir/preflight-output")
 [ -n "$bundle" ] || fail 'preflight did not print an evidence bundle'
-[ -f "$bundle/interface.txt" ] || fail 'preflight interface evidence missing'
-[ -f "$bundle/metadata" ] || fail 'preflight metadata missing'
+grep -q '^exit_status=0$' "$bundle/interface.txt" || fail 'preflight interface probe did not execute successfully'
+grep -q '^command=node-recovery$' "$bundle/metadata" || fail 'preflight metadata command missing'
 grep -q 'target_node=node-a' "$bundle/metadata" || fail 'preflight target missing from metadata'
 pass 'preflight evidence and metadata'
 
 PATH="$fake_bin:$PATH" "$network_repair" --target-node node-a --interface eth0 \
 	--action flush-neighbors --evidence-dir "$evidence_dir" --confirm NETWORK-REPAIR >"$tmp_dir/repair-output"
 repair_bundle=$(sed -n 's/.*Evidence: //p' "$tmp_dir/repair-output" | head -n 1)
-[ -f "$repair_bundle/before-link.txt" ] || fail 'repair before evidence missing'
-[ -f "$repair_bundle/after-link.txt" ] || fail 'repair after evidence missing'
+grep -q '^exit_status=0$' "$repair_bundle/before-link.txt" || fail 'repair before probe did not execute successfully'
+grep -q '^exit_status=0$' "$repair_bundle/after-link.txt" || fail 'repair after probe did not execute successfully'
 grep -q 'action=flush-neighbors' "$repair_bundle/metadata" || fail 'repair action missing from metadata'
 pass 'repair before/after evidence and metadata'
 
@@ -90,8 +90,8 @@ if PATH="$fake_bin:$PATH" ETHTOOL_FAIL=1 "$network_repair" \
 	fail 'failed repair was accepted'
 fi
 failed_bundle=$(sed -n 's/.*Evidence: //p' "$tmp_dir/failed-repair-output" | head -n 1)
-[ -f "$failed_bundle/before-link.txt" ] || fail 'failed repair before evidence missing'
-[ -f "$failed_bundle/after-link.txt" ] || fail 'failed repair after evidence missing'
+grep -q '^exit_status=0$' "$failed_bundle/before-link.txt" || fail 'failed repair before probe did not execute successfully'
+grep -q '^exit_status=0$' "$failed_bundle/after-link.txt" || fail 'failed repair after probe did not execute successfully'
 grep -q 'action_exit_status=7' "$failed_bundle/metadata" || fail 'failed action status missing from metadata'
 pass 'failed repair preserves before/after evidence'
 

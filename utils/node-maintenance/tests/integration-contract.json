@@ -10,6 +10,7 @@
     "readOnlyRootFilesystem": true,
     "allowPrivilegeEscalation": false,
     "seccompProfile": "runtime-default",
+    "seccompOption": "builtin",
     "capabilitiesDrop": ["ALL"],
     "capabilitiesAdd": ["NET_ADMIN"]
   },
