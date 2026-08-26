@@ -145,6 +145,9 @@ reports, prove forbidden mutations and secret isolation, and verify cleanup;
 it must fail loudly when a required tool or cluster is unavailable. Keep the
 machine-readable intent in `hack/cluster-validator-integration.contract.json`
 in sync with the harness and any consolidated utility workflow.
+The harness must also exercise exit code 1 with an unhealthy disposable
+resource, and cleanup may delete only resources (including the image and kind
+cluster) created by that invocation.
 
 ## Build Tags
 

@@ -26,6 +26,7 @@ SECRET_NAME="validator-secret-sentinel"
 SECRET_MARKER="validator-secret-marker-${RANDOM}-${RANDOM}"
 SERVICE_ACCOUNT_TOKEN=""
 CLUSTER_CREATED=false
+IMAGE_BUILT=false
 
 die() {
   printf 'cluster-validator-integration: %s\n' "$*" >&2
@@ -44,8 +45,12 @@ cleanup() {
     KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete clusterrolebinding "${CLUSTER_ROLE_BINDING}" --ignore-not-found --wait >/dev/null 2>&1
     KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete clusterrole "${CLUSTER_ROLE}" --ignore-not-found --wait >/dev/null 2>&1
   fi
-  kind delete cluster --name "${CLUSTER_NAME}" >/dev/null 2>&1
-  docker image rm "${IMAGE}" >/dev/null 2>&1
+  if [[ "${CLUSTER_CREATED}" == true ]]; then
+    kind delete cluster --name "${CLUSTER_NAME}" >/dev/null 2>&1
+  fi
+  if [[ "${IMAGE_BUILT}" == true ]]; then
+    docker image rm "${IMAGE}" >/dev/null 2>&1
+  fi
   rm -rf "${WORK_DIR}"
   exit "${exit_code}"
 }
@@ -75,6 +80,7 @@ validate_contract() {
 build_image() {
   log "Building ${IMAGE} for linux/amd64"
   docker build --pull --platform linux/amd64 --file "${ROOT_DIR}/Dockerfile.validator" --tag "${IMAGE}" "${ROOT_DIR}"
+  IMAGE_BUILT=true
 }
 
 create_cluster() {
@@ -251,6 +257,67 @@ assert_report() {
     ' "${report_file}" >/dev/null || die "${report_file} is not the expected deterministic ready report"
 }
 
+run_not_ready_case() {
+  local bad_pod="validator-not-ready-${RANDOM}" pod_file="${WORK_DIR}/not-ready.yaml"
+  cat >"${pod_file}" <<YAML
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${bad_pod}
+  namespace: ${NAMESPACE}
+spec:
+  restartPolicy: Never
+  containers:
+    - name: unavailable
+      image: validator-integration-image-does-not-exist
+      imagePullPolicy: Never
+YAML
+  kubectl apply -f "${pod_file}" >/dev/null
+  local phase=""
+  for _ in $(seq 1 60); do
+    phase="$(kubectl get pod "${bad_pod}" -n "${NAMESPACE}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    [[ "${phase}" == Pending || "${phase}" == Failed ]] && break
+    sleep 1
+  done
+  [[ "${phase}" == Pending || "${phase}" == Failed ]] || die "not-ready fixture did not become unhealthy (phase: ${phase})"
+
+  local validator_pod="validator-not-ready-run" validator_file="${WORK_DIR}/not-ready-run.yaml" log_file="${WORK_DIR}/not-ready.log"
+  cat >"${validator_file}" <<YAML
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${validator_pod}
+  namespace: ${NAMESPACE}
+spec:
+  serviceAccountName: cluster-validator
+  automountServiceAccountToken: true
+  restartPolicy: Never
+  containers:
+    - name: validator
+      image: ${IMAGE}
+      imagePullPolicy: Never
+      command: ["/cluster-validator"]
+      args: ["--mode", "one-time", "--report", "-"]
+YAML
+  kubectl apply -f "${validator_file}" >/dev/null
+  phase="$(wait_for_pod_result "${validator_pod}")"
+  kubectl logs "${validator_pod}" -n "${NAMESPACE}" >"${log_file}" 2>/dev/null || die "could not read not-ready validator log"
+  [[ "${phase}" == Failed ]] || die "not-ready validator unexpectedly succeeded"
+  local exit_code expected_exit
+  exit_code="$(kubectl get pod "${validator_pod}" -n "${NAMESPACE}" -o jsonpath='{.status.containerStatuses[0].state.terminated.exitCode}')"
+  expected_exit="$(jq -r '.cases[] | select(.name == "not-ready") | .expectedExitCode' "${CONTRACT_FILE}")"
+  [[ "${exit_code}" == "${expected_exit}" ]] || die "not-ready validator returned exit code ${exit_code}, expected ${expected_exit}"
+  local expected_checks
+  expected_checks="$(jq -c '.builtInChecks' "${CONTRACT_FILE}")"
+  jq -e --argjson expected "${expected_checks}" '
+    .status == "not-ready" and ([.checks[].name] == $expected) and
+    (any(.checks[]; .name == "pods-ready" and .status == "not-ready")) and
+    (.generatedAt == null)
+  ' "${log_file}" >/dev/null || die "not-ready report did not identify the unhealthy pod check"
+  assert_no_leaks "${log_file}"
+  kubectl delete pod "${bad_pod}" "${validator_pod}" -n "${NAMESPACE}" --ignore-not-found --wait >/dev/null
+}
+
 run_invalid_mode_case() {
   local output_file="${WORK_DIR}/invalid-mode.log" exit_code
   set +e
@@ -265,7 +332,13 @@ run_invalid_mode_case() {
 run_extension_case() {
   local binary="${WORK_DIR}/cluster-validator-extension" report_file="${WORK_DIR}/extension.log"
   go build -trimpath -o "${binary}" ./hack/cluster-validator-extension
-  "${binary}" --kubeconfig "${HELPER_KUBECONFIG}" --mode one-time >"${report_file}"
+  local expected_exit actual_exit
+  expected_exit="$(jq -r '.cases[] | select(.name == "one-time") | .expectedExitCode' "${CONTRACT_FILE}")"
+  set +e
+  "${binary}" --kubeconfig "${HELPER_KUBECONFIG}" --mode one-time >"${report_file}" 2>"${WORK_DIR}/extension.stderr"
+  actual_exit=$?
+  set -e
+  [[ "${actual_exit}" == "${expected_exit}" ]] || die "extension contract returned exit code ${actual_exit}, expected ${expected_exit}"
   local expected_checks
   expected_checks="$(jq -c '.builtInChecks + [.extension.name] | sort' "${CONTRACT_FILE}")"
   jq -e --argjson expected "${expected_checks}" '
@@ -273,7 +346,7 @@ run_extension_case() {
     ([.checks[].name] | sort) == $expected and
     any(.checks[]; .name == "integration-extension" and .status == "ready")
   ' "${report_file}" >/dev/null || die "extension contract report was not ready and complete"
-  assert_no_leaks "${report_file}"
+  assert_no_leaks "${report_file}" "${WORK_DIR}/extension.stderr"
 }
 
 assert_determinism() {
@@ -312,6 +385,7 @@ main() {
   run_image_case one-time-1 one-time
   run_image_case one-time-2 one-time
   run_image_case post-upgrade post-upgrade
+  run_not_ready_case
   run_extension_case
   assert_determinism
   assert_zero_residuals
