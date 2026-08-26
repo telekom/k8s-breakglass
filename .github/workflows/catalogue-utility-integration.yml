@@ -1,0 +1,71 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Catalogue utility integration
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - "utils/images/**"
+      - "utils/network-debug/**"
+      - "utils/node-maintenance/**"
+      - ".github/workflows/catalogue-utility-integration.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  utility:
+    name: ${{ matrix.name }} real-tool proof
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: network-debug
+            path: utils/network-debug
+            image: local/catalogue-network-debug:ci
+            command: ["--version"]
+          - name: node-maintenance
+            path: utils/node-maintenance
+            image: local/catalogue-node-maintenance:ci
+            command: ["--help"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803ef7f5f0e # v4.3.0
+      - name: Build multi-arch OCI artifact
+        env:
+          IMAGE: ${{ matrix.image }}
+        working-directory: ${{ matrix.path }}
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --provenance=true --sbom=true \
+            --build-arg VERSION=ci-${GITHUB_SHA} \
+            --build-arg VCS_REF=${GITHUB_SHA} \
+            --build-arg BUILD_DATE=1970-01-01T00:00:00Z \
+            --tag "${IMAGE}" \
+            --output "type=oci,dest=/tmp/${{ matrix.name }}.oci.tar" \
+            .
+          test -s "/tmp/${{ matrix.name }}.oci.tar"
+      - name: Execute image command on the real runtime
+        env:
+          IMAGE: ${{ matrix.image }}
+        working-directory: ${{ matrix.path }}
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --platform linux/amd64 \
+            --build-arg VERSION=ci-${GITHUB_SHA} \
+            --build-arg VCS_REF=${GITHUB_SHA} \
+            --build-arg BUILD_DATE=1970-01-01T00:00:00Z \
+            --tag "${IMAGE}" --load .
+          docker run --rm "${IMAGE}" ${{ join(matrix.command, ' ') }}
