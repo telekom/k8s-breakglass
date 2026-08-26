@@ -19,9 +19,10 @@ The image exposes exactly two supported commands:
 
 There is no supported unrestricted shell, package manager, compiler, packet
 capture tool, port scanner, or general-purpose network toolbox. The entrypoint
-dispatches only the two fixed command names. The image must run as root with a
-privileged, host-networked pod for repairs; preflight is read-only but still
-requires the same explicit target and confirmation gates.
+dispatches only the two fixed command names. The image must run as UID 0 in a
+host-networked pod with only the `NET_ADMIN` capability for repairs; blanket
+privileged mode is not required. Preflight is read-only but still requires the
+same explicit target and confirmation gates.
 
 ## Guardrails
 

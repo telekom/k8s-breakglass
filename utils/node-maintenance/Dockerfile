@@ -48,7 +48,9 @@ LABEL org.opencontainers.image.title="Kubernetes node maintenance" \
       io.telekom.breakglass.node-maintenance.shell="not-supported" \
       io.telekom.breakglass.node-maintenance.capabilities="NET_ADMIN"
 
-# Network repair runs as root in an elevated pod with host networking and the
-# narrowly scoped NET_ADMIN capability. The base image already defaults to
-# root; the chart declares this identity without enabling full privilege.
+# Network repair runs as UID 0 in a host-networked pod with only NET_ADMIN. The
+# chart declares this identity explicitly; the dispatcher is the sole entrypoint.
+# UID 0 is required for the narrow NET_ADMIN helper.
+# hadolint ignore=DL3002
+USER 0
 ENTRYPOINT ["/usr/local/bin/node-maintenance"]
