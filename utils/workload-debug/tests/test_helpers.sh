@@ -31,7 +31,7 @@ assert_contains "$wrapped" 'checks_failed: 0'
 
 dns_result=$(debug-dns localhost)
 assert_contains "$dns_result" '127.0.0.1'
-debug-report --json | jq -e '.schema_version == 1 and .checks == [] and .checks_failed == 0' >/dev/null
+debug-report --json | jq -e '.schema_version == 1 and .status == "ready" and .checks == [] and .checks_failed == 0' >/dev/null
 
 if debug-http ftp://invalid.example >/dev/null 2>&1; then
     printf '%s\n' 'debug-http accepted an unsupported URL scheme' >&2

@@ -79,7 +79,7 @@ esac
 
 # Convert the delimiter-separated header list to argv without eval, preserving
 # values exactly (including spaces). Header values are supplied by the caller.
-set -- curl --silent --show-error --include \
+set -- curl --silent --show-error --fail-with-body --include \
     --connect-timeout "$timeout_seconds" --max-time "$timeout_seconds" \
     --max-filesize "$max_bytes" --request "$method"
 if [ "$header_count" -gt 0 ]; then

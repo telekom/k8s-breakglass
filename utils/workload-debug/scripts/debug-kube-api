@@ -64,7 +64,7 @@ esac
     printf '%s\n' 'debug-kube-api: max response size must be between 1 and 10485760 bytes' >&2
     exit 2
 }
-set -- curl --silent --show-error --include --connect-timeout "$timeout_seconds" \
+set -- curl --silent --show-error --fail-with-body --include --connect-timeout "$timeout_seconds" \
     --max-time "$timeout_seconds" --max-filesize "$max_bytes"
 if [ -r "$ca_file" ]; then set -- "$@" --cacert "$ca_file"; fi
 if [ -r "$token_file" ]; then

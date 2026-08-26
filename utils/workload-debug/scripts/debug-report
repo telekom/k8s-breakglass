@@ -56,8 +56,10 @@ if [ "$json" -eq 1 ]; then
     fi
     [ -z "$http_url" ] || add_check "HTTP $http_url" debug-http "$http_url"
     [ -z "$kube_path" ] || add_check "Kubernetes API $kube_path" debug-kube-api "$kube_path"
-    jq -ncS --argjson checks "$checks" --argjson failures "$failures" \
-        '{schema_version: 1, checks: $checks, checks_failed: $failures}'
+	status=ready
+	[ "$failures" -eq 0 ] || status=not-ready
+	jq -ncS --arg status "$status" --argjson checks "$checks" --argjson failures "$failures" \
+		'{schema_version: 1, status: $status, checks: $checks, checks_failed: $failures}'
     exit 0
 fi
 

@@ -9,10 +9,8 @@ package main
 import (
 	"context"
 	"encoding/binary"
-	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -23,23 +21,7 @@ import (
 	"time"
 )
 
-type httpFixture struct {
-	slow          time.Duration
-	expectedToken string
-}
-
-const expectedAuthTokenPath = "/var/run/secrets/workload-debug/" + "to" + "ken"
-
-func (h httpFixture) acceptsAuthorization(r *http.Request) bool {
-	authorization := r.Header.Get("Authorization")
-	if authorization == "" {
-		return false
-	}
-	if h.expectedToken == "" {
-		return true
-	}
-	return authorization == "Bearer "+h.expectedToken
-}
+type httpFixture struct{ slow time.Duration }
 
 func (h httpFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Server", "workload-debug-fixture/1")
@@ -53,7 +35,6 @@ func (h httpFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("X-Fixture", "head")
-		w.Header().Set("Content-Length", "10")
 		w.WriteHeader(http.StatusOK)
 	case http.MethodGet:
 		switch r.URL.Path {
@@ -63,66 +44,6 @@ func (h httpFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/get", http.StatusFound)
 		case "/large":
 			writeBody(w, http.StatusOK, []byte(strings.Repeat("x", 4096)))
-		case "/auth":
-			if !h.acceptsAuthorization(r) {
-				writeBody(w, http.StatusUnauthorized, []byte("authorization-required\n"))
-				return
-			}
-			writeBody(w, http.StatusOK, []byte("authenticated\n"))
-		case "/auth-chunked":
-			if !h.acceptsAuthorization(r) {
-				writeBody(w, http.StatusUnauthorized, []byte("authorization-required\n"))
-				return
-			}
-			fallthrough
-		case "/chunked":
-			// Write a deliberately minimal HTTP/1.1 chunked response. The
-			// response-body limiter applies its configured bound independently
-			// to response headers and body; keeping this fixture's headers below
-			// the small integration-test limit ensures the test exercises the
-			// unknown-length body path rather than rejecting ordinary headers.
-			hijacker, ok := w.(http.Hijacker)
-			if !ok {
-				writeBody(w, http.StatusInternalServerError, []byte("hijacking is unavailable\n"))
-				return
-			}
-			conn, buffered, err := hijacker.Hijack()
-			if err != nil {
-				return
-			}
-			defer func() {
-				if err := conn.Close(); err != nil {
-					// The fixture never includes request data in connection-close
-					// errors, so this diagnostic cannot disclose credentials or
-					// response content to the integration-test log.
-					log.Printf("chunked fixture connection close failed: %v", err)
-				}
-			}()
-			if _, err := io.WriteString(buffered, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"); err != nil {
-				return
-			}
-			if err := buffered.Flush(); err != nil {
-				return
-			}
-			for i := 0; i < 4096; i++ {
-				if _, err := io.WriteString(buffered, "1\r\nx\r\n"); err != nil {
-					return
-				}
-				if err := buffered.Flush(); err != nil {
-					return
-				}
-			}
-			_, _ = io.WriteString(buffered, "0\r\n\r\n")
-			_ = buffered.Flush()
-		case "/auth-oversized-headers":
-			if !h.acceptsAuthorization(r) {
-				writeBody(w, http.StatusUnauthorized, []byte("authorization-required\n"))
-				return
-			}
-			fallthrough
-		case "/oversized-headers":
-			w.Header().Set("X-Fixture-Large", strings.Repeat("x", 4096))
-			writeBody(w, http.StatusOK, []byte("fixture-header-bound\n"))
 		case "/slow":
 			time.Sleep(h.slow)
 			writeBody(w, http.StatusOK, []byte("fixture-slow\n"))
@@ -148,21 +69,7 @@ func writeBody(w http.ResponseWriter, status int, body []byte) {
 }
 
 func runHTTP(ctx context.Context, listen string, slow time.Duration, tlsCert, tlsKey string) error {
-	expectedToken := ""
-	if tokenFile := os.Getenv("EXPECTED_AUTH_TOKEN_FILE"); tokenFile != "" {
-		if tokenFile != expectedAuthTokenPath {
-			return fmt.Errorf("expected auth token path must be %q", expectedAuthTokenPath)
-		}
-		contents, err := os.ReadFile(expectedAuthTokenPath)
-		if err != nil {
-			return fmt.Errorf("read expected auth token: %w", err)
-		}
-		expectedToken = strings.TrimSpace(string(contents))
-		if expectedToken == "" {
-			return errors.New("expected auth token file is empty")
-		}
-	}
-	server := &http.Server{Addr: listen, Handler: httpFixture{slow: slow, expectedToken: expectedToken}, ReadHeaderTimeout: 3 * time.Second}
+	server := &http.Server{Addr: listen, Handler: httpFixture{slow: slow}, ReadHeaderTimeout: 3 * time.Second}
 	errs := make(chan error, 1)
 	go func() {
 		if tlsCert == "" || tlsKey == "" {
@@ -177,7 +84,7 @@ func runHTTP(ctx context.Context, listen string, slow time.Duration, tlsCert, tl
 		defer cancel()
 		return server.Shutdown(shutdownCtx)
 	case err := <-errs:
-		if errors.Is(err, http.ErrServerClosed) {
+		if err == http.ErrServerClosed {
 			return nil
 		}
 		return err
@@ -193,14 +100,13 @@ func runDNS(ctx context.Context, listen, expectedName, address string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = sock.Close() }()
+	defer sock.Close()
 	buffer := make([]byte, 4096)
 	for {
 		_ = sock.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		size, peer, readErr := sock.ReadFromUDP(buffer)
 		if readErr != nil {
-			var timeoutErr net.Error
-			if errors.As(readErr, &timeoutErr) && timeoutErr.Timeout() {
+			if timeout, ok := readErr.(net.Error); ok && timeout.Timeout() {
 				select {
 				case <-ctx.Done():
 					return nil
@@ -292,7 +198,7 @@ func main() {
 		log.Fatalf("unknown fixture mode %q", *mode)
 	}
 	if err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }

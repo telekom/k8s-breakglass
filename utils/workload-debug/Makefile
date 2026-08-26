@@ -32,9 +32,11 @@ build-multiarch:
 
 sbom:
 	@test -n "$(DIGEST)" || (printf '%s\n' 'DIGEST is required' >&2; exit 2)
+	@case "$(DIGEST)" in sha256:*) ;; *) printf '%s\n' 'DIGEST must be an immutable sha256 digest' >&2; exit 2;; esac
 	@test -n "$(SBOM)" || (printf '%s\n' 'SBOM is required' >&2; exit 2)
 	cosign attest --yes --type spdxjson --predicate "$(SBOM)" "$(IMAGE)@$(DIGEST)"
 
 sign:
 	@test -n "$(DIGEST)" || (printf '%s\n' 'DIGEST is required' >&2; exit 2)
+	@case "$(DIGEST)" in sha256:*) ;; *) printf '%s\n' 'DIGEST must be an immutable sha256 digest' >&2; exit 2;; esac
 	cosign sign --yes "$(IMAGE)@$(DIGEST)"

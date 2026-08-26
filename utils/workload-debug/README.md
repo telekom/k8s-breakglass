@@ -47,8 +47,9 @@ registry digest, then runs `make sign DIGEST=...` and
 `make sbom DIGEST=... SBOM=...`.
 
 `tool-contract.json` is the machine-readable contract for the shared
-`workload-diagnostics` intent. `debug-report --json` emits stable check names
-and statuses (without host timestamps or command output), making it suitable
-for automation and audit comparisons. The HTTP helper does not follow
+`workload-diagnostics` intent. `debug-report --json` emits a stable
+`schema_version`, semantic `status` (`ready` or `not-ready`), check names and
+statuses (without host timestamps or command output), making it suitable for
+one-time and post-upgrade readiness comparisons. The HTTP helper does not follow
 redirects and the Kubernetes helper reads a token from a file so credentials
 never appear in command arguments.
