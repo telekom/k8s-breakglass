@@ -232,6 +232,15 @@ E2E tests use pre-configured Keycloak users:
 kind delete cluster --name breakglass-e2e
 ```
 
+#### Bootstrap configuration verification
+
+The bootstrap smoke suite includes C-002, which verifies the effective API
+server configuration after `kind-setup-single.sh` completes. It reads the
+typed `kube-apiserver` static Pod object from the `kube-system` namespace and
+checks the parsed authentication and authorization arguments together with
+their read-only hostPath volumes and mounts. This deliberately validates the
+running cluster rather than searching generated YAML or source text.
+
 ## Build Flags
 
 Available build arguments for `docker build`:
