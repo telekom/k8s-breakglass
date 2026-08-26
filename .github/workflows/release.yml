@@ -98,7 +98,7 @@ jobs:
             image: node-maintenance
           - name: validator
             path: .
-            file: Dockerfile.validator
+            file: utils/cluster-validator/Dockerfile
             image: cluster-validator
     runs-on: ubuntu-latest
     steps:
