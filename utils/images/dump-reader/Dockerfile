@@ -1,16 +1,17 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+FROM busybox:1.37@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
 
 LABEL org.opencontainers.image.title="Dump reader utilities" \
       org.opencontainers.image.description="Read-only existing-file inspection, checksums, and copy-out" \
-      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.licenses="Apache-2.0 AND GPL-2.0-only" \
       org.opencontainers.image.source="https://github.com/telekom/k8s-breakglass" \
       org.opencontainers.image.documentation="https://github.com/telekom/k8s-breakglass/tree/main/utils/images/dump-reader"
 
-# No dump-generation or debugger package is installed. Alpine's busybox
-# supplies stat, sha256sum, and cp; the pinned base is the only dependency.
+# No dump-generation or debugger package is installed. BusyBox supplies the
+# small POSIX utility set used by the helper; the pinned base is the only
+# runtime dependency and no package manager is added.
 RUN addgroup -S -g 65532 reader \
     && adduser -S -D -H -u 65532 -G reader reader \
     && install -d -o reader -g reader /input /output /usr/share/dump-reader
