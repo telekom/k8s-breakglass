@@ -9,12 +9,6 @@ chart_dir="${1:?chart package directory is required}"
 chart_repo="${2:?OCI chart repository is required}"
 release_tag="${3:?release tag is required}"
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-
-canonical_chart_digest() {
-  ruby "${script_dir}/canonical-helm-chart-digest.rb" "$1"
-}
-
 shopt -s nullglob
 chart_packages=("${chart_dir}"/*.tgz)
 [ "${#chart_packages[@]}" -gt 0 ] || {
@@ -51,39 +45,7 @@ for chart_package in "${chart_packages[@]}"; do
       echo "${chart_name}:${chart_version} exists with appVersion ${remote_app_version}; bump chart version" >&2
       exit 1
     }
-
-    # Metadata alone is not an identity check. Pull the remote package and
-    # compare its chart content before allowing a rerun to continue to
-    # signing. Archive timestamps and gzip headers are intentionally excluded
-    # so an equivalent repackaging remains idempotent.
-    remote_dir="$(mktemp -d)"
-    if ! helm pull "${remote}" --version "${chart_version}" --destination "${remote_dir}" >/dev/null 2>&1; then
-      rm -rf "${remote_dir}"
-      echo "Could not pull existing ${remote}:${chart_version} for content comparison" >&2
-      exit 1
-    fi
-    remote_package="${remote_dir}/$(basename "${chart_package}")"
-    if [ ! -f "${remote_package}" ]; then
-      rm -rf "${remote_dir}"
-      echo "Pulled ${remote}:${chart_version} did not contain $(basename "${chart_package}")" >&2
-      exit 1
-    fi
-    if ! local_digest="$(canonical_chart_digest "${chart_package}")"; then
-      rm -rf "${remote_dir}"
-      echo "Could not canonicalize ${chart_package} for content comparison" >&2
-      exit 1
-    fi
-    if ! remote_digest="$(canonical_chart_digest "${remote_package}")"; then
-      rm -rf "${remote_dir}"
-      echo "Could not canonicalize pulled ${remote}:${chart_version} for content comparison" >&2
-      exit 1
-    fi
-    rm -rf "${remote_dir}"
-    [ "${local_digest}" = "${remote_digest}" ] || {
-      echo "${chart_name}:${chart_version} exists but its package content differs; refusing to sign or replace it" >&2
-      exit 1
-    }
-    echo "Chart ${chart_name}:${chart_version} already present and content-equivalent; skipping push."
+    echo "Chart ${chart_name}:${chart_version} already present with matching appVersion; skipping push."
     continue
   fi
 

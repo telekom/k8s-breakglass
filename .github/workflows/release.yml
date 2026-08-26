@@ -576,33 +576,6 @@ jobs:
           set -euo pipefail
           hack/publish-helm-charts.sh chart-dist "${CHART_REPO}" "${{ github.ref_name }}"
 
-          RELEASE_TAG="${{ github.ref_name }}"
-          shopt -s nullglob
-          chart_packages=(chart-dist/*.tgz)
-          [ "${#chart_packages[@]}" -gt 0 ] || { echo "No chart packages found" >&2; exit 1; }
-          for chart_package in "${chart_packages[@]}"; do
-            chart_metadata="$(helm show chart "${chart_package}")"
-            chart_name="$(printf '%s\n' "${chart_metadata}" | awk '/^name:/ {print $2}')"
-            chart_version="$(printf '%s\n' "${chart_metadata}" | awk '/^version:/ {print $2}')"
-            chart_app_version="$(printf '%s\n' "${chart_metadata}" | awk '/^appVersion:/ {print $2}' | tr -d '"')"
-            [ -n "${chart_name}" ] && [ -n "${chart_version}" ] && [ -n "${chart_app_version}" ] || { echo "Invalid chart metadata: ${chart_package}" >&2; exit 1; }
-            [ "${chart_app_version}" = "${RELEASE_TAG}" ] || { echo "${chart_name}:${chart_version} appVersion ${chart_app_version} does not match ${RELEASE_TAG}" >&2; exit 1; }
-            remote="${CHART_REPO}/${chart_name}"
-            set +e
-            remote_output="$(helm show chart "${remote}" --version "${chart_version}" 2>&1)"
-            remote_status=$?
-            set -e
-            if [ "${remote_status}" -eq 0 ]; then
-              remote_app_version="$(printf '%s\n' "${remote_output}" | awk '/^appVersion:/ {print $2}' | tr -d '"')"
-              [ "${remote_app_version}" = "${chart_app_version}" ] || { echo "${chart_name}:${chart_version} exists with appVersion ${remote_app_version}; bump chart version" >&2; exit 1; }
-              echo "Chart ${chart_name}:${chart_version} already present with matching appVersion; skipping push."
-              continue
-            fi
-            printf '%s\n' "${remote_output}" | grep -Eiq '(^Error: .*(not found|manifest unknown)|(^|[[:space:]])manifest unknown([[:space:][:punct:]]|$))' || { echo "Failed to inspect ${remote}" >&2; printf '%s\n' "${remote_output}" >&2; exit "${remote_status}"; }
-            helm push "${chart_package}" "${CHART_REPO}"
-            echo "Published ${chart_package} to ${CHART_REPO}"
-          done
-
       - name: Sign and verify immutable chart contracts
         env:
           CHART_REPO: oci://ghcr.io/${{ github.repository }}/charts
