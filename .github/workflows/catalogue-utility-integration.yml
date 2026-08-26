@@ -58,14 +58,16 @@ jobs:
       - name: Build native image and disposable fio fixture
         env:
           NETWORK_DEBUG_IMAGE: network-debug:integration
-          KUBESTR_FIXTURE_IMAGE: network-debug-kubestr-fio:integration
+          NETWORK_DEBUG_KUBESTR_FIXTURE_IMAGE: network-debug-kubestr-fio:integration
         run: |
           docker build --file utils/network-debug/Dockerfile --tag "${NETWORK_DEBUG_IMAGE}" utils/network-debug
-          docker build --file utils/network-debug/tests/fixtures/kubestr-fio/Dockerfile --tag "${KUBESTR_FIXTURE_IMAGE}" utils/network-debug/tests/fixtures/kubestr-fio
+          docker build --file utils/network-debug/tests/fixtures/kubestr-fio/Dockerfile --tag "${NETWORK_DEBUG_KUBESTR_FIXTURE_IMAGE}" utils/network-debug/tests/fixtures/kubestr-fio
       - name: Create disposable storage fixture
+        env:
+          NETWORK_DEBUG_KUBESTR_FIXTURE_IMAGE: network-debug-kubestr-fio:integration
         run: |
           kind create cluster --name network-debug-proof --image "${KIND_NODE_IMAGE}" --wait 120s
-          kind load docker-image --name network-debug-proof network-debug-kubestr-fio:integration
+          kind load docker-image --name network-debug-proof "${NETWORK_DEBUG_KUBESTR_FIXTURE_IMAGE}"
           kind get kubeconfig --name network-debug-proof > "${RUNNER_TEMP}/network-debug.kubeconfig"
       - name: Execute every network tool contract
         env:

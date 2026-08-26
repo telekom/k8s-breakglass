@@ -16,7 +16,7 @@ checks:
     operation: loopback-and-fixture-traffic
     tools: [curl, nc, ping, tracepath, traceroute, mtr, ethtool]
   - id: dns-tls-http
-    operation: fixture-dns-and-http-plus-public-tls
+    operation: fixture-dns-and-http-plus-local-tls
     tools: [dig, host, nslookup, curl]
   - id: packet-capture
     operation: capture-generated-http-packets
