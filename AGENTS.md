@@ -265,7 +265,10 @@ a disposable kind service account; it must fail clearly when Docker, kind, or
 kubectl is unavailable rather than silently skipping. The fixture namespace,
 processes, containers, and temporary credentials are removed in an EXIT trap,
 and the test verifies the kind cluster is gone. Keep the JSON report stable and
-never place service-account tokens in argv or captured output.
+never place service-account tokens in argv or captured output. Assert only
+runtime behavior or rendered public output: do not replace integration checks
+with source/file-presence tests, host-network fixtures, or host-privileged
+containers.
 
 ## Reusable Prompts (19 total)
 
