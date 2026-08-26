@@ -935,6 +935,13 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 		}
 	}
 
+	if template.Spec.Audit != nil && template.Spec.Audit.RecordingRetention != "" {
+		result.Errors = append(result.Errors, validatePositiveDurationFormat(
+			template.Spec.Audit.RecordingRetention,
+			specPath.Child("audit").Child("recordingRetention"),
+		)...)
+	}
+
 	// Validate schedulingOptions if specified
 	if template.Spec.SchedulingOptions != nil {
 		result.Errors = append(result.Errors, validateSchedulingOptions(template.Spec.SchedulingOptions, specPath.Child("schedulingOptions"))...)

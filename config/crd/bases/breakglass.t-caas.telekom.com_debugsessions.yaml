@@ -2772,6 +2772,7 @@ spec:
                         default: 90d
                         description: recordingRetention specifies how long recordings
                           are kept.
+                        pattern: ^[0-9]+(ns|us|µs|ms|s|m|h|d|w|y)([0-9]+(ns|us|µs|ms|s|m|h|d|w|y))*$
                         type: string
                     type: object
                   auxiliaryResourceDefaults:

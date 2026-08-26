@@ -458,6 +458,6 @@ The 16 reviewer personas cover every issue class found by automated reviewers
 - Replay endpoints use the same DebugSession read authorization as session
   details. Artifact URIs are opaque and must not be treated as local paths;
   external stores own upload, retention expiry, and deletion.
-- Prefer digest-pinned, signed sidecar images. Build/sign hooks must accept
+- Require full-digest-pinned, signed sidecar images at runtime. Build/sign hooks must accept
   explicit deployment image inputs rather than embedding an internal registry
   or image name.

@@ -75,6 +75,8 @@ type RecordingReplayReader interface {
 	OpenRecording(ctx context.Context, session *breakglassv1alpha1.DebugSession) (io.ReadCloser, string, error)
 }
 
+const maxTerminalRecordingReplayBytes int64 = 512 * 1024 * 1024
+
 // NewDebugSessionAPIController creates a new debug session API controller
 func NewDebugSessionAPIController(log *zap.SugaredLogger, client ctrlclient.Client, ccProvider *cluster.ClientProvider, middleware gin.HandlerFunc) *DebugSessionAPIController {
 	return &DebugSessionAPIController{
@@ -752,8 +754,10 @@ func (c *DebugSessionAPIController) handleGetDebugSession(ctx *gin.Context) {
 	}
 
 	canApprove := c.canActOnDebugSessionApproval(apiCtx, session, identity, nil)
+	responseSession := session.DeepCopy()
+	responseSession.Status.Recording = sanitizedRecordingStatus(responseSession.Status.Recording)
 	ctx.JSON(http.StatusOK, DebugSessionDetailResponse{
-		DebugSession: *session,
+		DebugSession: *responseSession,
 		CanApprove:   canApprove,
 		CanReject:    canApprove,
 	})
@@ -791,7 +795,7 @@ func (c *DebugSessionAPIController) handleGetDebugSessionRecording(ctx *gin.Cont
 		apiresponses.RespondNotFoundSimple(ctx, "terminal recording is not enabled")
 		return
 	}
-	ctx.JSON(http.StatusOK, session.Status.Recording)
+	ctx.JSON(http.StatusOK, sanitizedRecordingStatus(session.Status.Recording))
 }
 
 // handleReplayDebugSessionRecording streams an artifact through an injected
@@ -828,7 +832,7 @@ func (c *DebugSessionAPIController) handleReplayDebugSessionRecording(ctx *gin.C
 		apiresponses.RespondServiceUnavailable(ctx, "terminal recording replay is not configured")
 		return
 	}
-	if session.Status.Recording == nil || !session.Status.Recording.Enabled {
+	if !recordingReplayAvailable(session.Status.Recording) {
 		apiresponses.RespondNotFoundSimple(ctx, "terminal recording is not enabled")
 		return
 	}
@@ -838,15 +842,35 @@ func (c *DebugSessionAPIController) handleReplayDebugSessionRecording(ctx *gin.C
 		return
 	}
 	defer reader.Close()
-	if contentType == "" {
+	// The reader is deployment supplied; do not allow it to inject response
+	// headers or advertise an executable content type.
+	if contentType != "application/x-asciicast" && contentType != "text/plain" {
 		contentType = "application/x-asciicast"
 	}
 	ctx.Header("Content-Type", contentType)
 	ctx.Header("Content-Disposition", `inline; filename="`+session.Name+`.cast"`)
-	if _, err := io.Copy(ctx.Writer, reader); err != nil {
+	maxBytes := maxTerminalRecordingReplayBytes
+	if session.Status.Recording.Artifact.SizeBytes > 0 && session.Status.Recording.Artifact.SizeBytes < maxBytes {
+		maxBytes = session.Status.Recording.Artifact.SizeBytes
+	}
+	if _, err := io.Copy(ctx.Writer, io.LimitReader(reader, maxBytes)); err != nil {
 		// Headers may already be committed; only log-safe status is available.
 		c.log.Warnw("Failed to stream terminal recording", "session", session.Name, "error", err)
 	}
+}
+
+func recordingReplayAvailable(recording *breakglassv1alpha1.TerminalRecordingStatus) bool {
+	if recording == nil || !recording.Enabled || recording.Artifact == nil {
+		return false
+	}
+	if recording.Artifact.SizeBytes < 0 || recording.Artifact.SizeBytes > maxTerminalRecordingReplayBytes {
+		return false
+	}
+	if recording.Artifact.ExpiresAt != nil && !recording.Artifact.ExpiresAt.IsZero() && !time.Now().Before(recording.Artifact.ExpiresAt.Time) {
+		return false
+	}
+	return recording.State == breakglassv1alpha1.TerminalRecordingStateReady ||
+		recording.State == breakglassv1alpha1.TerminalRecordingStateRetained
 }
 
 // handleCreateDebugSession creates a new debug session

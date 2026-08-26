@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"context"
 	"reflect"
+	"strings"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -708,6 +709,31 @@ func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) fie
 	checkTime(oldObj.Status.LastActivity, newObj.Status.LastActivity, statusPath.Child("lastActivity"))
 	if newObj.Status.ActivityCount < oldObj.Status.ActivityCount {
 		errs = append(errs, field.Invalid(statusPath.Child("activityCount"), newObj.Status.ActivityCount, "activity count must not decrease"))
+	}
+	var oldRecordingStarted, newRecordingStarted, oldRecordingCompleted, newRecordingCompleted *metav1.Time
+	if oldObj.Status.Recording != nil {
+		oldRecordingStarted = oldObj.Status.Recording.StartedAt
+		oldRecordingCompleted = oldObj.Status.Recording.CompletedAt
+	}
+	if newObj.Status.Recording != nil {
+		newRecordingStarted = newObj.Status.Recording.StartedAt
+		newRecordingCompleted = newObj.Status.Recording.CompletedAt
+	}
+	checkTime(oldRecordingStarted, newRecordingStarted, statusPath.Child("recording").Child("startedAt"))
+	checkTime(oldRecordingCompleted, newRecordingCompleted, statusPath.Child("recording").Child("completedAt"))
+	if oldObj.Status.Recording != nil && oldObj.Status.Recording.Enabled &&
+		(newObj.Status.Recording == nil || !newObj.Status.Recording.Enabled) {
+		errs = append(errs, field.Invalid(statusPath.Child("recording").Child("enabled"), false, "recording enabled must not be cleared once set"))
+	}
+	if newObj.Status.Recording != nil && newObj.Status.Recording.Artifact != nil {
+		artifact := newObj.Status.Recording.Artifact
+		artifactPath := statusPath.Child("recording").Child("artifact")
+		if artifact.SizeBytes < 0 {
+			errs = append(errs, field.Invalid(artifactPath.Child("sizeBytes"), artifact.SizeBytes, "artifact size must not be negative"))
+		}
+		if strings.ContainsAny(artifact.URI, "\r\n\x00") {
+			errs = append(errs, field.Invalid(artifactPath.Child("uri"), artifact.URI, "artifact URI must not contain control characters"))
+		}
 	}
 
 	if oldObj.Status.Approval != nil {

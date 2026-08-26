@@ -1,4 +1,8 @@
 /*
+SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+
+SPDX-License-Identifier: Apache-2.0
+
 Copyright 2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +32,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 var recordingSecretPattern = regexp.MustCompile(`(?i)(bearer\s+|token|password|passwd|secret|authorization)([=:]\s*|\s+)[^\s,;]+`)
@@ -41,17 +46,19 @@ const (
 	// controller and a recording sidecar. The sidecar image is intentionally
 	// deployment supplied; the controller does not assume an internal image or
 	// a command line implementation.
-	TerminalRecordingEnabledEnv     = "BREAKGLASS_TERMINAL_RECORDING"
-	TerminalRecordingSessionEnv     = "BREAKGLASS_RECORDING_SESSION"
-	TerminalRecordingNamespaceEnv   = "BREAKGLASS_RECORDING_NAMESPACE"
-	TerminalRecordingClusterEnv     = "BREAKGLASS_RECORDING_CLUSTER"
-	TerminalRecordingTemplateEnv    = "BREAKGLASS_RECORDING_TEMPLATE"
-	TerminalRecordingCorrelationEnv = "BREAKGLASS_RECORDING_CORRELATION_ID"
-	TerminalRecordingFormatEnv      = "BREAKGLASS_RECORDING_FORMAT"
-	TerminalRecordingOutputEnv      = "BREAKGLASS_RECORDING_OUTPUT"
-	TerminalRecordingRetentionEnv   = "BREAKGLASS_RECORDING_RETENTION"
-	TerminalRecordingRedactionEnv   = "BREAKGLASS_RECORDING_REDACT_SECRETS"
-	TerminalRecordingFormat         = "asciicast-v2"
+	TerminalRecordingEnabledEnv           = "BREAKGLASS_TERMINAL_RECORDING"
+	TerminalRecordingSessionEnv           = "BREAKGLASS_RECORDING_SESSION"
+	TerminalRecordingNamespaceEnv         = "BREAKGLASS_RECORDING_NAMESPACE"
+	TerminalRecordingClusterEnv           = "BREAKGLASS_RECORDING_CLUSTER"
+	TerminalRecordingTemplateEnv          = "BREAKGLASS_RECORDING_TEMPLATE"
+	TerminalRecordingCorrelationEnv       = "BREAKGLASS_RECORDING_CORRELATION_ID"
+	TerminalRecordingFormatEnv            = "BREAKGLASS_RECORDING_FORMAT"
+	TerminalRecordingOutputEnv            = "BREAKGLASS_RECORDING_OUTPUT"
+	TerminalRecordingRetentionEnv         = "BREAKGLASS_RECORDING_RETENTION"
+	TerminalRecordingRedactionEnv         = "BREAKGLASS_RECORDING_REDACT_SECRETS"
+	TerminalRecordingMaxBytesEnv          = "BREAKGLASS_RECORDING_MAX_BYTES"
+	TerminalRecordingFormat               = "asciicast-v2"
+	terminalRecordingMaxBytes       int64 = 512 * 1024 * 1024
 )
 
 // recordingCorrelationID is stable across controller retries and contains no
@@ -102,6 +109,15 @@ func validateTerminalRecordingImage(image string) error {
 	if strings.IndexFunc(image, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
 		return fmt.Errorf("terminal recording sidecar image contains whitespace or control characters")
 	}
+	digest := strings.LastIndex(image, "@sha256:")
+	if digest < 0 || len(image)-digest-len("@sha256:") != 64 {
+		return fmt.Errorf("terminal recording sidecar image must be pinned by a sha256 digest")
+	}
+	for _, r := range image[digest+len("@sha256:"):] {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return fmt.Errorf("terminal recording sidecar image has an invalid sha256 digest")
+		}
+	}
 	return nil
 }
 
@@ -118,6 +134,15 @@ func safeRecordingFailure(reason string) string {
 		reason = reason[:512] + "..."
 	}
 	return reason
+}
+
+func sanitizedRecordingStatus(status *breakglassv1alpha1.TerminalRecordingStatus) *breakglassv1alpha1.TerminalRecordingStatus {
+	if status == nil {
+		return nil
+	}
+	copy := status.DeepCopy()
+	copy.Error = safeRecordingFailure(copy.Error)
+	return copy
 }
 
 // injectTerminalRecording adds the sidecar contract and a private shared
@@ -137,12 +162,17 @@ func injectTerminalRecording(spec *corev1.PodSpec, ds *breakglassv1alpha1.DebugS
 	if len(spec.Containers) == 0 {
 		return fmt.Errorf("terminal recording requires at least one workload container")
 	}
+	for i := range spec.Volumes {
+		if spec.Volumes[i].Name == terminalRecordingVolumeName {
+			return fmt.Errorf("volume name %q is reserved for the terminal recording sidecar", terminalRecordingVolumeName)
+		}
+	}
 
 	for i := range spec.Containers {
 		// A controller-owned name makes retries idempotent without trusting a
 		// user-provided environment marker on the workload container.
 		if spec.Containers[i].Name == "terminal-recorder" {
-			return nil
+			return fmt.Errorf("container name %q is reserved for the terminal recording sidecar", "terminal-recorder")
 		}
 	}
 
@@ -158,20 +188,9 @@ func injectTerminalRecording(spec *corev1.PodSpec, ds *breakglassv1alpha1.DebugS
 		{Name: TerminalRecordingOutputEnv, Value: terminalRecordingOutput},
 		{Name: TerminalRecordingRetentionEnv, Value: defaultRecordingRetention(template.Spec.Audit.RecordingRetention)},
 		{Name: TerminalRecordingRedactionEnv, Value: "true"},
+		{Name: TerminalRecordingMaxBytesEnv, Value: strconv.FormatInt(terminalRecordingMaxBytes, 10)},
 	}
 	mount := corev1.VolumeMount{Name: terminalRecordingVolumeName, MountPath: terminalRecordingMountPath}
-	for i := range spec.Containers {
-		if !hasVolumeMount(spec.Containers[i].VolumeMounts, terminalRecordingVolumeName) {
-			spec.Containers[i].VolumeMounts = append(spec.Containers[i].VolumeMounts, mount)
-		}
-		// The recorder can correlate terminal input/output without receiving
-		// authentication material. Do not pass arbitrary template env values.
-		spec.Containers[i].Env = append(spec.Containers[i].Env,
-			corev1.EnvVar{Name: TerminalRecordingEnabledEnv, Value: "true"},
-			corev1.EnvVar{Name: TerminalRecordingCorrelationEnv, Value: correlationID},
-			corev1.EnvVar{Name: TerminalRecordingRedactionEnv, Value: "true"},
-		)
-	}
 
 	spec.Volumes = upsertRecordingVolume(spec.Volumes)
 	spec.Containers = append(spec.Containers, corev1.Container{
@@ -198,24 +217,6 @@ func defaultRecordingRetention(value string) string {
 	return strings.TrimSpace(value)
 }
 
-func hasEnv(env []corev1.EnvVar, name string) bool {
-	for _, item := range env {
-		if item.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-func hasVolumeMount(mounts []corev1.VolumeMount, name string) bool {
-	for _, mount := range mounts {
-		if mount.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
 func upsertRecordingVolume(volumes []corev1.Volume) []corev1.Volume {
 	for _, volume := range volumes {
 		if volume.Name == terminalRecordingVolumeName {
@@ -223,7 +224,9 @@ func upsertRecordingVolume(volumes []corev1.Volume) []corev1.Volume {
 		}
 	}
 	return append(volumes, corev1.Volume{
-		Name:         terminalRecordingVolumeName,
-		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		Name: terminalRecordingVolumeName,
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
+			SizeLimit: resource.NewQuantity(terminalRecordingMaxBytes, resource.DecimalSI),
+		}},
 	})
 }

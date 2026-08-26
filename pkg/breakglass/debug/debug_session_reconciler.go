@@ -518,7 +518,9 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 		// Requeue to retry cleanup
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
-	if ds.Status.Recording != nil && ds.Status.Recording.Enabled && ds.Status.Recording.State != breakglassv1alpha1.TerminalRecordingStateFailed {
+	if ds.Status.Recording != nil && ds.Status.Recording.Enabled &&
+		(ds.Status.Recording.State == breakglassv1alpha1.TerminalRecordingStateRecording ||
+			ds.Status.Recording.State == breakglassv1alpha1.TerminalRecordingStateFinalizing) {
 		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 			if status.Recording == nil {
 				return
@@ -526,6 +528,12 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 			status.Recording.State = breakglassv1alpha1.TerminalRecordingStateRetained
 			now := metav1.Now()
 			status.Recording.CompletedAt = &now
+			if status.Recording.Artifact != nil && status.Recording.Artifact.ExpiresAt == nil {
+				if retention, parseErr := recordingRetentionDuration(status.Recording.Retention); parseErr == nil {
+					expiresAt := metav1.NewTime(now.Add(retention))
+					status.Recording.Artifact.ExpiresAt = &expiresAt
+				}
+			}
 		}); err != nil {
 			return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, err
 		}
@@ -657,7 +665,6 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 			return c.failSession(ctx, ds, fmt.Sprintf("failed to deploy resources: %v", err))
 		}
 	}
-<<<<<<< HEAD
 	if c.shouldEmitAudit(ds) {
 		if auditManager := c.currentAuditManager(); auditManager != nil {
 			for _, resource := range ds.Status.DeployedResources {
@@ -780,6 +787,10 @@ func effectiveTemplateForBinding(
 // failSession marks a session as failed and logs the failure
 func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession, reason string) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
+	statusReason := reason
+	if ds.Status.Recording != nil && ds.Status.Recording.Enabled {
+		statusReason = safeRecordingFailure(reason)
+	}
 
 	// Best-effort cleanup of any partially deployed resources on the target cluster.
 	// Short-circuit if the session never deployed anything to avoid noisy cross-cluster calls.
@@ -798,7 +809,7 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglass
 
 	// Log the failure with full context
 	log.Errorw("Debug session failed",
-		"reason", reason,
+		"reason", statusReason,
 		"template", ds.Spec.TemplateRef,
 		"requestedBy", ds.Spec.RequestedBy,
 		"previousState", ds.Status.State,
@@ -807,7 +818,7 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglass
 	// Emit audit event if audit is enabled for this session
 	if c.shouldEmitAudit(ds) {
 		if auditManager := c.currentAuditManager(); auditManager != nil {
-			auditManager.DebugSessionFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, failureAuditCategory(reason), map[string]interface{}{
+			auditManager.DebugSessionFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, failureAuditCategory(statusReason), map[string]interface{}{
 				"template":       ds.Spec.TemplateRef,
 				"requested_by":   ds.Spec.RequestedBy,
 				"previous_state": string(ds.Status.State),
@@ -817,24 +828,24 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglass
 				"session":   ds.Name,
 				"namespace": ds.Namespace,
 				"cluster":   ds.Spec.Cluster,
-				"reason":    failureAuditCategory(reason),
+				"reason":    failureAuditCategory(statusReason),
 			})
 		}
 	}
 
 	ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
-	ds.Status.Message = reason
+	ds.Status.Message = statusReason
 	breakglass.SetDebugSessionRetainedUntil(ds, time.Now())
 	if ds.Status.Recording != nil && ds.Status.Recording.Enabled {
 		ds.Status.Recording.State = breakglassv1alpha1.TerminalRecordingStateFailed
-		ds.Status.Recording.Error = safeRecordingFailure(reason)
+		ds.Status.Recording.Error = statusReason
 		c.emitRecordingAudit(ctx, audit.EventDebugSessionRecordingFailed, ds, map[string]interface{}{
 			"reason": ds.Status.Recording.Error,
 		})
 	}
 
 	// Send failure notification email to requester
-	c.sendDebugSessionFailedEmail(ds, reason)
+	c.sendDebugSessionFailedEmail(ds, statusReason)
 
 	// Increment failure metric
 	metrics.DebugSessionsFailed.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()

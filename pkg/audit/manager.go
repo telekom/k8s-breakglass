@@ -874,21 +874,28 @@ func (m *Manager) DebugSessionCreated(ctx context.Context, sessionName, user, cl
 // CorrelationID is intentionally supplied separately from artifact metadata so
 // the event remains useful even when finalization fails.
 func (m *Manager) DebugSessionRecording(ctx context.Context, eventType EventType, sessionName, namespace, cluster, correlationID string, details map[string]interface{}) {
-	if details == nil {
-		details = make(map[string]interface{})
+	// Whitelist the small metadata contract rather than filtering a caller map.
+	// This prevents future sidecars or integrations from accidentally placing
+	// recording bytes, credentials, or arbitrary nested data in the audit queue.
+	safeDetails := make(map[string]interface{}, 3)
+	for _, key := range []string{"format", "retention", "state"} {
+		if value, ok := details[key]; ok {
+			switch value := value.(type) {
+			case string:
+				if len(value) <= 128 {
+					safeDetails[key] = value
+				}
+			case bool, int, int32, int64, uint, uint32, uint64:
+				safeDetails[key] = value
+			}
+		}
 	}
-	// Never let callers accidentally put the recording payload or credentials in
-	// the audit queue. The sidecar contract only permits metadata here.
-	delete(details, "data")
-	delete(details, "content")
-	delete(details, "token")
-	delete(details, "authorization")
 	m.Emit(ctx, &Event{
 		Type:     eventType,
 		Severity: SeverityForEventType(eventType),
 		Actor:    Actor{User: "system"},
 		Target:   Target{Kind: "DebugSession", Name: sessionName, Namespace: namespace, Cluster: cluster},
-		Details:  details,
+		Details:  safeDetails,
 		RequestContext: &RequestContext{
 			CorrelationID:    correlationID,
 			DebugSessionName: sessionName,

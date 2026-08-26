@@ -1847,6 +1847,41 @@ func TestManager_DebugSessionLifecycleEventsAreStructuredAndBounded(t *testing.T
 	}
 }
 
+func TestDebugSessionRecordingAuditWhitelistsMetadata(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	var event *Event
+	var eventMu sync.Mutex
+	sink := &testSink{name: "recording-audit", writeFunc: func(received *Event) {
+		eventMu.Lock()
+		defer eventMu.Unlock()
+		event = received
+	}}
+	manager := NewManager(sink, DefaultManagerConfig(), logger)
+	manager.DebugSessionRecording(context.Background(), EventDebugSessionRecordingFailed,
+		"session", "tenant-a", "prod", "corr-1", map[string]interface{}{
+			"state":             "Failed",
+			"format":            "asciicast-v2",
+			"retention":         "30d",
+			"reason":            "token=super-secret",
+			"content":           "terminal bytes",
+			"nestedCredentials": map[string]string{"token": "secret"},
+		})
+	require.Eventually(t, func() bool {
+		eventMu.Lock()
+		defer eventMu.Unlock()
+		return event != nil
+	}, time.Second, 10*time.Millisecond)
+	eventMu.Lock()
+	assert.Equal(t, "Failed", event.Details["state"])
+	assert.Equal(t, "asciicast-v2", event.Details["format"])
+	assert.NotContains(t, event.Details, "reason")
+	assert.NotContains(t, event.Details, "content")
+	assert.NotContains(t, event.Details, "nestedCredentials")
+	assert.Equal(t, "corr-1", event.RequestContext.CorrelationID)
+	eventMu.Unlock()
+	assert.NoError(t, manager.Close())
+}
+
 func TestSyncWriteDirect_AllSinksFail(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 

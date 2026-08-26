@@ -6,8 +6,8 @@ session recording. It is distinct from the narrated/demo recordings under
 
 When enabled, the DebugSession controller requires the deployment to configure
 `BREAKGLASS_TERMINAL_RECORDING_IMAGE` (or call its equivalent constructor
-option). The image must implement the sidecar contract and should be pinned to
-a digest and signed by the platform's image policy. No image is selected by
+option). The image must implement the sidecar contract and be pinned to a full
+sha256 digest, with signing enforced by the platform's image policy. No image is selected by
 the controller, so installations do not inherit an unreviewed registry or
 internal naming assumption.
 
@@ -28,8 +28,9 @@ messages. A missing image, invalid retention, or pod without a workload
 container fails the DebugSession rather than silently running without the
 requested recording.
 
-The sidecar writes to the private `emptyDir` recording volume and is
-responsible for uploading/finalizing the artifact in an external store. The
+The sidecar writes to the private, size-limited `emptyDir` recording volume and
+is the only container granted access to that volume. It is responsible for
+uploading/finalizing the artifact in an external store. The
 DebugSession status exposes metadata only (`sha256`, size, expiry, and an
 opaque URI). Deployments may provide a `RecordingReplayReader` to stream
   authorized artifacts through `GET /api/debugSessions/:name/recording/replay`;

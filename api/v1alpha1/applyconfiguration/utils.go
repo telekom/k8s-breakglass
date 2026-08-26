@@ -270,6 +270,10 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.SMTPConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TemplateReference"):
 		return &apiv1alpha1.TemplateReferenceApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("TerminalRecordingArtifact"):
+		return &apiv1alpha1.TerminalRecordingArtifactApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("TerminalRecordingStatus"):
+		return &apiv1alpha1.TerminalRecordingStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TerminalSharingConfig"):
 		return &apiv1alpha1.TerminalSharingConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TerminalSharingStatus"):
