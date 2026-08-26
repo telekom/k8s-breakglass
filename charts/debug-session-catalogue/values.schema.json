@@ -75,7 +75,7 @@
         "replicas": { "type": "integer", "minimum": 1 },
         "privileged": { "type": "boolean" },
         "hostPID": { "type": "boolean" },
-        "capabilities": { "type": "array", "items": { "type": "string", "pattern": "^[A-Z0-9_]+$" } },
+        "capabilities": { "type": "array", "items": { "type": "string", "enum": ["AUDIT_CONTROL", "BPF", "NET_ADMIN", "NET_RAW", "PERFMON", "SYS_ADMIN", "SYS_PTRACE"] } },
         "pod": {
           "type": "object",
           "additionalProperties": false,

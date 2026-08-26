@@ -76,9 +76,16 @@ images:
 
 Images are an interface, not a dependency of this chart: each image should
 provide the command in its profile's `command`/`args` values and should be
-reviewed for the capabilities requested by that profile. The defaults are
-deliberately neutral and do not claim to include specialized tools such as
-`tcpdump` or `kubectl`.
+reviewed for the capabilities requested by that profile. The defaults point at
+the independently published upstream utility images and invoke their
+intent-specific entrypoints. Pin each image to its release digest in
+production.
+
+Platform-specific controls (SR-IOV, admission protections, NetworkPolicies,
+Kyverno PolicyExceptions, node labels, and tenant/session policy) remain
+downstream concerns. Consumers may add those controls through their normal
+deployment overlay or Function configuration; this generic chart deliberately
+does not name a platform, tenant, or policy engine.
 
 ### Adding profiles and upgrading from the map format
 
