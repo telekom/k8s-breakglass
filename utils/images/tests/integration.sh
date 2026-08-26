@@ -12,15 +12,43 @@ storage_read_only=$test_root/storage-read-only
 dump_input=$test_root/dump-input
 dump_output=$test_root/dump-output
 outside=$test_root/outside
-trap 'rm -rf "$test_root"' EXIT HUP INT TERM
+remove_storage_image=0
+remove_dump_image=0
 
 fail() {
     echo "utility image integration: $1" >&2
     exit 1
 }
 
+if [ -n "${STORAGE_IMAGE:-}" ]; then
+    storage_image=$STORAGE_IMAGE
+else
+    storage_image=tcaas1618-storage-debug:integration-$$
+    remove_storage_image=1
+fi
+if [ -n "${DUMP_IMAGE:-}" ]; then
+    dump_image=$DUMP_IMAGE
+else
+    dump_image=tcaas1618-dump-reader:integration-$$
+    remove_dump_image=1
+fi
+
+cleanup() {
+    status=$?
+    if [ "$remove_storage_image" -eq 1 ]; then
+        docker image rm "$storage_image" >/dev/null 2>&1 || true
+    fi
+    if [ "$remove_dump_image" -eq 1 ]; then
+        docker image rm "$dump_image" >/dev/null 2>&1 || true
+    fi
+    rm -rf "$test_root"
+    exit "$status"
+}
+trap cleanup EXIT HUP INT TERM
+
 command -v docker >/dev/null 2>&1 || fail "docker is required; integration tests do not silently skip"
 docker buildx version >/dev/null 2>&1 || fail "docker buildx is required"
+docker info >/dev/null 2>&1 || fail "Docker daemon is unavailable; integration tests do not silently skip"
 
 arch=$(docker info --format '{{.Architecture}}')
 case "${IMAGE_PLATFORM:-linux/$arch}" in
@@ -30,9 +58,6 @@ case "${IMAGE_PLATFORM:-linux/$arch}" in
     *) fail "set IMAGE_PLATFORM to linux/amd64 or linux/arm64 (detected ${IMAGE_PLATFORM:-linux/$arch})" ;;
 esac
 
-storage_image=${STORAGE_IMAGE:-tcaas1618-storage-debug:integration}
-dump_image=${DUMP_IMAGE:-tcaas1618-dump-reader:integration}
-
 mkdir -p "$storage_volume" "$storage_reports" "$storage_read_only" \
     "$dump_input/subdir" "$dump_output" "$outside"
 # The container UID is intentionally not the host user. These are temporary,
@@ -41,12 +66,16 @@ chmod 0777 "$storage_volume" "$storage_reports" "$storage_read_only" \
     "$dump_input" "$dump_input/subdir" "$dump_output"
 printf '%s\n' 'keep this pre-existing file' >"$storage_volume/existing-data"
 ln -s existing-data "$storage_volume/path-link"
+mkdir "$storage_volume/nested"
+ln -s /scratch "$storage_volume/nested/path-link"
 printf '%s\n' 'real dump fixture for integration' >"$dump_input/existing.dump"
 printf '%s\n' 'nested fixture' >"$dump_input/subdir/nested.dump"
 printf '%s\n' 'outside fixture' >"$outside/outside.dump"
 ln -s existing.dump "$dump_input/source-link.dump"
 ln -s "$outside" "$dump_input/escape-dir"
 ln -s "$dump_input/existing.dump" "$dump_output/destination-link"
+mkdir "$dump_output/subdir" "$dump_output/nested"
+ln -s /output "$dump_output/nested/path-link"
 
 echo "building utility images for ${platform}"
 docker buildx build --load --platform "$platform" -t "$storage_image" "$images_root/storage-debug"
@@ -148,6 +177,9 @@ fi
 if run_storage --path /scratch/path-link --dry-run >/dev/null 2>&1; then
     fail "symbolic-link test path was accepted"
 fi
+if run_storage --path /scratch/nested/path-link/nested --dry-run >/dev/null 2>&1; then
+    fail "nested symbolic-link test path was accepted"
+fi
 if run_storage --path /scratch/../etc --dry-run >/dev/null 2>&1; then
     fail "test path traversal was accepted"
 fi
@@ -211,6 +243,14 @@ if run_dump copy /input/existing.dump /tmp/escaped.dump >/dev/null 2>&1; then
 fi
 if run_dump copy /input/existing.dump destination-link >/dev/null 2>&1; then
     fail "copy to output symlink unexpectedly succeeded"
+fi
+if docker run --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
+    --security-opt=no-new-privileges --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+    --mount "type=bind,src=$dump_input,dst=/input,readonly" \
+    --mount "type=bind,src=$dump_output,dst=/output" \
+    -e DUMP_OUTPUT_DIR=/output/nested/path-link/subdir "$dump_image" \
+    copy /input/existing.dump nested-copy.dump >/dev/null 2>&1; then
+    fail "copy through a nested output symlink unexpectedly succeeded"
 fi
 if docker run --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
     --security-opt=no-new-privileges --tmpfs /tmp:rw,nosuid,nodev,size=64m \

@@ -31,4 +31,6 @@ Docker-backed proofs. The integration target builds both images for the local
 Docker architecture, runs them as UID/GID 65532 with a read-only rootfs,
 `--cap-drop=ALL`, and no network, then exercises the real packaged tools and all
 safe-copy/report failure boundaries. It fails when Docker is unavailable; it
-does not silently skip.
+does not silently skip. `make -C utils/images multiarch` performs a real
+BuildKit OCI build for both declared platforms and removes its temporary
+archives; CI enables QEMU for this validation while runtime proofs stay native.
