@@ -5206,10 +5206,24 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 		assert.Equal(t, "failed-delete-pod", session.Status.AllowedPods[0].Name)
 	})
 
-	t.Run("preserves unsupported resource kind for retry", func(t *testing.T) {
-		session := newTestDebugSession("cleanup-unsupported-kind", "test-template", "test-cluster", "user@example.com")
+	t.Run("cleans up supported Job resource", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-job-kind", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-			{APIVersion: "batch/v1", Kind: "Job", Name: "unsupported-job", Namespace: "default", Source: "workload"},
+			{APIVersion: "batch/v1", Kind: "Job", Name: "job-resource", Namespace: "default", Source: "workload"},
+		}
+
+		targetClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, false, false)
+		require.NoError(t, err)
+		require.Empty(t, session.Status.DeployedResources)
+	})
+
+	t.Run("preserves unknown resource kind for retry", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-unknown-kind", "test-template", "test-cluster", "user@example.com")
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "unknown-resource", Namespace: "default", Source: "workload"},
 		}
 
 		targetClient := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -5217,9 +5231,9 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 
 		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, false, false)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), `unsupported deployed resource kind "Job"`)
+		assert.Contains(t, err.Error(), `unsupported deployed resource kind "ConfigMap"`)
 		require.Len(t, session.Status.DeployedResources, 1)
-		assert.Equal(t, "unsupported-job", session.Status.DeployedResources[0].Name)
+		assert.Equal(t, "unknown-resource", session.Status.DeployedResources[0].Name)
 	})
 }
 

@@ -57,18 +57,27 @@ jobs:
           go-version-file: go.mod
 
       - name: Install gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.27.1
+        run: |
+          # The pinned module version is intentionally unchanged. Bounded
+          # retries tolerate transient proxy/HTTP2 failures, while the final
+          # attempt still fails closed and never changes versions.
+          install_status=1
+          for attempt in 1 2 3; do
+            if go install github.com/securego/gosec/v2/cmd/gosec@v2.27.1; then
+              install_status=0
+              break
+            fi
+            if [[ "${attempt}" != 3 ]]; then
+              sleep "$((attempt * 5))"
+            fi
+          done
+          exit "${install_status}"
+
+      - name: Test gosec SARIF wrapper
+        run: hack/test-gosec-sarif.sh
 
       - name: Run gosec
-        run: |
-          gosec \
-            -exclude-generated \
-            -exclude-dir=e2e \
-            -exclude-dir=frontend/node_modules \
-            -exclude=G101,G117,G302,G304,G704 \
-            -fmt sarif \
-            -out gosec-results.sarif \
-            ./...
+        run: hack/run-gosec-sarif.sh
 
       - name: Upload gosec results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8

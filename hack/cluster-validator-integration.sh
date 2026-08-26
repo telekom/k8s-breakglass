@@ -16,6 +16,7 @@ NAMESPACE="validator-integration"
 IMAGE="${VALIDATOR_INTEGRATION_IMAGE:-cluster-validator-integration:${GITHUB_SHA:-local}}"
 KIND_NODE_IMAGE="${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cluster-validator-integration.XXXXXX")"
+ARTIFACT_DIR="${VALIDATOR_INTEGRATION_ARTIFACT_DIR:-${RUNNER_TEMP:-/tmp}/cluster-validator-integration-artifacts}"
 KUBECONFIG_FILE="${WORK_DIR}/kind.kubeconfig"
 HELPER_KUBECONFIG="${WORK_DIR}/extension.kubeconfig"
 SERVICE_ACCOUNT="system:serviceaccount:${NAMESPACE}:cluster-validator"
@@ -44,6 +45,10 @@ log() {
 cleanup() {
   local exit_code=$?
   set +e
+  if [[ "${exit_code}" != 0 ]]; then
+    preserve_diagnostics
+    printf 'Diagnostics preserved at %s\n' "${ARTIFACT_DIR}" >&2
+  fi
   if [[ "${CLUSTER_CREATED}" == true && -f "${KUBECONFIG_FILE}" ]]; then
     KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete namespace "${NAMESPACE}" --ignore-not-found --wait --timeout=60s >/dev/null 2>&1
     KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete clusterrolebinding "${CLUSTER_ROLE_BINDING}" --ignore-not-found --wait >/dev/null 2>&1
@@ -59,6 +64,34 @@ cleanup() {
   exit "${exit_code}"
 }
 trap cleanup EXIT
+
+preserve_diagnostics() {
+  mkdir -p "${ARTIFACT_DIR}"
+  # Only reports and redacted diagnostic text leave the temporary directory.
+  # Kubeconfigs contain bearer tokens and are deliberately never copied.
+  local source base
+  for source in "${WORK_DIR}"/*.log "${WORK_DIR}"/*.stderr "${WORK_DIR}"/*.txt "${WORK_DIR}"/*.json; do
+    [[ -f "${source}" ]] || continue
+    base="$(basename "${source}")"
+    case "${base}" in
+      *.kubeconfig|*kubeconfig*) continue ;;
+    esac
+    cp -- "${source}" "${ARTIFACT_DIR}/${base}" >/dev/null 2>&1 || true
+  done
+  # Prove the allowlist did not leak credentials even if a future diagnostic
+  # accidentally contains one. Remove that diagnostic before upload.
+  while IFS= read -r -d '' source; do
+    if grep -Eiq 'BEGIN [A-Z0-9 ]*PRIVATE KEY|client-(certificate|key)-data:|token:[[:space:]]' "${source}" ||
+      { [[ -n "${SERVICE_ACCOUNT_TOKEN}" ]] && grep -Fq "${SERVICE_ACCOUNT_TOKEN}" "${source}"; } ||
+      grep -Fq "${SECRET_MARKER}" "${source}"; then
+      rm -f -- "${source}"
+    fi
+  done < <(find "${ARTIFACT_DIR}" -type f -print0)
+  if find "${ARTIFACT_DIR}" -type f \( -name '*kubeconfig*' -o -name '*.key' -o -name '*.crt' \) -print -quit | grep -q .; then
+    printf 'unsafe credential artifact detected; refusing diagnostic upload\n' >&2
+    find "${ARTIFACT_DIR}" -type f \( -name '*kubeconfig*' -o -name '*.key' -o -name '*.crt' \) -delete
+  fi
+}
 
 require_tools() {
   local tool
@@ -206,9 +239,25 @@ wait_for_pod_result() {
   die "timed out waiting for pod ${pod} (last phase: ${phase})"
 }
 
+wait_for_active_pods_ready() {
+  for _ in $(seq 1 60); do
+    if kubectl get pods --all-namespaces -o json 2>/dev/null | jq -e '
+      all(.items[];
+        .status.phase == "Succeeded" or
+        (.status.phase == "Running" and
+          any(.status.conditions[]?; .type == "Ready" and .status == "True")))
+    ' >/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 run_image_case() {
   local name="$1" mode="$2"
   local pod_file="${WORK_DIR}/${name}.yaml" log_file="${WORK_DIR}/${name}.log"
+  wait_for_active_pods_ready || die "active cluster pods did not become Ready before ${name}"
   cat >"${pod_file}" <<YAML
 apiVersion: v1
 kind: Pod
@@ -230,11 +279,28 @@ YAML
   local phase exit_code
   phase="$(wait_for_pod_result "${name}")"
   kubectl logs "${name}" -n "${NAMESPACE}" >"${log_file}" 2>/dev/null || die "could not read ${name} log"
-  [[ "${phase}" == Succeeded ]] || die "${name} did not succeed; report saved at ${log_file}"
+  if [[ "${phase}" != Succeeded ]]; then
+    collect_pod_diagnostics "${name}"
+    printf '%s\n' "--- ${name} report/log ---" >&2
+    cat "${log_file}" >&2 || true
+    die "${name} did not succeed; report saved at ${log_file}"
+  fi
   exit_code="$(kubectl get pod "${name}" -n "${NAMESPACE}" -o jsonpath='{.status.containerStatuses[0].state.terminated.exitCode}')"
-  [[ "${exit_code}" == 0 ]] || die "${name} returned exit code ${exit_code}; report saved at ${log_file}"
+  if [[ "${exit_code}" != 0 ]]; then
+    collect_pod_diagnostics "${name}"
+    printf '%s\n' "--- ${name} report/log ---" >&2
+    cat "${log_file}" >&2 || true
+    die "${name} returned exit code ${exit_code}; report saved at ${log_file}"
+  fi
   assert_report "${log_file}" "${mode}"
   assert_no_leaks "${log_file}"
+}
+
+collect_pod_diagnostics() {
+  local pod="$1"
+  kubectl get pod "${pod}" -n "${NAMESPACE}" -o wide >"${WORK_DIR}/${pod}-status.txt" 2>&1 || true
+  kubectl describe pod "${pod}" -n "${NAMESPACE}" >"${WORK_DIR}/${pod}-describe.txt" 2>&1 || true
+  kubectl get events -n "${NAMESPACE}" --sort-by=.lastTimestamp >"${WORK_DIR}/events.txt" 2>&1 || true
 }
 
 assert_report() {

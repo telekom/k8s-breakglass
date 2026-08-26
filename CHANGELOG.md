@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Cluster-validator reports now reject traversal and symlink escapes, use
+  owner-only report permissions, and preserve post-upgrade diagnostics in a
+  credential-free CI artifact on failure.
+- Security CI now fails closed on malformed or incomplete gosec SARIF output
+  and reports analyzer/load errors instead of treating skipped packages as a
+  clean scan.
+- **Network debug image**: Rebased the runtime on the immutable netshoot v0.16
+  multi-architecture manifest. The inherited netshoot toolset now supplies all
+  overlapping network commands; the image retains only its bounded helpers,
+  pinned `kubestr`/`pwru` additions, and signed SBOM/provenance workflow. Tool
+  inventory normalizes upstream version-banner formats while the integration
+  proof executes the real storage operation.
 - The standalone debug-session catalogue now uses an ordered, extensible
   profile list with DNS-safe names and stable generic intent names. Existing
   map-shaped profile values must be converted before upgrading; the chart

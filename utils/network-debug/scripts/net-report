@@ -23,15 +23,25 @@ tool_version() {
 	if command -v "$name" >/dev/null 2>&1; then
 		case "$name" in
 			kubestr)
-				value=$(kubestr version 2>/dev/null | sed -n '1p' || true)
-				printf '%s\t%s\n' "$name" "${value:-installed}"
+				value=$(kubestr version 2>/dev/null) || {
+					printf '%s\tunavailable\n' "$name"
+					return
+				}
 				;;
 			pwru)
-				value=$(pwru --version 2>/dev/null | sed -n '1p' || true)
-				printf '%s\t%s\n' "$name" "${value:-installed}"
+				value=$(pwru --version 2>/dev/null) || {
+					printf '%s\tunavailable\n' "$name"
+					return
+				}
 				;;
-			*) printf '%s\tinstalled\n' "$name" ;;
+			*) printf '%s\tinstalled\n' "$name"; return ;;
 		esac
+		version=$(printf '%s\n' "$value" | sed -nE 's/.*(v[0-9]+(\.[0-9]+){1,2}([.-][[:alnum:].-]+)?).*/\1/p' | sed -n '1p')
+		if [ -n "$version" ]; then
+			printf '%s\t%s %s\n' "$name" "$name" "$version"
+		else
+			printf '%s\tinstalled\n' "$name"
+		fi
 	else
 		printf '%s\tunavailable\n' "$name"
 	fi

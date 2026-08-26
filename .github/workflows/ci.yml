@@ -405,7 +405,7 @@ jobs:
             make_dir: utils/network-debug
             target: test
             dockerfile: utils/network-debug/Dockerfile
-            shell_paths: utils/network-debug/scripts/*.sh utils/network-debug/tests/*.sh
+            shell_paths: utils/network-debug/scripts/*.sh utils/network-debug/scripts/net-debug utils/network-debug/scripts/net-report utils/network-debug/tests/*.sh
             metadata: utils/network-debug/IMAGE-METADATA.yaml
           - name: node-recovery-and-network-repair
             make_dir: utils/node-maintenance

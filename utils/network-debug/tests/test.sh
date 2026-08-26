@@ -21,12 +21,12 @@ EOF
 cat >"$fixture/kubestr" <<'EOF'
 #!/bin/sh
 [ "${1:-}" = version ] || exit 2
-printf '%s\n' 'kubestr v0.4.49'
+printf '%s\n' 'Version: v0.4.49'
 EOF
 cat >"$fixture/pwru" <<'EOF'
 #!/bin/sh
 [ "${1:-}" = --version ] || exit 2
-printf '%s\n' 'pwru v1.0.12'
+printf '%s\n' 'pwru version v1.0.12'
 EOF
 chmod +x "$fixture/ip" "$fixture/kubestr" "$fixture/pwru"
 
