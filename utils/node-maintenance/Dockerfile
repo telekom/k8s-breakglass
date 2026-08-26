@@ -48,7 +48,6 @@ LABEL org.opencontainers.image.title="Kubernetes node maintenance" \
       io.telekom.breakglass.node-maintenance.shell="not-supported" \
       io.telekom.breakglass.node-maintenance.capabilities="NET_ADMIN"
 
-# Network repair requires a privileged pod and host networking. The command
-# dispatcher rejects every operation outside its two fixed helper names.
-USER 0
+# Network repair runs as root in a privileged pod with host networking. The
+# base Alpine image already defaults to root; the chart declares this identity.
 ENTRYPOINT ["/usr/local/bin/node-maintenance"]

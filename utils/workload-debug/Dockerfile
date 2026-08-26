@@ -18,7 +18,7 @@ RUN apk add --no-cache \
       ca-certificates=20260611-r0 \
       curl=8.21.0-r0 \
       jq=1.8.1-r0 \
-      openssl=3.5.7-r0 \
+      openssl=3.5.8-r0 \
       tini=0.19.0-r3 \
     && addgroup -S -g 65532 debug \
     && adduser -S -D -H -u 65532 -G debug debug \
