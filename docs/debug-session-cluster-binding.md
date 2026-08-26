@@ -877,6 +877,15 @@ When a binding is found (explicit or auto-discovered), its configuration is merg
 | **approvers** | Full replacement: binding takes precedence |
 | **requiredAuxiliaryResourceCategories** | Additive: both template and binding categories required |
 
+#### Extra deploy variable narrowing
+
+Bindings may set `spec.extraDeployVariables` to constrain the form for a
+specific cluster. Each entry must refer to an existing template variable.
+`options` is an allow-list subset, validation bounds and regexes are
+intersected with the template policy, and `required`, `disabled`, and
+`default` are checked against the resulting policy. Attempts to add an
+unknown variable/option or relax a template bound fail admission/resolution.
+
 #### Constraints Merge (Field-Level)
 
 ```yaml

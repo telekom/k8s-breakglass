@@ -151,7 +151,14 @@ const userGroups = ref<string[]>([]);
 
 // Check if template has extra deploy variables
 const hasExtraDeployVariables = computed(() => {
-  return !!(selectedTemplate.value?.extraDeployVariables && selectedTemplate.value.extraDeployVariables.length > 0);
+  const variables = selectedBindingOption.value?.extraDeployVariables ||
+    selectedClusterDetail.value?.extraDeployVariables || selectedTemplate.value?.extraDeployVariables;
+  return !!(variables && variables.length > 0);
+});
+
+const effectiveExtraDeployVariables = computed(() => {
+  return selectedBindingOption.value?.extraDeployVariables ||
+    selectedClusterDetail.value?.extraDeployVariables || selectedTemplate.value?.extraDeployVariables || [];
 });
 
 // Get the selected cluster's detailed info
@@ -603,7 +610,7 @@ async function handleSubmit() {
     }
 
     // Include extraDeployValues if the template has variables and user has provided values
-    if (selectedTemplate.value?.extraDeployVariables?.length && Object.keys(form.extraDeployValues).length > 0) {
+    if (effectiveExtraDeployVariables.value.length && Object.keys(form.extraDeployValues).length > 0) {
       request.extraDeployValues = form.extraDeployValues;
     }
 
@@ -817,7 +824,7 @@ function handleTemplateChange(ev: Event) {
         :impersonation-info="impersonationInfo"
         :required-auxiliary-resources="requiredAuxiliaryResources"
         :has-extra-deploy-variables="hasExtraDeployVariables"
-        :extra-deploy-variables="selectedTemplate?.extraDeployVariables || []"
+        :extra-deploy-variables="effectiveExtraDeployVariables"
         :user-groups="userGroups"
         :selected-scheduling-option="form.selectedSchedulingOption"
         :target-namespace="form.targetNamespace"

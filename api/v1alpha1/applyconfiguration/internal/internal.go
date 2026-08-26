@@ -1380,6 +1380,12 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: expiresAt
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: extraDeployVariables
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ExtraDeployVariableConstraint
+          elementRelationship: atomic
     - name: hidden
       type:
         scalar: boolean
@@ -2134,6 +2140,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: description
       type:
         scalar: string
+    - name: disabled
+      type:
+        scalar: boolean
     - name: displayName
       type:
         scalar: string
@@ -2144,6 +2153,36 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ExtraDeployInputType
       default: text
+    - name: name
+      type:
+        scalar: string
+    - name: options
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SelectOption
+          elementRelationship: atomic
+    - name: required
+      type:
+        scalar: boolean
+    - name: validation
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.VariableValidation
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ExtraDeployVariableConstraint
+  map:
+    fields:
+    - name: allowedValues
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: default
+      type:
+        namedType: io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.JSON
+    - name: disabled
+      type:
+        scalar: boolean
     - name: name
       type:
         scalar: string

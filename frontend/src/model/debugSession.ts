@@ -330,6 +330,7 @@ export interface AvailableClusterDetail {
   requiredAuxiliaryResourceCategories?: string[];
   approval?: ApprovalInfo;
   status?: ClusterStatusInfo;
+  extraDeployVariables?: ExtraDeployVariable[];
 }
 
 // A single binding option with its resolved configuration
@@ -346,6 +347,7 @@ export interface BindingOption {
   requestReason?: ReasonConfigInfo;
   approvalReason?: ReasonConfigInfo;
   notification?: NotificationConfigInfo;
+  extraDeployVariables?: ExtraDeployVariable[];
 }
 
 // Reference to the cluster binding that provides access
@@ -451,6 +453,7 @@ export interface ExtraDeployVariable {
   allowedGroups?: string[];
   advanced?: boolean;
   group?: string;
+  disabled?: boolean;
 }
 
 // User-provided values for variables (sent in CreateDebugSessionRequest)

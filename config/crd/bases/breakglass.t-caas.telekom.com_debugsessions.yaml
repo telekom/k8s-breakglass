@@ -2857,6 +2857,12 @@ spec:
                         description:
                           description: description provides help text for the user.
                           type: string
+                        disabled:
+                          description: |-
+                            disabled prevents this variable from being requested through a binding.
+                            Template variables are enabled by default; bindings may only set this to
+                            true, never use it to re-enable a disabled variable.
+                          type: boolean
                         displayName:
                           description: displayName is the human-readable label shown
                             in the UI.

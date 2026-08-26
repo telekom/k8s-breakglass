@@ -1162,20 +1162,50 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 	}
 
-	// Coerce extraDeployValues types based on template variable definitions.
+	// Resolve binding-level variable constraints before coercion and validation.
+	// The effective definitions are the intersection of template and binding
+	// policy; a binding can never add variables or widen a template rule.
+	effectiveVariables, err := breakglassv1alpha1.EffectiveExtraDeployVariables(
+		template.Spec.ExtraDeployVariables,
+		func() []breakglassv1alpha1.ExtraDeployVariableConstraint {
+			if resolvedBinding == nil {
+				return nil
+			}
+			return resolvedBinding.Spec.ExtraDeployVariables
+		}(),
+	)
+	if err != nil {
+		reqLog.Warnw("Binding extra deploy variable constraints are invalid", "error", err)
+		apiresponses.RespondBadRequest(ctx, err.Error())
+		return
+	}
+
+	// Coerce extraDeployValues types based on the effective variable definitions.
 	// HTML form inputs and YAML defaults can produce string-encoded numbers/booleans
 	// (e.g., "5" instead of 5). Normalize them before validation and storage so
 	// templates render correct YAML (e.g., `storage: 5Gi` not `storage: "5"Gi`).
 	if len(req.ExtraDeployValues) > 0 {
-		req.ExtraDeployValues = breakglassv1alpha1.CoerceExtraDeployValues(req.ExtraDeployValues, template.Spec.ExtraDeployVariables)
+		req.ExtraDeployValues = breakglassv1alpha1.CoerceExtraDeployValues(req.ExtraDeployValues, effectiveVariables)
+	}
+	// Binding defaults are persisted in the session input so rendering remains
+	// self-contained even if the binding changes after session creation.
+	if req.ExtraDeployValues == nil {
+		req.ExtraDeployValues = make(map[string]apiextensionsv1.JSON)
+	}
+	for _, variable := range effectiveVariables {
+		if variable.Default != nil {
+			if _, provided := req.ExtraDeployValues[variable.Name]; !provided {
+				req.ExtraDeployValues[variable.Name] = *variable.Default.DeepCopy()
+			}
+		}
 	}
 
-	// Validate extraDeployValues against template's extraDeployVariables
+	// Validate extraDeployValues against the effective variable definitions.
 	// This includes checking allowedGroups on variables and options
-	if len(req.ExtraDeployValues) > 0 || len(template.Spec.ExtraDeployVariables) > 0 {
+	if len(req.ExtraDeployValues) > 0 || len(effectiveVariables) > 0 {
 		valErrs := breakglassv1alpha1.ValidateExtraDeployValuesWithGroups(
 			req.ExtraDeployValues,
-			template.Spec.ExtraDeployVariables,
+			effectiveVariables,
 			userGroups,
 			field.NewPath("extraDeployValues"),
 		)

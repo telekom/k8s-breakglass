@@ -114,6 +114,7 @@ type AvailableClusterDetail struct {
 	RequestReason                 *breakglass.ReasonConfigInfo                `json:"requestReason,omitempty"`
 	ApprovalReason                *breakglass.ReasonConfigInfo                `json:"approvalReason,omitempty"`
 	Notification                  *NotificationConfigInfo                     `json:"notification,omitempty"`
+	ExtraDeployVariables          []breakglassv1alpha1.ExtraDeployVariable    `json:"extraDeployVariables,omitempty"`
 	Status                        *ClusterStatusInfo                          `json:"status,omitempty"`
 }
 
@@ -132,6 +133,7 @@ type BindingOption struct {
 	RequestReason                 *breakglass.ReasonConfigInfo                `json:"requestReason,omitempty"`
 	ApprovalReason                *breakglass.ReasonConfigInfo                `json:"approvalReason,omitempty"`
 	Notification                  *NotificationConfigInfo                     `json:"notification,omitempty"`
+	ExtraDeployVariables          []breakglassv1alpha1.ExtraDeployVariable    `json:"extraDeployVariables,omitempty"`
 }
 
 // BindingReference identifies the binding that enabled access
@@ -818,6 +820,10 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *bre
 			ApprovalReason:                c.resolveApprovalReason(template, binding),
 			Notification:                  c.resolveNotification(template, binding),
 		}
+		effectiveVariables, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, binding.Spec.ExtraDeployVariables)
+		if err == nil {
+			option.ExtraDeployVariables = filterExtraDeployVariablesForRequester(effectiveVariables, requester)
+		}
 		detail.BindingOptions = append(detail.BindingOptions, option)
 	}
 
@@ -840,6 +846,9 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *bre
 		detail.RequestReason = c.resolveRequestReason(template, primaryBinding)
 		detail.ApprovalReason = c.resolveApprovalReason(template, primaryBinding)
 		detail.Notification = c.resolveNotification(template, primaryBinding)
+		if effectiveVariables, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, primaryBinding.Spec.ExtraDeployVariables); err == nil {
+			detail.ExtraDeployVariables = filterExtraDeployVariablesForRequester(effectiveVariables, requester)
+		}
 	}
 
 	return detail

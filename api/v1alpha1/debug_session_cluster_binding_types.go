@@ -111,6 +111,12 @@ type DebugSessionClusterBindingSpec struct {
 	// +optional
 	NamespaceConstraints *NamespaceConstraints `json:"namespaceConstraints,omitempty"`
 
+	// extraDeployVariables narrows the variables exposed by the referenced
+	// template for this binding. Entries must name variables defined by the
+	// template; options and validation can only become more restrictive.
+	// +optional
+	ExtraDeployVariables []ExtraDeployVariableConstraint `json:"extraDeployVariables,omitempty"`
+
 	// impersonation configures ServiceAccount impersonation for deployment.
 	// If set, overrides the template's impersonation configuration.
 	// +optional
@@ -509,6 +515,12 @@ func ValidateDebugSessionClusterBinding(binding *DebugSessionClusterBinding) *Va
 		// Bindings don't have a targetNamespace field, so pass empty string
 		result.Warnings = append(result.Warnings, warnNamespaceConstraintIssues(spec.NamespaceConstraints, "")...)
 	}
+
+	// Validate binding-side extra deploy variable constraint shape. Whether a
+	// named variable/options subset exists is checked when the referenced
+	// template is resolved, because selectors may match multiple templates.
+	result.Errors = append(result.Errors,
+		ValidateExtraDeployVariableConstraints(spec.ExtraDeployVariables, specPath.Child("extraDeployVariables"))...)
 
 	// Validate impersonation config if specified
 	if spec.Impersonation != nil {

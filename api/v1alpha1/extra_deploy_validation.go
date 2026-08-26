@@ -158,6 +158,9 @@ func validateExtraDeployValues(
 
 	// Check for required variables
 	for _, varDef := range variables {
+		if varDef.Disabled {
+			continue
+		}
 		if _, provided := values[varDef.Name]; !provided {
 			// Variable not provided - check if required
 			if varDef.Required && varDef.Default == nil {
@@ -289,13 +292,17 @@ func validateTextValue(value apiextensionsv1.JSON, validation *VariableValidatio
 	}
 
 	// Validate pattern
+	patterns := append([]string(nil), validation.AdditionalPatterns...)
 	if validation.Pattern != "" {
-		matched, err := regexp.MatchString(validation.Pattern, strVal)
+		patterns = append(patterns, validation.Pattern)
+	}
+	for _, pattern := range patterns {
+		matched, err := regexp.MatchString(pattern, strVal)
 		if err != nil {
 			allErrs = append(allErrs, field.Invalid(fldPath, strVal,
-				fmt.Sprintf("invalid pattern %q: %v", validation.Pattern, err)))
+				fmt.Sprintf("invalid pattern %q: %v", pattern, err)))
 		} else if !matched {
-			errMsg := fmt.Sprintf("must match pattern %q", validation.Pattern)
+			errMsg := fmt.Sprintf("must match pattern %q", pattern)
 			if validation.PatternError != "" {
 				errMsg = validation.PatternError
 			}
