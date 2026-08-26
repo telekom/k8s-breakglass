@@ -1,0 +1,136 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+set -eu
+
+usage() {
+    cat <<'EOF'
+dump-reader: inspect existing dump files without generating or modifying them
+
+Usage:
+  dump-reader inspect FILE
+  dump-reader checksum FILE
+  dump-reader copy FILE [OUTPUT_NAME]
+  dump-reader help
+
+FILE must be an existing regular file and may not be a symbolic link. `copy`
+writes only beneath DUMP_OUTPUT_DIR (default: /output), refuses to overwrite,
+and accepts a basename only. Mount source files read-only and mount a separate
+output volume when copying an artifact out.
+EOF
+}
+
+fail() {
+    echo "dump-reader: $1" >&2
+    exit 2
+}
+
+validate_source() {
+    source=$1
+    case "$source" in
+        /*) ;;
+        *) fail "FILE must be an absolute path" ;;
+    esac
+    [ -e "$source" ] || fail "FILE does not exist: $source"
+    [ ! -L "$source" ] || fail "symbolic links are not accepted: $source"
+    [ -f "$source" ] || fail "FILE is not a regular file: $source"
+    [ -r "$source" ] || fail "FILE is not readable: $source"
+}
+
+basename_safe() {
+    source=$1
+    name=${source##*/}
+    [ -n "$name" ] || fail "FILE must have a basename"
+    printf '%s\n' "$name"
+}
+
+stat_field() {
+    field=$1
+    source=$2
+    case "$field" in
+        size) format='%s'; bsd_format='%z' ;;
+        mode) format='%A'; bsd_format='%Sp' ;;
+        uid) format='%u'; bsd_format='%u' ;;
+        gid) format='%g'; bsd_format='%g' ;;
+        mtime) format='%Y'; bsd_format='%m' ;;
+        *) fail "unsupported metadata field: $field" ;;
+    esac
+    stat -c "$format" "$source" 2>/dev/null || stat -f "$bsd_format" "$source"
+}
+
+inspect() {
+    source=$1
+    validate_source "$source"
+    name=$(basename_safe "$source")
+    printf '%s\n' \
+        "schema_version=dump-reader/v1" \
+        "name=$name" \
+        "size_bytes=$(stat_field size "$source")" \
+        "mode=$(stat_field mode "$source")" \
+        "uid=$(stat_field uid "$source")" \
+        "gid=$(stat_field gid "$source")" \
+        "mtime_epoch=$(stat_field mtime "$source")"
+}
+
+checksum() {
+    source=$1
+    validate_source "$source"
+    name=$(basename_safe "$source")
+    digest=$(sha256sum "$source" | awk '{print $1}')
+    printf '%s\n' \
+        "schema_version=dump-reader/v1" \
+        "name=$name" \
+        "sha256=$digest"
+}
+
+copy_out() {
+    source=$1
+    validate_source "$source"
+    output_dir=${DUMP_OUTPUT_DIR:-/output}
+    case "$output_dir" in
+        /*) ;;
+        *) fail "DUMP_OUTPUT_DIR must be an absolute path" ;;
+    esac
+    [ -d "$output_dir" ] || fail "DUMP_OUTPUT_DIR does not exist: $output_dir"
+    [ -w "$output_dir" ] || fail "DUMP_OUTPUT_DIR is not writable: $output_dir"
+    name=$(basename_safe "$source")
+    if [ "$#" -eq 2 ] && [ -n "$2" ]; then
+        name=$2
+    fi
+    case "$name" in
+        ''|.|..|*/*) fail "OUTPUT_NAME must be a basename" ;;
+    esac
+    destination=$output_dir/$name
+    [ ! -e "$destination" ] || fail "refusing to overwrite existing output: $destination"
+    umask 077
+    cp "$source" "$destination"
+    printf '%s\n' \
+        "schema_version=dump-reader/v1" \
+        "name=$name" \
+        "destination=$destination" \
+        "bytes=$(stat_field size "$destination")" \
+        "sha256=$(sha256sum "$destination" | awk '{print $1}')"
+}
+
+[ "$#" -gt 0 ] || { usage; exit 0; }
+case "$1" in
+    help|--help|-h)
+        usage
+        ;;
+    inspect)
+        [ "$#" -eq 2 ] || fail "inspect requires exactly one FILE"
+        inspect "$2"
+        ;;
+    checksum)
+        [ "$#" -eq 2 ] || fail "checksum requires exactly one FILE"
+        checksum "$2"
+        ;;
+    copy)
+        [ "$#" -ge 2 ] && [ "$#" -le 3 ] || fail "copy requires FILE and optional OUTPUT_NAME"
+        copy_out "$2" "${3-}"
+        ;;
+    *)
+        fail "unknown command: $1 (use help)"
+        ;;
+esac

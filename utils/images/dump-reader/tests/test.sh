@@ -1,0 +1,44 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+set -eu
+
+root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+reader="$root/bin/dump-reader"
+test_dir=$(mktemp -d "${TMPDIR:-/tmp}/dump-reader-test.XXXXXX")
+trap 'rm -rf "$test_dir"' EXIT HUP INT TERM
+mkdir "$test_dir/output"
+printf '%s\n' 'existing artifact' >"$test_dir/source.dump"
+
+inspect=$($reader inspect "$test_dir/source.dump")
+printf '%s\n' "$inspect" | grep -F 'schema_version=dump-reader/v1' >/dev/null
+printf '%s\n' "$inspect" | grep -F 'name=source.dump' >/dev/null
+printf '%s\n' "$inspect" | grep -F 'size_bytes=18' >/dev/null
+
+checksum=$($reader checksum "$test_dir/source.dump")
+printf '%s\n' "$checksum" | grep -F 'sha256=63a0c194794026e2f3e0374882bff803c4eae4822e7bc891766bb5f28c2c756f' >/dev/null
+
+copy=$(DUMP_OUTPUT_DIR="$test_dir/output" $reader copy "$test_dir/source.dump")
+printf '%s\n' "$copy" | grep -F 'name=source.dump' >/dev/null
+cmp "$test_dir/source.dump" "$test_dir/output/source.dump"
+
+if $reader copy "$test_dir/source.dump" >/dev/null 2>&1; then
+    echo "copy unexpectedly succeeded without a writable output mount" >&2
+    exit 1
+fi
+if $reader inspect "$test_dir/output/missing.dump" >/dev/null 2>&1; then
+    echo "missing source unexpectedly succeeded" >&2
+    exit 1
+fi
+ln -s source.dump "$test_dir/link.dump"
+if $reader inspect "$test_dir/link.dump" >/dev/null 2>&1; then
+    echo "symbolic link unexpectedly accepted" >&2
+    exit 1
+fi
+if DUMP_OUTPUT_DIR="$test_dir/output" $reader copy "$test_dir/source.dump" >/dev/null 2>&1; then
+    echo "overwrite unexpectedly succeeded" >&2
+    exit 1
+fi
+
+echo "dump-reader tests passed"

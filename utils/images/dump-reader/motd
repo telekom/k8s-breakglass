@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+Dump reader utilities
+
+This image reads existing regular files only. It can inspect metadata, compute
+SHA-256 checksums, and copy a selected file to a separate output mount. It
+does not generate dumps or alter source files.
+
+Read the runbook before use:
+https://github.com/telekom/k8s-breakglass/tree/main/utils/images/dump-reader
