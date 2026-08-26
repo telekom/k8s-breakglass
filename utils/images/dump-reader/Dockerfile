@@ -11,10 +11,9 @@ LABEL org.opencontainers.image.title="Dump reader utilities" \
 
 # No dump-generation or debugger package is installed. BusyBox supplies the
 # small POSIX utility set used by the helper; the pinned base is the only
-# runtime dependency and no package manager is added.
-RUN printf '%s\n' 'reader:x:65532:65532:Dump reader:/home/reader:/sbin/nologin' >> /etc/passwd \
-    && printf '%s\n' 'reader:x:65532:' >> /etc/group \
-    && install -d -o 65532 -g 65532 /input /output /usr/share/dump-reader
+# runtime dependency and no package manager is added. Numeric ownership keeps
+# the image independent of mutable passwd/group databases.
+RUN install -d -o 65532 -g 65532 /input /output /usr/share/dump-reader
 
 COPY --chmod=0755 bin/dump-reader /usr/local/bin/dump-reader
 COPY --chmod=0644 motd /etc/motd
