@@ -59,6 +59,10 @@ the invocation, not silently inferred by the image.
 The image first tries in-cluster configuration, then a kubeconfig. Reports are
 written to `/reports/{mode}.json` and also printed to stdout. Mount `/reports`
 as a writable volume, or pass `--report -` to disable the file.
+For safety, a report path supplied with `--report` or `VALIDATOR_REPORT_PATH`
+must resolve below `/reports`; relative paths are resolved within that volume,
+and traversal or symlink escapes are rejected. Report files are written with
+owner-only permissions.
 
 ```bash
 docker run --rm \

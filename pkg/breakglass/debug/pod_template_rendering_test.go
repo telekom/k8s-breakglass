@@ -1470,7 +1470,7 @@ spec:
 	assert.True(t, result.PodSpec.HostNetwork)
 }
 
-func TestRenderPodTemplateStringMultiDoc_UnsupportedKind(t *testing.T) {
+func TestRenderPodTemplateStringMultiDoc_KindJob(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	controller := &DebugSessionController{log: logger}
 
@@ -1486,10 +1486,13 @@ spec:
           image: busybox
 `
 
-	_, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported manifest kind")
-	assert.Contains(t, err.Error(), "Job")
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
+	require.NoError(t, err)
+	job, ok := result.Workload.(*batchv1.Job)
+	require.True(t, ok, "expected *batchv1.Job")
+	assert.Equal(t, "job", job.Name)
+	require.Len(t, result.PodSpec.Containers, 1)
+	assert.Equal(t, "test", result.PodSpec.Containers[0].Name)
 }
 
 func TestRenderPodTemplateStringMultiDoc_EmptyContainersError(t *testing.T) {
@@ -3569,7 +3572,7 @@ spec:
 	assert.Contains(t, err.Error(), "StatefulSet")
 }
 
-func TestRenderPodTemplateStringMultiDoc_UnsupportedKindJob(t *testing.T) {
+func TestRenderPodTemplateStringMultiDoc_KindJobAtReconcilerLevel(t *testing.T) {
 	controller := newTestController()
 
 	templateStr := `apiVersion: batch/v1
@@ -3584,10 +3587,11 @@ spec:
           image: busybox:latest
 `
 	ctx := newTestRenderContext()
-	_, err := controller.renderPodTemplateStringMultiDoc(templateStr, ctx)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported manifest kind")
-	assert.Contains(t, err.Error(), "Job")
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, ctx)
+	require.NoError(t, err)
+	job, ok := result.Workload.(*batchv1.Job)
+	require.True(t, ok, "expected *batchv1.Job")
+	assert.Equal(t, "test", job.Name)
 }
 
 func TestRenderPodTemplateStringMultiDoc_AdditionalResourceInvalidYAML(t *testing.T) {
