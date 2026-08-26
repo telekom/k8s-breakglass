@@ -145,7 +145,11 @@ assert_container_security() {
 	[ "$readonly_root" = true ] || fail "$name did not use a read-only root filesystem"
 	[ "$user" = 0 ] || fail "$name did not run as UID 0 for the capability-bound helper"
 	[ "$cap_drop" = ALL ] || fail "$name did not drop all capabilities (got '$cap_drop')"
-	[ "$cap_add" = NET_ADMIN ] || fail "$name did not add only NET_ADMIN (got '$cap_add')"
+	# Docker versions differ in whether inspect reports the kernel capability
+	# prefix. Both spellings represent the same single capability; do not make
+	# the behavioral security assertion depend on that presentation detail.
+	normalized_cap_add=${cap_add#CAP_}
+	[ "$normalized_cap_add" = NET_ADMIN ] || fail "$name did not add only NET_ADMIN (got '$cap_add')"
 	case ",$security_opts," in
 		*,no-new-privileges,* ) ;;
 		*) fail "$name did not set no-new-privileges (got '$security_opts')" ;;

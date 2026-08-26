@@ -235,15 +235,23 @@ if [ -n "$OUTPUT" ]; then
         "$report_real"|"$report_real"/*) ;;
         *) echo "--output must be beneath STORAGE_REPORT_DIR: $REPORT_DIR" >&2; exit 2 ;;
     esac
-    [ ! -e "$OUTPUT" ] && [ ! -L "$OUTPUT" ] || {
+    if [ -e "$OUTPUT" ] || [ -L "$OUTPUT" ]; then
         echo "refusing to overwrite existing report: $OUTPUT" >&2
         exit 1
-    }
+    fi
     report_tmp=$(mktemp "$output_dir/.storage-report.XXXXXX") || {
         echo "cannot create temporary report in: $output_dir" >&2
         exit 1
     }
     write_report >"$report_tmp"
+    # Reports are intentionally readable by the caller that mounted the
+    # disposable report directory. mktemp creates mode 0600 files, which
+    # would leave a report owned by UID 65532 unreadable to the host after
+    # this container exits.
+    chmod 0644 "$report_tmp" || {
+        echo "cannot make temporary report readable: $report_tmp" >&2
+        exit 1
+    }
     if ! ln "$report_tmp" "$OUTPUT"; then
         echo "refusing to overwrite existing report: $OUTPUT" >&2
         exit 1
