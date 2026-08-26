@@ -131,6 +131,15 @@ jobs:
             --destination chart-dist \
             --app-version "${{ github.ref_name }}"
 
+          # The standalone catalogue is introduced by the foundation stack.
+          # Keep the base release valid before that chart lands, while making
+          # its package part of the same immutable release once present.
+          if [ -d charts/debug-session-catalogue ]; then
+            helm package charts/debug-session-catalogue \
+              --destination chart-dist \
+              --app-version "${{ github.ref_name }}"
+          fi
+
           echo "Packaged chart artifacts:"
           ls -la chart-dist
       - name: Upload chart artifact
@@ -505,13 +514,15 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # Publish Helm charts to GHCR OCI
+  # Publish Helm charts to GHCR OCI; the following step signs and verifies
+  # every packaged chart, including the optional standalone catalogue.
   # ---------------------------------------------------------------------------
   publish-chart:
     needs: [prepare]
     permissions:
       contents: read
       packages: write
+      id-token: write
     runs-on: ubuntu-latest
     steps:
       - name: Download chart artifact
@@ -523,6 +534,18 @@ jobs:
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.2.2
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.2
+      - name: Generate chart SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: chart-dist
+          format: spdx-json
+          output-file: chart-sbom.spdx.json
       - name: Login to GHCR for Helm OCI
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} \
@@ -560,6 +583,113 @@ jobs:
             helm push "${chart_package}" "${CHART_REPO}"
             echo "Published ${chart_package} to ${CHART_REPO}"
           done
+
+      - name: Publish debug-session-catalogue chart when present
+        env:
+          CHART_REPO: oci://ghcr.io/${{ github.repository }}/charts
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          packages=(chart-dist/debug-session-catalogue-*.tgz)
+          if [ "${#packages[@]}" -eq 0 ]; then
+            echo "No standalone debug-session-catalogue chart package; skipping."
+            exit 0
+          fi
+          [ "${#packages[@]}" -eq 1 ] || {
+            echo "Expected one debug-session-catalogue package, found ${#packages[@]}." >&2
+            exit 1
+          }
+          chart_package="${packages[0]}"
+          metadata="$(helm show chart "${chart_package}")"
+          chart_name="$(printf '%s\n' "${metadata}" | awk '/^name:/ {print $2}')"
+          chart_version="$(printf '%s\n' "${metadata}" | awk '/^version:/ {print $2}')"
+          chart_app_version="$(printf '%s\n' "${metadata}" | awk '/^appVersion:/ {print $2}' | tr -d '"')"
+          [ "${chart_name}" = "debug-session-catalogue" ] || {
+            echo "Unexpected catalogue chart name: ${chart_name}" >&2
+            exit 1
+          }
+          [ -n "${chart_version}" ] || { echo "Catalogue chart version is empty." >&2; exit 1; }
+          [ "${chart_app_version}" = "${GITHUB_REF_NAME}" ] || {
+            echo "Catalogue appVersion ${chart_app_version} does not match ${GITHUB_REF_NAME}." >&2
+            exit 1
+          }
+
+          set +e
+          remote_metadata="$(helm show chart "${CHART_REPO}/${chart_name}" --version "${chart_version}" 2>&1)"
+          lookup_status=$?
+          set -e
+          if [ "${lookup_status}" -eq 0 ]; then
+            remote_app_version="$(printf '%s\n' "${remote_metadata}" | awk '/^appVersion:/ {print $2}' | tr -d '"')"
+            if [ "${remote_app_version}" = "${chart_app_version}" ]; then
+              echo "Catalogue chart ${chart_version} already published for ${remote_app_version}; skipping push."
+              exit 0
+            fi
+            echo "Catalogue chart ${chart_version} exists with appVersion ${remote_app_version}; bump Chart.yaml version." >&2
+            exit 1
+          fi
+          if ! printf '%s\n' "${remote_metadata}" | grep -Eiq '(^Error: .*(not found|manifest unknown)|(^|[[:space:]])manifest unknown([[:space:][:punct:]]|$))'; then
+            echo "Could not inspect catalogue chart ${chart_name}:${chart_version} before publishing." >&2
+            printf '%s\n' "${remote_metadata}" >&2
+            exit "${lookup_status}"
+          fi
+          helm push "${chart_package}" "${CHART_REPO}"
+          echo "Published ${chart_package} to ${CHART_REPO}"
+
+      - name: Sign and verify immutable chart contracts
+        env:
+          CHART_REPO: oci://ghcr.io/${{ github.repository }}/charts
+          SUPPLY_CHAIN_IDENTITY_REGEXP: https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          chart_packages=(chart-dist/*.tgz)
+          [ "${#chart_packages[@]}" -gt 0 ] || { echo "No chart packages found" >&2; exit 1; }
+          : > catalogue-image-refs.txt
+          catalogue_chart_ref=""
+          for chart_package in "${chart_packages[@]}"; do
+            metadata="$(helm show chart "${chart_package}")"
+            chart_name="$(printf '%s\n' "${metadata}" | awk '/^name:/ {print $2}')"
+            chart_version="$(printf '%s\n' "${metadata}" | awk '/^version:/ {print $2}')"
+            remote="${CHART_REPO}/${chart_name}"
+            digest="$(docker buildx imagetools inspect "${remote}:${chart_version}" | awk '/^Digest:/ {print $2; exit}')"
+            [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "No immutable digest for ${remote}:${chart_version}" >&2; exit 1; }
+            subject="${remote#oci://}@${digest}"
+            cosign sign --yes "${subject}"
+            cosign attest --yes --type spdxjson --predicate chart-sbom.spdx.json "${subject}"
+            digest_hex="${digest#sha256:}"
+            jq -n --arg subject "${remote#oci://}" --arg digest "${digest_hex}" --arg sha "${GITHUB_SHA}" \
+              --arg workflow "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              '{_type:"https://in-toto.io/Statement/v1",subject:[{name:$subject,digest:{sha256:$digest}}],predicateType:"https://slsa.dev/provenance/v1",predicate:{buildDefinition:{buildType:"https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml",externalParameters:{source:{uri:"https://github.com/telekom/k8s-breakglass",digest:{sha1:$sha}}},resolvedDependencies:[]},runDetails:{builder:{id:$workflow}}}}' > chart-provenance.json
+            cosign attest --yes --type slsaprovenance --predicate chart-provenance.json "${subject}"
+            cosign verify "${subject}" \
+              --certificate-identity-regexp="${SUPPLY_CHAIN_IDENTITY_REGEXP}" \
+              --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+            cosign verify-attestation "${subject}" --type spdxjson \
+              --certificate-identity-regexp="${SUPPLY_CHAIN_IDENTITY_REGEXP}" \
+              --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+            cosign verify-attestation "${subject}" --type slsaprovenance \
+              --certificate-identity-regexp="${SUPPLY_CHAIN_IDENTITY_REGEXP}" \
+              --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+            if [ "${chart_name}" = "debug-session-catalogue" ]; then
+              catalogue_chart_ref="${subject}"
+              helm show values "${chart_package}" > catalogue-values.yaml
+              ruby -ryaml -e '
+                values = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false) || {}
+                images = values.fetch("images", {})
+                refs = values.fetch("profiles", []).map do |profile|
+                  image = profile["image"] || images.fetch(profile.fetch("imageKey"))
+                  repository = image.fetch("repository")
+                  digest = image["digest"].to_s
+                  tag = image["tag"].to_s
+                  digest.empty? ? "#{repository}:#{tag}" : "#{repository}@#{digest}"
+                end
+                puts refs.uniq.sort
+              ' catalogue-values.yaml > catalogue-image-refs.txt
+            fi
+          done
+          if [ -n "${catalogue_chart_ref}" ]; then
+            hack/verify-catalogue-supply-chain.sh --images-file catalogue-image-refs.txt --chart "${catalogue_chart_ref}"
+          fi
 
   # ---------------------------------------------------------------------------
   # Create GitHub Release with manifests, bgctl binaries, and SBOM
