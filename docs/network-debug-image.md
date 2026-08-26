@@ -36,7 +36,10 @@ capture to a public tracker without redaction.
 `kubestr` talks to the Kubernetes API and may create short-lived diagnostic
 resources for its selected command. Use a read-only service account unless a
 specific kubestr check documents a narrower write permission. The image itself
-does not contain `kubectl`, credentials, or a kubeconfig.
+does not contain `kubectl`, credentials, or a kubeconfig. Keep
+`automountServiceAccountToken: false` for ordinary network diagnostics; mount
+an explicitly approved, read-only service account only for the kubestr command
+that needs API access.
 
 The image runs as UID 0 to support packet capture and eBPF tools. A workload
 or DebugSession using it must isolate the network namespace and grant only the
@@ -47,6 +50,10 @@ unless the incident approval explicitly requires it. The shell is an operator
 tool, not a bounded repair API: commands such as `ip route`, `ip link`, and
 `ethtool` can mutate a shared namespace. Use the dedicated node-maintenance
 repair workflow for allowlisted repairs.
+
+The repository's `config/samples/debug-pod-template-network.yaml` shows the
+same image in a `DebugPodTemplate`; replace its version tag with the reviewed
+final manifest digest before applying it to a cluster.
 
 ## Reproducible evidence
 
