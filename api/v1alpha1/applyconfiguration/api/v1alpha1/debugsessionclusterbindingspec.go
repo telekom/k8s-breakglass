@@ -57,6 +57,10 @@ type DebugSessionClusterBindingSpecApplyConfiguration struct {
 	// namespaceConstraints defines where debug pods can be deployed.
 	// Can only be MORE restrictive than the template's constraints.
 	NamespaceConstraints *NamespaceConstraintsApplyConfiguration `json:"namespaceConstraints,omitempty"`
+	// extraDeployVariables narrows the variables exposed by the referenced
+	// template for this binding. Entries must name variables defined by the
+	// template; options and validation can only become more restrictive.
+	ExtraDeployVariables []ExtraDeployVariableConstraintApplyConfiguration `json:"extraDeployVariables,omitempty"`
 	// impersonation configures ServiceAccount impersonation for deployment.
 	// If set, overrides the template's impersonation configuration.
 	Impersonation *ImpersonationConfigApplyConfiguration `json:"impersonation,omitempty"`
@@ -210,6 +214,19 @@ func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithConstraints(value
 // If called multiple times, the NamespaceConstraints field is set to the value of the last call.
 func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithNamespaceConstraints(value *NamespaceConstraintsApplyConfiguration) *DebugSessionClusterBindingSpecApplyConfiguration {
 	b.NamespaceConstraints = value
+	return b
+}
+
+// WithExtraDeployVariables adds the given value to the ExtraDeployVariables field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the ExtraDeployVariables field.
+func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithExtraDeployVariables(values ...*ExtraDeployVariableConstraintApplyConfiguration) *DebugSessionClusterBindingSpecApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithExtraDeployVariables")
+		}
+		b.ExtraDeployVariables = append(b.ExtraDeployVariables, *values[i])
+	}
 	return b
 }
 

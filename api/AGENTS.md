@@ -14,3 +14,4 @@ This document provides conventions specifically for AI coding agents working in 
 3. **Validation**: Use kubebuilder validation markers (e.g. `//+kubebuilder:validation:Required`, `//+kubebuilder:validation:Enum=...`) on all new fields to enforce API constraints.
 4. **Fuzz Testing**: Add cases to `fuzz_test.go` when adding new complex types or validations.
 5. **Backwards Compatibility**: Do not make backwards-incompatible changes to `v1alpha1` unless absolutely necessary and documented in the CHANGELOG.
+6. **Binding constraint narrowing**: Resolve `DebugSessionClusterBinding.spec.extraDeployVariables` through the shared effective-variable helper; binding options, validation, required/disabled state, and defaults must never widen the referenced template.

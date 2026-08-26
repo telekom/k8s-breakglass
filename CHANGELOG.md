@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   images through the signed utility-image release matrix, with their existing
   runtime behavior gates and multi-architecture build contexts.
 
+- DebugSession cluster bindings can narrow template extra-deploy variables
+  (option subsets, validation bounds/regexes, required or disabled state, and
+  defaults) without widening the template policy. Effective constraints are
+  surfaced by the template-cluster API and frontend form.
+
 - The debug-session-catalogue Helm chart provides administrator-authored,
   restricted DebugSession profiles for workload, network, storage, dump-access,
   and cluster-validation diagnostics.
