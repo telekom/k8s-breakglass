@@ -27,6 +27,7 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/util/yaml"
@@ -207,6 +208,135 @@ func TestSampleCoverage(t *testing.T) {
 	// Note: This test is intentionally soft - it logs gaps but doesn't fail
 	// because the main validation test already ensures all CRD kinds have samples.
 	// This coverage check is for documentation/review purposes.
+}
+
+// TestDebugSampleSecurityContract validates the behavior represented by the
+// debug sample objects. In particular, migration-only host access must be
+// visibly deprecated and network images must be immutable. This intentionally
+// decodes the YAML into API objects; it does not inspect source text or rely on
+// comments and key ordering.
+func TestDebugSampleSecurityContract(t *testing.T) {
+	decoder := sampleDecoder(t)
+	for _, filename := range []string{
+		"debug_pod_templates.yaml",
+		"debug-pod-template-comprehensive.yaml",
+		"debug_session_templates.yaml",
+		"debug-session-template-comprehensive.yaml",
+		"debug_session_template_namespace_selectors.yaml",
+	} {
+		path := filepath.Join(findSamplesDir(t), filename)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", filename, err)
+		}
+
+		for documentNumber, doc := range splitYAMLDocuments(t, data) {
+			if len(bytes.TrimSpace(doc)) == 0 || !isBreakglassResource(doc) {
+				continue
+			}
+			object, _, err := decoder.Decode(doc, nil, nil)
+			if err != nil {
+				t.Fatalf("decode %s document %d: %v", filename, documentNumber+1, err)
+			}
+
+			switch resource := object.(type) {
+			case *DebugPodTemplate:
+				validateDebugPodSample(t, filename, resource)
+			case *DebugSessionTemplate:
+				validateDebugSessionSample(t, filename, resource)
+			}
+		}
+	}
+}
+
+func sampleDecoder(t *testing.T) runtime.Decoder {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := AddToScheme(scheme); err != nil {
+		t.Fatalf("add API scheme: %v", err)
+	}
+	return serializer.NewCodecFactory(scheme).UniversalDeserializer()
+}
+
+func validateDebugPodSample(t *testing.T, filename string, sample *DebugPodTemplate) {
+	t.Helper()
+	if sample.Spec.Template == nil {
+		return
+	}
+
+	podSpec := sample.Spec.Template.Spec
+	elevated := podSpec.HostNetwork || podSpec.HostPID || podSpec.HostIPC || len(podSpec.Volumes) > 0 && hasHostPathVolume(podSpec.Volumes)
+	for _, container := range append(append([]corev1.Container{}, podSpec.InitContainers...), podSpec.Containers...) {
+		image := container.Image
+		if strings.Contains(image, "nicolaka/netshoot") && !strings.Contains(image, "@sha256:") {
+			t.Errorf("%s/%s uses a mutable netshoot image %q", filename, sample.Name, image)
+		}
+		if container.SecurityContext != nil && container.SecurityContext.Privileged != nil && *container.SecurityContext.Privileged {
+			elevated = true
+		}
+	}
+
+	if !elevated {
+		return
+	}
+	annotations := sample.Annotations
+	if annotations["breakglass.t-caas.telekom.com/deprecated"] != "true" {
+		t.Errorf("%s/%s has elevated pod behavior without a deprecation marker", filename, sample.Name)
+	}
+	if strings.TrimSpace(annotations["breakglass.t-caas.telekom.com/deprecation-message"]) == "" {
+		t.Errorf("%s/%s has elevated pod behavior without safe guidance", filename, sample.Name)
+	}
+	if strings.TrimSpace(annotations["breakglass.t-caas.telekom.com/replacement"]) == "" {
+		t.Errorf("%s/%s has elevated pod behavior without a catalogue replacement", filename, sample.Name)
+	}
+}
+
+func hasHostPathVolume(volumes []corev1.Volume) bool {
+	for _, volume := range volumes {
+		if volume.HostPath != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func validateDebugSessionSample(t *testing.T, filename string, sample *DebugSessionTemplate) {
+	t.Helper()
+	kubectl := sample.Spec.KubectlDebug
+	elevated := false
+	if kubectl != nil {
+		if ephemeral := kubectl.EphemeralContainers; ephemeral != nil {
+			for _, image := range ephemeral.AllowedImages {
+				if strings.Contains(image, "nicolaka/netshoot") && !strings.Contains(image, "@sha256:") {
+					t.Errorf("%s/%s allows a mutable netshoot image %q", filename, sample.Name, image)
+				}
+			}
+			if ephemeral.AllowPrivileged {
+				elevated = true
+			}
+		}
+		if node := kubectl.NodeDebug; node != nil {
+			if namespaces := node.HostNamespaces; namespaces != nil && (namespaces.HostNetwork || namespaces.HostPID || namespaces.HostIPC) {
+				elevated = true
+			}
+		}
+	}
+	if overrides := sample.Spec.PodOverrides; overrides != nil && overrides.Spec != nil {
+		for _, hostNamespace := range []*bool{overrides.Spec.HostNetwork, overrides.Spec.HostPID, overrides.Spec.HostIPC} {
+			if hostNamespace != nil && *hostNamespace {
+				elevated = true
+			}
+		}
+	}
+
+	if elevated {
+		if !sample.Spec.Deprecated {
+			t.Errorf("%s/%s has elevated session behavior without spec.deprecated=true", filename, sample.Name)
+		}
+		if strings.TrimSpace(sample.Spec.DeprecationMessage) == "" {
+			t.Errorf("%s/%s has elevated session behavior without safe guidance", filename, sample.Name)
+		}
+	}
 }
 
 // findSamplesDir locates the config/samples directory relative to the test file

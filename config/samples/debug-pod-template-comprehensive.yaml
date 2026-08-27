@@ -2,6 +2,10 @@
 # These templates cover common operator use-cases and can be used as a base
 # for customizing debug sessions in your environment.
 #
+# This is a documentation catalogue, not an apply-all bundle. The elevated
+# historical examples below are explicitly quarantined with deprecation
+# annotations; use charts/debug-session-catalogue for supported node access.
+#
 # Categories covered:
 # - General purpose debugging
 # - Network troubleshooting
@@ -170,7 +174,7 @@ spec:
         kubernetes.io/os: linux
       containers:
       - name: netdebug
-        image: nicolaka/netshoot:latest
+        image: ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70
         imagePullPolicy: IfNotPresent
         command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
         securityContext:
@@ -194,6 +198,10 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugPodTemplate
 metadata:
   name: netshoot-host-network
+  annotations:
+    breakglass.t-caas.telekom.com/deprecated: "true"
+    breakglass.t-caas.telekom.com/deprecation-message: "Do not apply: use the disabled network-diagnostics catalogue profile with explicit elevation and approved images."
+    breakglass.t-caas.telekom.com/replacement: "debug-session-catalogue/network-diagnostics"
 spec:
   displayName: "Netshoot Host Network"
   description: "Network debugging with host network namespace for node-level troubleshooting"
@@ -214,7 +222,7 @@ spec:
         effect: NoSchedule
       containers:
       - name: netdebug
-        image: nicolaka/netshoot:latest
+        image: ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70
         imagePullPolicy: IfNotPresent
         command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
         securityContext:
@@ -238,6 +246,10 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugPodTemplate
 metadata:
   name: tcpdump-capture
+  annotations:
+    breakglass.t-caas.telekom.com/deprecated: "true"
+    breakglass.t-caas.telekom.com/deprecation-message: "Do not apply: use the disabled dump-access catalogue profile with explicit elevation and a reviewed read-only source."
+    breakglass.t-caas.telekom.com/replacement: "debug-session-catalogue/dump-access"
 spec:
   displayName: "TCPDump Capture"
   description: "Packet capture with tcpdump for traffic analysis"
@@ -258,7 +270,7 @@ spec:
         effect: NoSchedule
       containers:
       - name: tcpdump
-        image: nicolaka/netshoot:latest
+        image: ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70
         imagePullPolicy: IfNotPresent
         command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
         securityContext:
@@ -336,6 +348,10 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugPodTemplate
 metadata:
   name: host-filesystem-readonly
+  annotations:
+    breakglass.t-caas.telekom.com/deprecated: "true"
+    breakglass.t-caas.telekom.com/deprecation-message: "Do not apply without a reviewed hostPath policy; prefer the disabled dump-access catalogue profile with an approved read-only source."
+    breakglass.t-caas.telekom.com/replacement: "debug-session-catalogue/dump-access"
 spec:
   displayName: "Host Filesystem (Read-Only)"
   description: "Read-only access to host filesystem for log inspection and filesystem analysis"
@@ -440,6 +456,10 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugPodTemplate
 metadata:
   name: jvm-debug
+  annotations:
+    breakglass.t-caas.telekom.com/deprecated: "true"
+    breakglass.t-caas.telekom.com/deprecation-message: "Do not apply without a reviewed node-debug policy; prefer the catalogue workload-diagnostics profile."
+    breakglass.t-caas.telekom.com/replacement: "debug-session-catalogue/workload-diagnostics"
 spec:
   displayName: "JVM Debug"
   description: "Java debugging tools (jcmd, jmap, jstack, jps, async-profiler)"
@@ -667,6 +687,10 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugPodTemplate
 metadata:
   name: perf-tools
+  annotations:
+    breakglass.t-caas.telekom.com/deprecated: "true"
+    breakglass.t-caas.telekom.com/deprecation-message: "Do not apply: use a reviewed, explicitly elevated catalogue profile for node performance diagnostics."
+    breakglass.t-caas.telekom.com/replacement: "debug-session-catalogue/node-recovery"
 spec:
   displayName: "Performance Tools"
   description: "Linux performance analysis tools (perf, strace, ltrace, sysstat)"
@@ -819,6 +843,10 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugPodTemplate
 metadata:
   name: node-privileged
+  annotations:
+    breakglass.t-caas.telekom.com/deprecated: "true"
+    breakglass.t-caas.telekom.com/deprecation-message: "Do not apply: use the disabled node-recovery catalogue profile with explicit elevation and approved images."
+    breakglass.t-caas.telekom.com/replacement: "debug-session-catalogue/node-recovery"
 spec:
   displayName: "Node Privileged"
   description: "EMERGENCY ONLY: Full privileged access to node with all host namespaces"
@@ -843,7 +871,7 @@ spec:
       - operator: Exists
       containers:
       - name: debug
-        image: nicolaka/netshoot:latest
+        image: ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70
         imagePullPolicy: IfNotPresent
         command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
         securityContext:
@@ -877,6 +905,10 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugPodTemplate
 metadata:
   name: node-nsenter
+  annotations:
+    breakglass.t-caas.telekom.com/deprecated: "true"
+    breakglass.t-caas.telekom.com/deprecation-message: "Do not apply: use the disabled node-recovery catalogue profile with explicit elevation and approved images."
+    breakglass.t-caas.telekom.com/replacement: "debug-session-catalogue/node-recovery"
 spec:
   displayName: "Node nsenter"
   description: "EMERGENCY ONLY: Use nsenter to enter node namespaces (requires privileged)"

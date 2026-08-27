@@ -257,7 +257,7 @@ spec:
           - matchLabels:
               restricted: "true"
       allowedImages:
-        - "nicolaka/netshoot:*"
+        - "ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70"
         - "busybox:*"
       requireImageDigest: false
       allowPrivileged: false
@@ -332,6 +332,8 @@ metadata:
 spec:
   displayName: "Emergency Node Debug"
   description: "Privileged node debugging for emergency scenarios - requires approval"
+  deprecated: true
+  deprecationMessage: "Deprecated legacy sample. Use the disabled node-recovery catalogue profile with explicit target-node, confirmation, and approval controls."
   mode: hybrid
   podTemplateRef:
     name: privileged-debug
@@ -345,7 +347,7 @@ spec:
     nodeDebug:
       enabled: true
       allowedImages:
-        - "nicolaka/netshoot:*"
+        - "ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70"
       hostNamespaces:
         hostNetwork: true
         hostPID: true

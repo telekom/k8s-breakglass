@@ -14,6 +14,12 @@
 # - Performance profiling
 # - Log analysis
 # - Collaborative debugging
+#
+# This file is a documentation catalogue, not an apply-all bundle. Elevated
+# and node-oriented examples are retained for migration reference only and
+# are marked deprecated below. For supported deployments, use the
+# charts/debug-session-catalogue chart, whose profiles are disabled until an
+# administrator explicitly opts into elevation.
 
 ---
 # =============================================================================
@@ -332,6 +338,8 @@ metadata:
 spec:
   displayName: "Network Host Debug"
   description: "Host network debugging with NET_ADMIN capabilities for network team"
+  deprecated: true
+  deprecationMessage: "Deprecated legacy sample. Use the disabled network-diagnostics catalogue profile with explicit elevation and approved images."
   mode: workload
   podTemplateRef:
     name: netshoot-host-network
@@ -382,6 +390,8 @@ metadata:
 spec:
   displayName: "Network Packet Capture"
   description: "TCPdump session for packet capture analysis - requires security approval"
+  deprecated: true
+  deprecationMessage: "Deprecated legacy sample. Use the disabled dump-access catalogue profile with explicit elevation and an approved read-only source."
   mode: workload
   podTemplateRef:
     name: tcpdump-capture
@@ -498,7 +508,7 @@ spec:
       allowedImages:
         - "busybox:*"
         - "alpine:*"
-        - "nicolaka/netshoot:*"
+        - "ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70"
       requireImageDigest: false
       allowPrivileged: false
       requireNonRoot: true
@@ -562,7 +572,7 @@ spec:
       allowedImages:
         - "busybox:*"
         - "alpine:*"
-        - "nicolaka/netshoot:*"
+        - "ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70"
         - "curlimages/curl:*"
       requireImageDigest: false
       allowPrivileged: false
@@ -617,6 +627,8 @@ metadata:
 spec:
   displayName: "Kubectl Node Debug"
   description: "Debug nodes using kubectl debug node - requires approval"
+  deprecated: true
+  deprecationMessage: "Deprecated legacy sample. Use the disabled node-recovery catalogue profile with explicit target-node and approval controls."
   mode: kubectl-debug
   targetNamespace: breakglass-debug
   
@@ -627,7 +639,7 @@ spec:
       enabled: true
       allowedImages:
         - "alpine:*"
-        - "nicolaka/netshoot:*"
+        - "ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70"
         - "busybox:*"
       hostNamespaces:
         hostNetwork: true
@@ -674,6 +686,8 @@ metadata:
 spec:
   displayName: "Hybrid Full Debug"
   description: "Combined workload + kubectl-debug for maximum flexibility"
+  deprecated: true
+  deprecationMessage: "Deprecated legacy sample. Use separate restricted catalogue profiles and opt into elevation only for an approved intent."
   mode: hybrid
   podTemplateRef:
     name: netshoot-standard
@@ -693,13 +707,13 @@ spec:
       allowedImages:
         - "busybox:*"
         - "alpine:*"
-        - "nicolaka/netshoot:*"
+        - "ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70"
       allowPrivileged: false
       requireNonRoot: true
     nodeDebug:
       enabled: true
       allowedImages:
-        - "nicolaka/netshoot:*"
+        - "ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70"
       hostNamespaces:
         hostNetwork: true
         hostPID: true
@@ -756,6 +770,8 @@ metadata:
 spec:
   displayName: "Emergency Node Access"
   description: "EMERGENCY ONLY: Full privileged node access - requires security team approval"
+  deprecated: true
+  deprecationMessage: "Deprecated legacy sample. Use the disabled node-recovery catalogue profile with explicit target-node, confirmation, and approval controls."
   mode: workload
   podTemplateRef:
     name: node-privileged
@@ -817,6 +833,8 @@ metadata:
 spec:
   displayName: "Incident Response"
   description: "Debug session for active incidents with collaborative access"
+  deprecated: true
+  deprecationMessage: "Deprecated legacy sample. Use the disabled catalogue profile matching the approved incident intent; do not apply this broad host-access example."
   mode: hybrid
   podTemplateRef:
     name: netshoot-host-network
