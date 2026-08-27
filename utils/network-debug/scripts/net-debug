@@ -179,7 +179,12 @@ capture_command() {
 
 	# Keep this argv literal and reviewable: in particular, -p prevents
 	# tcpdump from enabling promiscuous mode on the target interface.
-	tcpdump -p -i "$interface" -s "$snaplen" -c "$packets" -w "$TEMP_EVIDENCE" -- ${filter:+"$filter"} >"$TEMP_EVIDENCE.err" 2>&1 &
+	# The staging directory is deliberately mode 700.  tcpdump otherwise
+	# drops from root to its packaged capture user before opening -w and then
+	# cannot enter that private directory.  Keep the process in the already
+	# admission-bounded container identity instead of weakening the directory
+	# or output-file permissions.
+	tcpdump -Z root -p -i "$interface" -s "$snaplen" -c "$packets" -w "$TEMP_EVIDENCE" -- ${filter:+"$filter"} >"$TEMP_EVIDENCE.err" 2>&1 &
 	ACTIVE_PID=$!
 	(
 		sleep "$duration"

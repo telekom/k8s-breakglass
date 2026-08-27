@@ -110,16 +110,35 @@ all([.spec.containers[],.spec.ephemeralContainers[]][]; all(.volumeMounts[]?; (.
 ' >/dev/null || requirement 'ephemeral selected-pod security boundary was not retained by the API'
 capture_status=waiting
 for _ in $(seq 1 60); do
-  capture_status=$(kubectl -n "$namespace" get pod target -o json | jq -r '.status.ephemeralContainerStatuses[]? | select(.name == "capture") | if .state.terminated then "terminated" elif .state.running then "running" else "waiting" end' | tail -1)
+  capture_status=$(kubectl -n "$namespace" get pod target -o json | jq -r '[.status.ephemeralContainerStatuses[]? | select(.name == "capture") | if .state.terminated != null then "terminated" elif .state.running != null then "running" else "waiting" end] | last // "missing"')
   [ "$capture_status" = terminated ] && break
   sleep 1
 done
-[ "$capture_status" = terminated ] || requirement 'ephemeral selected-pod capture did not terminate within its bound'
-capture_log=$(kubectl -n "$namespace" logs target -c capture)
-printf '%s\n' "$capture_log" | grep -Fx 'proof_status complete' >/dev/null || requirement 'ephemeral capture proof did not complete'
-printf '%s\n' "$capture_log" | grep -Fx 'decoy_packets 0' >/dev/null || requirement 'ephemeral capture observed decoy traffic'
-printf '%s\n' "$capture_log" | grep -E '^target_packets [1-9][0-9]*$' >/dev/null || requirement 'ephemeral capture missed target traffic'
-printf '%s\n' "$capture_log" | grep -E '^bytes [1-9][0-9]*$' >/dev/null || requirement 'ephemeral capture produced no bounded evidence'
+if [ "$capture_status" != terminated ]; then
+  kubectl -n "$namespace" get pod target -o json | jq '.status.ephemeralContainerStatuses // []' >&2 || true
+  kubectl -n "$namespace" logs target -c capture --timestamps >&2 || true
+  requirement "ephemeral selected-pod capture did not terminate within its bound (state: $capture_status)"
+fi
+capture_log=$(kubectl -n "$namespace" logs target -c capture) || {
+  kubectl -n "$namespace" get pod target -o json | jq '.status.ephemeralContainerStatuses // []' >&2 || true
+  requirement 'ephemeral capture logs were unavailable'
+}
+printf '%s\n' "$capture_log" | grep -Fx 'proof_status complete' >/dev/null || {
+  printf '%s\n' "$capture_log" >&2
+  requirement 'ephemeral capture proof did not complete'
+}
+printf '%s\n' "$capture_log" | grep -Fx 'decoy_packets 0' >/dev/null || {
+  printf '%s\n' "$capture_log" >&2
+  requirement 'ephemeral capture observed decoy traffic'
+}
+printf '%s\n' "$capture_log" | grep -E '^target_packets [1-9][0-9]*$' >/dev/null || {
+  printf '%s\n' "$capture_log" >&2
+  requirement 'ephemeral capture missed target traffic'
+}
+printf '%s\n' "$capture_log" | grep -E '^bytes [1-9][0-9]*$' >/dev/null || {
+  printf '%s\n' "$capture_log" >&2
+  requirement 'ephemeral capture produced no bounded evidence'
+}
 kubectl -n "$namespace" delete pod target decoy --wait=true --timeout=90s >/dev/null
 if kubectl -n "$namespace" get pod target decoy >/dev/null 2>&1; then requirement 'selected-pod target or decoy survived exact cleanup'; fi
 printf 'selected-pod ephemeral capture behavior passed\ntarget_uid %s\n' "$target_uid"

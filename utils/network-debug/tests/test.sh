@@ -102,6 +102,7 @@ capture_report=$(FAKE_TCPDUMP_ARGS="$capture_fixture/args" NETWORK_DEBUG_WORK_DI
 printf '%s\n' "$capture_report" | grep -F 'packet_count 2' >/dev/null
 printf '%s\n' "$capture_report" | grep -F 'sha256 ' >/dev/null
 grep -F -- '-p -i eth0 -s 64 -c 2' "$capture_fixture/args" >/dev/null
+grep -F -- '-Z root -p -i eth0 -s 64 -c 2' "$capture_fixture/args" >/dev/null
 [ -f "$capture_fixture/work/capture.pcap" ]
 test -z "$(find "$capture_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
 if NETWORK_DEBUG_WORK_DIR="$capture_fixture/work" PATH="$capture_fixture/bin:/usr/bin:/bin" \
