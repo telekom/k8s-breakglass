@@ -2,6 +2,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+FROM golang:1.27@sha256:c5b07c17f54c5f22230c4b4da6e90249165cf55368e01a52808cb92064e18836 AS network-action-builder
+
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /src
+COPY cmd/network-action/ ./
+RUN CGO_ENABLED=0 GO111MODULE=off GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
+      go build -trimpath -ldflags='-s -w' -o /out/network-action .
+
 # The manifest digest is pinned so every architecture starts from the same
 # reviewed Alpine release. BuildKit resolves the selected architecture.
 FROM alpine:3.22.1@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1
@@ -14,10 +23,12 @@ ARG BUILD_DATE=unknown
 # toolbox, a compiler, a package manager, or an interactive shell entrypoint.
 RUN apk add --no-cache \
         ethtool=6.14.1-r0 \
+        flock=2.41-r9 \
         iproute2=6.15.0-r0 \
     && rm -f /sbin/apk /sbin/apk.static
 
 COPY bin/node-maintenance /usr/local/bin/node-maintenance
+COPY --from=network-action-builder /out/network-action /usr/local/sbin/network-action
 COPY lib/common.sh /usr/local/libexec/node-maintenance/common.sh
 COPY lib/network-repair.sh /usr/local/libexec/node-maintenance/network-repair
 COPY lib/node-recovery-preflight.sh /usr/local/libexec/node-maintenance/node-recovery
@@ -29,6 +40,7 @@ COPY runbooks/node-recovery-preflight.md /usr/share/breakglass/runbooks/upstream
 COPY runbooks/kexec-recovery-validation.md /usr/share/breakglass/runbooks/upstream/node-maintenance/kexec-recovery-validation.md
 
 RUN chmod 0555 /usr/local/bin/node-maintenance \
+        /usr/local/sbin/network-action \
         /usr/local/libexec/node-maintenance/network-repair \
         /usr/local/libexec/node-maintenance/node-recovery \
         /usr/local/libexec/node-maintenance/kexec-recovery-validate \

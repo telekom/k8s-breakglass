@@ -96,7 +96,7 @@ validate_approved_action "$action"
 validate_approved_network_request "$target_node" "$interface" "$action" "$neighbor_address" "$bridge_name" "$entry_mac" "$vlan" "$confirmation"
 prepare_evidence_dir "$evidence_dir"
 trap 'release_operation_lock || true' EXIT
-acquire_operation_lock "$evidence_dir"
+acquire_operation_lock "$evidence_dir" "$APPROVED_NETWORK_REQUEST_DIGEST"
 
 bundle=$(new_bundle "$evidence_dir" network-repair)
 write_metadata "$bundle/metadata" network-repair "$target_node" "$interface" "$action"
@@ -119,6 +119,8 @@ capture "$bundle/before-neighbors.txt" ip neigh show dev "$interface" || true
 
 case "$action" in
 	neighbor-replace)
+		# Set by validate_neighbor_address in the sourced common contract.
+		# shellcheck disable=SC2153
 		if ! capture "$bundle/before-neighbor-route.txt" ip "$NEIGHBOR_FAMILY" route get "$neighbor_address" dev "$interface"; then
 			record_event operation-completed preflight-failed
 			die "neighbor '$neighbor_address' is not reachable through exact interface '$interface'; no repair was attempted (evidence: $bundle)"
@@ -167,48 +169,29 @@ printf 'Target: %s\nInterface: %s\nAction: %s\nEvidence: %s\n' \
 	"$target_node" "$interface" "$action" "$bundle"
 printf 'Confirmation and controller action binding accepted. Applying one allowlisted action...\n'
 
-if ! assert_interface_ifindex "$interface" "$interface_ifindex"; then
-	record_event operation-completed preflight-failed
-	die "interface '$interface' changed before mutation; no repair was attempted (evidence: $bundle)"
-fi
-if [ "$action" = bridge-fdb-replace ] && ! assert_interface_ifindex "$bridge_name" "$bridge_ifindex"; then
-	record_event operation-completed preflight-failed
-	die "bridge '$bridge_name' changed before mutation; no repair was attempted (evidence: $bundle)"
-fi
-
 set +e
 case "$action" in
 	link-cycle)
-		if capture "$bundle/action-link-down.txt" ip link set dev "$interface" down; then
-			capture "$bundle/action-link-up.txt" ip link set dev "$interface" up
-			action_status=$?
-		else
-			action_status=$?
-		fi
+		capture "$bundle/action-link-cycle.txt" network-action link-cycle "$interface_ifindex"
+		action_status=$?
 		;;
 	restart-autonegotiation)
-		capture "$bundle/action-restart-autonegotiation.txt" ethtool -r "$interface"
+		capture "$bundle/action-restart-autonegotiation.txt" network-action restart-autonegotiation "$interface_ifindex"
 		action_status=$?
 		;;
 	neighbor-replace)
-		capture "$bundle/action-neighbor-replace.txt" ip "$NEIGHBOR_FAMILY" neigh replace "$neighbor_address" lladdr "$entry_mac" nud reachable dev "$interface"
+		# Set by validate_neighbor_address in the sourced common contract.
+		# shellcheck disable=SC2153
+		neighbor_family=${NEIGHBOR_FAMILY#-}
+		capture "$bundle/action-neighbor-replace.txt" network-action neighbor-replace "$interface_ifindex" "$neighbor_family" "$neighbor_address" "$entry_mac"
 		action_status=$?
 		;;
 	bridge-fdb-replace)
-		capture "$bundle/action-bridge-fdb-replace.txt" bridge fdb replace "$entry_mac" dev "$interface" master static vlan "$vlan"
+		capture "$bundle/action-bridge-fdb-replace.txt" network-action bridge-fdb-replace "$interface_ifindex" "$bridge_ifindex" "$entry_mac" "$vlan"
 		action_status=$?
 		;;
 esac
 set -e
-
-if ! assert_interface_ifindex "$interface" "$interface_ifindex"; then
-	record_event operation-completed failed
-	die "interface '$interface' changed during mutation; inspect evidence at $bundle"
-fi
-if [ "$action" = bridge-fdb-replace ] && ! assert_interface_ifindex "$bridge_name" "$bridge_ifindex"; then
-	record_event operation-completed failed
-	die "bridge '$bridge_name' changed during mutation; inspect evidence at $bundle"
-fi
 
 capture "$bundle/after-link.txt" ip -details link show dev "$interface" || true
 capture "$bundle/after-addresses.txt" ip -brief address show dev "$interface" || true

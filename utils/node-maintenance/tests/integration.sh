@@ -20,6 +20,7 @@ built_image=0
 image_owned=0
 container_name=
 volume_name=
+holder_name=
 
 fail() {
 	printf 'FAIL: %s\n' "$*" >&2
@@ -33,6 +34,13 @@ pass() {
 cleanup() {
 	exit_code=$?
 	cleanup_failed=0
+	if [ -n "${holder_name:-}" ]; then
+		"$docker_bin" rm -f "$holder_name" >/dev/null 2>&1 || true
+		if "$docker_bin" container inspect "$holder_name" >/dev/null 2>&1; then
+			printf 'FAIL: disposable holder container %s survived cleanup\n' "$holder_name" >&2
+			cleanup_failed=1
+		fi
+	fi
 	if [ -n "${container_name:-}" ]; then
 		"$docker_bin" rm -f "$container_name" >/dev/null 2>&1 || true
 		if "$docker_bin" container inspect "$container_name" >/dev/null 2>&1; then
@@ -185,16 +193,16 @@ new_fixture() {
 				-c 'mkdir /evidence/race && mv /evidence/race /evidence/race-original && ln -s /host/etc /evidence/race' \
 				|| fail 'could not seed rename attack fixture'
 			;;
-		guard-operation-lock)
-			"$docker_bin" run --rm --entrypoint /bin/sh \
-				--mount "source=$volume_name,destination=/evidence" "$image" \
-				-c 'mkdir /evidence/.node-maintenance-operation.lock' \
-				|| fail 'could not seed concurrent-operation fixture'
-			;;
 	esac
 }
 
 destroy_fixture() {
+	if [ -n "${holder_name:-}" ]; then
+		"$docker_bin" rm -f "$holder_name" >/dev/null 2>&1 || true
+		if "$docker_bin" container inspect "$holder_name" >/dev/null 2>&1; then
+			fail "disposable holder container '$holder_name' survived cleanup"
+		fi
+	fi
 	"$docker_bin" rm -f "$container_name" >/dev/null 2>&1 || true
 	if "$docker_bin" container inspect "$container_name" >/dev/null 2>&1; then
 		fail "disposable container '$container_name' survived cleanup"
@@ -203,6 +211,7 @@ destroy_fixture() {
 	"$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1 && fail "disposable volume '$volume_name' survived cleanup"
 	container_name=
 	volume_name=
+	holder_name=
 }
 
 approved_network_request() {
@@ -475,8 +484,17 @@ grep -Eq '^192\.0\.2\.2 +lladdr +02:00:00:00:00:02 +REACHABLE' "$neighbor_host_b
 	|| fail 'neighbor-replace did not create the exact requested entry in the disposable namespace'
 grep -q '^action_exit_status=0$' "$neighbor_host_bundle/metadata" || fail 'neighbor-replace did not record success'
 grep -q '"result":"succeeded"' "$neighbor_host_bundle/events.jsonl" || fail 'neighbor-replace completion recording hook is missing'
+neighbor_tuple_digest=$(printf '%s' "$approved_request" | sha256sum | awk '{print $1}')
+lock_record=$("$docker_bin" run --rm --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/cat "$image" \
+	/evidence/.node-maintenance-operation.lock) || fail 'could not read persistent operation lock record'
+printf '%s\n' "$lock_record" | grep -Fqx "tuple_sha256=$neighbor_tuple_digest" \
+	|| fail 'operation lock record was not bound to the exact approved tuple digest'
+printf '%s\n' "$lock_record" | grep -Fqx 'approval_id=approval-repair-neighbor-replace' \
+	|| fail 'operation lock record omitted the exact approval identity'
 destroy_fixture
-pass 'neighbor-replace changes only the exact requested entry in a disposable Linux namespace'
+pass 'neighbor-replace changes only the exact requested entry and binds its lock record to the approval tuple'
 
 run_network_fixture repair-bridge-fdb-replace 0 bridge-fdb-replace network-repair \
 	--target-node node-a --interface fdb0 --bridge br0 --action bridge-fdb-replace \
@@ -536,71 +554,171 @@ grep -q 'does not match requested action' "$fixture_dir/output" || fail 'approva
 destroy_fixture
 pass 'each repair requires an independently bound exact approved action'
 
-run_command guard-operation-lock 2 none read-only node-recovery --target-node node-a --interface lo \
-	--evidence-dir /evidence --confirm NODE-RECOVERY-PREFLIGHT
-grep -q 'another node-maintenance operation is active' "$fixture_dir/output" || fail 'concurrent-operation lease produced no denial'
-destroy_fixture
-pass 'a concurrent operation sharing the controller evidence lease is denied'
+run_network_tuple_mismatch() {
+	field=$1
+	approved_tuple=$2
+	label="guard-approved-tuple-$field"
+	new_fixture "$label"
+	set +e
+	"$docker_bin" run --name "$container_name" --user 0 \
+		--env BREAKGLASS_NODE_NAME=node-a \
+		--env BREAKGLASS_OPERATION_ID="operation-$label" \
+		--env BREAKGLASS_RECORDING_ID="recording-$label" \
+		--env BREAKGLASS_APPROVAL_ID="approval-$label" \
+		--env BREAKGLASS_APPROVED_ACTION=link-cycle \
+		--env BREAKGLASS_APPROVED_NETWORK_REQUEST="$approved_tuple" \
+		--network none --read-only --cap-drop ALL \
+		--security-opt no-new-privileges --security-opt seccomp=builtin \
+		--mount "source=$volume_name,destination=/evidence" \
+		"$image" network-repair --target-node node-a --interface lo --action link-cycle \
+		--evidence-dir /evidence --confirm NETWORK-REPAIR >"$fixture_dir/output" 2>&1
+	mismatch_exit=$?
+	set -e
+	[ "$mismatch_exit" -eq 2 ] || { cat "$fixture_dir/output"; fail "$field approval mismatch returned $mismatch_exit, expected 2"; }
+	grep -q 'controller-approved network request does not exactly match' "$fixture_dir/output" \
+		|| fail "$field approval mismatch produced no exact-tuple denial"
+	assert_container_security "$container_name" none
+	destroy_fixture
+}
 
-# A killed holder must not permanently deny a retry for the identical immutable
-# operation/recording tuple.  The owner timestamp is made stale only after the
-# real SIGKILL, modelling elapsed controller recovery time without sleeping for
-# the production lease TTL in CI.
-new_fixture guard-stale-operation-lock
+run_network_tuple_mismatch target-node \
+	'target_node=node-b&interface=lo&action=link-cycle&neighbor_address=&bridge=&entry_mac=&vlan=&confirmation=NETWORK-REPAIR'
+run_network_tuple_mismatch interface \
+	'target_node=node-a&interface=eth0&action=link-cycle&neighbor_address=&bridge=&entry_mac=&vlan=&confirmation=NETWORK-REPAIR'
+run_network_tuple_mismatch action \
+	'target_node=node-a&interface=lo&action=restart-autonegotiation&neighbor_address=&bridge=&entry_mac=&vlan=&confirmation=NETWORK-REPAIR'
+run_network_tuple_mismatch neighbor-address \
+	'target_node=node-a&interface=lo&action=link-cycle&neighbor_address=192.0.2.9&bridge=&entry_mac=&vlan=&confirmation=NETWORK-REPAIR'
+run_network_tuple_mismatch bridge \
+	'target_node=node-a&interface=lo&action=link-cycle&neighbor_address=&bridge=br0&entry_mac=&vlan=&confirmation=NETWORK-REPAIR'
+run_network_tuple_mismatch entry-mac \
+	'target_node=node-a&interface=lo&action=link-cycle&neighbor_address=&bridge=&entry_mac=02:00:00:00:00:09&vlan=&confirmation=NETWORK-REPAIR'
+run_network_tuple_mismatch vlan \
+	'target_node=node-a&interface=lo&action=link-cycle&neighbor_address=&bridge=&entry_mac=&vlan=100&confirmation=NETWORK-REPAIR'
+run_network_tuple_mismatch confirmation \
+	'target_node=node-a&interface=lo&action=link-cycle&neighbor_address=&bridge=&entry_mac=&vlan=&confirmation=DIFFERENT'
+pass 'every field in the exact approved network tuple has an independent mismatch denial'
+
+# The kernel-held flock is authoritative for liveness. An active holder remains
+# exclusive even when its informational timestamp is older than the removed
+# 300-second lease threshold; SIGKILL releases it immediately.
+new_fixture guard-operation-lock
 holder_name="${container_name}-holder"
-# The isolated container, not this harness, expands its controller environment.
+holder_tuple='target_node=node-a&interface=lo&action=link-cycle&neighbor_address=&bridge=&entry_mac=&vlan=&confirmation=NETWORK-REPAIR'
+holder_digest=$(printf '%s' "$holder_tuple" | sha256sum | awk '{print $1}')
+# The isolated container, not this harness, expands controller values.
 # shellcheck disable=SC2016
 "$docker_bin" run -d --name "$holder_name" --user 0 \
-	--env BREAKGLASS_OPERATION_ID=operation-guard-stale-operation-lock \
-	--env BREAKGLASS_RECORDING_ID=recording-guard-stale-operation-lock \
+	--env BREAKGLASS_OPERATION_ID=operation-guard-operation-lock \
+	--env BREAKGLASS_RECORDING_ID=recording-guard-operation-lock \
+	--env BREAKGLASS_APPROVAL_ID=approval-guard-operation-lock \
+	--env BREAKGLASS_TUPLE_DIGEST="$holder_digest" \
 	--network none --read-only --cap-drop ALL \
 	--security-opt no-new-privileges --security-opt seccomp=builtin \
 	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" \
-	-c '. /usr/local/libexec/node-maintenance/common.sh; EVIDENCE_DIR=/evidence; operation_id=$BREAKGLASS_OPERATION_ID; recording_id=$BREAKGLASS_RECORDING_ID; acquire_operation_lock /evidence; while :; do sleep 60; done' \
-	>/dev/null || fail 'could not start stale-lock holder'
-"$docker_bin" kill --signal KILL "$holder_name" >/dev/null || fail 'could not SIGKILL stale-lock holder'
-"$docker_bin" wait "$holder_name" >/dev/null 2>&1 || true
-"$docker_bin" rm "$holder_name" >/dev/null || fail 'could not remove killed stale-lock holder'
+	-c '. /usr/local/libexec/node-maintenance/common.sh; EVIDENCE_DIR=/evidence; operation_id=$BREAKGLASS_OPERATION_ID; recording_id=$BREAKGLASS_RECORDING_ID; approval_id=$BREAKGLASS_APPROVAL_ID; acquire_operation_lock /evidence "$BREAKGLASS_TUPLE_DIGEST"; : >/evidence/holder-ready; while :; do sleep 60; done' \
+	>/dev/null || fail 'could not start flock holder'
+holder_ready=false
+attempt=0
+while [ "$attempt" -lt 20 ]; do
+	if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
+		--security-opt no-new-privileges --security-opt seccomp=builtin \
+		--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" \
+		-c 'test -f /evidence/holder-ready'; then
+		holder_ready=true
+		break
+	fi
+	attempt=$((attempt + 1))
+done
+[ "$holder_ready" = true ] || fail 'flock holder did not report readiness'
+# The isolated container expands its positional tuple digest.
+# shellcheck disable=SC2016
 "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
 	--security-opt no-new-privileges --security-opt seccomp=builtin \
 	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" \
-	-c 'printf "operation_id=operation-guard-stale-operation-lock\\nrecording_id=recording-guard-stale-operation-lock\\ncreated_epoch=1\\n" >/evidence/.node-maintenance-operation.lock/owner' \
-	|| fail 'could not age stale-lock owner fixture'
+	-c 'printf "schema=node-maintenance-lock/v2\noperation_id=operation-guard-operation-lock\nrecording_id=recording-guard-operation-lock\napproval_id=approval-guard-operation-lock\ntuple_sha256=%s\nholder_pid=1\nacquired_epoch=1\n" "$1" >/evidence/.node-maintenance-operation.lock' aged "$holder_digest" \
+	|| fail 'could not age active flock record in place'
 set +e
 "$docker_bin" run --name "$container_name" --user 0 \
 	--env BREAKGLASS_NODE_NAME=node-a \
-	--env BREAKGLASS_OPERATION_ID=operation-guard-stale-operation-lock \
-	--env BREAKGLASS_RECORDING_ID=recording-guard-stale-operation-lock \
+	--env BREAKGLASS_OPERATION_ID=operation-competing-lock \
+	--env BREAKGLASS_RECORDING_ID=recording-competing-lock \
 	--network none --read-only --cap-drop ALL \
 	--security-opt no-new-privileges --security-opt seccomp=builtin \
 	--mount "source=$volume_name,destination=/evidence" "$image" node-recovery \
 	--target-node node-a --interface lo --evidence-dir /evidence --confirm NODE-RECOVERY-PREFLIGHT \
 	>"$fixture_dir/output" 2>&1
-stale_recovery_exit=$?
+active_holder_exit=$?
 set -e
-[ "$stale_recovery_exit" -eq 0 ] || { cat "$fixture_dir/output"; fail 'same-operation stale lease was not recovered after SIGKILL'; }
+[ "$active_holder_exit" -eq 2 ] || { cat "$fixture_dir/output"; fail "active flock competitor returned $active_holder_exit, expected 2"; }
+grep -q 'another node-maintenance operation is active' "$fixture_dir/output" \
+	|| fail 'aged active holder produced no concurrency denial'
+assert_container_security "$container_name" none
+"$docker_bin" rm "$container_name" >/dev/null || fail 'could not remove denied lock competitor'
+"$docker_bin" kill --signal KILL "$holder_name" >/dev/null || fail 'could not SIGKILL flock holder'
+"$docker_bin" wait "$holder_name" >/dev/null 2>&1 || true
+"$docker_bin" rm "$holder_name" >/dev/null || fail 'could not remove killed flock holder'
+holder_name=
+set +e
+"$docker_bin" run --name "$container_name" --user 0 \
+	--env BREAKGLASS_NODE_NAME=node-a \
+	--env BREAKGLASS_OPERATION_ID=operation-after-crash \
+	--env BREAKGLASS_RECORDING_ID=recording-after-crash \
+	--network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" "$image" node-recovery \
+	--target-node node-a --interface lo --evidence-dir /evidence --confirm NODE-RECOVERY-PREFLIGHT \
+	>"$fixture_dir/retry-output" 2>&1
+crash_retry_exit=$?
+set -e
+[ "$crash_retry_exit" -eq 0 ] || { cat "$fixture_dir/retry-output"; fail 'flock was not released immediately after SIGKILL'; }
 assert_container_security "$container_name" none
 destroy_fixture
-pass 'SIGKILL stale lease is reclaimed only by the same immutable operation and recording tuple'
+pass 'kernel flock denies an arbitrarily old live holder and releases immediately on SIGKILL'
 
-new_fixture guard-ifindex-replacement
-# The isolated container executes the literal namespace fixture.
+new_fixture guard-kernel-interface-identities
+# The isolated container expands only its literal namespace fixture values.
 # shellcheck disable=SC2016
-ifindex_output=$("$docker_bin" run --rm --user 0 --network none --read-only --cap-drop ALL --cap-add NET_ADMIN \
+identity_output=$("$docker_bin" run --rm --user 0 --network none --read-only --cap-drop ALL --cap-add NET_ADMIN \
 	--security-opt no-new-privileges --security-opt seccomp=builtin --entrypoint /bin/sh "$image" -c '
 		set -eu
-		. /usr/local/libexec/node-maintenance/common.sh
-		ip link add race0 type dummy
-		old=$(pin_interface_ifindex race0)
-		ip link del race0
-		ip link add race0 type dummy
-		if assert_interface_ifindex race0 "$old"; then exit 70; fi
-		printf "ifindex-replacement-rejected\\n"
-	') || fail 'ifindex replacement fixture did not execute'
-printf '%s\n' "$ifindex_output" | grep -Fx 'ifindex-replacement-rejected' >/dev/null \
-	|| fail 'ifindex replacement was not rejected before a mutation could be issued'
+		ip link add race0 type veth peer name racepeer0
+		ip address add 198.51.100.1/24 dev race0
+		ip link set race0 up
+		original_ifindex=$(cat /sys/class/net/race0/ifindex)
+		ip link set race0 name pinned-original
+		ip link add race0 type veth peer name racepeer1
+		ip link set race0 up
+		network-action neighbor-replace "$original_ifindex" 4 198.51.100.2 02:00:00:00:00:22
+		ip neigh show to 198.51.100.2 dev pinned-original | grep -q "02:00:00:00:00:22"
+		if ip neigh show to 198.51.100.2 dev race0 | grep -q "02:00:00:00:00:22"; then exit 70; fi
+		printf "replacement-name-untouched\n"
+
+		ip link add br0 type bridge
+		ip link add br1 type bridge
+		ip link set br0 type bridge vlan_filtering 1
+		ip link set br1 type bridge vlan_filtering 1
+		ip link set br0 up
+		ip link set br1 up
+		ip link add fdb0 type veth peer name fdbpeer0
+		ip link set fdb0 master br0
+		ip link set fdb0 up
+		bridge vlan add dev fdb0 vid 100
+		port_ifindex=$(cat /sys/class/net/fdb0/ifindex)
+		approved_master_ifindex=$(cat /sys/class/net/br0/ifindex)
+		test "$(basename "$(readlink -f /sys/class/net/fdb0/master)")" = br0
+		ip link set fdb0 nomaster
+		ip link set fdb0 master br1
+		if network-action bridge-fdb-replace "$port_ifindex" "$approved_master_ifindex" 02:00:00:00:01:22 100; then exit 71; fi
+		if bridge fdb show br br1 | grep -qi "02:00:00:00:01:22"; then exit 72; fi
+		printf "changed-master-rejected\n"
+	') || fail 'kernel interface identity adversarial fixture did not execute'
+printf '%s\n' "$identity_output" | grep -Fx 'replacement-name-untouched' >/dev/null \
+	|| fail 'a replacement interface inherited a mutation addressed to the pinned kernel identity'
+printf '%s\n' "$identity_output" | grep -Fx 'changed-master-rejected' >/dev/null \
+	|| fail 'changed bridge membership was not rejected using the approved master ifindex'
 destroy_fixture
-pass 'delete/recreate interface TOCTOU is rejected by ifindex pinning'
+pass 'kernel-index actions avoid replacement names and reject changed bridge membership'
 
 recovery_dir="$tmp_dir/recovery"
 mkdir -p "$recovery_dir"

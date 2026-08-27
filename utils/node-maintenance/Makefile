@@ -15,6 +15,7 @@ OCI_ARCHIVE ?= node-maintenance.oci.tar
 
 test:
 	./tests/test-helpers.sh
+	GOCACHE=$${NODE_MAINTENANCE_GOCACHE:-$${TMPDIR:-/tmp}/node-maintenance-go-cache} go test ./cmd/network-action
 
 integration:
 	./tests/integration.sh

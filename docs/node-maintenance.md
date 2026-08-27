@@ -23,6 +23,9 @@ contexts. Workload templates must inject exact controller-owned node,
 operation, recording, approval, and approved-action bindings. The node comes
 from Downward API `spec.nodeName`; hostname is not a trust input. Confirmation
 is not authorization, and approval for one operation cannot authorize another.
+Network repair binds the complete approved tuple to a SHA-256 digest in a
+process-held evidence-volume `flock` record. Kernel release on process death,
+not a timestamp or PID, controls liveness.
 
 Built-in runbooks remain under
 `/usr/share/breakglass/runbooks/upstream/node-maintenance/`. A downstream
@@ -43,8 +46,10 @@ builds and runs the image against a Linux Docker daemon in disposable
 `--network none` namespaces with the
 separate preflight/repair capability boundaries. It executes every allowlisted action,
 including real veth neighbor and VLAN bridge-FDB replacement, checks exact-
-target and injection denials, and verifies fixed-path kexec inputs without
-invoking even a fixture executable. Tests also exercise recording evidence,
+target and injection denials, all approved-tuple mismatches, interface-name
+replacement, bridge reparenting after preflight, active-holder clock age, and
+immediate crash release. It verifies fixed-path kexec inputs without invoking
+even a fixture executable. Tests also exercise recording evidence,
 shared-volume concurrency denial, read-only recovery assets, digest mismatch,
 container and volume cleanup, and fixed timeout/output quotas. Missing Docker,
 namespace support, or security flags fails the job with diagnostics; the proof
@@ -57,3 +62,12 @@ is deliberately unresolved: a provider must separately define immutable
 signed assets, platform/kernel compatibility, lockdown and measured-boot
 policy, health/rollback behavior, node quiescence, its own approval, and a
 bounded cleanup contract before execution can be considered.
+
+Network mutations use pinned kernel ifindexes. Linux does not expose an atomic
+FDB add that also asserts the expected master ifindex, a persistent netdevice
+handle preventing ifindex reuse, or an ifindex-based legacy auto-negotiation
+ioctl. The helper checks bridge identity around the kernel request and derives
+the ioctl name from the pinned index, but admission/controller policy must still
+exclude other privileged host-network writers. The shared evidence volume must
+provide local Linux advisory-lock semantics and its persistent lock file must
+not be replaced while workloads may run.

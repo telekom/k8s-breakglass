@@ -107,9 +107,10 @@ initrd_bytes=$asset_bytes
 validate_recovery_file cmdline "$cmdline_path" "$cmdline_max_bytes"
 cmdline_bytes=$asset_bytes
 
+operation_tuple_digest=$(sha256_text "target_node=$target_node&action=kexec-recovery-validate&recovery_profile=$profile&kernel_sha256=$kernel_sha256&initrd_sha256=$initrd_sha256&cmdline_sha256=$cmdline_sha256&confirmation=$confirmation")
 prepare_evidence_dir "$evidence_dir"
 trap 'release_operation_lock || true' EXIT
-acquire_operation_lock "$evidence_dir"
+acquire_operation_lock "$evidence_dir" "$operation_tuple_digest"
 bundle=$(new_bundle "$evidence_dir" kexec-recovery-validate)
 write_metadata "$bundle/metadata" kexec-recovery-validate "$target_node" not-applicable validation-only
 {

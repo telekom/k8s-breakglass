@@ -20,7 +20,10 @@ targeted incident interfaces:
 Broad neighbor flushing is not supported. Neighbor replacement requires one
 exact IP/MAC/interface tuple. FDB replacement requires one exact
 bridge/port/MAC/VLAN tuple and verifies bridge membership and VLAN presence
-before mutation. There is no caller-selected shell, command, command argument,
+before mutation. The mutation helper resolves the approved names once, then
+addresses links, neighbors, and FDB ports by kernel ifindex. It revalidates the
+exact bridge master ifindex immediately around an FDB request. There is no
+caller-selected shell, command, command argument,
 path, recovery image, route, or sysctl interface. The image has no kexec
 executable, package manager, compiler, packet capture tool, or port scanner.
 
@@ -48,11 +51,14 @@ by operation and recording IDs. Repair captures before/action/after evidence;
 kexec validation records fixed-file digests and an explicit
 `execution_performed=false`. Validated request values and captures have fixed
 limits: values are at most 256 bytes, captures have fixed 10-second, 32 KiB per-file,
-and 384 KiB per-bundle bounds. An atomic evidence-volume lease permits one
-operation at a time and is released on exit. A crash retry for the same
-immutable operation and recording ID can reclaim its own expired, 300-second
-lease; a different operation cannot reclaim it and must be reconciled by the
-controller. The controller must also enforce
+and 384 KiB per-bundle bounds. A process-held Linux `flock` on the persistent
+evidence-volume lock file permits one operation at a time. The owner record
+contains the operation, recording, approval, and SHA-256 digest of the exact
+approved tuple. Its timestamp and PID are audit context only, never liveness
+signals. The kernel releases exclusivity when the holder exits, is killed, or
+its container dies, so there is no active-holder timeout and no clock-jump
+recovery path. The lock file remains for reuse and must not be deleted or
+replaced while any maintenance workload can run. The controller must also enforce
 one active workload per node because separate volumes cannot coordinate.
 Containers, evidence volumes, and controller leases must have bounded
 lifetimes and deterministic cleanup.
@@ -106,6 +112,23 @@ The Alpine runtime contains `/bin/sh` because the fixed helpers are POSIX
 scripts. An entrypoint override is an external admission-policy boundary, not
 a supported feature.
 
+The Linux FDB add ABI identifies the port by ifindex but does not accept an
+expected bridge-master identity in the same atomic request. The helper checks
+the approved master before and after the request, while the kernel checks that
+the port is currently bridged and that the VLAN is currently configured during
+the request. A separate privileged host-network actor can still reparent a port
+inside that narrow interval; controller/admission policy must exclude such
+concurrent writers. Linux also has no persistent userspace netdevice handle
+that prevents ifindex reuse after delete/recreate. Auto-negotiation's legacy
+ioctl requires a name, so the helper derives that name from the pinned ifindex
+immediately before the ioctl and verifies the mapping afterwards. These kernel
+ABI limits are why per-node workload exclusivity remains mandatory.
+
+Upgrades from the short-lived directory-lease implementation may encounter an
+old `.node-maintenance-operation.lock` directory. After proving that no old or
+new maintenance workload is active, remove that obsolete directory once; the
+new implementation creates a persistent regular lock file in its place.
+
 ## Runbook bundle, build, and proof
 
 Built-in runbooks are image-owned at
@@ -116,8 +139,10 @@ mount a digest-pinned downstream documentation bundle read-only at
 `make test` runs fast behavioral denial checks. `make integration` uses a
 Linux Docker daemon and exercises every action in disposable Docker network
 namespaces, including real veth neighbor and VLAN bridge-FDB changes, exact-
-target adversarial cases, immutable kexec input checks, recording evidence,
-time/concurrency boundaries, and cleanup. The proof refuses to skip when its
+target adversarial cases, every approved-tuple mismatch, interface-name
+replacement, changed bridge membership, an arbitrarily old live lock holder,
+crash release, immutable kexec input checks, recording evidence, and cleanup.
+The proof refuses to skip when its
 Linux/Docker prerequisites are absent.
 
 `make build-multiarch` requests provenance and an SPDX SBOM for amd64/arm64.

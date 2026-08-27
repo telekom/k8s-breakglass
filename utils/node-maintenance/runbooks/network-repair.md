@@ -54,19 +54,23 @@ Downward API `spec.nodeName`, unique operation/recording/approval identifiers,
 `BREAKGLASS_APPROVED_ACTION`, and
 `BREAKGLASS_APPROVED_NETWORK_REQUEST`. The latter is an exact canonical tuple
 of target node, interface, action, neighbor, bridge, MAC, VLAN, and
-confirmation; the helper compares it before any evidence or mutation. It must
+confirmation; the helper compares it before any evidence or mutation and binds
+the evidence lock record to its SHA-256 digest. It must
 pin the image by digest and enforce one active operation per node. The helper
-also takes an atomic evidence-volume lease, but that cannot coordinate distinct
-volumes. A killed workload can be retried only with the same immutable
-operation and recording IDs after its lease TTL; a different operation needs
-controller reconciliation.
+also holds a kernel `flock` on the shared evidence volume for its process
+lifetime, but that cannot coordinate distinct volumes. No timestamp reclaims a
+live holder. Container death releases the lock immediately; its regular lock
+file persists and must not be deleted or replaced while operations can run.
 
 Run with `hostNetwork: true`, a read-only root, RuntimeDefault seccomp,
 `allowPrivilegeEscalation: false`, all capabilities dropped except
 `NET_ADMIN`, no host PID, and no host filesystem mount. The helper verifies the
-exact interface. Neighbor repair also verifies the address routes through that
-interface. FDB repair verifies the exact bridge exists, the port is enslaved
-to it, and the exact VLAN is configured before changing one entry.
+exact interface and performs mutations through a fixed helper using the pinned
+kernel ifindex, not the caller's interface name. Neighbor repair also verifies
+the address routes through that interface. FDB repair verifies the exact bridge
+exists, the port is enslaved to its pinned master ifindex, and the exact VLAN is
+configured before changing one entry; the kernel validates port and VLAN again
+during the FDB request.
 
 Preserve `metadata`, `events.jsonl`, and all before/action/after captures even
 on non-zero exit. Each command and capture has a fixed timeout and quota. A
@@ -77,3 +81,15 @@ node-scoped lease within their configured deadlines.
 
 This helper cannot run caller commands or arguments, select paths or images,
 replace routes, mutate sysctls, capture traffic, reboot, or execute kexec.
+
+Linux does not provide one FDB-add request containing both a port ifindex and
+an asserted master ifindex, nor a persistent userspace handle that prevents
+ifindex reuse after delete/recreate. The helper therefore checks master
+identity immediately before and after the fixed FDB request, and derives the
+legacy auto-negotiation ioctl name from the pinned ifindex immediately before
+use. A concurrently privileged actor outside the controller lock could still
+race those kernel ABI boundaries. Admission and controller policy must enforce
+one host-network writer per node. If upgrading from the former directory
+lease, remove an obsolete `.node-maintenance-operation.lock` directory only
+after proving that no maintenance workload is active; leave the new regular
+lock file in place for reuse.

@@ -39,9 +39,10 @@ validate_target "$target_node"
 validate_interface "$interface"
 validate_confirmation NODE-RECOVERY-PREFLIGHT "$confirmation"
 validate_recording_context
+operation_tuple_digest=$(sha256_text "target_node=$target_node&interface=$interface&action=read-only&confirmation=$confirmation")
 prepare_evidence_dir "$evidence_dir"
 trap 'release_operation_lock || true' EXIT
-acquire_operation_lock "$evidence_dir"
+acquire_operation_lock "$evidence_dir" "$operation_tuple_digest"
 
 bundle=$(new_bundle "$evidence_dir" node-recovery)
 write_metadata "$bundle/metadata" node-recovery "$target_node" "$interface" read-only

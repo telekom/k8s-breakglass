@@ -19,8 +19,6 @@ capture_timeout_seconds=10
 capture_max_bytes=32768
 evidence_max_bytes=393216
 operation_lock_name=.node-maintenance-operation.lock
-operation_lock_owner_name=owner
-operation_lock_ttl_seconds=300
 
 die() {
 	printf 'node-maintenance: %s\n' "$*" >&2
@@ -168,6 +166,16 @@ validate_approved_network_request() {
 	[ "${#approved_request}" -le "$value_max_bytes" ] || die "BREAKGLASS_APPROVED_NETWORK_REQUEST exceeds the fixed ${value_max_bytes}-byte limit"
 	expected_request="target_node=$requested_target&interface=$requested_interface&action=$requested_action&neighbor_address=$requested_neighbor&bridge=$requested_bridge&entry_mac=$requested_mac&vlan=$requested_vlan&confirmation=$requested_confirmation"
 	[ "$approved_request" = "$expected_request" ] || die "controller-approved network request does not exactly match the requested tuple"
+	# Consumed by the network-repair caller after this file is sourced.
+	# shellcheck disable=SC2034
+	APPROVED_NETWORK_REQUEST_DIGEST=$(sha256_text "$approved_request")
+}
+
+sha256_text() {
+	value=$1
+	digest=$(printf '%s' "$value" | sha256sum | awk 'NR == 1 { print $1 }') || die "cannot hash immutable operation tuple"
+	validate_sha256 "operation tuple digest" "$digest"
+	printf '%s\n' "$digest"
 }
 
 prepare_evidence_dir() {
@@ -197,56 +205,47 @@ prepare_evidence_dir() {
 
 acquire_operation_lock() {
 	directory=$1
+	tuple_digest=$2
 	assert_safe_evidence_dir "$directory"
+	validate_sha256 "operation tuple digest" "$tuple_digest"
+	command -v flock >/dev/null 2>&1 || die "flock utility is required for crash-safe operation exclusivity"
 	lock_candidate="$directory/$operation_lock_name"
-	if ! mkdir "$lock_candidate" 2>/dev/null; then
-		reclaim_own_stale_operation_lock "$lock_candidate" || die "another node-maintenance operation is active for this evidence lease"
-		mkdir "$lock_candidate" 2>/dev/null || die "another node-maintenance operation is active for this evidence lease"
+	[ ! -L "$lock_candidate" ] || die "operation lock may not be a symlink"
+	if [ ! -e "$lock_candidate" ]; then
+		(umask 077; : >"$lock_candidate") || die "cannot create operation lock"
 	fi
 	operation_lock=$lock_candidate
-	[ ! -L "$operation_lock" ] || die "operation lock may not be a symlink"
+	[ -f "$operation_lock" ] && [ ! -L "$operation_lock" ] || die "operation lock must be a regular file"
 	resolved_lock=$(readlink -f "$operation_lock" 2>/dev/null || true)
 	[ "$resolved_lock" = "$operation_lock" ] || die "operation lock did not resolve safely"
-	chmod 0700 "$operation_lock" || die "cannot protect operation lock"
-	operation_lock_owner="$operation_lock/$operation_lock_owner_name"
-	(umask 077; printf 'operation_id=%s\nrecording_id=%s\ncreated_epoch=%s\n' "$operation_id" "$recording_id" "$(date -u +%s)" >"$operation_lock_owner") || die "cannot record operation lock owner"
-}
-
-reclaim_own_stale_operation_lock() {
-	lock_candidate=$1
-	case "$lock_candidate" in "$EVIDENCE_DIR/$operation_lock_name") ;; *) return 1 ;; esac
-	[ -d "$lock_candidate" ] && [ ! -L "$lock_candidate" ] || return 1
-	owner_file="$lock_candidate/$operation_lock_owner_name"
-	[ -f "$owner_file" ] && [ ! -L "$owner_file" ] || return 1
-	[ "$(readlink -f "$owner_file" 2>/dev/null || true)" = "$owner_file" ] || return 1
-	{
-		IFS= read -r lock_operation
-		IFS= read -r lock_recording
-		IFS= read -r lock_created
-	} <"$owner_file" || return 1
-	[ "$lock_operation" = "operation_id=$operation_id" ] || return 1
-	[ "$lock_recording" = "recording_id=$recording_id" ] || return 1
-	lock_epoch=${lock_created#created_epoch=}
-	case "$lock_epoch" in ''|*[!0-9]*) return 1 ;; esac
-	[ "${#lock_epoch}" -le 10 ] || return 1
-	now_epoch=$(date -u +%s) || return 1
-	[ "$now_epoch" -ge "$lock_epoch" ] || return 1
-	[ $((now_epoch - lock_epoch)) -ge "$operation_lock_ttl_seconds" ] || return 1
-	rm -f "$owner_file" || return 1
-	rmdir "$lock_candidate" 2>/dev/null
+	chmod 0600 "$operation_lock" || die "cannot protect operation lock"
+	# The fixed descriptor remains open in this shell and every bounded capture
+	# child. Linux releases the advisory lock automatically on normal exit,
+	# SIGKILL, or container death; wall-clock age is never a liveness signal.
+	exec 9>>"$operation_lock" || die "cannot open operation lock"
+	if ! flock -n 9; then
+		exec 9>&-
+		operation_lock=
+		die "another node-maintenance operation is active for this evidence lock"
+	fi
+	operation_lock_tuple_digest=$tuple_digest
+	# Truncate and write through the already locked descriptor, never by
+	# resolving the evidence path a second time.
+	: >"/proc/self/fd/9" || die "cannot reset operation lock record"
+	printf 'schema=node-maintenance-lock/v2\noperation_id=%s\nrecording_id=%s\napproval_id=%s\ntuple_sha256=%s\nholder_pid=%s\nacquired_epoch=%s\n' \
+		"$operation_id" "$recording_id" "${approval_id:-}" "$operation_lock_tuple_digest" "$$" "$(date -u +%s)" \
+		>&9 || die "cannot record operation lock owner"
 }
 
 release_operation_lock() {
 	if [ -n "${operation_lock:-}" ]; then
 		[ -n "${EVIDENCE_DIR:-}" ] && [ -d "$EVIDENCE_DIR" ] && [ ! -L "$EVIDENCE_DIR" ] || return 1
 		case "$operation_lock" in "$EVIDENCE_DIR/$operation_lock_name") ;; *) return 1 ;; esac
-		[ ! -L "$operation_lock" ] || return 1
-		[ "${operation_lock_owner:-}" = "$operation_lock/$operation_lock_owner_name" ] || return 1
-		[ -f "$operation_lock_owner" ] && [ ! -L "$operation_lock_owner" ] || return 1
-		grep -Fqx "operation_id=$operation_id" "$operation_lock_owner" || return 1
-		grep -Fqx "recording_id=$recording_id" "$operation_lock_owner" || return 1
-		rm -f "$operation_lock_owner" || return 1
-		rmdir "$operation_lock" 2>/dev/null || return 1
+		grep -Fqx "operation_id=$operation_id" /proc/self/fd/9 || return 1
+		grep -Fqx "recording_id=$recording_id" /proc/self/fd/9 || return 1
+		grep -Fqx "tuple_sha256=$operation_lock_tuple_digest" /proc/self/fd/9 || return 1
+		flock -u 9 || return 1
+		exec 9>&-
 		operation_lock=
 	fi
 }
@@ -261,13 +260,6 @@ pin_interface_ifindex() {
 	pinned_ifindex=$(interface_ifindex "$pinned_interface") || die "cannot determine ifindex for interface '$pinned_interface'"
 	case "$pinned_ifindex" in ''|*[!0-9]*) die "cannot determine ifindex for interface '$pinned_interface'" ;; esac
 	printf '%s\n' "$pinned_ifindex"
-}
-
-assert_interface_ifindex() {
-	pinned_interface=$1
-	expected_ifindex=$2
-	actual_ifindex=$(interface_ifindex "$pinned_interface") || return 1
-	[ "$actual_ifindex" = "$expected_ifindex" ]
 }
 
 assert_safe_evidence_dir() {

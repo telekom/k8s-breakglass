@@ -1,12 +1,15 @@
 {
-  "contractVersion": "node-maintenance.integration/v3",
+  "contractVersion": "node-maintenance.integration/v4",
   "imageContext": "utils/node-maintenance",
   "network": {
     "mode": "none",
     "hostNetwork": false,
     "hostNetworkMutation": false,
     "disposableVethNeighborFixture": true,
-    "disposableVLANBridgeFixture": true
+    "disposableVLANBridgeFixture": true,
+    "kernelIfindexMutation": true,
+    "nameReplacementAdversary": true,
+    "bridgeReparentAdversary": true
   },
   "security": {
     "readOnlyRootFilesystem": true,
@@ -28,6 +31,7 @@
     "approvedActionEnvironment": "BREAKGLASS_APPROVED_ACTION",
     "approvedNetworkRequestEnvironment": "BREAKGLASS_APPROVED_NETWORK_REQUEST",
     "approvedNetworkRequestFields": ["target_node", "interface", "action", "neighbor_address", "bridge", "entry_mac", "vlan", "confirmation"],
+    "lockRecordTupleDigest": "sha256",
     "exactActionMatch": true,
     "independentApprovalRequired": true
   },
@@ -37,7 +41,9 @@
     "captureMaxBytes": 32768,
     "evidenceMaxBytes": 393216,
     "sharedEvidenceLeaseConcurrency": 1,
-    "sameOperationStaleLeaseRecoverySeconds": 300,
+    "sharedEvidenceLock": "process-held-flock",
+    "activeHolderTimeoutRecovery": false,
+    "crashRelease": "kernel-file-description-close",
     "controllerNodeConcurrencyRequired": 1
   },
   "disposableResources": {
@@ -83,6 +89,11 @@
     "evidence-symlink",
     "evidence-rename",
     "shared-evidence-concurrency",
+    "active-holder-old-timestamp",
+    "crash-lock-release",
+    "approved-tuple-mismatch-matrix",
+    "interface-name-replacement",
+    "bridge-membership-change",
     "neighbor-argument-injection",
     "fdb-bridge-mismatch",
     "fdb-vlan-mismatch",
