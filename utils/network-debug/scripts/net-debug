@@ -71,6 +71,12 @@ cleanup_child() {
 		kill_process_group TERM "$ACTIVE_PID"
 		kill_process_group KILL "$ACTIVE_PID"
 	fi
+	# setsid can return a short-lived parent while the owned session leader
+	# continues in the background. If startup failed before its PID handshake,
+	# still terminate that exact launcher process during trap cleanup.
+	if [ -n "${LAUNCH_PID:-}" ]; then
+		kill -KILL "$LAUNCH_PID" 2>/dev/null || true
+	fi
 	if [ -n "${WATCHDOG_PID:-}" ]; then
 		kill "$WATCHDOG_PID" 2>/dev/null || true
 	fi
@@ -100,11 +106,35 @@ process_alive() {
 	return 0
 }
 
+process_group_alive() {
+	pid=$1
+	# The session leader can become a zombie while a child is still running.
+	# Check the complete owned process group so that state never allows a trace
+	# descendant to escape the watchdog.
+	kill -0 "-$pid" 2>/dev/null && return 0
+	# `kill --` is not implemented by every minimal shell. Keep it as a
+	# compatibility retry, but never fall back to the leader on Linux: doing so
+	# could report a dead group while an adopted descendant is still running.
+	kill -0 -- "-$pid" 2>/dev/null && return 0
+	if [ ! -d /proc ]; then
+		# Non-Linux platforms without /proc cannot expose adopted descendants;
+		# retain the direct check there for portability of the image helper tests.
+		process_alive "$pid"
+	fi
+	return 1
+}
+
 kill_process_group() {
 	signal=$1 pid=$2
 	# setsid gives the owned trace a distinct process group, so this cannot
 	# signal the wrapper or unrelated work in the caller's namespace.
-	kill -"$signal" -- "-$pid" 2>/dev/null || kill -"$signal" "$pid" 2>/dev/null || true
+	kill -"$signal" "-$pid" 2>/dev/null && return 0
+	# Retry the long option separator for shells that require it when a
+	# negative process-group ID follows a signal option.
+	kill -"$signal" -- "-$pid" 2>/dev/null && return 0
+	# This direct signal is only a last-resort cleanup; process_group_alive keeps
+	# Linux callers fail-closed if descendants remain after it.
+	kill -"$signal" "$pid" 2>/dev/null || true
 }
 
 capture_command() {
@@ -279,38 +309,108 @@ trace_command() {
 	# bound for malformed or unexpectedly large event records (512-byte units).
 	max_trace_bytes=$((events * 4097))
 	max_trace_blocks=$(((max_trace_bytes + 511) / 512))
+	TRACE_PID_FILE=$STAGING_DIR/trace.pid
+	TRACE_STATUS_FILE=$TRACE_PID_FILE.status
+	TRACE_TIMED_OUT_FILE=$TRACE_PID_FILE.timed-out
 	if [ -n "$filter" ]; then
 		# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
-		setsid sh -c 'ulimit -f "$1"; shift; exec "$@"' sh "$max_trace_blocks" pwru \
+		setsid sh -c 'pid_file=$1; status_file=$2; max_blocks=$3; printf "%s\\n" "$$" >"$pid_file"; ulimit -f "$max_blocks"; shift 3; "$@"; status=$?; printf "%s\\n" "$status" >"$status_file"; exit "$status"' sh "$TRACE_PID_FILE" "$TRACE_STATUS_FILE" "$max_trace_blocks" pwru \
 			--backend kprobe --output-tuple --timestamp none --output-limit-lines "$events" -- "$filter" \
 			>"$TEMP_EVIDENCE" 2>&1 &
 	else
 		# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
-		setsid sh -c 'ulimit -f "$1"; shift; exec "$@"' sh "$max_trace_blocks" pwru \
+		setsid sh -c 'pid_file=$1; status_file=$2; max_blocks=$3; printf "%s\\n" "$$" >"$pid_file"; ulimit -f "$max_blocks"; shift 3; "$@"; status=$?; printf "%s\\n" "$status" >"$status_file"; exit "$status"' sh "$TRACE_PID_FILE" "$TRACE_STATUS_FILE" "$max_trace_blocks" pwru \
 			--backend kprobe --output-tuple --timestamp none --output-limit-lines "$events" \
 			>"$TEMP_EVIDENCE" 2>&1 &
 	fi
-	ACTIVE_PID=$!
+	LAUNCH_PID=$!
+	TRACE_PID=''
+	# setsid may fork when its caller is already a process-group leader. The
+	# owned wrapper records the actual session leader PID so the watchdog never
+	# mistakes a short-lived setsid parent for the trace process.
+	for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+		if [ -r "$TRACE_PID_FILE" ]; then
+			candidate=$(cat "$TRACE_PID_FILE" 2>/dev/null || true)
+			case "$candidate" in
+				''|*[!0-9]*) ;;
+				*) TRACE_PID=$candidate; break ;;
+			esac
+		fi
+		sleep 0.1
+	done
+	[ -n "$TRACE_PID" ] || {
+		printf '%s\n' 'net-debug: setsid did not start the trace process' >&2
+		if [ -r "$TRACE_PID_FILE" ]; then
+			candidate=$(cat "$TRACE_PID_FILE" 2>/dev/null || true)
+			case "$candidate" in
+				''|*[!0-9]*) ;;
+				*) ACTIVE_PID=$candidate; kill_process_group KILL "$ACTIVE_PID" ;;
+			esac
+		fi
+		wait "$LAUNCH_PID" 2>/dev/null || true
+		return 1
+	}
+	ACTIVE_PID=$TRACE_PID
 	# Own the complete process group. BusyBox timeout only signals its
 	# immediate child and can leave a tracing descendant alive; group-directed
 	# INT then KILL makes the bound apply to pwru and any children.
 	(
 		sleep "$duration"
-		if process_alive "$ACTIVE_PID"; then
+		if process_group_alive "$ACTIVE_PID"; then
+			: >"$TRACE_TIMED_OUT_FILE"
 			kill_process_group INT "$ACTIVE_PID"
 			sleep "$stop_timeout"
-			if process_alive "$ACTIVE_PID"; then
+			if process_group_alive "$ACTIVE_PID"; then
 				kill_process_group KILL "$ACTIVE_PID"
 			fi
 		fi
 	) &
 	WATCHDOG_PID=$!
 	status=0
-	wait "$ACTIVE_PID" || status=$?
+	# Poll the recorded session leader because it may not be a direct child when
+	# setsid had to fork. The watchdog supplies the hard duration+grace bound.
+	wait_iterations=$(((duration + stop_timeout + 5) * 10))
+	while [ "$wait_iterations" -gt 0 ] && process_group_alive "$ACTIVE_PID"; do
+		sleep 0.1
+		wait_iterations=$((wait_iterations - 1))
+	done
+	if process_group_alive "$ACTIVE_PID"; then
+		kill_process_group KILL "$ACTIVE_PID"
+		for _ in 1 2 3 4 5 6 7 8 9 10; do
+			process_group_alive "$ACTIVE_PID" || break
+			sleep 0.1
+		done
+	fi
+	process_group_alive "$ACTIVE_PID" && status=137
+	if [ -r "$TRACE_STATUS_FILE" ]; then
+		candidate_status=$(cat "$TRACE_STATUS_FILE" 2>/dev/null || true)
+		case "$candidate_status" in
+			''|*[!0-9]*) status=1 ;;
+			*) status=$candidate_status ;;
+		esac
+	elif [ -s "$TRACE_TIMED_OUT_FILE" ]; then
+		# A group KILL can prevent the wrapper from publishing its child status.
+		# Treat that expected bounded termination as 137, but fail closed for any
+		# other missing status file.
+		status=137
+	else
+		status=1
+	fi
+	# When setsid had to fork, the session leader is reparented to this shell
+	# after the short-lived launcher exits. Reap it when it has stopped so a
+	# killed trace cannot remain as an owned zombie in a container without init.
+	if ! process_alive "$ACTIVE_PID"; then
+		wait "$ACTIVE_PID" 2>/dev/null || true
+	fi
 	ACTIVE_PID=''
 	kill "$WATCHDOG_PID" 2>/dev/null || true
 	wait "$WATCHDOG_PID" 2>/dev/null || true
 	WATCHDOG_PID=''
+	# Reap the direct setsid child when it did not fork, and otherwise reap the
+	# short-lived setsid parent. This also prevents a launcher zombie from
+	# surviving the public command.
+	wait "$LAUNCH_PID" 2>/dev/null || true
+	LAUNCH_PID=''
 	# Normal pwru exits 0; signal termination is expected at the bounded
 	# duration. Other statuses indicate startup/runtime failure.
 	case "$status" in

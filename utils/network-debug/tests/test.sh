@@ -274,6 +274,7 @@ EOF
 chmod +x "$trace_fixture/bin/pwru"
 test_context='trace-long-child-timeout'
 printf 'CapEff: c001081000\n' >"$trace_fixture/status"
+rm -f "$trace_fixture/work/trace.log"
 if NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" \
 	NETWORK_DEBUG_BTF_PATH="$trace_fixture/status" NETWORK_DEBUG_DEBUGFS_PATH="$trace_fixture/debug" \
 	NETWORK_DEBUG_TRACEFS_PATH="$trace_fixture/trace" NETWORK_DEBUG_SECURITYFS_PATH="$trace_fixture/security" \
@@ -287,8 +288,22 @@ if NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" \
 fi
 test -s "$trace_fixture/pwru.pid"
 test -s "$trace_fixture/pwru-child.pid"
-if kill -0 "$(cat "$trace_fixture/pwru.pid")" 2>/dev/null || kill -0 "$(cat "$trace_fixture/pwru-child.pid")" 2>/dev/null; then
-	printf '%s\n' 'bounded timeout left the deliberately long pwru child running' >&2
+trace_pwru_pid=$(cat "$trace_fixture/pwru.pid")
+trace_child_pid=$(cat "$trace_fixture/pwru-child.pid")
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+	if ! kill -0 "$trace_pwru_pid" 2>/dev/null; then break; fi
+	sleep 0.1
+done
+if kill -0 "$trace_pwru_pid" 2>/dev/null; then
+	printf 'bounded timeout left pwru wrapper running (pid %s)\n' "$trace_pwru_pid" >&2
+	exit 1
+fi
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+	if ! kill -0 "$trace_child_pid" 2>/dev/null; then break; fi
+	sleep 0.1
+done
+if kill -0 "$trace_child_pid" 2>/dev/null; then
+	printf 'bounded timeout left nested pwru child running (pid %s)\n' "$trace_child_pid" >&2
 	exit 1
 fi
 test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"

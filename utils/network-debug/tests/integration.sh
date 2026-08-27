@@ -512,7 +512,9 @@ if [ "$PWRU_READY" = true ]; then
 	# The wrapper's duration is itself bounded. Wait only through a separate
 	# bounded Docker wait, then validate its public summary and evidence file.
 	trace_wait_status=0
+	trace_wait_started=$(date +%s)
 	trace_exit=$(timeout --foreground "${PWRU_TIMEOUT}s" docker wait "$PWRU_CONTAINER" 2>/dev/null) || trace_wait_status=$?
+	trace_wait_finished=$(date +%s)
 	if [ "$trace_wait_status" -ne 0 ]; then
 		# Keep the bounded failure actionable and terminate only this owned
 		# invocation. The EXIT trap repeats ownership-checked cleanup.
@@ -523,6 +525,9 @@ if [ "$PWRU_READY" = true ]; then
 		fi
 		requirement "public net-debug trace exceeded its bounded wait"
 	fi
+	trace_wait_elapsed=$((trace_wait_finished - trace_wait_started))
+	[ "$trace_wait_elapsed" -le $((TRACE_DURATION + PWRU_STOP_TIMEOUT + 5)) ] || \
+		requirement "public net-debug trace exceeded its duration and shutdown contract"
 	trace_state=$(docker_call inspect --format '{{.State.Status}}' "$PWRU_CONTAINER" 2>/dev/null) || requirement "could not inspect completed trace container"
 	[ "$trace_state" = exited ] || requirement "public net-debug trace container did not exit"
 	trace_summary=$(docker_call logs "$PWRU_CONTAINER") || requirement "could not read public trace summary"
