@@ -69,7 +69,7 @@ pwru_stop_gracefully() {
 pwru_force_remove() {
 	local container=$1
 	local timeout_seconds=${2:-15}
-	local iterations
+	local iterations state
 	# Absence is only a proof when the daemon was reachable for the inspect.
 	case "$timeout_seconds" in
 		''|*[!0-9]*) return 1 ;;
@@ -84,9 +84,15 @@ pwru_force_remove() {
 	# never broadens cleanup to containers from another invocation.
 	for _ in $(seq 1 "$iterations"); do
 		if ! pwru_docker inspect "$container" >/dev/null 2>&1; then
-			# An inspect failure is only treated as absence after proving the
-			# daemon is reachable. Daemon errors therefore fail closed.
-			pwru_docker info >/dev/null 2>&1 || return 1
+			# An inspect failure is only treated as absence after a bounded
+			# exact-name list query proves it is gone. If listed, ownership
+			# cannot be verified and cleanup fails closed.
+			if pwru_container_listed "$container"; then
+				return 1
+			else
+				state=$?
+			fi
+			[ "$state" -eq 1 ] || return 1
 			return 0
 		fi
 		pwru_validate_owner "$container" || return 1
@@ -100,7 +106,22 @@ pwru_force_remove() {
 		fi
 		sleep 0.5
 	done
-	! pwru_docker inspect "$container" >/dev/null 2>&1 && pwru_docker info >/dev/null 2>&1
+	if ! pwru_docker inspect "$container" >/dev/null 2>&1; then
+		if pwru_container_listed "$container"; then
+			return 1
+		else
+			state=$?
+		fi
+		[ "$state" -eq 1 ]
+		return
+	fi
+	return 1
+}
+
+pwru_container_listed() {
+	local container=$1 listed
+	listed=$(pwru_docker container ls --all --filter "name=^/${container}$" --format '{{.Names}}') || return 2
+	printf '%s\n' "$listed" | grep -Fx -- "$container" >/dev/null 2>&1
 }
 
 pwru_docker() {

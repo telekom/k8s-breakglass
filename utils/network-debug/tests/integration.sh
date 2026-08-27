@@ -170,6 +170,16 @@ docker_owned_resource() {
 	[ "$owner" = "$RUN_ID" ] || return 3
 }
 
+docker_resource_listed() {
+	local kind=$1 name=$2 listed
+	case "$kind" in
+		container) listed=$(docker_call container ls --all --filter "name=^/${name}$" --format '{{.Names}}') || return 2 ;;
+		network) listed=$(docker_call network ls --filter "name=^${name}$" --format '{{.Name}}') || return 2 ;;
+		*) return 2 ;;
+	esac
+	printf '%s\n' "$listed" | grep -Fx -- "$name" >/dev/null 2>&1
+}
+
 docker_resource_present() {
 	local kind=$1 name=$2 state
 	if docker_owned_resource "$kind" "$name" >/dev/null 2>&1; then
@@ -178,14 +188,13 @@ docker_resource_present() {
 	state=$?
 	[ "$state" -eq 3 ] && return 3
 	# An inspect failure may mean that the resource is gone, but only a
-	# reachable daemon can establish that. Ownership mismatches fail closed.
-	docker_call info >/dev/null 2>&1 || return 2
-	if docker_owned_resource "$kind" "$name" >/dev/null 2>&1; then
-		return 0
+	# bounded exact-name list query can establish that. If it still appears,
+	# refuse deletion because ownership could not be verified.
+	if docker_resource_listed "$kind" "$name"; then
+		return 3
 	fi
 	state=$?
-	[ "$state" -eq 3 ] && return 3
-	[ "$state" -eq 2 ] && { docker_call info >/dev/null 2>&1 || return 2; }
+	[ "$state" -eq 2 ] && return 2
 	return 1
 }
 

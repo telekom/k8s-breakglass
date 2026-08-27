@@ -15,7 +15,17 @@ state=$PWRU_FAKE_STATE
 command=${1:-}
 shift || true
 case "$command" in
+  container)
+    subcommand=${1:-}
+    [ "$subcommand" = ls ] || exit 2
+    if [ "$PWRU_FAKE_MODE" = inspect-fail-listed ]; then
+      printf '%s\n' "$PWRU_FAKE_CONTAINER"
+    fi
+    ;;
   inspect)
+    case "$PWRU_FAKE_MODE" in
+      inspect-fail-listed|inspect-fail-absent) exit 1 ;;
+    esac
     format=''
     if [ "${1:-}" = --format ]; then
       format=$2
@@ -171,6 +181,25 @@ if PWRU_FAKE_MODE=daemon-fail PWRU_FAKE_STATE="$fixture/owner-state" \
 	:
 else
 	printf '%s\n' 'daemon failure was not rejected' >&2
+	exit 1
+fi
+
+if PWRU_FAKE_MODE=inspect-fail-listed PWRU_FAKE_STATE="$fixture/owner-state" \
+	PWRU_FAKE_CONTAINER=pwru-proof PWRU_FAKE_LOG="$fixture/pwru.log" \
+	PWRU_FAKE_SIGNALS="$fixture/signals" PATH="$fixture:/usr/bin:/bin" \
+	bash -c '. "$1/pwru-lifecycle.sh"; ! pwru_force_remove pwru-proof 1' bash "$root"; then
+	:
+else
+	printf '%s\n' 'listed inspect failure was not rejected' >&2
+	exit 1
+fi
+if PWRU_FAKE_MODE=inspect-fail-absent PWRU_FAKE_STATE="$fixture/owner-state" \
+	PWRU_FAKE_CONTAINER=pwru-proof PWRU_FAKE_LOG="$fixture/pwru.log" \
+	PWRU_FAKE_SIGNALS="$fixture/signals" PATH="$fixture:/usr/bin:/bin" \
+	bash -c '. "$1/pwru-lifecycle.sh"; pwru_force_remove pwru-proof 1' bash "$root"; then
+	:
+else
+	printf '%s\n' 'empty list after inspect failure was not accepted as absence' >&2
 	exit 1
 fi
 
