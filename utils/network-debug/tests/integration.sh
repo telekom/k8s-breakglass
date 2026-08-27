@@ -451,7 +451,9 @@ capture_pod_traffic() {
 	packet_count=$(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
 		sed -n 's/^packet_count //p' "/work/${expected}.log")
 	case "$packet_count" in ''|*[!0-9]*) requirement "$pod wrapper summary has an invalid packet count" ;; esac
-	[ "$packet_count" -gt 0 ] && [ "$packet_count" -le 2 ] || requirement "$pod wrapper exceeded its packet bound"
+	if [ "$packet_count" -le 0 ] || [ "$packet_count" -gt 2 ]; then
+		requirement "$pod wrapper exceeded its packet bound"
+	fi
 	reported_hash=$(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
 		sed -n 's/^sha256 //p' "/work/${expected}.log")
 	printf '%s\n' "$reported_hash" | grep -E '^[0-9a-f]{64}$' >/dev/null || requirement "$pod wrapper summary has an invalid hash"
