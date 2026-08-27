@@ -270,6 +270,20 @@ trace_prerequisites() {
 	if [ -z "$self_netns" ] || [ "$self_netns" != "$host_netns" ]; then
 		usage_error 'trace requires the host network namespace (hostPID=true and hostNetwork=true)'
 	fi
+	# A private PID namespace makes /proc/1 the container's own init, so the
+	# network comparison above would otherwise succeed for an ordinary
+	# hostNetwork pod. In a hostPID workload, /proc/1 is the node init and its
+	# mount namespace/root are distinct from this container's view. Both checks
+	# are kernel-derived and do not trust an environment boolean. Reading
+	# /proc/1/root does not mount or write the host filesystem.
+	self_mntns=$(readlink /proc/self/ns/mnt 2>/dev/null || true)
+	host_mntns=$(readlink /proc/1/ns/mnt 2>/dev/null || true)
+	self_root=$(stat -Lc '%d:%i' / 2>/dev/null || true)
+	host_root=$(stat -Lc '%d:%i' /proc/1/root 2>/dev/null || true)
+	if [ -z "$self_mntns" ] || [ -z "$host_mntns" ] || [ "$self_mntns" = "$host_mntns" ] || \
+		[ -z "$self_root" ] || [ -z "$host_root" ] || [ "$self_root" = "$host_root" ]; then
+		usage_error 'trace requires a host PID namespace (hostPID=true)'
+	fi
 }
 
 trace_command() {

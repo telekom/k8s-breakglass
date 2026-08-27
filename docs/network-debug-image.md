@@ -28,6 +28,10 @@ are controller-owned; the operation runs in that Pod's existing network
 namespace and never infers cgroups, enters a namespace from host procfs, or
 uses a CRI socket or host path. Capture metadata and SHA-256 are emitted while
 the pcap remains on the server-owned `emptyDir`.
+This image change does not implement that controller or admission policy; the
+downstream controller and cluster admission must enforce the fixed profile.
+The repository's kind proof constructs the same fixed request only to exercise
+the Kubernetes subresource and image-owned wrapper behavior.
 
 ## Suggested sequence
 

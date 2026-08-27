@@ -56,8 +56,43 @@ kubectl -n "$namespace" wait pod/target pod/decoy --for=condition=Ready --timeou
 target_uid=$(kubectl -n "$namespace" get pod target -o jsonpath='{.metadata.uid}')
 case "$target_uid" in ????????-????-????-????-????????????) ;; *) requirement 'Kubernetes did not return a canonical target Pod UID' ;; esac
 
+# The ephemeral container invokes the image-owned bounded wrapper. The
+# read-only checks below inspect its pcap and summary; tcpdump is never used
+# as the capture process itself.
 # shellcheck disable=SC2016 # the script is intentionally interpreted in the target container.
-capture_script='set -eu; rm -f /work/capture.pcap /work/capture.log; status=0; timeout 15 tcpdump -p -i lo -s 128 -c 8 -w /work/capture.pcap "tcp port 18080 or tcp port 18081" >/work/capture.log 2>&1 || status=$?; case "$status" in 0|124|130|143) ;; *) cat /work/capture.log >&2; exit 1 ;; esac; test -s /work/capture.pcap; target_packets=$(tcpdump -nn -r /work/capture.pcap "tcp port 18080" 2>/dev/null | wc -l | tr -d " "); decoy_packets=$(tcpdump -nn -r /work/capture.pcap "tcp port 18081" 2>/dev/null | wc -l | tr -d " "); test "$target_packets" -gt 0; test "$decoy_packets" -eq 0; bytes=$(wc -c < /work/capture.pcap | tr -d " "); test "$bytes" -le 40960; printf "proof_status complete\\ntarget_packets %s\\ndecoy_packets %s\\nbytes %s\\n" "$target_packets" "$decoy_packets" "$bytes"'
+capture_script='set -eu
+rm -f /work/capture.pcap /work/capture.log /work/overwrite.log
+status=0
+/usr/local/bin/net-debug capture --interface lo --duration 15 --packets 8 --snaplen 128 --filter "tcp port 18080 or tcp port 18081" --output capture.pcap >/work/capture.log 2>&1 || status=$?
+test "$status" -eq 0 || { cat /work/capture.log >&2; exit 1; }
+grep -Fx "capture" /work/capture.log >/dev/null
+grep -Fx "interface lo" /work/capture.log >/dev/null
+grep -Fx "duration 15" /work/capture.log >/dev/null
+grep -Fx "packet_limit 8" /work/capture.log >/dev/null
+grep -Fx "snaplen 128" /work/capture.log >/dev/null
+packet_count=$(sed -n "s/^packet_count //p" /work/capture.log)
+case "$packet_count" in ""|*[!0-9]*) exit 1 ;; esac
+test "$packet_count" -gt 0
+test "$packet_count" -le 8
+reported_bytes=$(sed -n "s/^bytes //p" /work/capture.log)
+case "$reported_bytes" in ""|*[!0-9]*) exit 1 ;; esac
+test "$reported_bytes" -gt 24
+test "$reported_bytes" -le $((8 * (128 + 16) + 24))
+reported_hash=$(sed -n "s/^sha256 //p" /work/capture.log)
+case "$reported_hash" in ??????*) ;; *) exit 1 ;; esac
+actual_hash=$(sha256sum /work/capture.pcap | awk "{print \$1}")
+test "$reported_hash" = "$actual_hash"
+grep -Fx "file capture.pcap" /work/capture.log >/dev/null
+test -s /work/capture.pcap
+target_packets=$(tcpdump -nn -r /work/capture.pcap "tcp port 18080" 2>/dev/null | wc -l | tr -d " ")
+decoy_packets=$(tcpdump -nn -r /work/capture.pcap "tcp port 18081" 2>/dev/null | wc -l | tr -d " ")
+test "$target_packets" -gt 0
+test "$decoy_packets" -eq 0
+before_hash=$actual_hash
+if /usr/local/bin/net-debug capture --interface lo --duration 1 --packets 1 --snaplen 128 --filter "tcp port 18080" --output capture.pcap >/work/overwrite.log 2>&1; then exit 1; fi
+test "$before_hash" = "$(sha256sum /work/capture.pcap | awk "{print \$1}")"
+test -z "$(find /work -maxdepth 1 -name ".net-debug.*" -print -quit)"
+printf "proof_status complete\\ntarget_packets %s\\ndecoy_packets %s\\npacket_count %s\\nbytes %s\\n" "$target_packets" "$decoy_packets" "$packet_count" "$reported_bytes"'
 kubectl -n "$namespace" get pod target -o json |
   jq --arg uid "$target_uid" --arg image "$image" --arg script "$capture_script" 'select(.metadata.uid == $uid) | .spec.ephemeralContainers = ((.spec.ephemeralContainers // []) + [{name:"capture",image:$image,imagePullPolicy:"Never",targetContainerName:"server",command:["/bin/sh","-ec"],args:[$script],securityContext:{runAsUser:0,runAsNonRoot:false,privileged:false,allowPrivilegeEscalation:false,readOnlyRootFilesystem:true,capabilities:{drop:["ALL"],add:["NET_RAW"]},seccompProfile:{type:"RuntimeDefault"}},volumeMounts:[{name:"evidence",mountPath:"/work"}]}])' |
   kubectl replace --raw "/api/v1/namespaces/$namespace/pods/target/ephemeralcontainers" -f - >/dev/null
@@ -66,6 +101,7 @@ kubectl -n "$namespace" get pod target -o json | jq -e '
 .spec.automountServiceAccountToken == false and .spec.volumes == [{name:"evidence",emptyDir:{}}] and
 all(.spec.volumes[]; (.hostPath // null) == null) and (.spec.ephemeralContainers | length == 1) and
 .spec.ephemeralContainers[0].name == "capture" and .spec.ephemeralContainers[0].targetContainerName == "server" and
+.spec.ephemeralContainers[0].command == ["/bin/sh","-ec"] and (.spec.ephemeralContainers[0].args[0] | contains("/usr/local/bin/net-debug capture")) and
 (.spec.ephemeralContainers[0].securityContext.privileged // false) == false and .spec.ephemeralContainers[0].securityContext.allowPrivilegeEscalation == false and
 .spec.ephemeralContainers[0].securityContext.readOnlyRootFilesystem == true and .spec.ephemeralContainers[0].securityContext.capabilities.drop == ["ALL"] and
 .spec.ephemeralContainers[0].securityContext.capabilities.add == ["NET_RAW"] and

@@ -150,6 +150,10 @@ Selected-pod capture is performed by an approved controller injecting a
 short-lived ephemeral container into the selected Pod through the Kubernetes
 `ephemeralcontainers` subresource. Requesters never provide commands, PIDs,
 pod names, nodes, or raw argv.
+This utility image does not implement the controller or admission policy. The
+downstream controller and cluster admission must enforce this fixed profile;
+the repository's kind proof builds the fixed subresource request only to
+exercise the image-owned wrapper and Kubernetes behavior.
 
 The selected-pod operation is an API-level controller action, not an image-side
 helper. The controller resolves the selected Pod, appends one ephemeral
