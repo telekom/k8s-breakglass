@@ -49,7 +49,7 @@ metadata (count, size, and SHA-256), never packet payloads. For example:
 
 `net-debug trace` is the bounded host-network-namespace `pwru` wrapper. It
 limits duration to 60 seconds and evidence to 10,000 lines, sends SIGINT via
-`timeout --foreground`, and forces KILL after the bounded grace period. It
+BusyBox-compatible `timeout`, and forces KILL after the bounded grace period. It
 refuses to run unless BTF, debugfs, tracefs, securityfs/LSM, and the required BPF/PERFMON,
 NET_ADMIN, SYS_RESOURCE, and SYS_PTRACE capabilities are available. SYS_PTRACE
 is limited to the kernel-enforced host-PID namespace identity check. It never
@@ -166,7 +166,7 @@ cleanup.
 The host trace remains a separate host-network/host-PID operation. Its wrapper
 executes the pinned `pwru --backend kprobe` with a native event-line bound into
 a private regular staging file, applies an independent kernel file-size bound,
-and runs it under `timeout --foreground` with bounded INT-to-KILL shutdown.
+and runs it under BusyBox-compatible `timeout` with bounded INT-to-KILL shutdown.
 Only after the process exits does it no-clobber publish the file below `/work`.
 This avoids FIFO startup/shutdown deadlocks while preserving real packet-tuple
 evidence and exact cleanup. Missing BTF, tracing filesystems, capabilities, or
@@ -178,7 +178,7 @@ non-kind Kubernetes context is not a substitute for that job.
 
 Graceful `pwru` shutdown is bounded by `NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS`
 (15 seconds by default) after the primary duration. The wrapper sends INT via
-`timeout --foreground` and then forces KILL at that deadline; a still-running
+`timeout` and then forces KILL at that deadline; a still-running
 container is removed only after the run-ownership checks.
 
 `build-multiarch` writes a local OCI archive and never pushes a mutable tag.

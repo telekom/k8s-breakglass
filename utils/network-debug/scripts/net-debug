@@ -261,13 +261,13 @@ trace_command() {
 	max_trace_blocks=$(((max_trace_bytes + 511) / 512))
 	if [ -n "$filter" ]; then
 		# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
-		(timeout --foreground --signal=INT --kill-after="${stop_timeout}s" "${duration}s" \
+		(timeout -s INT -k "$stop_timeout" "$duration" \
 			sh -c 'ulimit -f "$1"; shift; exec "$@"' sh "$max_trace_blocks" pwru \
 			--backend kprobe --output-tuple --timestamp none --output-limit-lines "$events" -- "$filter") \
 			>"$TEMP_EVIDENCE" 2>&1 &
 	else
 		# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
-		(timeout --foreground --signal=INT --kill-after="${stop_timeout}s" "${duration}s" \
+		(timeout -s INT -k "$stop_timeout" "$duration" \
 			sh -c 'ulimit -f "$1"; shift; exec "$@"' sh "$max_trace_blocks" pwru \
 			--backend kprobe --output-tuple --timestamp none --output-limit-lines "$events") \
 			>"$TEMP_EVIDENCE" 2>&1 &

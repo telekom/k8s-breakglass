@@ -252,21 +252,26 @@ done
 cat >"$trace_fixture/bin/pwru" <<'EOF'
 #!/bin/sh
 set -eu
+printf '%s\n' "$$" >"$PWRU_PID_FILE"
 trap '' INT TERM
-while :; do
-	printf '%s\n' trace-event
-	sleep 1
-done
+printf '%s\n' trace-event
+sleep 300
 EOF
 chmod +x "$trace_fixture/bin/pwru"
 printf 'CapEff: c001081000\n' >"$trace_fixture/status"
 if NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" \
 	NETWORK_DEBUG_BTF_PATH="$trace_fixture/status" NETWORK_DEBUG_DEBUGFS_PATH="$trace_fixture/debug" \
 	NETWORK_DEBUG_TRACEFS_PATH="$trace_fixture/trace" NETWORK_DEBUG_SECURITYFS_PATH="$trace_fixture/security" \
-	NETWORK_DEBUG_MOUNTINFO_PATH="$trace_fixture/mountinfo" NETWORK_DEBUG_CAPABILITY_FILE="$trace_fixture/status" \
-	NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS=1 \
+		NETWORK_DEBUG_MOUNTINFO_PATH="$trace_fixture/mountinfo" NETWORK_DEBUG_CAPABILITY_FILE="$trace_fixture/status" \
+		PWRU_PID_FILE="$trace_fixture/pwru.pid" \
+		NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS=1 \
 	PATH="$trace_fixture/bin:/usr/bin:/bin" sh "$root/scripts/net-debug" trace --duration 1 --events 1 >/dev/null 2>&1; then
 	printf '%s\n' 'trace unexpectedly succeeded when pwru ignored stop signals' >&2
+	exit 1
+fi
+test -s "$trace_fixture/pwru.pid"
+if kill -0 "$(cat "$trace_fixture/pwru.pid")" 2>/dev/null; then
+	printf '%s\n' 'bounded timeout left the deliberately long pwru child running' >&2
 	exit 1
 fi
 test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"

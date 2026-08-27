@@ -65,7 +65,7 @@ traffic in a real Linux/kind test, and delete the selected and decoy Pods with
 absence checks even after failure or interruption.
 
 The real-tool proof runs `pwru --backend kprobe` with a native event-line bound
-and an independent regular-file size bound. `timeout --foreground` sends
+and an independent regular-file size bound. BusyBox-compatible `timeout` sends
 SIGINT at the trace duration and forces SIGKILL after the bounded
 `NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS` grace period (15 seconds by default).
 A still-running container is a failed proof and is cleaned up only when its
