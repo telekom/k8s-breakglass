@@ -224,6 +224,10 @@ case "$*" in
 	*'--backend kprobe'*) ;;
 	*) exit 2 ;;
 esac
+case "$*" in
+	*'--output-meta=false'*) ;;
+	*) exit 2 ;;
+esac
 printf '%s\n' trace-event
 EOF
 chmod +x "$trace_fixture/bin/pwru"

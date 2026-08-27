@@ -313,15 +313,19 @@ trace_command() {
 	TRACE_STATUS_FILE=$TRACE_PID_FILE.status
 	TRACE_TIMED_OUT_FILE=$TRACE_PID_FILE.timed-out
 	TEMP_DIAGNOSTICS=$STAGING_DIR/diagnostics
+	# Interface metadata is optional for this tuple-only contract. Disabling it
+	# avoids pwru's best-effort walk of every host PID/netns, which requires
+	# broader namespace privileges and can consume the complete trace duration
+	# before the kprobes begin listening.
 	if [ -n "$filter" ]; then
 		# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
 		setsid sh -c 'pid_file=$1; status_file=$2; max_blocks=$3; printf "%s\\n" "$$" >"$pid_file"; ulimit -f "$max_blocks"; shift 3; "$@"; status=$?; printf "%s\\n" "$status" >"$status_file"; exit "$status"' sh "$TRACE_PID_FILE" "$TRACE_STATUS_FILE" "$max_trace_blocks" pwru \
-			--backend kprobe --output-tuple --timestamp none --output-limit-lines "$events" -- "$filter" \
+			--backend kprobe --output-meta=false --output-tuple --timestamp none --output-limit-lines "$events" -- "$filter" \
 			>"$TEMP_EVIDENCE" 2>"$TEMP_DIAGNOSTICS" &
 	else
 		# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
 		setsid sh -c 'pid_file=$1; status_file=$2; max_blocks=$3; printf "%s\\n" "$$" >"$pid_file"; ulimit -f "$max_blocks"; shift 3; "$@"; status=$?; printf "%s\\n" "$status" >"$status_file"; exit "$status"' sh "$TRACE_PID_FILE" "$TRACE_STATUS_FILE" "$max_trace_blocks" pwru \
-			--backend kprobe --output-tuple --timestamp none --output-limit-lines "$events" \
+			--backend kprobe --output-meta=false --output-tuple --timestamp none --output-limit-lines "$events" \
 			>"$TEMP_EVIDENCE" 2>"$TEMP_DIAGNOSTICS" &
 	fi
 	LAUNCH_PID=$!
