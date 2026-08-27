@@ -51,6 +51,9 @@ const (
 	// Jobs use this label in their manual selector so a recreated session with
 	// the same name can never adopt pods from the previous instance.
 	DebugSessionUIDLabelKey = "breakglass.telekom.com/debug-session-uid"
+	// DebugSessionUIDAnnotationKey is persisted on session-owned auxiliary
+	// resources so cleanup can detect replacement by another object/session.
+	DebugSessionUIDAnnotationKey = "breakglass.telekom.com/debug-session-uid"
 	// DebugTemplateLabelKey identifies the template used
 	DebugTemplateLabelKey = "breakglass.telekom.com/debug-template"
 	// DebugClusterLabelKey identifies the target cluster

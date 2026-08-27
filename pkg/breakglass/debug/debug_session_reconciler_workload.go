@@ -270,6 +270,10 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 	if err != nil {
 		return nil, nil, err
 	}
+	restrictedCatalogue, _, err := restrictedCatalogueProfile(template, podTemplate)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	labels := map[string]string{
 		DebugSessionLabelKey:           ds.Name,
@@ -307,6 +311,11 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 
 	// Merge pod-level annotations from the template manifest
 	annotations = mergeStringMaps(annotations, renderResult.PodAnnotations)
+	if restrictedCatalogue {
+		if err := validateRestrictedCatalogueAnnotations(annotations); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	workloadType := template.Spec.WorkloadType
 	if workloadType == "" {
@@ -582,6 +591,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 	}
 	labels["app.kubernetes.io/managed-by"] = "breakglass"
 	labels["breakglass.t-caas.telekom.com/session"] = ds.Name
+	labels[DebugSessionUIDLabelKey] = debugSessionIdentity(ds)
 	labels["breakglass.t-caas.telekom.com/session-cluster"] = ds.Spec.Cluster
 	labels["breakglass.t-caas.telekom.com/pod-template-resource"] = "true"
 	obj.SetLabels(labels)
@@ -592,13 +602,52 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		annotations = make(map[string]string)
 	}
 	annotations["breakglass.t-caas.telekom.com/source-session"] = fmt.Sprintf("%s/%s", ds.Namespace, ds.Name)
+	annotations[DebugSessionUIDAnnotationKey] = debugSessionIdentity(ds)
 	obj.SetAnnotations(annotations)
 
-	// Deploy using Server-Side Apply for idempotency
-	obj.SetManagedFields(nil)
-	//nolint:staticcheck // SA1019: client.Apply for Patch is still required for unstructured objects
-	if err := targetClient.Patch(ctx, obj, ctrlclient.Apply, ctrlclient.FieldOwner("breakglass-controller"), ctrlclient.ForceOwnership); err != nil {
-		return fmt.Errorf("SSA apply failed: %w", err)
+	// Never apply over an object that was not created for this session. The
+	// create-first path also closes the race where a tenant object appears after
+	// a NotFound check but before the apply.
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(obj.GroupVersionKind())
+	existing.SetName(obj.GetName())
+	existing.SetNamespace(obj.GetNamespace())
+	created := false
+	err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(existing), existing)
+	switch {
+	case err == nil:
+		if !resourceOwnedByDebugSession(existing, ds) {
+			return fmt.Errorf("refusing to overwrite pre-existing %s %s/%s not owned by debug session %s", obj.GetKind(), obj.GetNamespace(), obj.GetName(), ds.Name)
+		}
+	case !apierrors.IsNotFound(err):
+		return fmt.Errorf("failed to check existing pod template resource %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
+	default:
+		if createErr := targetClient.Create(ctx, obj); createErr == nil {
+			created = true
+		} else if !apierrors.IsAlreadyExists(createErr) {
+			return fmt.Errorf("create pod template resource %s/%s: %w", obj.GetNamespace(), obj.GetName(), createErr)
+		} else {
+			if getErr := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(existing), existing); getErr != nil {
+				return fmt.Errorf("failed to recheck raced pod template resource %s/%s: %w", obj.GetNamespace(), obj.GetName(), getErr)
+			}
+			if !resourceOwnedByDebugSession(existing, ds) {
+				return fmt.Errorf("refusing to overwrite raced %s %s/%s not owned by debug session %s", obj.GetKind(), obj.GetNamespace(), obj.GetName(), ds.Name)
+			}
+		}
+	}
+
+	// Existing resources from this same session are updated idempotently. The
+	// ownership check above makes ForceOwnership safe for this narrow case.
+	if !created && existing.GetUID() != "" {
+		obj.SetUID(existing.GetUID())
+		obj.SetResourceVersion(existing.GetResourceVersion())
+	}
+	if !created {
+		obj.SetManagedFields(nil)
+		//nolint:staticcheck // SA1019: client.Apply for Patch is still required for unstructured objects
+		if patchErr := targetClient.Patch(ctx, obj, ctrlclient.Apply, ctrlclient.FieldOwner("breakglass-controller"), ctrlclient.ForceOwnership); patchErr != nil {
+			return fmt.Errorf("SSA apply failed: %w", patchErr)
+		}
 	}
 
 	// Track in session status
@@ -629,6 +678,28 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		"namespace", obj.GetNamespace())
 
 	return nil
+}
+
+func resourceOwnedByDebugSession(obj *unstructured.Unstructured, ds *breakglassv1alpha1.DebugSession) bool {
+	if obj == nil || ds == nil {
+		return false
+	}
+	identity := debugSessionIdentity(ds)
+	return obj.GetLabels()["breakglass.t-caas.telekom.com/session"] == ds.Name &&
+		obj.GetLabels()[DebugSessionUIDLabelKey] == identity &&
+		obj.GetAnnotations()["breakglass.t-caas.telekom.com/source-session"] == fmt.Sprintf("%s/%s", ds.Namespace, ds.Name) &&
+		obj.GetAnnotations()[DebugSessionUIDAnnotationKey] == identity
+}
+
+func hasDebugSessionOwnershipMetadata(obj *unstructured.Unstructured) bool {
+	if obj == nil {
+		return false
+	}
+	_, labelSession := obj.GetLabels()["breakglass.t-caas.telekom.com/session"]
+	_, labelUID := obj.GetLabels()[DebugSessionUIDLabelKey]
+	_, annotationSession := obj.GetAnnotations()["breakglass.t-caas.telekom.com/source-session"]
+	_, annotationUID := obj.GetAnnotations()[DebugSessionUIDAnnotationKey]
+	return labelSession || labelUID || annotationSession || annotationUID
 }
 
 // debugSessionIdentity returns the immutable identity used to fence a Job's
@@ -883,6 +954,18 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 	if spec.SecurityContext.RunAsGroup != nil && *spec.SecurityContext.RunAsGroup == 0 {
 		return fmt.Errorf("restricted catalogue profiles cannot override the pod group to root")
 	}
+	if err := validateRestrictedAppArmor(spec.SecurityContext.AppArmorProfile); err != nil {
+		return err
+	}
+	if err := validateRestrictedSELinux(spec.SecurityContext.SELinuxOptions); err != nil {
+		return err
+	}
+	if err := validateRestrictedSysctls(spec.SecurityContext.Sysctls); err != nil {
+		return err
+	}
+	if spec.SecurityContext.WindowsOptions != nil && spec.SecurityContext.WindowsOptions.HostProcess != nil && *spec.SecurityContext.WindowsOptions.HostProcess {
+		return fmt.Errorf("restricted catalogue profiles cannot use a Windows host process")
+	}
 	podSeccompValid := false
 	if spec.SecurityContext.SeccompProfile != nil {
 		if err := validateRestrictedSeccomp(spec.SecurityContext.SeccompProfile); err != nil {
@@ -907,6 +990,9 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 	containers = append(containers, spec.InitContainers...)
 	containers = append(containers, spec.Containers...)
 	for _, container := range containers {
+		if err := validateRestrictedContainerSurface(container.Name, container.SecurityContext, container.Ports, container.LivenessProbe, container.ReadinessProbe, container.StartupProbe, container.Lifecycle); err != nil {
+			return err
+		}
 		security := container.SecurityContext
 		if security == nil || security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem ||
 			(security.Privileged != nil && *security.Privileged) ||
@@ -946,6 +1032,9 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 		}
 	}
 	for _, container := range spec.EphemeralContainers {
+		if err := validateRestrictedContainerSurface(container.Name, container.SecurityContext, container.Ports, nil, nil, nil, nil); err != nil {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q: %w", container.Name, err)
+		}
 		security := container.SecurityContext
 		if security == nil || security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem ||
 			(security.Privileged != nil && *security.Privileged) ||
@@ -971,6 +1060,104 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 		}
 		if len(container.Env) > 0 || len(container.EnvFrom) > 0 {
 			return fmt.Errorf("restricted catalogue profile ephemeral container %q cannot source environment variables", container.Name)
+		}
+	}
+	return nil
+}
+
+func validateRestrictedContainerSurface(name string, security *corev1.SecurityContext, ports []corev1.ContainerPort, liveness, readiness, startup *corev1.Probe, lifecycle *corev1.Lifecycle) error {
+	if security == nil {
+		return nil
+	}
+	if err := validateRestrictedAppArmor(security.AppArmorProfile); err != nil {
+		return fmt.Errorf("restricted catalogue profile container %q: %w", name, err)
+	}
+	if err := validateRestrictedSELinux(security.SELinuxOptions); err != nil {
+		return fmt.Errorf("restricted catalogue profile container %q: %w", name, err)
+	}
+	for _, port := range ports {
+		if port.HostPort != 0 {
+			return fmt.Errorf("restricted catalogue profile container %q cannot use hostPort", name)
+		}
+	}
+	for probeName, probe := range map[string]*corev1.Probe{"liveness": liveness, "readiness": readiness, "startup": startup} {
+		if probe != nil && probe.HTTPGet != nil && probe.HTTPGet.Host != "" {
+			return fmt.Errorf("restricted catalogue profile container %q cannot use a host in %s probe", name, probeName)
+		}
+	}
+	if lifecycle != nil {
+		for hookName, hook := range map[string]*corev1.LifecycleHandler{"postStart": lifecycle.PostStart, "preStop": lifecycle.PreStop} {
+			if hook != nil && hook.HTTPGet != nil && hook.HTTPGet.Host != "" {
+				return fmt.Errorf("restricted catalogue profile container %q cannot use a host in %s lifecycle hook", name, hookName)
+			}
+		}
+	}
+	return nil
+}
+
+func validateRestrictedAppArmor(profile *corev1.AppArmorProfile) error {
+	if profile == nil {
+		return nil
+	}
+	switch profile.Type {
+	case corev1.AppArmorProfileTypeRuntimeDefault:
+		if profile.LocalhostProfile != nil {
+			return fmt.Errorf("restricted catalogue profiles cannot set a localhost AppArmor name with RuntimeDefault")
+		}
+	case corev1.AppArmorProfileTypeLocalhost:
+		if profile.LocalhostProfile == nil || strings.TrimSpace(*profile.LocalhostProfile) == "" {
+			return fmt.Errorf("restricted catalogue profiles require a localhost AppArmor profile name")
+		}
+	case corev1.AppArmorProfileTypeUnconfined:
+		return fmt.Errorf("restricted catalogue profiles cannot use an unconfined AppArmor profile")
+	default:
+		return fmt.Errorf("restricted catalogue profiles require RuntimeDefault or named Localhost AppArmor")
+	}
+	return nil
+}
+
+func validateRestrictedSELinux(options *corev1.SELinuxOptions) error {
+	if options == nil {
+		return nil
+	}
+	if options.User != "" || options.Role != "" {
+		return fmt.Errorf("restricted catalogue profiles cannot set SELinux user or role")
+	}
+	if options.Type != "" {
+		switch options.Type {
+		case "container_t", "container_init_t", "container_kvm_t", "container_engine_t":
+		default:
+			return fmt.Errorf("restricted catalogue profiles cannot use SELinux type %q", options.Type)
+		}
+	}
+	return nil
+}
+
+func validateRestrictedSysctls(sysctls []corev1.Sysctl) error {
+	allowed := map[string]struct{}{
+		"kernel.shm_rmid_forced":              {},
+		"net.ipv4.ip_local_port_range":        {},
+		"net.ipv4.ip_unprivileged_port_start": {},
+		"net.ipv4.tcp_syncookies":             {},
+		"net.ipv4.ping_group_range":           {},
+		"net.ipv4.ip_local_reserved_ports":    {},
+		"net.ipv4.tcp_keepalive_time":         {},
+		"net.ipv4.tcp_fin_timeout":            {},
+		"net.ipv4.tcp_keepalive_intvl":        {},
+		"net.ipv4.tcp_keepalive_probes":       {},
+	}
+	for _, sysctl := range sysctls {
+		if _, ok := allowed[sysctl.Name]; !ok {
+			return fmt.Errorf("restricted catalogue profiles cannot use unsafe sysctl %q", sysctl.Name)
+		}
+	}
+	return nil
+}
+
+func validateRestrictedCatalogueAnnotations(annotations map[string]string) error {
+	for key := range annotations {
+		if strings.HasPrefix(key, "container.apparmor.security.beta.kubernetes.io/") {
+			return fmt.Errorf("restricted catalogue profiles cannot use legacy AppArmor annotations")
 		}
 	}
 	return nil

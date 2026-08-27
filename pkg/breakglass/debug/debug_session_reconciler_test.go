@@ -5280,6 +5280,39 @@ func TestDebugSessionController_CleanupPodTemplateResourcesPreservesFailures(t *
 	assert.False(t, session.Status.PodTemplateResourceStatuses[0].Deleted)
 }
 
+func TestDebugSessionController_CleanupPodTemplateResourcesPreservesReplacement(t *testing.T) {
+	scheme := testScheme()
+	session := newTestDebugSession("cleanup-replaced-resource", "test-template", "test-cluster", "user@example.com")
+	session.UID = "current-session-uid"
+	session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+		{Kind: "ConfigMap", APIVersion: "v1", ResourceName: "debug-config", Namespace: "default", Created: true},
+	}
+	replacement := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "debug-config",
+			Namespace: "default",
+			Labels: map[string]string{
+				"breakglass.t-caas.telekom.com/session": session.Name,
+				DebugSessionUIDLabelKey:                 "old-session-uid",
+			},
+			Annotations: map[string]string{
+				"breakglass.t-caas.telekom.com/source-session": session.Namespace + "/" + session.Name,
+				DebugSessionUIDAnnotationKey:                   "old-session-uid",
+			},
+		},
+		Data: map[string]string{"tenant": "must-remain"},
+	}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(replacement).Build()
+	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+	err := controller.cleanupPodTemplateResources(context.Background(), session, targetClient)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ownership precondition failed")
+	var unchanged corev1.ConfigMap
+	require.NoError(t, targetClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(replacement), &unchanged))
+	assert.Equal(t, map[string]string{"tenant": "must-remain"}, unchanged.Data)
+}
+
 func TestDebugSessionController_CleanupPodTemplateResourcesPreservesParseFailures(t *testing.T) {
 	scheme := testScheme()
 	session := newTestDebugSession("cleanup-pod-template-parse-failure", "test-template", "test-cluster", "user@example.com")

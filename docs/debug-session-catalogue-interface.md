@@ -71,6 +71,20 @@ only additional resource permitted is a fixed-name, namespaceless `core/v1`
 Cluster-scoped, namespaced-outside-target, workload, RBAC, network, storage,
 and identity resources are rejected before anything is applied.
 
+The same revalidation covers the Kubernetes Restricted pod-security surfaces
+for regular, init, and ephemeral containers: host ports, unconfined or
+malformed AppArmor, unsafe SELinux user/role/type settings, unsafe sysctls,
+and HTTP host fields in probes or lifecycle hooks are denied. Legacy AppArmor
+annotation keys are denied after all template, binding, session, and rendered
+pod annotations have been merged, so an annotation source cannot bypass the
+boundary.
+
+Additional resources use create-first semantics and carry the session UID
+identity. A fixed-name collision with an existing tenant object fails without
+mutation. During cleanup, a replacement with a different session identity is
+left untouched; a UID precondition protects deletion of an object still owned
+by the session.
+
 Node maintenance profiles expose constrained per-session variables for an exact
 target node, interface, evidence directory, confirmation token, and (for repair)
 an allowlisted action. They are scheduled to the selected node, mount an

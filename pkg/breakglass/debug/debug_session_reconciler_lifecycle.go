@@ -647,7 +647,41 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 		obj.SetName(status.ResourceName)
 		obj.SetNamespace(status.Namespace)
 
-		if err := targetClient.Delete(ctx, obj); err != nil {
+		existing := &unstructured.Unstructured{}
+		existing.SetGroupVersionKind(gvk)
+		existing.SetName(status.ResourceName)
+		existing.SetNamespace(status.Namespace)
+		if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(existing), existing); err != nil {
+			if apierrors.IsNotFound(err) {
+				log.Debugw("Pod template resource already deleted",
+					"kind", status.Kind,
+					"name", status.ResourceName)
+				status.Deleted = true
+				now := time.Now().UTC().Format(time.RFC3339)
+				status.DeletedAt = &now
+				continue
+			}
+			status.Error = fmt.Sprintf("get failed: %v", err)
+			remainingStatuses = append(remainingStatuses, *status)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("get pod template resource %s %s/%s: %w", status.Kind, status.Namespace, status.ResourceName, err))
+			continue
+		}
+		// New resources carry an ownership marker. If that marker is present,
+		// require an exact session identity before deletion. Legacy status entries
+		// without markers retain their historical cleanup behavior.
+		if hasDebugSessionOwnershipMetadata(existing) && !resourceOwnedByDebugSession(existing, ds) {
+			status.Error = "ownership precondition failed: resource was replaced or belongs to another session"
+			remainingStatuses = append(remainingStatuses, *status)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("refusing to delete pod template resource %s %s/%s: ownership precondition failed", status.Kind, status.Namespace, status.ResourceName))
+			continue
+		}
+
+		deleteOptions := []ctrlclient.DeleteOption{}
+		if existing.GetUID() != "" {
+			uid := existing.GetUID()
+			deleteOptions = append(deleteOptions, ctrlclient.Preconditions{UID: &uid})
+		}
+		if err := targetClient.Delete(ctx, obj, deleteOptions...); err != nil {
 			if apierrors.IsNotFound(err) {
 				log.Debugw("Pod template resource already deleted",
 					"kind", status.Kind,
