@@ -312,16 +312,17 @@ trace_command() {
 	TRACE_PID_FILE=$STAGING_DIR/trace.pid
 	TRACE_STATUS_FILE=$TRACE_PID_FILE.status
 	TRACE_TIMED_OUT_FILE=$TRACE_PID_FILE.timed-out
+	TEMP_DIAGNOSTICS=$STAGING_DIR/diagnostics
 	if [ -n "$filter" ]; then
 		# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
 		setsid sh -c 'pid_file=$1; status_file=$2; max_blocks=$3; printf "%s\\n" "$$" >"$pid_file"; ulimit -f "$max_blocks"; shift 3; "$@"; status=$?; printf "%s\\n" "$status" >"$status_file"; exit "$status"' sh "$TRACE_PID_FILE" "$TRACE_STATUS_FILE" "$max_trace_blocks" pwru \
 			--backend kprobe --output-tuple --timestamp none --output-limit-lines "$events" -- "$filter" \
-			>"$TEMP_EVIDENCE" 2>&1 &
+			>"$TEMP_EVIDENCE" 2>"$TEMP_DIAGNOSTICS" &
 	else
 		# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
 		setsid sh -c 'pid_file=$1; status_file=$2; max_blocks=$3; printf "%s\\n" "$$" >"$pid_file"; ulimit -f "$max_blocks"; shift 3; "$@"; status=$?; printf "%s\\n" "$status" >"$status_file"; exit "$status"' sh "$TRACE_PID_FILE" "$TRACE_STATUS_FILE" "$max_trace_blocks" pwru \
 			--backend kprobe --output-tuple --timestamp none --output-limit-lines "$events" \
-			>"$TEMP_EVIDENCE" 2>&1 &
+			>"$TEMP_EVIDENCE" 2>"$TEMP_DIAGNOSTICS" &
 	fi
 	LAUNCH_PID=$!
 	TRACE_PID=''
@@ -411,23 +412,41 @@ trace_command() {
 	# surviving the public command.
 	wait "$LAUNCH_PID" 2>/dev/null || true
 	LAUNCH_PID=''
-	# Normal pwru exits 0; signal termination is expected at the bounded
-	# duration. Other statuses indicate startup/runtime failure.
+	# pwru v1.0.12 returns status 1 when its native output-line limit is reached.
+	# Accept that one bounded-completion case only when its exact slog marker
+	# names this request's limit; ordinary status-1 failures remain fatal.
+	limit_completed=false
 	case "$status" in
-		0|130|137|141|143) ;;
+		0|130|141|143) ;;
+		1)
+			completion_count=$(sed -n 's/^time=[^ ]* level=INFO msg="Printed events, exiting program\.\." count=\([0-9][0-9]*\)$/\1/p' "$TEMP_DIAGNOSTICS" 2>/dev/null || true)
+			if [ "$completion_count" = "$events" ]; then
+				limit_completed=true
+			else
+				printf 'net-debug: pwru status 1 lacked the exact bounded-completion marker for %s events\n' "$events" >&2
+				if [ -s "$TEMP_DIAGNOSTICS" ]; then
+					sed '/->/d' "$TEMP_DIAGNOSTICS" | sed -n '1,40p' >&2
+				fi
+				return 1
+			fi
+			;;
 		*)
 			# Preserve actionable startup diagnostics before the EXIT trap removes
 			# private evidence. Drop packet-tuple lines so failure logs cannot
 			# become an alternate packet-content output channel.
 			printf 'net-debug: pwru exited with status %s\n' "$status" >&2
-			if [ -s "$TEMP_EVIDENCE" ]; then
-				sed '/->/d' "$TEMP_EVIDENCE" | sed -n '1,40p' >&2
+			if [ -s "$TEMP_DIAGNOSTICS" ]; then
+				sed '/->/d' "$TEMP_DIAGNOSTICS" | sed -n '1,40p' >&2
 			fi
 			return 1
 		;;
 	esac
 	count=$(wc -l <"$TEMP_EVIDENCE" | tr -d ' ')
 	[ "$count" -le "$events" ] || usage_error 'trace evidence exceeded event limit'
+	if [ "$limit_completed" = true ] && [ "$count" -ne "$events" ]; then
+		printf 'net-debug: bounded-completion marker claimed %s events but evidence contained %s\n' "$events" "$count" >&2
+		return 1
+	fi
 	bytes=$(wc -c <"$TEMP_EVIDENCE" | tr -d ' ')
 	[ "$bytes" -le "$max_trace_bytes" ] || usage_error 'trace evidence exceeds its bounded file size'
 	hash=$(sha256sum "$TEMP_EVIDENCE" | awk '{print $1}')

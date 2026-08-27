@@ -307,6 +307,84 @@ if kill -0 "$trace_child_pid" 2>/dev/null; then
 	exit 1
 fi
 test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
+
+run_trace_fixture() {
+	trace_fixture_events=$1
+	NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" \
+		NETWORK_DEBUG_BTF_PATH="$trace_fixture/status" NETWORK_DEBUG_DEBUGFS_PATH="$trace_fixture/debug" \
+		NETWORK_DEBUG_TRACEFS_PATH="$trace_fixture/trace" NETWORK_DEBUG_SECURITYFS_PATH="$trace_fixture/security" \
+		NETWORK_DEBUG_MOUNTINFO_PATH="$trace_fixture/mountinfo" NETWORK_DEBUG_CAPABILITY_FILE="$trace_fixture/status" \
+		PATH="$trace_fixture/bin:/usr/bin:/bin" sh "$root/scripts/net-debug" trace \
+			--duration 1 --events "$trace_fixture_events" --output trace.log
+}
+
+# pwru v1.0.12 reports reaching --output-limit-lines as an informational
+# completion marker on stderr but exits with status 1. Accept only that exact
+# marker/count pair and only when stdout contains the same number of events.
+cat >"$trace_fixture/bin/pwru" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80' '10.0.0.1:12346 -> 10.0.0.2:80' '10.0.0.1:12347 -> 10.0.0.2:80'
+printf '%s\n' 'time=fixture level=INFO msg="Printed events, exiting program.." count=3' >&2
+exit 1
+EOF
+chmod +x "$trace_fixture/bin/pwru"
+test_context='trace-limit-status-1'
+rm -f "$trace_fixture/work/trace.log"
+run_trace_fixture 3 >"$trace_fixture/limit-summary"
+grep -Fx 'event_count 3' "$trace_fixture/limit-summary" >/dev/null
+test "$(wc -l <"$trace_fixture/work/trace.log" | tr -d ' ')" -eq 3
+test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
+
+cat >"$trace_fixture/bin/pwru" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80' '10.0.0.1:12346 -> 10.0.0.2:80' '10.0.0.1:12347 -> 10.0.0.2:80'
+printf '%s\n' 'time=fixture level=INFO msg="Printed events, exiting program.." count=2' >&2
+exit 1
+EOF
+chmod +x "$trace_fixture/bin/pwru"
+test_context='trace-limit-false-marker'
+rm -f "$trace_fixture/work/trace.log"
+if run_trace_fixture 3 >"$trace_fixture/false-marker-summary" 2>"$trace_fixture/false-marker-error"; then
+	printf '%s\n' 'trace accepted a false bounded-completion marker' >&2
+	exit 1
+fi
+test ! -e "$trace_fixture/work/trace.log"
+test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
+
+cat >"$trace_fixture/bin/pwru" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80' '10.0.0.1:12346 -> 10.0.0.2:80'
+printf '%s\n' 'time=fixture level=INFO msg="Printed events, exiting program.." count=3' >&2
+exit 1
+EOF
+chmod +x "$trace_fixture/bin/pwru"
+test_context='trace-limit-evidence-mismatch'
+rm -f "$trace_fixture/work/trace.log"
+if run_trace_fixture 3 >"$trace_fixture/mismatch-summary" 2>"$trace_fixture/mismatch-error"; then
+	printf '%s\n' 'trace accepted evidence with a mismatched bounded-completion count' >&2
+	exit 1
+fi
+test ! -e "$trace_fixture/work/trace.log"
+test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
+
+cat >"$trace_fixture/bin/pwru" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' 'pwru: failed to attach kprobe' >&2
+exit 1
+EOF
+chmod +x "$trace_fixture/bin/pwru"
+test_context='trace-status-1-runtime-error'
+rm -f "$trace_fixture/work/trace.log"
+if run_trace_fixture 3 >"$trace_fixture/error-summary" 2>"$trace_fixture/error-error"; then
+	printf '%s\n' 'trace accepted an unmarked pwru runtime error' >&2
+	exit 1
+fi
+test ! -e "$trace_fixture/work/trace.log"
+test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
 else
 	printf '%s\n' 'skipping Linux-only trace success fixture on non-Linux host' >&2
 fi
