@@ -325,7 +325,7 @@ cat >"$trace_fixture/bin/pwru" <<'EOF'
 #!/bin/sh
 set -eu
 printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80' '10.0.0.1:12346 -> 10.0.0.2:80' '10.0.0.1:12347 -> 10.0.0.2:80'
-printf '%s\n' 'time=fixture level=INFO msg="Printed events, exiting program.." count=3' >&2
+printf '%s\n' '2026/08/27 20:00:00 INFO Printed events, exiting program.. count=3' >&2
 exit 1
 EOF
 chmod +x "$trace_fixture/bin/pwru"
@@ -340,7 +340,7 @@ cat >"$trace_fixture/bin/pwru" <<'EOF'
 #!/bin/sh
 set -eu
 printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80' '10.0.0.1:12346 -> 10.0.0.2:80' '10.0.0.1:12347 -> 10.0.0.2:80'
-printf '%s\n' 'time=fixture level=INFO msg="Printed events, exiting program.." count=2' >&2
+printf '%s\n' '2026/08/27 20:00:00 INFO Printed events, exiting program.. count=2' >&2
 exit 1
 EOF
 chmod +x "$trace_fixture/bin/pwru"
@@ -357,7 +357,7 @@ cat >"$trace_fixture/bin/pwru" <<'EOF'
 #!/bin/sh
 set -eu
 printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80' '10.0.0.1:12346 -> 10.0.0.2:80'
-printf '%s\n' 'time=fixture level=INFO msg="Printed events, exiting program.." count=3' >&2
+printf '%s\n' '2026/08/27 20:00:00 INFO Printed events, exiting program.. count=3' >&2
 exit 1
 EOF
 chmod +x "$trace_fixture/bin/pwru"
