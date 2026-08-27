@@ -5,9 +5,16 @@
 
 set -eu
 
+# Do not let a caller-controlled environment select helper binaries from a
+# writable evidence or recovery mount. The image's fixed utility locations
+# are part of the command contract.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
 # These limits are deliberately fixed in the image rather than configurable by
 # a request. They keep a failed driver, command, or mounted evidence volume
 # from turning a bounded maintenance request into unbounded work or storage.
+value_max_bytes=256
 capture_timeout_seconds=10
 capture_max_bytes=32768
 evidence_max_bytes=393216
@@ -23,6 +30,7 @@ validate_value() {
 	value=$2
 
 	[ -n "$value" ] || die "$label is required"
+	[ "${#value}" -le "$value_max_bytes" ] || die "$label exceeds the fixed ${value_max_bytes}-byte limit"
 	case "$value" in
 		*[!A-Za-z0-9_.:@-]*) die "$label contains unsupported characters" ;;
 	esac

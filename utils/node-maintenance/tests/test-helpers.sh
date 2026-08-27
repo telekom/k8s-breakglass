@@ -59,4 +59,9 @@ BREAKGLASS_NODE_NAME=node-a BREAKGLASS_OPERATION_ID=op-a BREAKGLASS_RECORDING_ID
 	--neighbor-address 192.0.2.2 --entry-mac 02:00:00:00:00:02 \
 	--evidence-dir /evidence --confirm NETWORK-REPAIR
 
+long_node=$(awk 'BEGIN { for (i = 0; i < 257; i++) printf "n" }')
+BREAKGLASS_NODE_NAME="$long_node" assert_rejected 'oversized controller value is rejected' "$preflight" \
+	--target-node "$long_node" --interface eth0 --evidence-dir /evidence \
+	--confirm NODE-RECOVERY-PREFLIGHT
+
 printf 'PASS: node-maintenance fast behavioral guards completed\n'

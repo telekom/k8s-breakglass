@@ -41,7 +41,8 @@ reused as approval for another.
 Each command creates `metadata` plus `events.jsonl` recording hooks correlated
 by operation and recording IDs. Repair captures before/action/after evidence;
 kexec validation records fixed-file digests and an explicit
-`execution_performed=false`. Captures have fixed 10-second, 32 KiB per-file,
+`execution_performed=false`. Validated request values and captures have fixed
+limits: values are at most 256 bytes, captures have fixed 10-second, 32 KiB per-file,
 and 384 KiB per-bundle bounds. An atomic evidence-volume lease permits one
 operation at a time and is released on exit. The controller must also enforce
 one active workload per node because separate volumes cannot coordinate.

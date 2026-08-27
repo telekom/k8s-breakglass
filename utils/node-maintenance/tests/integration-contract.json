@@ -30,6 +30,7 @@
     "independentApprovalRequired": true
   },
   "bounds": {
+    "validatedValueMaxBytes": 256,
     "captureTimeoutSeconds": 10,
     "captureMaxBytes": 32768,
     "evidenceMaxBytes": 393216,
