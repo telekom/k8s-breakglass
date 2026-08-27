@@ -228,7 +228,7 @@ case "$*" in
 	*'--output-meta=false'*) ;;
 	*) exit 2 ;;
 esac
-printf '%s\n' trace-event
+printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80'
 EOF
 chmod +x "$trace_fixture/bin/pwru"
 cat >"$trace_fixture/bin/readlink" <<'EOF'
