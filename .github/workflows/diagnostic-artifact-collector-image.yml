@@ -29,7 +29,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.0"
+          go-version-file: go.mod
       - name: Run copier and uploader tests
         run: make -C utils/images/diagnostic-artifact-collector test
       - name: Lint image helper shell
