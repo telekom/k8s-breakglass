@@ -1,0 +1,139 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+---
+image: ghcr.io/telekom/k8s-breakglass/utils/diagnostic-artifact-collector
+context: utils/images/diagnostic-artifact-collector
+platforms:
+  - linux/amd64
+  - linux/arm64
+base:
+  image: busybox:1.37
+  digest: sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
+build:
+  image: golang:1.27
+  digest: sha256:c5b07c17f54c5f22230c4b4da6e90249165cf55368e01a52808cb92064e18836
+  purpose: static-stdlib-uploader-and-pinned-ca-bundle
+runtime:
+  user: "65532:65532 by default; 0:65532 only for host-mounted crashdump collector"
+  # The image default and all uploader/summary containers are unprivileged.
+  # The controller may run only the host-mounted crashdump collector init
+  # container as root because coredump files are commonly root-readable only.
+  users:
+    default: "65532:65532"
+    host_mount_collector: "0:65532"
+  writable_paths:
+    - /output
+  output_owner_after_root_collection: "0:65532 (mode 0640; uploader accepts this hand-off)"
+  output_owner_after_summary_collection: "65532:65532 (mode 0600)"
+  read_only_paths:
+    - /host-coredumps
+    - /usr/share/breakglass/runbooks/upstream/diagnostic-artifact-collection
+    - /usr/share/breakglass/runbooks/internal
+  runbooks:
+    upstream: /usr/share/breakglass/runbooks/upstream/diagnostic-artifact-collection
+    optional_internal_mount: /usr/share/breakglass/runbooks/internal
+    internal_mount_mode: root-owned-read-only-image-volume-without-subPath
+    internal_content_execution: denied
+  limits:
+    crashdump_max_source_total_bytes: 503316480
+    crashdump_max_source_file_bytes: 503316480
+    crashdump_max_files: 4096
+    crashdump_max_candidate_files: 4096
+    crashdump_max_total_entries: 8192
+    crashdump_max_source_path_bytes: 512
+    crashdump_source_mount_crossing: denied
+    crashdump_source_link_count: 1
+    crashdump_copy_verification: descriptor-relative-double-sha256-and-stable-metadata
+    crashdump_max_duration_seconds: 900
+    crashdump_max_archive_bytes: 536870912
+    system_summary_max_source_total_bytes: 14680064
+    system_summary_max_source_file_bytes: 14680064
+    system_summary_max_files: 64
+    system_summary_max_duration_seconds: 120
+    system_summary_max_archive_bytes: 16777216
+  capabilities: []
+  privileged: false
+  # Collection is offline; only the uploader needs egress to the exact
+  # controller-issued upload endpoint. The controller, not this image, talks
+  # to S3-compatible storage.
+  network_required: true
+  network_consumer: uploader-only
+contract:
+  schema_version: diagnostic-artifact/v1
+  executable: /usr/local/bin/diagnostic-artifact-collector
+  uploader: /usr/local/bin/diagnostic-artifact-upload
+  intents:
+    - diagnostic-artifact-collection
+  recipes:
+    - id: crashdump-collection.v1
+      inputs:
+        - name: nodeName
+          type: kubernetes-node-name
+          source: DIAGNOSTIC_NODE
+          required: true
+        - name: maxAgeMinutes
+          type: integer
+          source: DIAGNOSTIC_MAX_AGE_MINUTES
+          minimum: 1
+          maximum: 10080
+          default: 1440
+      source_mount: /host-coredumps
+      outputs:
+        - coredumps/**
+    - id: system-summary.v1
+      inputs:
+        - name: detailLevel
+          type: enum
+          source: DIAGNOSTIC_DETAIL_LEVEL
+          values:
+            - basic
+            - extended
+          default: basic
+      outputs:
+        - system-summary.json
+  archive:
+    format: tar.gz
+    includes:
+      - manifest.json
+      - stdout.log
+      - stderr.log
+      - files/**
+    checksum: sha256
+    destination_overwrite: denied
+  commands:
+    - --help
+    - collect
+    - upload
+  upload:
+    method: PUT
+    archive: /output/artifact.tar.gz
+    max_archive_bytes_source: BREAKGLASS_ARTIFACT_MAX_BYTES
+    max_archive_bytes_range: 1..536870912
+    ready_marker: /output/artifact.ready
+    url_source: BREAKGLASS_ARTIFACT_UPLOAD_URL
+    token_source: BREAKGLASS_ARTIFACT_UPLOAD_TOKEN
+    timeout_source: BREAKGLASS_ARTIFACT_UPLOAD_TIMEOUT
+    timeout_range: 1ns..1h
+    redirects: denied
+    tls: TLS1.2-or-newer-verified
+    trust_store: /etc/ssl/certs/ca-certificates.crt
+    ambient_ca_and_proxy_environment: ignored
+    recipe_ceiling_source: /output/artifact.manifest.json
+    transfer_integrity: before-after-sha256-and-stable-metadata
+  forbidden_inputs:
+    - command
+    - arguments
+    - script
+    - image
+    - mount
+    - output-path
+    - output-declaration
+attestations:
+  sbom: required
+  provenance: required
+  signature: cosign-keyless
+signing:
+  tool: cosign
+  identity: keyless
+  verify_command: cosign verify IMAGE@DIGEST
