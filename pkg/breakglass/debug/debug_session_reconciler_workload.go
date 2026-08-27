@@ -326,7 +326,16 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 
 	// If the template produced a full workload manifest, validate and use it directly
 	if renderResult.Workload != nil {
-		return c.useTemplateWorkload(renderResult, workloadType, workloadName, targetNs, ds, template, binding, labels, annotations)
+		workload, resources, err := c.useTemplateWorkload(renderResult, workloadType, workloadName, targetNs, ds, template, binding, labels, annotations)
+		if err != nil {
+			return nil, nil, err
+		}
+		if restrictedCatalogue {
+			if err := validateRestrictedWorkloadAnnotations(workload); err != nil {
+				return nil, nil, err
+			}
+		}
+		return workload, resources, nil
 	}
 
 	// Enforce RestartPolicy: Always for DaemonSets and Deployments. Jobs retain
@@ -345,7 +354,7 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 
 	switch workloadType {
 	case breakglassv1alpha1.DebugWorkloadDaemonSet:
-		return &appsv1.DaemonSet{
+		workload := &appsv1.DaemonSet{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "apps/v1",
 				Kind:       "DaemonSet",
@@ -370,7 +379,13 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 					Spec: podSpec,
 				},
 			},
-		}, renderResult.AdditionalResources, nil
+		}
+		if restrictedCatalogue {
+			if err := validateRestrictedWorkloadAnnotations(workload); err != nil {
+				return nil, nil, err
+			}
+		}
+		return workload, renderResult.AdditionalResources, nil
 
 	case breakglassv1alpha1.DebugWorkloadDeployment:
 		replicas := int32(1)
@@ -380,7 +395,7 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 		if template.Spec.ResourceQuota != nil && template.Spec.ResourceQuota.MaxPods != nil && replicas > *template.Spec.ResourceQuota.MaxPods {
 			return nil, nil, fmt.Errorf("replicas (%d) exceed resourceQuota.maxPods (%d)", replicas, *template.Spec.ResourceQuota.MaxPods)
 		}
-		return &appsv1.Deployment{
+		workload := &appsv1.Deployment{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "apps/v1",
 				Kind:       "Deployment",
@@ -406,7 +421,13 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 					Spec: podSpec,
 				},
 			},
-		}, renderResult.AdditionalResources, nil
+		}
+		if restrictedCatalogue {
+			if err := validateRestrictedWorkloadAnnotations(workload); err != nil {
+				return nil, nil, err
+			}
+		}
+		return workload, renderResult.AdditionalResources, nil
 
 	case breakglassv1alpha1.DebugWorkloadJob:
 		if podSpec.RestartPolicy != corev1.RestartPolicyNever && podSpec.RestartPolicy != corev1.RestartPolicyOnFailure {
@@ -420,7 +441,7 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 		jobLabels := mergeStringMaps(labels, map[string]string{
 			DebugSessionUIDLabelKey: debugSessionIdentity(ds),
 		})
-		return &batchv1.Job{
+		workload := &batchv1.Job{
 			TypeMeta: metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
 			ObjectMeta: metav1.ObjectMeta{
 				Name: workloadName, Namespace: targetNs, Labels: jobLabels, Annotations: annotations,
@@ -437,7 +458,13 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 					Spec:       podSpec,
 				},
 			},
-		}, renderResult.AdditionalResources, nil
+		}
+		if restrictedCatalogue {
+			if err := validateRestrictedWorkloadAnnotations(workload); err != nil {
+				return nil, nil, err
+			}
+		}
+		return workload, renderResult.AdditionalResources, nil
 
 	default:
 		return nil, nil, fmt.Errorf("unsupported workload type: %s", workloadType)
@@ -1161,6 +1188,25 @@ func validateRestrictedCatalogueAnnotations(annotations map[string]string) error
 		}
 	}
 	return nil
+}
+
+// validateRestrictedWorkloadAnnotations checks the final pod-template
+// annotations after workload-specific metadata has been merged. Keeping this
+// check at the object boundary prevents a full workload manifest from adding a
+// legacy AppArmor annotation after the shared annotation map was validated.
+func validateRestrictedWorkloadAnnotations(workload ctrlclient.Object) error {
+	var annotations map[string]string
+	switch typed := workload.(type) {
+	case *appsv1.Deployment:
+		annotations = typed.Spec.Template.Annotations
+	case *appsv1.DaemonSet:
+		annotations = typed.Spec.Template.Annotations
+	case *batchv1.Job:
+		annotations = typed.Spec.Template.Annotations
+	default:
+		return nil
+	}
+	return validateRestrictedCatalogueAnnotations(annotations)
 }
 
 func dropsAllCapabilities(drop []corev1.Capability) bool {
