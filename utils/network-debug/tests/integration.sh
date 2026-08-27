@@ -576,9 +576,10 @@ if [ "$PWRU_READY" = true ]; then
 		>"$WORK_DIR/trace-start.log" 2>&1 || trace_start_status=$?
 	[ "$trace_start_status" -eq 0 ] || requirement "could not start public net-debug trace operation"
 	# The public wrapper defers its duration watchdog until pwru has attached
-	# kprobes and created its native readiness marker. Start the owner-labelled
-	# client only after that handshake, so every observed tuple is attributable
-	# to traffic generated during the bounded listening interval.
+	# kprobes and created its native readiness marker. Start a small, fixed
+	# number of successful requests only after that handshake, so every observed
+	# tuple is attributable to traffic generated during the bounded listening
+	# interval without allowing the native event limit to end the proof early.
 	trace_ready=false
 	for _ in $(seq 1 $((PWRU_STARTUP_MARGIN * 4))); do
 		trace_ready_marker=$(docker_call exec "$PWRU_CONTAINER" sh -c \
@@ -602,14 +603,17 @@ if [ "$PWRU_READY" = true ]; then
 	docker_call run --detach --name "$TRACE_TRAFFIC_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" \
 		--network host --cap-drop ALL --security-opt no-new-privileges=true "$IMAGE" sh -ec '
 			curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18080/ >/dev/null
-			while :; do
-				curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18080/ >/dev/null || true
-				sleep 0.1
-			done
+			curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18080/ >/dev/null
 		' >/dev/null 2>&1 || requirement "could not start owned trace traffic generator"
-	sleep 0.25
-	trace_traffic_state=$(docker_call inspect --format '{{.State.Status}}' "$TRACE_TRAFFIC_CONTAINER" 2>/dev/null || true)
-	[ "$trace_traffic_state" = running ] || requirement "trace HTTP traffic generator did not remain running"
+	trace_traffic_state=running
+	for _ in $(seq 1 40); do
+		trace_traffic_state=$(docker_call inspect --format '{{.State.Status}}' "$TRACE_TRAFFIC_CONTAINER" 2>/dev/null || true)
+		[ "$trace_traffic_state" = exited ] && break
+		sleep 0.25
+	done
+	[ "$trace_traffic_state" = exited ] || requirement "trace HTTP traffic generator exceeded its bounded request run"
+	trace_traffic_exit=$(docker_call inspect --format '{{.State.ExitCode}}' "$TRACE_TRAFFIC_CONTAINER" 2>/dev/null || true)
+	[ "$trace_traffic_exit" = 0 ] || requirement "trace HTTP traffic generator request failed"
 	# The wrapper's duration is itself bounded. Wait only through a separate
 	# bounded Docker wait, then validate its public summary and evidence file.
 	trace_wait_status=0

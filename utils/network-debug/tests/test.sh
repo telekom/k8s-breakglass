@@ -327,6 +327,11 @@ printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80'
 EOF
 chmod +x "$trace_fixture/bin/pwru"
 test_context='trace-native-readiness-handshake'
+# The preceding negative capability matrix intentionally leaves the fixture
+# in its last reduced-capability state. Reset it explicitly before this
+# positive case so readiness coverage cannot depend on loop ordering.
+printf 'CapEff: c001081000\n' >"$trace_fixture/status"
+grep -Fx 'CapEff: c001081000' "$trace_fixture/status" >/dev/null
 rm -f "$trace_fixture/work/trace.log"
 NETWORK_DEBUG_PWRU_REQUIRE_READY=true NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" \
 	NETWORK_DEBUG_BTF_PATH="$trace_fixture/status" NETWORK_DEBUG_DEBUGFS_PATH="$trace_fixture/debug" \
