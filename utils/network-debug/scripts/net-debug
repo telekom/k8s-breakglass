@@ -302,14 +302,18 @@ trace_command() {
 	# A FIFO reader enforces the event bound before evidence reaches disk. Once
 	# the limit is reached it closes the FIFO; the wrapper then sends SIGINT and
 	# gives pwru a bounded settle window for BPF detachment.
+	# Open the reader before starting pwru. Opening a FIFO for writing blocks
+	# until a reader exists; starting the writer first can leave a shell child
+	# stuck in that open on some /bin/sh implementations, making the public
+	# stop signal target the shell rather than pwru.
+	awk -v limit="$events" 'NR <= limit { if (length($0) > 4096) print substr($0, 1, 4096); else print } NR == limit { exit }' "$fifo" >"$TEMP_EVIDENCE" &
+	READER_PID=$!
 	if [ -n "$filter" ]; then
 		pwru --backend kprobe --output-tuple --timestamp none -- "$filter" >"$fifo" 2>&1 &
 	else
 		pwru --backend kprobe --output-tuple --timestamp none >"$fifo" 2>&1 &
 	fi
 	ACTIVE_PID=$!
-	awk -v limit="$events" 'NR <= limit { if (length($0) > 4096) print substr($0, 1, 4096); else print } NR == limit { exit }' "$fifo" >"$TEMP_EVIDENCE" &
-	READER_PID=$!
 	(
 		sleep "$duration"
 		kill -INT "$ACTIVE_PID" 2>/dev/null || true
