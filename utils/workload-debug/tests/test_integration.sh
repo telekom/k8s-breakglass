@@ -6,7 +6,7 @@ set -Eeuo pipefail
 root=$(cd -- "$(dirname "$0")/.." && pwd)
 # shellcheck disable=SC1091
 source "$root/tests/kind-lifecycle.sh"
-image=${WORKLOAD_DEBUG_IMAGE:-workload-debug:integration-$$}
+image=${WORKLOAD_DEBUG_IMAGE:-ghcr.io/telekom/k8s-breakglass/utils/workload-debug:integration-$$}
 fixture_image=workload-debug-fixture:integration-$$
 fixture_dir=$(mktemp -d "${TMPDIR:-/tmp}/workload-debug.XXXXXX")
 kind_name=workload-debug-$$

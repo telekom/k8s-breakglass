@@ -7,6 +7,7 @@ All notable changes to the standalone workload-debug image are documented here.
 
 ## Unreleased
 
+- Publish the utility image at the canonical `utils/workload-debug` GHCR path.
 - Require the real projected service-account bearer token in the Kubernetes
   API integration fixture and verify authenticated output, process arguments,
   and logs do not disclose it.

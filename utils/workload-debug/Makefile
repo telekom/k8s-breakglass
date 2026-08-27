@@ -3,7 +3,7 @@
 
 SHELL := /bin/sh
 
-IMAGE ?= ghcr.io/telekom/k8s-breakglass/workload-debug:dev
+IMAGE ?= ghcr.io/telekom/k8s-breakglass/utils/workload-debug:dev
 PLATFORMS ?= linux/amd64,linux/arm64
 VERSION ?= dev
 VCS_REF ?= $(shell git rev-parse --short HEAD 2>/dev/null || printf unknown)
