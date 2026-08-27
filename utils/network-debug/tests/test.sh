@@ -87,7 +87,11 @@ case "$*" in
     '-d '*) exit 0 ;;
     *' -r '*) printf '%s\n' packet-header packet-header; exit 0 ;;
 esac
-printf '%s' 'pcap-fixture' >"$output"
+if [ "$output" = - ]; then
+    printf '%s' 'pcap-fixture'
+else
+    printf '%s' 'pcap-fixture' >"$output"
+fi
 exit 0
 EOF
 chmod +x "$capture_fixture/bin/tcpdump"
@@ -145,7 +149,11 @@ case "$*" in
 esac
 : >"$FAKE_TCPDUMP_STARTED"
 sleep 2
-printf '%s' pcap-fixture >"$output"
+if [ "$output" = - ]; then
+    printf '%s' pcap-fixture
+else
+    printf '%s' pcap-fixture >"$output"
+fi
 EOF
 chmod +x "$capture_fixture/bin/tcpdump"
 race_work=$(mktemp -d)
@@ -185,7 +193,11 @@ case "$*" in
     '-d '*) exit 0 ;;
     *' -r '*) printf '%s\n' packet-header; exit 0 ;;
 esac
-printf '%s' pcap-fixture >"$output"
+if [ "$output" = - ]; then
+    printf '%s' pcap-fixture
+else
+    printf '%s' pcap-fixture >"$output"
+fi
 EOF
 chmod +x "$capture_fixture/bin/tcpdump"
 actual_cr=$(printf 'tcp port 443\r')

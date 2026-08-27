@@ -178,14 +178,12 @@ capture_command() {
 	fi
 
 	# Keep this argv literal and reviewable: in particular, -p prevents
-	# tcpdump from enabling promiscuous mode on the target interface. The
-	# packaged tcpdump drops to its capture user before opening -w. Give that
-	# user write/traversal, but not listing, of the random staging directory;
-	# the inherited 077 umask keeps the newly-created evidence file private.
-	# This avoids adding CAP_SETUID merely to request `-Z root` in the
-	# admission-bounded profile.
-	chmod 0733 "$STAGING_DIR"
-	tcpdump -p -i "$interface" -s "$snaplen" -c "$packets" -w "$TEMP_EVIDENCE" -- ${filter:+"$filter"} >"$TEMP_EVIDENCE.err" 2>&1 &
+	# tcpdump from enabling promiscuous mode on the target interface. Open the
+	# root-owned 0600 evidence file through the shell before tcpdump drops to
+	# its packaged capture user; -w - makes tcpdump write through that inherited
+	# descriptor and avoids granting any shared-directory write permission or
+	# CAP_SETUID merely to request `-Z root`.
+	tcpdump -p -i "$interface" -s "$snaplen" -c "$packets" -w - -- ${filter:+"$filter"} >"$TEMP_EVIDENCE" 2>"$TEMP_EVIDENCE.err" &
 	ACTIVE_PID=$!
 	(
 		sleep "$duration"
