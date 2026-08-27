@@ -14,6 +14,9 @@ dump_output=$test_root/dump-output
 outside=$test_root/outside
 remove_storage_image=0
 remove_dump_image=0
+test_version=utility-integration-version
+test_revision=utility-integration-revision
+test_created=2026-01-02T03:04:05Z
 
 fail() {
     echo "utility image integration: $1" >&2
@@ -78,8 +81,35 @@ mkdir "$dump_output/subdir" "$dump_output/nested"
 ln -s /output "$dump_output/nested/path-link"
 
 echo "building utility images for ${platform}"
-docker buildx build --load --platform "$platform" -t "$storage_image" "$images_root/storage-debug"
-docker buildx build --load --platform "$platform" -t "$dump_image" "$images_root/dump-reader"
+docker buildx build --load --platform "$platform" \
+    --build-arg VERSION="$test_version" \
+    --build-arg VCS_REF="$test_revision" \
+    --build-arg BUILD_DATE="$test_created" \
+    -t "$storage_image" "$images_root/storage-debug"
+docker buildx build --load --platform "$platform" \
+    --build-arg VERSION="$test_version" \
+    --build-arg VCS_REF="$test_revision" \
+    --build-arg BUILD_DATE="$test_created" \
+    -t "$dump_image" "$images_root/dump-reader"
+
+assert_image_label() {
+    image=$1
+    label=$2
+    expected=$3
+    actual=$(docker image inspect "$image" --format "{{ index .Config.Labels \"$label\" }}")
+    [ "$actual" = "$expected" ] || fail "$image label $label is $actual, expected $expected"
+}
+
+echo "checking OCI traceability labels"
+for image in "$storage_image" "$dump_image"; do
+    assert_image_label "$image" org.opencontainers.image.version "$test_version"
+    assert_image_label "$image" org.opencontainers.image.revision "$test_revision"
+    assert_image_label "$image" org.opencontainers.image.created "$test_created"
+done
+assert_image_label "$storage_image" org.opencontainers.image.base.name alpine:3.24
+assert_image_label "$storage_image" org.opencontainers.image.base.digest sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+assert_image_label "$dump_image" org.opencontainers.image.base.name busybox:1.37
+assert_image_label "$dump_image" org.opencontainers.image.base.digest sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
 
 storage_user=$(docker image inspect "$storage_image" --format '{{.Config.User}}')
 dump_user=$(docker image inspect "$dump_image" --format '{{.Config.User}}')
