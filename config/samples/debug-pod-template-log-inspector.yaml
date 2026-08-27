@@ -4,6 +4,10 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugPodTemplate
 metadata:
   name: log-inspector
+  annotations:
+    breakglass.t-caas.telekom.com/deprecated: "true"
+    breakglass.t-caas.telekom.com/deprecation-message: "Do not apply without a reviewed hostPath policy; use the disabled dump-access catalogue profile with an approved read-only source."
+    breakglass.t-caas.telekom.com/replacement: "debug-session-catalogue/dump-access"
 spec:
   displayName: "Log Inspector"
   description: "Read-only access to host logs in /var/log"
