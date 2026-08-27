@@ -2353,7 +2353,10 @@ func TestBuildPodSpec_RestrictedCatalogueRejectsIncompletePodSecurity(t *testing
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := controller.buildPodSpec(ds, &breakglassv1alpha1.DebugSessionTemplate{}, tc.pod)
+			template := &breakglassv1alpha1.DebugSessionTemplate{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+			}
+			_, err := controller.buildPodSpec(ds, template, tc.pod)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.want)
 		})
@@ -2396,7 +2399,10 @@ rules: []
 `},
 	}
 
-	_, err := controller.buildPodSpec(ds, &breakglassv1alpha1.DebugSessionTemplate{}, podTemplate)
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Labels: labels},
+	}
+	_, err := controller.buildPodSpec(ds, template, podTemplate)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "may only carry core/v1 ConfigMap")
 }
