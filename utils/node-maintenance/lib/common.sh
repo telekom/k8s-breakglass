@@ -62,6 +62,7 @@ prepare_evidence_dir() {
 	root=$(readlink -f /evidence 2>/dev/null || true)
 	[ "$root" = /evidence ] || die "/evidence did not resolve safely"
 	if [ "$directory" != /evidence ]; then
+		[ ! -L "$directory" ] || die "evidence directory may not be a symlink"
 		mkdir "$directory" 2>/dev/null || [ -d "$directory" ] || die "cannot create evidence directory '$directory'"
 	fi
 	assert_safe_evidence_dir "$directory"
