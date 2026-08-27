@@ -883,8 +883,12 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 	if spec.SecurityContext.RunAsGroup != nil && *spec.SecurityContext.RunAsGroup == 0 {
 		return fmt.Errorf("restricted catalogue profiles cannot override the pod group to root")
 	}
-	if err := validateRestrictedSeccomp(spec.SecurityContext.SeccompProfile); err != nil {
-		return err
+	podSeccompValid := false
+	if spec.SecurityContext.SeccompProfile != nil {
+		if err := validateRestrictedSeccomp(spec.SecurityContext.SeccompProfile); err != nil {
+			return err
+		}
+		podSeccompValid = true
 	}
 	if intent == "cluster-validation" {
 		if spec.ServiceAccountName == "" || spec.ServiceAccountName == "default" || spec.AutomountServiceAccountToken == nil || !*spec.AutomountServiceAccountToken {
@@ -925,8 +929,12 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 		if security.WindowsOptions != nil && security.WindowsOptions.HostProcess != nil && *security.WindowsOptions.HostProcess {
 			return fmt.Errorf("restricted catalogue profile container %q cannot use a host process", container.Name)
 		}
-		if err := validateRestrictedSeccomp(security.SeccompProfile); err != nil {
-			return fmt.Errorf("restricted catalogue profile container %q: %w", container.Name, err)
+		if security.SeccompProfile != nil {
+			if err := validateRestrictedSeccomp(security.SeccompProfile); err != nil {
+				return fmt.Errorf("restricted catalogue profile container %q: %w", container.Name, err)
+			}
+		} else if !podSeccompValid {
+			return fmt.Errorf("restricted catalogue profile container %q requires a confined seccomp profile", container.Name)
 		}
 		for _, env := range container.Env {
 			if env.ValueFrom != nil {
@@ -954,8 +962,12 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 		if security.RunAsGroup != nil && *security.RunAsGroup == 0 {
 			return fmt.Errorf("restricted catalogue profile ephemeral container %q cannot use root group", container.Name)
 		}
-		if err := validateRestrictedSeccomp(security.SeccompProfile); err != nil {
-			return fmt.Errorf("restricted catalogue profile ephemeral container %q: %w", container.Name, err)
+		if security.SeccompProfile != nil {
+			if err := validateRestrictedSeccomp(security.SeccompProfile); err != nil {
+				return fmt.Errorf("restricted catalogue profile ephemeral container %q: %w", container.Name, err)
+			}
+		} else if !podSeccompValid {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q requires a confined seccomp profile", container.Name)
 		}
 		if len(container.Env) > 0 || len(container.EnvFrom) > 0 {
 			return fmt.Errorf("restricted catalogue profile ephemeral container %q cannot source environment variables", container.Name)
