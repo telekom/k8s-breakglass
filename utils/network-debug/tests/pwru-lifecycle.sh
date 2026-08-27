@@ -49,8 +49,9 @@ pwru_force_remove() {
 		fi
 		# The second attempt also handles a slow daemon whose first rm returned
 		# before the container disappeared.
-		docker inspect "$container" >/dev/null 2>&1 && \
+		if docker inspect "$container" >/dev/null 2>&1; then
 			docker rm -f "$container" >/dev/null 2>&1 || true
+		fi
 	fi
 	if docker inspect "$container" >/dev/null 2>&1; then
 		return 1
