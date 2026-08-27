@@ -58,6 +58,19 @@ an explicit paired opt-in: set a constrained `serviceAccountName` together
 with `automountServiceAccountToken: true`; the chart does not create the
 ServiceAccount or grant its read-only RBAC.
 
+The controller re-validates this boundary when a session is activated. A
+restricted pod must retain non-root execution, read-only root storage,
+`allowPrivilegeEscalation: false`, `drop: [ALL]`, and a confined
+`RuntimeDefault` or named `Localhost` seccomp profile; explicit root user/group
+overrides, `envFrom`, and external environment values are rejected. Service-
+account token sources are rejected except for the explicit, dedicated
+`cluster-validation` identity contract. If a restricted template uses
+multi-document YAML, the
+only additional resource permitted is a fixed-name, namespaceless `core/v1`
+`ConfigMap`, which the controller places in the session target namespace.
+Cluster-scoped, namespaced-outside-target, workload, RBAC, network, storage,
+and identity resources are rejected before anything is applied.
+
 Node maintenance profiles expose constrained per-session variables for an exact
 target node, interface, evidence directory, confirmation token, and (for repair)
 an allowlisted action. They are scheduled to the selected node, mount an
