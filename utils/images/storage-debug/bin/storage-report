@@ -3,218 +3,261 @@
 # SPDX-License-Identifier: Apache-2.0
 
 set -eu
-umask 077
 
-path=${STORAGE_TEST_PATH:-/scratch}
-size_mb=${STORAGE_TEST_SIZE_MB:-16}
-runtime_seconds=${STORAGE_TEST_RUNTIME_SECONDS:-5}
-ioping_count=${STORAGE_IOPING_COUNT:-5}
-output=
-dry_run=false
+usage() {
+    cat <<'EOF'
+storage-report: run bounded fio and ioping checks against an existing mount
 
-fail() {
-    printf 'storage-report: %s\n' "$1" >&2
-    exit 1
+Usage:
+  storage-report [options]
+
+Options:
+  --path PATH             Existing test directory (default: $STORAGE_TEST_PATH)
+  --size-mb N             fio file size, 1..1024 MiB (default: 16)
+  --runtime-seconds N     fio/ioping runtime, 1..60 seconds (default: 5)
+  --ioping-count N        ioping request count, 1..20 (default: 5)
+  --output FILE           Write deterministic report beneath STORAGE_REPORT_DIR
+                          (default: stdout)
+  --dry-run               Validate options and print planned commands
+  --help                  Show this help
+
+The fio scratch file is removed on exit. Set STORAGE_TEST_PATH, rather than
+editing this image, when a workload-specific mount is used.
+EOF
 }
 
-trim_trailing_slash() {
-    value=$1
-    while [ "$value" != "/" ] && [ "${value%/}" != "$value" ]; do
-        value=${value%/}
-    done
-    printf '%s' "$value"
-}
-
-require_positive_int() {
-    value=$1
-    name=$2
-    min=$3
-    max=$4
-    case "$value" in
-        ''|*[!0-9]*) fail "$name must be an integer" ;;
-    esac
-    [ "$value" -ge "$min" ] || fail "$name must be >= $min"
-    [ "$value" -le "$max" ] || fail "$name must be <= $max"
-}
-
-reject_traversal() {
+is_uint() {
     case "$1" in
-        *'/../'*|../*|*/..)
-            fail "$2 must not contain path traversal"
-            ;;
+        ''|*[!0-9]*) return 1 ;;
+        *) return 0 ;;
     esac
 }
 
-require_absolute_path() {
-    case "$1" in
-        /*) ;;
-        *) fail "$2 must be absolute" ;;
-    esac
-}
-
-validate_test_path() {
-    reject_traversal "$path" '--path'
-    require_absolute_path "$path" '--path'
-
-    path_trimmed=$(trim_trailing_slash "$path")
-    canonical=$(readlink -f -- "$path_trimmed" 2>/dev/null || true)
-    [ -n "$canonical" ] || fail '--path must exist'
-    [ -d "$canonical" ] || fail '--path must be a directory'
-    canonical_trimmed=$(trim_trailing_slash "$canonical")
-
-    if [ "$path_trimmed" != "$canonical_trimmed" ]; then
-        fail '--path must not contain symlinks or unresolved components'
+bounded_uint() {
+    value=$1
+    minimum=$2
+    maximum=$3
+    label=$4
+    if ! is_uint "$value" || [ "$value" -lt "$minimum" ] || [ "$value" -gt "$maximum" ]; then
+        echo "$label must be an integer between $minimum and $maximum" >&2
+        exit 2
     fi
-
-    path=$canonical_trimmed
 }
 
-validate_output_path() {
-    [ -n "$output" ] || return 0
-
-    reject_traversal "$output" '--output'
-    require_absolute_path "$output" '--output'
-
-    if [ -L "$output" ] || [ -e "$output" ]; then
-        fail '--output must not already exist'
-    fi
-
-    report_root=${STORAGE_REPORT_DIR:-/reports}
-    require_absolute_path "$report_root" 'STORAGE_REPORT_DIR'
-    report_root_canonical=$(readlink -f -- "$report_root" 2>/dev/null || true)
-    [ -n "$report_root_canonical" ] || fail 'STORAGE_REPORT_DIR must exist'
-    [ -d "$report_root_canonical" ] || fail 'STORAGE_REPORT_DIR must be a directory'
-
-    output_parent=$(dirname -- "$output")
-    output_parent_canonical=$(readlink -f -- "$output_parent" 2>/dev/null || true)
-    [ -n "$output_parent_canonical" ] || fail '--output parent directory must exist'
-
-    case "$output_parent_canonical/" in
-        "$report_root_canonical/"*) ;;
-        *) fail '--output must stay within STORAGE_REPORT_DIR' ;;
-    esac
-}
-
-print_help() {
-    cat <<'USAGE'
-Usage: storage-report [--path PATH] [--size-mb N] [--runtime-seconds N] [--ioping-count N] [--output PATH] [--dry-run]
-USAGE
-}
+TEST_PATH=${STORAGE_TEST_PATH:-/scratch}
+REPORT_DIR=${STORAGE_REPORT_DIR:-/reports}
+SIZE_MB=${STORAGE_TEST_SIZE_MB:-16}
+RUNTIME_SECONDS=${STORAGE_TEST_RUNTIME_SECONDS:-5}
+IOPING_COUNT=${STORAGE_IOPING_COUNT:-5}
+OUTPUT=
+DRY_RUN=false
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --path)
-            [ "$#" -ge 2 ] || fail '--path requires a value'
-            path=$2
+            [ "$#" -ge 2 ] || { echo "--path needs a value" >&2; exit 2; }
+            TEST_PATH=$2
             shift 2
             ;;
         --size-mb)
-            [ "$#" -ge 2 ] || fail '--size-mb requires a value'
-            size_mb=$2
+            [ "$#" -ge 2 ] || { echo "--size-mb needs a value" >&2; exit 2; }
+            SIZE_MB=$2
             shift 2
             ;;
         --runtime-seconds)
-            [ "$#" -ge 2 ] || fail '--runtime-seconds requires a value'
-            runtime_seconds=$2
+            [ "$#" -ge 2 ] || { echo "--runtime-seconds needs a value" >&2; exit 2; }
+            RUNTIME_SECONDS=$2
             shift 2
             ;;
         --ioping-count)
-            [ "$#" -ge 2 ] || fail '--ioping-count requires a value'
-            ioping_count=$2
+            [ "$#" -ge 2 ] || { echo "--ioping-count needs a value" >&2; exit 2; }
+            IOPING_COUNT=$2
             shift 2
             ;;
         --output)
-            [ "$#" -ge 2 ] || fail '--output requires a value'
-            output=$2
+            [ "$#" -ge 2 ] || { echo "--output needs a value" >&2; exit 2; }
+            OUTPUT=$2
             shift 2
             ;;
         --dry-run)
-            dry_run=true
+            DRY_RUN=true
             shift
             ;;
-        -h|--help|help)
-            print_help
+        --help|-h)
+            usage
             exit 0
             ;;
         *)
-            fail "unsupported argument: $1"
+            echo "unknown option: $1" >&2
+            usage >&2
+            exit 2
             ;;
     esac
 done
 
-require_positive_int "$size_mb" '--size-mb' 1 1024
-require_positive_int "$runtime_seconds" '--runtime-seconds' 1 60
-require_positive_int "$ioping_count" '--ioping-count' 1 20
-validate_test_path
-validate_output_path
+case "$TEST_PATH" in
+    /*) ;;
+    *) echo "--path must be an absolute path" >&2; exit 2 ;;
+esac
+case "$TEST_PATH" in
+    */../*|*/..) echo "--path may not contain parent traversal" >&2; exit 2 ;;
+esac
+bounded_uint "$SIZE_MB" 1 1024 "--size-mb"
+bounded_uint "$RUNTIME_SECONDS" 1 60 "--runtime-seconds"
+bounded_uint "$IOPING_COUNT" 1 20 "--ioping-count"
 
-scratch_file="$path/.storage-debug-fio.$$"
-cleanup() {
-    rm -f -- "$scratch_file"
+reject_symlink_components() {
+    path=$1
+    current=/
+    remainder=${path#/}
+    while [ -n "$remainder" ]; do
+        component=${remainder%%/*}
+        if [ "$remainder" = "$component" ]; then
+            remainder=
+        else
+            remainder=${remainder#*/}
+        fi
+        [ -n "$component" ] || continue
+        current=$current$component
+        if [ -L "$current" ]; then
+            # macOS exposes temporary directories through /var and /tmp
+            # symlinks; those host aliases are not mount escapes.
+            case "$current" in
+                /var|/tmp) ;;
+                *) echo "path may not contain symbolic links: $path" >&2; exit 1 ;;
+            esac
+        fi
+        current=$current/
+    done
 }
+
+test_path_check=${TEST_PATH%/}
+[ -n "$test_path_check" ] || test_path_check=/
+[ ! -L "$test_path_check" ] || { echo "test path may not be a symbolic link: $TEST_PATH" >&2; exit 1; }
+
+FIO_TIMEOUT=$((RUNTIME_SECONDS + 5))
+FIO_PLAN_FILE=$TEST_PATH/.storage-debug-fio.XXXXXX
+temporary_dir=
+FIO_FILE=
+report_tmp=
+
+cleanup() {
+    if [ -n "$temporary_dir" ]; then
+        rm -rf "$temporary_dir"
+    fi
+    if [ -n "$FIO_FILE" ]; then
+        rm -f "$FIO_FILE"
+    fi
+    if [ -n "$report_tmp" ]; then
+        rm -f "$report_tmp"
+    fi
+}
+
 trap cleanup EXIT HUP INT TERM
 
-fio_runtime="${runtime_seconds}s"
-fio_cmd="fio --name storage-debug --filename $scratch_file --rw readwrite --bs 4k --size ${size_mb}M --ioengine sync --iodepth 1 --time_based --runtime=${fio_runtime}"
-ioping_cmd="ioping -c $ioping_count $path"
-
-if [ "$dry_run" = true ]; then
-    report=$(cat <<EOF_REPORT
-schema_version=storage-debug/v1
-mode=dry-run
-path=$path
-size_mb=$size_mb
-runtime_seconds=$runtime_seconds
-ioping_count=$ioping_count
-fio_command=$fio_cmd
-ioping_command=$ioping_cmd
-EOF_REPORT
-)
-    if [ -n "$output" ]; then
-        printf '%s\n' "$report" >"$output"
-        chmod 600 "$output"
-    fi
-    printf '%s\n' "$report"
+if [ "$DRY_RUN" = true ]; then
+    [ -d "$TEST_PATH" ] || { echo "test path does not exist: $TEST_PATH" >&2; exit 1; }
+    reject_symlink_components "$TEST_PATH"
+    printf '%s\n' \
+        "schema_version=storage-debug/v1" \
+        "path=$TEST_PATH" \
+        "fio_command=fio --name=storage-debug --filename=$FIO_PLAN_FILE --size=${SIZE_MB}M --runtime=${RUNTIME_SECONDS}s --time_based --rw=readwrite --bs=4k --iodepth=1" \
+        "fio_timeout_seconds=$FIO_TIMEOUT" \
+        "ioping_command=ioping -c $IOPING_COUNT $TEST_PATH"
     exit 0
 fi
 
-fio_status=fail
-ioping_status=fail
+[ -d "$TEST_PATH" ] || { echo "test path does not exist: $TEST_PATH" >&2; exit 1; }
+reject_symlink_components "$TEST_PATH"
+[ -w "$TEST_PATH" ] || { echo "test path is not writable: $TEST_PATH" >&2; exit 1; }
+command -v fio >/dev/null 2>&1 || { echo "fio is not installed" >&2; exit 1; }
+command -v ioping >/dev/null 2>&1 || { echo "ioping is not installed" >&2; exit 1; }
 
-if timeout "$((runtime_seconds + 10))" \
-    fio --name storage-debug --filename "$scratch_file" --rw readwrite --bs 4k \
-    --size "${size_mb}M" --ioengine sync --iodepth 1 --time_based --runtime "$fio_runtime" \
-    >/dev/null 2>&1; then
-    fio_status=pass
-fi
+temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/storage-debug.XXXXXX")
+FIO_FILE=$(mktemp "$TEST_PATH/.storage-debug-fio.XXXXXX") || {
+    echo "cannot create a private fio scratch file in: $TEST_PATH" >&2
+    exit 1
+}
 
-if timeout "$((runtime_seconds + 10))" \
-    ioping -c "$ioping_count" "$path" >/dev/null 2>&1; then
-    ioping_status=pass
-fi
+fio_status=0
+ioping_status=0
+timeout "$FIO_TIMEOUT" fio --name=storage-debug --filename="$FIO_FILE" \
+    --size="${SIZE_MB}M" --runtime="${RUNTIME_SECONDS}s" --time_based \
+    --rw=readwrite --bs=4k --iodepth=1 --group_reporting \
+    --output-format=json >"$temporary_dir/fio.json" 2>"$temporary_dir/fio.err" || fio_status=$?
 
-overall_status=fail
-if [ "$fio_status" = pass ] && [ "$ioping_status" = pass ]; then
-    overall_status=pass
-fi
+# ioping has its own count bound; timeout is a second, independent wall-clock
+# guard for a hung filesystem or a broken utility.
+timeout "$FIO_TIMEOUT" ioping -c "$IOPING_COUNT" "$TEST_PATH" \
+    >"$temporary_dir/ioping.txt" 2>"$temporary_dir/ioping.err" || ioping_status=$?
 
-report=$(cat <<EOF_REPORT
-schema_version=storage-debug/v1
-path=$path
-size_mb=$size_mb
-runtime_seconds=$runtime_seconds
-ioping_count=$ioping_count
-fio_status=$fio_status
-ioping_status=$ioping_status
-overall_status=$overall_status
-EOF_REPORT
-)
+if [ "$fio_status" -eq 0 ]; then fio_result=pass; else fio_result=fail; fi
+if [ "$ioping_status" -eq 0 ]; then ioping_result=pass; else ioping_result=fail; fi
 
-if [ -n "$output" ]; then
-    printf '%s\n' "$report" >"$output"
-    chmod 600 "$output"
+write_report() {
+    if [ "$fio_status" -eq 0 ] && [ "$ioping_status" -eq 0 ]; then
+        overall_result=pass
+    else
+        overall_result=fail
+    fi
+    printf '%s\n' \
+        "schema_version=storage-debug/v1" \
+        "path=$TEST_PATH" \
+        "size_mib=$SIZE_MB" \
+        "runtime_seconds=$RUNTIME_SECONDS" \
+        "ioping_count=$IOPING_COUNT" \
+        "fio_status=$fio_result" \
+        "ioping_status=$ioping_result" \
+        "overall_status=$overall_result"
+}
+
+if [ -n "$OUTPUT" ]; then
+    case "$OUTPUT" in
+        /*) ;;
+        *) echo "--output must be an absolute path" >&2; exit 2 ;;
+    esac
+    output_dir=${OUTPUT%/*}
+    [ "$output_dir" != "$OUTPUT" ] || output_dir=/
+    [ -d "$output_dir" ] || { echo "report directory does not exist: $output_dir" >&2; exit 1; }
+    reject_symlink_components "$output_dir"
+    case "$REPORT_DIR" in
+        /*) ;;
+        *) echo "STORAGE_REPORT_DIR must be an absolute path" >&2; exit 2 ;;
+    esac
+    [ -d "$REPORT_DIR" ] || { echo "report directory does not exist: $REPORT_DIR" >&2; exit 1; }
+    reject_symlink_components "$REPORT_DIR"
+    report_dir_check=${REPORT_DIR%/}
+    [ -n "$report_dir_check" ] || report_dir_check=/
+    [ ! -L "$report_dir_check" ] || { echo "STORAGE_REPORT_DIR may not be a symbolic link: $REPORT_DIR" >&2; exit 2; }
+    report_real=$(realpath "$REPORT_DIR") || { echo "cannot resolve report directory: $REPORT_DIR" >&2; exit 1; }
+    output_real=$(realpath "$output_dir") || { echo "cannot resolve output directory: $output_dir" >&2; exit 1; }
+    case "$output_real" in
+        "$report_real"|"$report_real"/*) ;;
+        *) echo "--output must be beneath STORAGE_REPORT_DIR: $REPORT_DIR" >&2; exit 2 ;;
+    esac
+    if [ -e "$OUTPUT" ] || [ -L "$OUTPUT" ]; then
+        echo "refusing to overwrite existing report: $OUTPUT" >&2
+        exit 1
+    fi
+    report_tmp=$(mktemp "$output_dir/.storage-report.XXXXXX") || {
+        echo "cannot create temporary report in: $output_dir" >&2
+        exit 1
+    }
+    write_report >"$report_tmp"
+    # Reports may contain incident details; retain private mode 0600 so only
+    # the image UID (and an explicitly authorized collector) can read them.
+    chmod 0600 "$report_tmp" || {
+        echo "cannot set temporary report permissions: $report_tmp" >&2
+        exit 1
+    }
+    if ! ln "$report_tmp" "$OUTPUT"; then
+        echo "refusing to overwrite existing report: $OUTPUT" >&2
+        exit 1
+    fi
+    rm -f "$report_tmp"
+    report_tmp=
 else
-    printf '%s\n' "$report"
+    write_report
 fi
 
-[ "$overall_status" = pass ] || exit 1
+[ "$fio_status" -eq 0 ] && [ "$ioping_status" -eq 0 ]

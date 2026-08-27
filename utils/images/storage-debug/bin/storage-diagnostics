@@ -4,252 +4,232 @@
 
 set -eu
 
-script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
-report_bin="$script_dir/storage-report"
-if [ ! -x "$report_bin" ] && [ -x /usr/local/bin/storage-report ]; then
-    report_bin=/usr/local/bin/storage-report
+KUBESTR=/usr/libexec/storage-debug/kubestr
+STORAGE_REPORT=/usr/local/bin/storage-report
+UPSTREAM_RUNBOOK=/usr/share/breakglass/runbooks/upstream/storage-diagnostics/RUNBOOK.md
+if [ ! -x "$STORAGE_REPORT" ]; then
+    script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+    [ -x "$script_dir/storage-report" ] && STORAGE_REPORT=$script_dir/storage-report
+    source_root=$(CDPATH='' cd -- "$script_dir/.." && pwd)
+    [ -r "$source_root/RUNBOOK.md" ] && UPSTREAM_RUNBOOK=$source_root/RUNBOOK.md
 fi
+NAMESPACE=${POD_NAMESPACE:-}
+WORKLOAD_IMAGE=${STORAGE_DEBUG_WORKLOAD_IMAGE:-}
 
-runbook_file=/usr/share/breakglass/runbooks/upstream/storage-diagnostics/RUNBOOK.md
-if [ ! -r "$runbook_file" ]; then
-    runbook_file="$script_dir/../RUNBOOK.md"
-fi
+usage() {
+    cat <<'EOF'
+storage-diagnostics: bounded storage-diagnostics intent dispatcher
+
+Usage:
+  storage-diagnostics mounted-volume [storage-report options]
+  storage-diagnostics performance --storage-class NAME [--pvc-size SIZE]
+  storage-diagnostics snapshot-restore --storage-class NAME --snapshot-class NAME
+  storage-diagnostics snapshot-source-clone --storage-class NAME --snapshot-class NAME
+  storage-diagnostics block-volume --storage-class NAME
+  storage-diagnostics plan OPERATION [operation options]
+  storage-diagnostics docs
+  storage-diagnostics runbook
+  storage-diagnostics help
+
+SIZE is one of 4Gi, 8Gi, 16Gi, or 32Gi. Cluster operations infer their
+namespace from POD_NAMESPACE and require a provider-owned immutable image in
+STORAGE_DEBUG_WORKLOAD_IMAGE. They do not accept user-selected commands,
+images, namespaces, node selectors, capabilities, service accounts, or RBAC.
+EOF
+}
 
 fail() {
     printf 'storage-diagnostics: %s\n' "$1" >&2
-    exit 1
+    exit 2
 }
 
-print_help() {
-    cat <<'USAGE'
-Usage: storage-diagnostics <command> [options]
-Commands:
-  help
-  mounted-volume [storage-report flags]
-  plan <performance|snapshot-restore|snapshot-source-clone|block-volume> [flags]
-  performance [flags]
-  snapshot-restore [flags]
-  snapshot-source-clone [flags]
-  block-volume [flags]
-  docs
-  runbook
-USAGE
-}
-
-require_immutable_image() {
-    image=${STORAGE_DEBUG_WORKLOAD_IMAGE:-}
-    [ -n "$image" ] || fail 'STORAGE_DEBUG_WORKLOAD_IMAGE is required'
-    printf '%s\n' "$image" | grep -Eq '^.+@sha256:[0-9a-f]{64}$' ||
-        fail 'STORAGE_DEBUG_WORKLOAD_IMAGE must be an immutable image@sha256:digest'
-}
-
-require_namespace() {
-    namespace=${POD_NAMESPACE:-}
-    [ -n "$namespace" ] || fail 'POD_NAMESPACE is required'
-    printf '%s\n' "$namespace" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' ||
-        fail 'POD_NAMESPACE must be a valid DNS label'
-}
-
-validate_storage_class() {
+valid_kubernetes_name() {
     value=$1
-    [ -n "$value" ] || fail '--storage-class is required'
-    printf '%s\n' "$value" | grep -Eq '^[a-z0-9]([-.a-z0-9]*[a-z0-9])?$' ||
-        fail '--storage-class must be a valid DNS subdomain token'
-    case "$value" in
-        *..*) fail '--storage-class must not contain empty labels' ;;
-    esac
+    [ "${#value}" -le 253 ] || return 1
+    printf '%s\n' "$value" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$'
 }
 
-validate_snapshot_class() {
+valid_namespace() {
     value=$1
-    [ -n "$value" ] || fail '--snapshot-class is required'
-    printf '%s\n' "$value" | grep -Eq '^[a-z0-9]([-.a-z0-9]*[a-z0-9])?$' ||
-        fail '--snapshot-class must be a valid DNS subdomain token'
-    case "$value" in
-        *..*) fail '--snapshot-class must not contain empty labels' ;;
+    [ "${#value}" -le 63 ] || return 1
+    printf '%s\n' "$value" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+}
+
+validate_cluster_context() {
+    valid_namespace "$NAMESPACE" || fail "POD_NAMESPACE must be a valid Kubernetes namespace"
+    case "$WORKLOAD_IMAGE" in
+        *@sha256:????????????????????????????????????????????????????????????????) ;;
+        *) fail "STORAGE_DEBUG_WORKLOAD_IMAGE must be an immutable OCI image@sha256 reference" ;;
     esac
+    digest=${WORKLOAD_IMAGE##*@sha256:}
+    printf '%s\n' "$digest" | grep -Eq '^[0-9a-f]{64}$' || \
+        fail "STORAGE_DEBUG_WORKLOAD_IMAGE must use a lowercase sha256 digest"
 }
 
-validate_pvc_size() {
-    case "$1" in
-        4Gi|8Gi|16Gi|32Gi) ;;
-        *) fail '--pvc-size must be one of 4Gi, 8Gi, 16Gi, 32Gi' ;;
-    esac
-}
-
-render_plan() {
-    op=$1
-    cmd=$2
-    cat <<EOF_PLAN
-schema_version=storage-diagnostics/v1
-intent=storage-diagnostics
-operation=$op
-kubestr_command=$cmd
-EOF_PLAN
-}
-
-build_performance() {
-    storage_class=
-    pvc_size=4Gi
+parse_storage_class() {
+    STORAGE_CLASS=
+    PVC_SIZE=4Gi
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --storage-class)
-                [ "$#" -ge 2 ] || fail '--storage-class requires a value'
-                storage_class=$2
+                [ "$#" -ge 2 ] || fail "--storage-class needs a value"
+                STORAGE_CLASS=$2
                 shift 2
                 ;;
             --pvc-size)
-                [ "$#" -ge 2 ] || fail '--pvc-size requires a value'
-                pvc_size=$2
+                [ "$#" -ge 2 ] || fail "--pvc-size needs a value"
+                PVC_SIZE=$2
                 shift 2
                 ;;
-            --image|--fiofile)
-                fail "$1 is not allowed"
-                ;;
-            *)
-                fail "unsupported argument: $1"
-                ;;
+            *) fail "unsupported performance option: $1" ;;
         esac
     done
-    validate_storage_class "$storage_class"
-    validate_pvc_size "$pvc_size"
-
-    cmd="/usr/libexec/storage-debug/kubestr fio --storageclass $storage_class --size $pvc_size --namespace $namespace --testname default-fio --image $image --cleanup=true"
-}
-
-build_snapshot_restore() {
-    storage_class=
-    snapshot_class=
-    while [ "$#" -gt 0 ]; do
-        case "$1" in
-            --storage-class)
-                [ "$#" -ge 2 ] || fail '--storage-class requires a value'
-                storage_class=$2
-                shift 2
-                ;;
-            --snapshot-class)
-                [ "$#" -ge 2 ] || fail '--snapshot-class requires a value'
-                snapshot_class=$2
-                shift 2
-                ;;
-            --image)
-                fail '--image is not allowed'
-                ;;
-            *)
-                fail "unsupported argument: $1"
-                ;;
-        esac
-    done
-    validate_storage_class "$storage_class"
-    validate_snapshot_class "$snapshot_class"
-    cmd="/usr/libexec/storage-debug/kubestr csicheck --storageclass $storage_class --volumesnapshotclass $snapshot_class --namespace $namespace --image $image --cleanup=true --skipCFScheck=true"
-}
-
-build_snapshot_source_clone() {
-    storage_class=
-    snapshot_class=
-    while [ "$#" -gt 0 ]; do
-        case "$1" in
-            --storage-class)
-                [ "$#" -ge 2 ] || fail '--storage-class requires a value'
-                storage_class=$2
-                shift 2
-                ;;
-            --snapshot-class)
-                [ "$#" -ge 2 ] || fail '--snapshot-class requires a value'
-                snapshot_class=$2
-                shift 2
-                ;;
-            --image)
-                fail '--image is not allowed'
-                ;;
-            *)
-                fail "unsupported argument: $1"
-                ;;
-        esac
-    done
-    validate_storage_class "$storage_class"
-    validate_snapshot_class "$snapshot_class"
-    cmd="/usr/libexec/storage-debug/kubestr csicheck --storageclass $storage_class --volumesnapshotclass $snapshot_class --namespace $namespace --image $image --cleanup=true --skipCFScheck=false"
-}
-
-build_block_volume() {
-    storage_class=
-    while [ "$#" -gt 0 ]; do
-        case "$1" in
-            --storage-class)
-                [ "$#" -ge 2 ] || fail '--storage-class requires a value'
-                storage_class=$2
-                shift 2
-                ;;
-            --image)
-                fail '--image is not allowed'
-                ;;
-            *)
-                fail "unsupported argument: $1"
-                ;;
-        esac
-    done
-    validate_storage_class "$storage_class"
-    cmd="/usr/libexec/storage-debug/kubestr block-mount --storageclass $storage_class --namespace $namespace --image $image --size 1Gi --wait-timeout 120 --cleanup=true"
-}
-
-dispatch_cluster_command() {
-    operation=$1
-    shift
-
-    require_namespace
-    require_immutable_image
-
-    case "$operation" in
-        performance)
-            build_performance "$@"
-            ;;
-        snapshot-restore)
-            build_snapshot_restore "$@"
-            ;;
-        snapshot-source-clone)
-            build_snapshot_source_clone "$@"
-            ;;
-        block-volume)
-            build_block_volume "$@"
-            ;;
-        *)
-            fail "unsupported operation: $operation"
-            ;;
+    valid_kubernetes_name "$STORAGE_CLASS" || fail "--storage-class must be a valid Kubernetes name"
+    case "$PVC_SIZE" in
+        4Gi|8Gi|16Gi|32Gi) ;;
+        *) fail "--pvc-size must be one of 4Gi, 8Gi, 16Gi, or 32Gi" ;;
     esac
 }
 
-command=${1:-help}
-case "$command" in
-    help|-h|--help)
-        print_help
-        ;;
-    mounted-volume)
+parse_snapshot_classes() {
+    STORAGE_CLASS=
+    SNAPSHOT_CLASS=
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --storage-class)
+                [ "$#" -ge 2 ] || fail "--storage-class needs a value"
+                STORAGE_CLASS=$2
+                shift 2
+                ;;
+            --snapshot-class)
+                [ "$#" -ge 2 ] || fail "--snapshot-class needs a value"
+                SNAPSHOT_CLASS=$2
+                shift 2
+                ;;
+            *) fail "unsupported snapshot option: $1" ;;
+        esac
+    done
+    valid_kubernetes_name "$STORAGE_CLASS" || fail "--storage-class must be a valid Kubernetes name"
+    valid_kubernetes_name "$SNAPSHOT_CLASS" || fail "--snapshot-class must be a valid Kubernetes name"
+}
+
+print_plan() {
+    printf 'schema_version=storage-diagnostics/v1\n'
+    printf 'intent=storage-diagnostics\n'
+    printf 'operation=%s\n' "$1"
+    shift
+    printf 'namespace=%s\n' "$NAMESPACE"
+    printf 'workload_image=%s\n' "$WORKLOAD_IMAGE"
+    printf 'command='
+    printf '%s' "$KUBESTR"
+    for arg in "$@"; do
+        printf ' %s' "$arg"
+    done
+    printf '\n'
+}
+
+run_cluster_operation() {
+    plan=$1
+    operation=$2
+    shift 2
+    validate_cluster_context
+    if [ "$plan" = true ]; then
+        print_plan "$operation" "$@"
+        return
+    fi
+    [ -x "$KUBESTR" ] || fail "the pinned kubestr executable is unavailable"
+    result_file=$(mktemp "${TMPDIR:-/tmp}/storage-diagnostics-result.XXXXXX")
+    progress_file=$(mktemp "${TMPDIR:-/tmp}/storage-diagnostics-progress.XXXXXX")
+    chmod 0600 "$result_file" "$progress_file"
+    cleanup_result() {
+        rm -f "$result_file" "$progress_file"
+    }
+    trap cleanup_result EXIT HUP INT TERM
+    status=0
+    timeout 600 "$KUBESTR" "$@" --outfile "$result_file" >"$progress_file" 2>&1 || status=$?
+    if [ "$status" -ne 0 ]; then
+        cat "$progress_file" >&2
+        exit "$status"
+    fi
+    cat "$result_file"
+    cleanup_result
+    trap - EXIT HUP INT TERM
+}
+
+PLAN=false
+case "${1:-}" in
+    plan)
+        PLAN=true
         shift
-        exec "$report_bin" "$@"
+        ;;
+esac
+
+operation=${1:-help}
+[ "$#" -eq 0 ] || shift
+
+case "$operation" in
+    help|--help|-h)
+        [ "$#" -eq 0 ] || fail "help accepts no arguments"
+        usage
         ;;
     docs)
-        printf '%s\n' 'upstream=/usr/share/breakglass/runbooks/upstream/storage-diagnostics'
-        printf '%s\n' 'internal=/usr/share/breakglass/runbooks/internal (optional read-only image-volume mount)'
+        [ "$#" -eq 0 ] || fail "docs accepts no arguments"
+        printf '%s\n' \
+            'upstream=/usr/share/breakglass/runbooks/upstream/storage-diagnostics' \
+            'internal=/usr/share/breakglass/runbooks/internal (optional read-only image-volume mount)'
         ;;
     runbook)
-        cat "$runbook_file"
+        [ "$#" -eq 0 ] || fail "runbook accepts no arguments"
+        [ -r "$UPSTREAM_RUNBOOK" ] || fail "the built-in upstream runbook is unavailable"
+        cat "$UPSTREAM_RUNBOOK"
         ;;
-    plan)
-        [ "$#" -ge 2 ] || fail 'plan requires an operation'
-        operation=$2
-        shift 2
-        dispatch_cluster_command "$operation" "$@"
-        render_plan "$operation" "$cmd"
+    mounted-volume)
+        [ "$PLAN" = false ] || fail "mounted-volume already provides storage-report --dry-run"
+        [ -x "$STORAGE_REPORT" ] || fail "storage-report is unavailable"
+        exec "$STORAGE_REPORT" "$@"
         ;;
-    performance|snapshot-restore|snapshot-source-clone|block-volume)
-        operation=$command
-        shift
-        dispatch_cluster_command "$operation" "$@"
-        exec /bin/sh -c "exec $cmd"
+    performance)
+        parse_storage_class "$@"
+        run_cluster_operation "$PLAN" "$operation" fio \
+            --storageclass "$STORAGE_CLASS" \
+            --size "$PVC_SIZE" \
+            --testname default-fio \
+            --namespace "$NAMESPACE" \
+            --image "$WORKLOAD_IMAGE" \
+            --output json
+        ;;
+    snapshot-restore|snapshot-source-clone)
+        parse_snapshot_classes "$@"
+        if [ "$operation" = snapshot-restore ]; then
+            skip_clone=true
+        else
+            skip_clone=false
+        fi
+        run_cluster_operation "$PLAN" "$operation" csicheck \
+            --storageclass "$STORAGE_CLASS" \
+            --volumesnapshotclass "$SNAPSHOT_CLASS" \
+            --namespace "$NAMESPACE" \
+            --image "$WORKLOAD_IMAGE" \
+            --runAsUser 65532 \
+            --cleanup=true \
+            --skipCFScheck="$skip_clone" \
+            --output json
+        ;;
+    block-volume)
+        [ "$#" -eq 2 ] || fail "block-volume requires exactly --storage-class NAME"
+        [ "$1" = --storage-class ] || fail "block-volume requires --storage-class NAME"
+        valid_kubernetes_name "$2" || fail "--storage-class must be a valid Kubernetes name"
+        run_cluster_operation "$PLAN" "$operation" blockmount \
+            --storageclass "$2" \
+            --namespace "$NAMESPACE" \
+            --image "$WORKLOAD_IMAGE" \
+            --runAsUser 65532 \
+            --cleanup=true \
+            --wait-timeout 120 \
+            --pvc-size 1Gi \
+            --output json
         ;;
     *)
-        fail "unsupported command: $command"
+        fail "unsupported operation: $operation"
         ;;
 esac
