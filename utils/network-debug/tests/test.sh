@@ -324,6 +324,44 @@ run_trace_fixture() {
 			--duration 1 --events "$trace_fixture_events" --output trace.log
 }
 
+# A real duration stop may require KILL when pwru does not exit after INT.
+# Accept that path only with the wrapper-owned marker, pwru's complete
+# attach/signal/detach lifecycle, and non-empty bounded tuple evidence.
+cat >"$trace_fixture/bin/pwru" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80'
+printf '%s\n' '2026/08/27 20:00:00 INFO Attaching kprobes via=kprobe' >&2
+trap 'printf "%s\\n" "2026/08/27 20:00:01 INFO Received signal, exiting program.." >&2; printf "%s\\n" "2026/08/27 20:00:01 INFO Detaching kprobes..." >&2' INT TERM
+while :; do sleep 300; done
+EOF
+chmod +x "$trace_fixture/bin/pwru"
+test_context='trace-controlled-timeout-with-evidence'
+rm -f "$trace_fixture/work/trace.log"
+run_trace_fixture 3 >"$trace_fixture/controlled-timeout-summary"
+grep -Fx 'event_count 1' "$trace_fixture/controlled-timeout-summary" >/dev/null
+grep -F -- '->' "$trace_fixture/work/trace.log" >/dev/null
+test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
+
+# Lifecycle-looking diagnostics cannot forge success when the trace has no
+# packet tuple evidence.
+cat >"$trace_fixture/bin/pwru" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' '2026/08/27 20:00:00 INFO Attaching kprobes via=kprobe' >&2
+trap 'printf "%s\\n" "2026/08/27 20:00:01 INFO Received signal, exiting program.." >&2; printf "%s\\n" "2026/08/27 20:00:01 INFO Detaching kprobes..." >&2' INT TERM
+while :; do sleep 300; done
+EOF
+chmod +x "$trace_fixture/bin/pwru"
+test_context='trace-controlled-timeout-empty-evidence'
+rm -f "$trace_fixture/work/trace.log"
+if run_trace_fixture 3 >"$trace_fixture/controlled-timeout-empty-summary" 2>"$trace_fixture/controlled-timeout-empty-error"; then
+	printf '%s\n' 'trace accepted a controlled timeout without packet evidence' >&2
+	exit 1
+fi
+test ! -e "$trace_fixture/work/trace.log"
+test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
+
 # pwru v1.0.12 reports reaching --output-limit-lines as an informational
 # completion marker on stderr but exits with status 1. Accept only that exact
 # marker/count pair and only when stdout contains the same number of events.

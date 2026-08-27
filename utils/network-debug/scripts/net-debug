@@ -421,13 +421,32 @@ trace_command() {
 	# names this request's limit; ordinary status-1 failures remain fatal.
 	limit_completed=false
 	case "$status" in
-		0|130|141|143) ;;
+	0|130|141|143) ;;
 		1)
 			completion_count=$(sed -n 's/^[0-9][0-9][0-9][0-9]\/[0-9][0-9]\/\([0-9][0-9]\) [0-9][0-9]:[0-9][0-9]:[0-9][0-9] INFO Printed events, exiting program\.\. count=\([0-9][0-9]*\)$/\2/p' "$TEMP_DIAGNOSTICS" 2>/dev/null || true)
 			if [ "$completion_count" = "$events" ]; then
 				limit_completed=true
 			else
 				printf 'net-debug: pwru status 1 lacked the exact bounded-completion marker for %s events\n' "$events" >&2
+				if [ -s "$TEMP_DIAGNOSTICS" ]; then
+					sed '/->/d' "$TEMP_DIAGNOSTICS" | sed -n '1,40p' >&2
+				fi
+				return 1
+			fi
+			;;
+		137)
+			# A forced process-group KILL can prevent the launcher from publishing
+			# pwru's status. Treat it as a successful bounded stop only when the
+			# watchdog marker is ours, pwru proved its attach/signal/detach
+			# lifecycle, and diagnostics contain no error-level record. Evidence
+			# is still required below, so a timeout cannot turn an empty trace into
+			# a successful result.
+			if [ ! -e "$TRACE_TIMED_OUT_FILE" ] || \
+				! grep -E ' INFO Attaching kprobes via=kprobe$' "$TEMP_DIAGNOSTICS" >/dev/null 2>&1 || \
+				! grep -E ' INFO Received signal, exiting program\.\.$' "$TEMP_DIAGNOSTICS" >/dev/null 2>&1 || \
+				! grep -E ' INFO Detaching kprobes\.\.\.$' "$TEMP_DIAGNOSTICS" >/dev/null 2>&1 || \
+				grep -E -i '(^|[[:space:]])(error|erro|fatal)([[:space:]:]|$)|level=(error|fatal)|panic:' "$TEMP_DIAGNOSTICS" >/dev/null 2>&1; then
+				printf 'net-debug: pwru exited with status %s\n' "$status" >&2
 				if [ -s "$TEMP_DIAGNOSTICS" ]; then
 					sed '/->/d' "$TEMP_DIAGNOSTICS" | sed -n '1,40p' >&2
 				fi

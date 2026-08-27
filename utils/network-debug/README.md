@@ -174,6 +174,11 @@ This avoids FIFO startup/shutdown deadlocks while preserving real packet-tuple
 evidence and exact cleanup. Missing BTF, tracing filesystems, capabilities, or
 host namespace identity remains a fail-closed result; no SYS_ADMIN or
 privileged fallback is permitted.
+If the watchdog must force KILL at the duration plus grace deadline, the
+wrapper accepts that controlled stop only when pwru logged its attach,
+signal, and detach lifecycle without an error-level diagnostic and the bounded
+output contains packet tuples. A missing lifecycle or empty output remains a
+failure.
 The `pwru` portion requires readable `/sys/kernel/btf/vmlinux`, debugfs,
 tracefs, securityfs, and BPF/PERFMON support. Local macOS/Windows Docker Desktop or a
 non-kind Kubernetes context is not a substitute for that job.

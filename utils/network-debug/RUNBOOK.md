@@ -70,3 +70,7 @@ receives SIGINT at the trace duration and forces SIGKILL after the bounded
 `NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS` grace period (15 seconds by default).
 A still-running container is a failed proof and is cleaned up only when its
 invocation ownership is verified.
+If KILL is required, the wrapper accepts the controlled stop only after pwru
+has logged attach, signal, and detach lifecycle records without an error-level
+diagnostic and the bounded output contains packet tuples; missing lifecycle or
+empty output remains a failure.
