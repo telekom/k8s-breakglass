@@ -100,6 +100,11 @@ profiles:
     args: ["network-repair", "--target-node", "fixture-node", "--interface", "eth0", "--action", "link-cycle", "--evidence-dir", "/evidence", "--confirm", "NETWORK-REPAIR"]
     capabilities: [NET_ADMIN]
     pod:
+      env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
       volumeMounts:
         - name: evidence
           mountPath: /evidence
@@ -122,6 +127,11 @@ profiles:
     capabilities: [NET_ADMIN]
     hostPID: true
     pod:
+      env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
       volumeMounts:
         - name: evidence
           mountPath: /evidence
