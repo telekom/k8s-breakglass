@@ -180,6 +180,9 @@ The `templateString` supports all session context variables (`.session`, `.targe
 
 > **Note:** `template` and `templateString` are mutually exclusive. The webhook will reject DebugPodTemplates with both fields set.
 
+For additive operator-owned documentation supplied through a digest-pinned
+OCI image volume, see the [OCI runbook bundle contract](./runbook-bundle-contract.md).
+
 #### Multi-Document YAML in Pod Templates
 
 When using `templateString`, you can use multi-document YAML (documents separated by `---`) to define the PodSpec AND additional supporting Kubernetes resources that should be created alongside the debug pod.

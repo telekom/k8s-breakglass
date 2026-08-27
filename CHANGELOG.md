@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **OCI runbook bundle contract**: Documented the generic, additive contract for
+  mounting signed, digest-pinned documentation bundles into approved debug
+  templates through Kubernetes image volumes. The controller continues to use
+  the built-in runbooks when an optional bundle is absent and leaves capability,
+  signature, and provenance enforcement to the platform admission pipeline.
+
 ## [0.1.0-rc.8] - 2026-08-22
 
 ### Added
