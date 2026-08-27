@@ -280,6 +280,7 @@ trace_command() {
 	TEMP_EVIDENCE=$STAGING_DIR/evidence
 	fifo=$TEMP_EVIDENCE.fifo
 	mkfifo "$fifo"
+	trap cleanup_child EXIT
 	trap 'cleanup_child; exit 130' HUP INT TERM
 
 	# A FIFO reader enforces the event bound before evidence reaches disk. Once

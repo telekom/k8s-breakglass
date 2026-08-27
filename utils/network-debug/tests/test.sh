@@ -212,6 +212,15 @@ set -eu
 printf '%s\n' trace-event
 EOF
 chmod +x "$trace_fixture/bin/pwru"
+cat >"$trace_fixture/bin/readlink" <<'EOF'
+#!/bin/sh
+set -eu
+case "${1:-}" in
+	/proc/self/ns/net|/proc/1/ns/net) printf '%s\n' 'net:[4026531993]' ;;
+	*) exec /usr/bin/readlink "$@" ;;
+esac
+EOF
+chmod +x "$trace_fixture/bin/readlink"
 if [ "$(uname -s)" = Linux ]; then
 for required_cap_hex in c001001000 c001000000 c000001000 8001001000 4001001000; do
     printf 'CapEff: %s\n' "$required_cap_hex" >"$trace_fixture/status"
@@ -231,6 +240,27 @@ for required_cap_hex in c001001000 c001000000 c000001000 8001001000 4001001000; 
         exit 1
     fi
 done
+cat >"$trace_fixture/bin/pwru" <<'EOF'
+#!/bin/sh
+set -eu
+trap '' INT TERM
+while :; do
+	printf '%s\n' trace-event
+	sleep 1
+done
+EOF
+chmod +x "$trace_fixture/bin/pwru"
+printf 'CapEff: c001001000\n' >"$trace_fixture/status"
+if NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" \
+	NETWORK_DEBUG_BTF_PATH="$trace_fixture/status" NETWORK_DEBUG_DEBUGFS_PATH="$trace_fixture/debug" \
+	NETWORK_DEBUG_TRACEFS_PATH="$trace_fixture/trace" NETWORK_DEBUG_SECURITYFS_PATH="$trace_fixture/security" \
+	NETWORK_DEBUG_MOUNTINFO_PATH="$trace_fixture/mountinfo" NETWORK_DEBUG_CAPABILITY_FILE="$trace_fixture/status" \
+	NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS=1 NETWORK_DEBUG_PWRU_STOP_SETTLE_SECONDS=1 \
+	PATH="$trace_fixture/bin:/usr/bin:/bin" sh "$root/scripts/net-debug" trace --duration 1 --events 1 >/dev/null 2>&1; then
+	printf '%s\n' 'trace unexpectedly succeeded when pwru ignored stop signals' >&2
+	exit 1
+fi
+test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
 else
 	printf '%s\n' 'skipping Linux-only trace success fixture on non-Linux host' >&2
 fi
