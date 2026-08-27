@@ -79,7 +79,7 @@ case "$reported_bytes" in ""|*[!0-9]*) exit 1 ;; esac
 test "$reported_bytes" -gt 24
 test "$reported_bytes" -le $((8 * (128 + 16) + 24))
 reported_hash=$(sed -n "s/^sha256 //p" /work/capture.log)
-case "$reported_hash" in ??????*) ;; *) exit 1 ;; esac
+printf "%s\\n" "$reported_hash" | grep -E "^[0-9a-f]{64}$" >/dev/null
 actual_hash=$(sha256sum /work/capture.pcap | awk "{print \$1}")
 test "$reported_hash" = "$actual_hash"
 grep -Fx "file capture.pcap" /work/capture.log >/dev/null

@@ -235,7 +235,8 @@ cat >"$trace_fixture/bin/readlink" <<'EOF'
 #!/bin/sh
 set -eu
 case "${1:-}" in
-	/proc/self/ns/net|/proc/1/ns/net) printf '%s\n' 'net:[4026531993]' ;;
+	/proc/self/ns/net) if [ "${TRACE_PRIVATE_NETWORK:-false}" = true ]; then printf '%s\n' 'net:[4026531993]'; else printf '%s\n' 'net:[4026531994]'; fi ;;
+	/proc/1/ns/net) if [ "${TRACE_PRIVATE_NETWORK:-false}" = true ]; then printf '%s\n' 'net:[4026531995]'; else printf '%s\n' 'net:[4026531994]'; fi ;;
 	/proc/self/ns/mnt) if [ "${TRACE_PRIVATE:-false}" = true ]; then printf '%s\n' 'mnt:[4026531994]'; else printf '%s\n' 'mnt:[4026531994]'; fi ;;
 	/proc/1/ns/mnt) if [ "${TRACE_PRIVATE:-false}" = true ]; then printf '%s\n' 'mnt:[4026531994]'; else printf '%s\n' 'mnt:[4026531995]'; fi ;;
 	*) exec /usr/bin/readlink "$@" ;;
@@ -278,6 +279,15 @@ for required_cap_hex in c001081000 c001001000 c001000000 c000001000 8001001000 4
         exit 1
     fi
 done
+test_context='trace-private-network-namespace-rejected'
+if TRACE_PRIVATE_NETWORK=true NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" \
+	NETWORK_DEBUG_BTF_PATH="$trace_fixture/status" NETWORK_DEBUG_DEBUGFS_PATH="$trace_fixture/debug" \
+	NETWORK_DEBUG_TRACEFS_PATH="$trace_fixture/trace" NETWORK_DEBUG_SECURITYFS_PATH="$trace_fixture/security" \
+	NETWORK_DEBUG_MOUNTINFO_PATH="$trace_fixture/mountinfo" NETWORK_DEBUG_CAPABILITY_FILE="$trace_fixture/status" \
+	PATH="$trace_fixture/bin:/usr/bin:/bin" sh "$root/scripts/net-debug" trace --duration 1 --events 1 >/dev/null 2>&1; then
+	printf '%s\n' 'trace accepted a private network namespace' >&2
+	exit 1
+fi
 test_context='trace-private-pid-namespace-rejected'
 if TRACE_PRIVATE=true NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" \
 	NETWORK_DEBUG_BTF_PATH="$trace_fixture/status" NETWORK_DEBUG_DEBUGFS_PATH="$trace_fixture/debug" \

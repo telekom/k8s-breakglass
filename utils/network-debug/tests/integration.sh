@@ -418,7 +418,7 @@ kubectl get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" -o jso
 	' >/dev/null || requirement "host-network capture pod security boundary was not retained by the cluster"
 
 capture_pod_traffic() {
-	local pod=$1 expected=$2 capture_log=$3 capture_pid capture_size
+	local pod=$1 expected=$2 capture_log=$3 capture_pid capture_size reported_hash actual_hash packet_count
 
 	for _ in $(seq 1 40); do
 		if kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
@@ -430,8 +430,9 @@ capture_pod_traffic() {
 	kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
 		sh -c "rm -f /work/${expected}.pcap /work/${expected}.log" || \
 		requirement "could not prepare $pod capture evidence"
-	timeout --foreground 15 kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
-		sh -c "tcpdump -i lo -p -nn -s 128 -c 2 -w /work/${expected}.pcap tcp port 18080 >/work/${expected}.log 2>&1" \
+	# Exercise the image-owned bounded wrapper, not a raw tcpdump invocation.
+	timeout --foreground 25 kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		sh -c "net-debug capture --interface lo --duration 15 --packets 2 --snaplen 128 --filter 'tcp port 18080' --output ${expected}.pcap >/work/${expected}.log 2>&1" \
 		>"$capture_log" 2>&1 &
 	capture_pid=$!
 	sleep 1
@@ -443,12 +444,39 @@ capture_pod_traffic() {
 			sh -c "cat /work/${expected}.log" >&2 || true
 		requirement "$pod tcpdump did not capture generated HTTP packets"
 	fi
+	grep -Fx 'capture' <(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		cat "/work/${expected}.log") >/dev/null || requirement "$pod wrapper summary missing capture marker"
+	grep -Fx 'packet_limit 2' <(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		cat "/work/${expected}.log") >/dev/null || requirement "$pod wrapper summary missing packet bound"
+	packet_count=$(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		sed -n 's/^packet_count //p' "/work/${expected}.log")
+	case "$packet_count" in ''|*[!0-9]*) requirement "$pod wrapper summary has an invalid packet count" ;; esac
+	[ "$packet_count" -gt 0 ] && [ "$packet_count" -le 2 ] || requirement "$pod wrapper exceeded its packet bound"
+	reported_hash=$(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		sed -n 's/^sha256 //p' "/work/${expected}.log")
+	printf '%s\n' "$reported_hash" | grep -E '^[0-9a-f]{64}$' >/dev/null || requirement "$pod wrapper summary has an invalid hash"
+	actual_hash=$(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		sha256sum "/work/${expected}.pcap" | awk '{print $1}')
+	[ "$reported_hash" = "$actual_hash" ] || requirement "$pod wrapper hash did not match its pcap"
 	capture_size=$(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
 		stat -c '%s' "/work/${expected}.pcap")
 	[ "$capture_size" -gt 24 ] || requirement "$pod tcpdump produced an empty capture"
+	[ "$capture_size" -le $((2 * (128 + 16) + 24)) ] || requirement "$pod wrapper exceeded its byte bound"
 	kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
 		tcpdump -nn -r "/work/${expected}.pcap" 'tcp port 18080' 2>/dev/null | \
 		grep -F '18080' >/dev/null || requirement "$pod pcap omitted the generated HTTP endpoint"
+	before_hash=$actual_hash
+	if kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		sh -c "net-debug capture --interface lo --duration 1 --packets 1 --snaplen 128 --filter 'tcp port 18080' --output ${expected}.pcap" >/dev/null 2>&1; then
+		requirement "$pod wrapper overwrote an existing capture"
+	fi
+	actual_hash=$(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		sha256sum "/work/${expected}.pcap" | awk '{print $1}')
+	[ "$before_hash" = "$actual_hash" ] || requirement "$pod wrapper changed an existing capture"
+	# shellcheck disable=SC2016 # find is intentionally expanded in the target pod.
+	kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		sh -c 'test -z "$(find /work -maxdepth 1 -name ".net-debug.*" -print -quit)' || \
+		requirement "$pod wrapper left staging residue"
 }
 
 capture_pod_traffic "$NETWORK_HOST_POD_NAME" host-network "$WORK_DIR/host-network-tcpdump.log"
