@@ -36,8 +36,8 @@ The following tests in `e2e/api/use_cases_test.go` cover real-world scenarios do
 - Priority: High
 
 [C-002] Bootstrap: API server flags mount authorization/authentication files
-- Steps: After kind create, inspect the control-plane container manifest inside the node (or check `docker exec <node> cat /etc/kubernetes/manifests/kube-apiserver.yaml`) contains `--authorization-config` and `--authentication-config` paths referencing `/etc/kubernetes/authorization-config.yaml` and `/etc/kubernetes/authentication-config.yaml`.
-- Expected: kube-apiserver manifest includes both flags and extraVolumes entries.
+- Steps: After kind create and the API server restart, poll the `kube-system` Pods through the Kubernetes API until at least one `kube-apiserver` static Pod is observable, then select every API server Pod returned and inspect its typed Pod spec.
+- Expected: Every API server Pod has exactly one authentication-config and authorization-config argument (either `--flag=/path` or the equivalent `--flag /path` form), with the expected path, plus matching read-only hostPath volumes and mounts. The bootstrap test performs this validation against the live Pod object.
 - Priority: High
 
 ## Keycloak / OIDC
