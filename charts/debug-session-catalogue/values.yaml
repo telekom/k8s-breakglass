@@ -99,18 +99,17 @@ profiles:
     intent: dump-access
     displayName: Dump access (opt-in)
     description: >-
-      Read approved existing dump files; requires explicit elevated opt-in.
+      Copy one approved existing dump file to a bounded output volume.
     enabled: false
     elevated: false
     hostNetwork: false
-    requiredElevation: true
     imageKey: dumpAccess
-    command: ["sh", "-c"]
-    args:
-      - >-
-        echo 'Dump reader ready; provide an approved read-only command'; while
-        true; do sleep 3600; done
-    preset: elevated-node
+    workloadType: Job
+    command: ["/usr/local/bin/dump-reader"]
+    # Supply sourcePath and the input/output volumes in an enabled deployment
+    # overlay; the generic catalogue has no implicit host filesystem source.
+    args: []
+    allowExec: false
     capabilities: []
     pod:
       volumeMounts:
@@ -119,11 +118,6 @@ profiles:
           readOnly: true
         - name: output
           mountPath: /output
-      volumes:
-        - name: input
-          emptyDir: {}
-        - name: output
-          emptyDir: {}
   - name: network-repair
     intent: network-repair
     displayName: Network repair (opt-in)

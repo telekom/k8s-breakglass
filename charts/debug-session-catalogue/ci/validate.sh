@@ -10,7 +10,8 @@ all_rendered="$(mktemp)"
 failure_output="$(mktemp)"
 digest_rendered="$(mktemp)"
 elevated_rendered="$(mktemp)"
-trap 'rm -f "${rendered}" "${custom_rendered}" "${all_rendered}" "${failure_output}" "${digest_rendered}" "${elevated_rendered}"' EXIT
+duration_rendered=
+trap 'rm -f "${rendered}" "${custom_rendered}" "${all_rendered}" "${failure_output}" "${digest_rendered}" "${elevated_rendered}" "${duration_rendered}"' EXIT
 
 fail() {
   echo "::error::debug-session-catalogue validation failed: $*" >&2
@@ -83,6 +84,12 @@ expect_rejected "restricted Secret volume override" helm template debug-catalogu
 expect_rejected "restricted PVC volume override" helm template debug-catalogue "${chart_dir}" \
   --set-json 'profiles=[{"name":"pvc-volume","intent":"workload-diagnostics","displayName":"PVC volume","description":"Unbounded volume test","enabled":true,"elevated":false,"imageKey":"workload","command":["sh"],"args":[],"pod":{"volumes":[{"name":"claim","persistentVolumeClaim":{"claimName":"external"}}]}}]'
 
+expect_rejected "dump source without a read-only mount" helm template debug-catalogue "${chart_dir}" \
+  --set-json 'profiles=[{"name":"dump-access","intent":"dump-access","displayName":"Dump access","description":"Read approved dump","enabled":true,"elevated":false,"imageKey":"dumpAccess","command":["/usr/local/bin/dump-reader"],"args":["copy","/input/fixture.dump"],"sourcePath":"/input/fixture.dump","allowExec":false,"pod":{"volumes":[{"name":"input","hostPath":{"path":"/var/lib/catalogue-fixtures/dumps","type":"Directory"}}]}}]'
+
+expect_rejected "dump source without an explicit path" helm template debug-catalogue "${chart_dir}" \
+  --set-json 'profiles=[{"name":"dump-access","intent":"dump-access","displayName":"Dump access","description":"Read approved dump","enabled":true,"elevated":false,"imageKey":"dumpAccess","command":["/usr/local/bin/dump-reader"],"args":["copy","/input/fixture.dump"],"allowExec":false,"pod":{"volumeMounts":[{"name":"input","mountPath":"/input","readOnly":true},{"name":"output","mountPath":"/output"}],"volumes":[{"name":"input","hostPath":{"path":"/var/lib/catalogue-fixtures/dumps","type":"Directory"}},{"name":"output","emptyDir":{"sizeLimit":"1Gi"}}]}}]'
+
 helm template debug-catalogue "${chart_dir}" \
   --set-json 'profiles=[{"name":"elevated-host","intent":"node-recovery","displayName":"Elevated host","description":"Explicit elevation test","enabled":true,"elevated":true,"hostNetwork":true,"preset":"elevated-node","imageKey":"nodeRecovery","command":["/usr/local/bin/node-maintenance"],"args":["node-recovery"],"pod":{"volumes":[{"name":"host","hostPath":{"path":"/var/lib/example","type":"Directory"}}]}}]' >"${elevated_rendered}"
 validate_rendered elevated "${elevated_rendered}"
@@ -95,5 +102,14 @@ expect_rejected "unapproved capabilities" helm template debug-catalogue "${chart
 
 helm template debug-catalogue "${chart_dir}" \
   --values "${chart_dir}/ci/elevated-optin-values.yaml" >/dev/null
+
+duration_rendered="$(mktemp)"
+helm template debug-catalogue "${chart_dir}" --values "${chart_dir}/ci/test-values.yaml" \
+  --set defaultDuration=1h30m --set maxDuration=2h15m >"${duration_rendered}"
+expect_rejected "malformed compound default duration" helm template debug-catalogue "${chart_dir}" \
+  --values "${chart_dir}/ci/test-values.yaml" --set defaultDuration=1hm
+expect_rejected "malformed compound max duration" helm template debug-catalogue "${chart_dir}" \
+  --values "${chart_dir}/ci/test-values.yaml" --set maxDuration=1h30mm
+rm -f "${duration_rendered}"
 
 echo "debug-session-catalogue validation passed"

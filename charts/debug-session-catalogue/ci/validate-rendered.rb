@@ -148,6 +148,16 @@ when "all"
     end
     if profile == "dump-access"
       expect(value_at(pod_spec, "hostNetwork").is_a?(FalseClass), "dump-access must not use host networking")
+      expect(!elevated, "dump-access must not use node elevation")
+      container = value_at(pod_spec, "containers").first
+      expect(container["command"] == ["/usr/local/bin/dump-reader"], "dump-access must use the bounded dump-reader command")
+      expect(container["args"] == ["copy", "/input/catalogue-fixture.dump"], "dump-access must use the deployment-supplied approved-file copy operation")
+      expect(value_at(session_spec, "workloadType") == "Job", "dump-access must be a bounded Job")
+      expect(value_at(session_spec, "allowedPodOperations", "exec").is_a?(FalseClass), "dump-access must disable exec")
+      input = value_at(pod_spec, "volumes").find { |volume| volume["name"] == "input" }
+      expect(input && input["hostPath"] == {"path" => "/var/lib/catalogue-fixtures/dumps", "type" => "Directory"}, "dump-access must use the supplied approved source path")
+      output = value_at(pod_spec, "volumes").find { |volume| volume["name"] == "output" }
+      expect(output && output.dig("emptyDir", "sizeLimit") == "1Gi", "dump-access output must be bounded")
     end
   end
   cluster = pod_by_profile.fetch("cluster-validation")

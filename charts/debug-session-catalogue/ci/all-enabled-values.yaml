@@ -73,15 +73,16 @@ profiles:
   - name: dump-access
     intent: dump-access
     displayName: Dump access
-    description: Explicitly elevated dump access.
+    description: Bounded approved dump copy.
     enabled: true
-    elevated: true
+    elevated: false
     hostNetwork: false
-    requiredElevation: true
-    preset: elevated-node
     imageKey: dumpAccess
-    command: ["sh", "-c"]
-    args: ["sleep 3600"]
+    workloadType: Job
+    command: ["/usr/local/bin/dump-reader"]
+    args: ["copy", "/input/catalogue-fixture.dump"]
+    sourcePath: /input/catalogue-fixture.dump
+    allowExec: false
     pod:
       volumeMounts:
         - name: input
@@ -91,9 +92,12 @@ profiles:
           mountPath: /output
       volumes:
         - name: input
-          emptyDir: {}
+          hostPath:
+            path: /var/lib/catalogue-fixtures/dumps
+            type: Directory
         - name: output
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 1Gi
   - name: network-repair
     intent: network-repair
     displayName: Network repair

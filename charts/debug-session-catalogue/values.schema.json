@@ -15,8 +15,8 @@
       }
     },
     "targetNamespace": { "type": "string", "minLength": 1, "maxLength": 63 },
-    "defaultDuration": { "type": "string", "pattern": "^[0-9]+(ns|us|ms|s|m|h|d)+$" },
-    "maxDuration": { "type": "string", "pattern": "^[0-9]+(ns|us|ms|s|m|h|d)+$" },
+    "defaultDuration": { "type": "string", "pattern": "^[0-9]+(ns|us|ms|s|m|h|d)([0-9]+(ns|us|ms|s|m|h|d))*$" },
+    "maxDuration": { "type": "string", "pattern": "^[0-9]+(ns|us|ms|s|m|h|d)([0-9]+(ns|us|ms|s|m|h|d))*$" },
     "maxConcurrentSessions": { "type": "integer", "minimum": 1 },
     "imagePullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
     "images": {
@@ -71,6 +71,7 @@
         "image": { "$ref": "#/definitions/image" },
         "command": { "type": "array", "minItems": 1, "items": { "type": "string" } },
         "args": { "type": "array", "items": { "type": "string" } },
+        "sourcePath": { "type": "string", "pattern": "^/input/[A-Za-z0-9][A-Za-z0-9._-]{0,254}$", "maxLength": 262 },
         "workloadType": { "type": "string", "enum": ["DaemonSet", "Deployment", "Job"] },
         "podOverridesTemplate": { "type": "string", "minLength": 1 },
         "extraDeployVariables": { "type": "array", "items": { "type": "object" } },

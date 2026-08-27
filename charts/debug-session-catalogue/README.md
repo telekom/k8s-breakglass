@@ -53,7 +53,11 @@ The chart includes these profiles:
 
 Bounded reports use `workloadType: Job`, so a completed diagnostic is retained
 for inspection and is not restarted by the controller's Deployment/DaemonSet
-normalization. Interactive `dump-access` remains a long-running Deployment.
+normalization. `dump-access` is also a bounded Job: it runs one configured
+`dump-reader copy` operation, disables `exec`, and uses a 1 GiB output volume.
+The source path and source volume are deployment-supplied; the generic chart
+does not silently select a node path or artifact name. It never starts an
+interactive or host-network shell.
 
 The node-oriented profiles are elevated. Enable them only with an explicit
 two-part opt-in, including host networking only for profiles that need it,
@@ -64,7 +68,7 @@ profiles:
   - name: dump-access
     intent: dump-access
     enabled: true
-    elevated: true
+    elevated: false
     hostNetwork: false
 ```
 
@@ -89,17 +93,19 @@ default because its packet and node inspection tools require root/capability
 access. Pin each image to its release digest in production.
 
 The `storage-diagnostics` profile mounts the image's `/scratch`, `/reports`,
-and writable `/tmp` paths. The `dump-access` profile mounts `/input` read-only
-and `/output` writable, matching the dump-reader image contract. Replace the
-empty input volume in a reviewed elevated overlay with an approved read-only
-source, for example:
+and writable `/tmp` paths. The `dump-access` profile mounts the approved source
+directory at `/input` read-only and a separate 1 GiB `emptyDir` at `/output`,
+matching the dump-reader image contract. The source path is an explicit
+administrator-controlled value beneath `/input` and must be paired with a
+reviewed source volume:
 
 ```yaml
 profiles:
   - name: dump-access
     enabled: true
-    elevated: true
-    preset: elevated-node
+    elevated: false
+    hostNetwork: false
+    sourcePath: /input/incident-123.dump
     pod:
       volumes:
         - name: input
@@ -107,16 +113,21 @@ profiles:
             path: /var/lib/approved-dumps/incident-123
             type: Directory
         - name: output
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 1Gi
 ```
 
 The administrator must constrain that host path and its retention separately;
-the image still rejects symlinks and traversal. All catalogue containers retain
-a read-only root filesystem. Writable paths must be explicit bounded volumes
+the image still rejects symlinks and traversal. The dump profile does not
+require `elevated-node`, host networking, host PID, or added capabilities; the
+hostPath is exposed only through the read-only `/input` mount. All catalogue
+containers retain a read-only root filesystem. Writable paths must be explicit bounded volumes
 (for example `/output`, `/evidence`, or `/work`); the chart has no writable-root
 opt-out. Restricted profiles accept only `emptyDir`, `configMap`, and
-`downwardAPI` volumes; Secret, projected-token, PVC, CSI, and hostPath sources
-require explicit elevated node opt-in.
+`downwardAPI` volumes; Secret, projected-token, PVC, and CSI sources require
+explicit elevated node opt-in. The dump-access input is the sole exception:
+its hostPath must be mounted read-only and is still an administrator-reviewed
+source boundary.
 
 `cluster-validation` does not receive a service-account token by default. To
 run API checks, explicitly set both `serviceAccountName` and
