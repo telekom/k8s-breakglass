@@ -79,7 +79,9 @@ assert_safe_evidence_dir() {
 			;;
 		*) die "unsafe evidence directory" ;;
 	esac
-	[ -d /evidence ] && [ ! -L /evidence ] || die "/evidence changed while handling evidence"
+	if [ ! -d /evidence ] || [ -L /evidence ]; then
+		die "/evidence changed while handling evidence"
+	fi
 	[ ! -L "$directory" ] || die "evidence directory may not be a symlink"
 	resolved_directory=$(readlink -f "$directory" 2>/dev/null || true)
 	[ "$resolved_directory" = "$directory" ] || die "evidence directory changed or resolves outside /evidence"
@@ -89,7 +91,9 @@ assert_safe_bundle() {
 	bundle=$1
 	assert_safe_evidence_dir "${EVIDENCE_DIR:?evidence directory is not initialized}"
 	case "$bundle" in "$EVIDENCE_DIR"/*) ;; *) die "unsafe evidence bundle" ;; esac
-	[ -d "$bundle" ] && [ ! -L "$bundle" ] || die "evidence bundle changed while handling evidence"
+	if [ ! -d "$bundle" ] || [ -L "$bundle" ]; then
+		die "evidence bundle changed while handling evidence"
+	fi
 	resolved_bundle=$(readlink -f "$bundle" 2>/dev/null || true)
 	[ "$resolved_bundle" = "$bundle" ] || die "evidence bundle did not resolve safely"
 }

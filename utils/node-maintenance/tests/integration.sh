@@ -193,7 +193,12 @@ assert_container_security() {
 	[ "$cap_drop" = ALL ] || fail "$name did not drop all capabilities (got '$cap_drop')"
 	case "$expected_capability" in
 		none) [ -z "$cap_add" ] || fail "$name added capabilities for a read-only preflight (got '$cap_add')" ;;
-		NET_ADMIN) [ "$cap_add" = NET_ADMIN ] || fail "$name did not add only NET_ADMIN (got '$cap_add')" ;;
+		NET_ADMIN)
+			case "$cap_add" in
+				NET_ADMIN|CAP_NET_ADMIN) ;;
+				*) fail "$name did not add only NET_ADMIN (got '$cap_add')" ;;
+			esac
+			;;
 	esac
 	case ",$security_opts," in
 		*,no-new-privileges,* ) ;;
