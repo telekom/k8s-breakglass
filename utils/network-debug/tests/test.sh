@@ -332,7 +332,9 @@ cat >"$trace_fixture/bin/pwru" <<'EOF'
 set -eu
 printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80'
 printf '%s\n' '2026/08/27 20:00:00 INFO Attaching kprobes via=kprobe' >&2
-trap 'printf "%s\\n" "2026/08/27 20:00:01 INFO Received signal, exiting program.." >&2; printf "%s\\n" "2026/08/27 20:00:01 INFO Detaching kprobes..." >&2' INT TERM
+printf '%s\n' '2026/08/27 20:00:01 INFO Received signal, exiting program..' >&2
+printf '%s\n' '2026/08/27 20:00:01 INFO Detaching kprobes...' >&2
+trap '' INT TERM
 while :; do sleep 300; done
 EOF
 chmod +x "$trace_fixture/bin/pwru"
@@ -349,7 +351,9 @@ cat >"$trace_fixture/bin/pwru" <<'EOF'
 #!/bin/sh
 set -eu
 printf '%s\n' '2026/08/27 20:00:00 INFO Attaching kprobes via=kprobe' >&2
-trap 'printf "%s\\n" "2026/08/27 20:00:01 INFO Received signal, exiting program.." >&2; printf "%s\\n" "2026/08/27 20:00:01 INFO Detaching kprobes..." >&2' INT TERM
+printf '%s\n' '2026/08/27 20:00:01 INFO Received signal, exiting program..' >&2
+printf '%s\n' '2026/08/27 20:00:01 INFO Detaching kprobes...' >&2
+trap '' INT TERM
 while :; do sleep 300; done
 EOF
 chmod +x "$trace_fixture/bin/pwru"
