@@ -240,6 +240,40 @@ assert_capture_statuses() {
 	done
 }
 
+new_fixture capture-output-quota
+set +e
+# The quoted program is evaluated inside the test container; host-side
+# expansion would invalidate the namespace and evidence-path proof.
+# shellcheck disable=SC2016
+"$docker_bin" run \
+	--name "$container_name" --user 0 --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" \
+	--entrypoint /bin/sh "$image" -c '
+		. /usr/local/libexec/node-maintenance/common.sh
+		EVIDENCE_DIR=/evidence
+		bundle=/evidence/quota
+		mkdir -m 0700 "$bundle"
+		set +e
+		capture "$bundle/output" awk '\''BEGIN { for (i = 0; i < 40000; i++) printf "x" }'\''
+		status=$?
+		set -e
+		[ "$status" -eq 75 ]
+	' >"$fixture_dir/output" 2>&1
+quota_status=$?
+set -e
+cat "$fixture_dir/output"
+assert_container_security "$container_name" none
+[ "$quota_status" -eq 0 ] || fail "bounded capture behavior returned $quota_status"
+"$docker_bin" cp "$container_name:/evidence/quota/output" "$fixture_dir/quota-output" >/dev/null \
+	|| fail 'could not copy bounded capture evidence'
+[ "$(wc -c <"$fixture_dir/quota-output" | tr -d ' ')" -le 32832 ] \
+	|| fail 'oversized capture exceeded the bounded evidence allowance'
+grep -q '^capture_result=output-quota-exceeded$' "$fixture_dir/quota-output" \
+	|| fail 'oversized capture did not record the quota failure'
+destroy_fixture
+pass 'oversized command output is bounded while it is produced'
+
 run_command preflight 0 none node-recovery --target-node node-a --interface lo \
 	--evidence-dir /evidence --confirm NODE-RECOVERY-PREFLIGHT
 preflight_bundle=$(bundle_from_output "$fixture_dir/output")

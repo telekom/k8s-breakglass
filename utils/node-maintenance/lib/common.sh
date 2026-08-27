@@ -117,11 +117,31 @@ capture() {
 	assert_safe_bundle "$bundle"
 	command -v timeout >/dev/null 2>&1 || die "timeout utility is required for bounded evidence capture"
 	temporary_file=$(mktemp "$bundle/.capture.XXXXXX") || die "cannot create bounded capture temporary file"
-	if timeout "$capture_timeout_seconds" "$@" >"$temporary_file" 2>&1; then
-		status=0
-	else
-		status=$?
+	status_file=$(mktemp "$bundle/.capture-status.XXXXXX") || die "cannot create capture status file"
+	fifo=$(mktemp "$bundle/.capture-fifo.XXXXXX") || die "cannot reserve capture pipe"
+	rm -f "$fifo"
+	mkfifo -m 0600 "$fifo" || die "cannot create capture pipe"
+	(
+		set +e
+		timeout "$capture_timeout_seconds" "$@" >"$fifo" 2>&1
+		printf '%s\n' "$?" >"$status_file"
+	) &
+	producer_pid=$!
+	# Read at most one byte beyond the fixed quota. Closing the FIFO then
+	# back-pressures or terminates a noisy producer instead of allowing an
+	# unbounded temporary file to grow before the quota is checked.
+	if ! head -c "$((capture_max_bytes + 1))" "$fifo" >"$temporary_file"; then
+		rm -f "$fifo" "$status_file" "$temporary_file"
+		die "cannot read bounded command output"
 	fi
+	if wait "$producer_pid"; then :; else :; fi
+	rm -f "$fifo"
+	[ -s "$status_file" ] || {
+		rm -f "$status_file" "$temporary_file"
+		die "capture command did not report an exit status"
+	}
+	status=$(cat "$status_file")
+	rm -f "$status_file"
 	bytes=$(wc -c <"$temporary_file" | tr -d ' ')
 	if [ "$bytes" -gt "$capture_max_bytes" ]; then
 		head -c "$capture_max_bytes" "$temporary_file" >"$output_file"
