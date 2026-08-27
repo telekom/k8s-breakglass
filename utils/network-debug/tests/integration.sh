@@ -475,10 +475,10 @@ capture_pod_traffic() {
 	actual_hash=$(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
 		sha256sum "/work/${expected}.pcap" | awk '{print $1}')
 	[ "$before_hash" = "$actual_hash" ] || requirement "$pod wrapper changed an existing capture"
-	# shellcheck disable=SC2016 # find is intentionally expanded in the target pod.
-	kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
-		sh -c 'test -z "$(find /work -maxdepth 1 -name ".net-debug.*" -print -quit)' || \
-		requirement "$pod wrapper left staging residue"
+	staging_residue=$(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		find /work -maxdepth 1 -name '.net-debug.*' -print -quit) || \
+		requirement "$pod wrapper staging inspection failed"
+	[ -z "$staging_residue" ] || requirement "$pod wrapper left staging residue"
 }
 
 capture_pod_traffic "$NETWORK_HOST_POD_NAME" host-network "$WORK_DIR/host-network-tcpdump.log"
