@@ -161,12 +161,14 @@ jobs:
           subject="${SUBJECT}"
           cosign sign --yes "${subject}"
           cosign attest --yes --type spdxjson --predicate "${{ matrix.name }}.spdx.json" "${subject}"
-          jq -n --arg subject "${IMAGE}" --arg digest "${digest#sha256:}" --arg sha "${GITHUB_SHA}" \
-            '{_type:"https://in-toto.io/Statement/v1",subject:[{name:$subject,digest:{sha256:$digest}}],predicateType:"https://slsa.dev/provenance/v1",predicate:{buildDefinition:{buildType:"https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml",externalParameters:{source:{uri:"https://github.com/telekom/k8s-breakglass",digest:{sha1:$sha}}},resolvedDependencies:[]},runDetails:{builder:{id:"github-actions"}}}}' > "${{ matrix.name }}.provenance.json"
-          cosign attest --yes --type slsaprovenance --predicate "${{ matrix.name }}.provenance.json" "${subject}"
+          bash hack/generate-slsa-provenance.sh \
+            --subject "${IMAGE}" --digest "${digest}" --sha "${GITHUB_SHA}" \
+            --build-type "https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml" \
+            --builder-id "github-actions" --output "${{ matrix.name }}.provenance.json"
+          cosign attest --yes --type slsaprovenance1 --predicate "${{ matrix.name }}.provenance.json" "${subject}"
           cosign verify "${subject}" --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
           cosign verify-attestation "${subject}" --type spdxjson --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
-          cosign verify-attestation "${subject}" --type slsaprovenance --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
+          cosign verify-attestation "${subject}" --type slsaprovenance1 --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
           printf '%s|%s|%s\n' '${{ matrix.name }}' "${IMAGE}" "${digest}" > '${{ matrix.name }}.ref'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -709,18 +711,19 @@ jobs:
             subject="${docker_remote}@${digest}"
             cosign sign --yes "${subject}"
             cosign attest --yes --type spdxjson --predicate chart-sbom.spdx.json "${subject}"
-            digest_hex="${digest#sha256:}"
-            jq -n --arg subject "${remote#oci://}" --arg digest "${digest_hex}" --arg sha "${GITHUB_SHA}" \
-              --arg workflow "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-              '{_type:"https://in-toto.io/Statement/v1",subject:[{name:$subject,digest:{sha256:$digest}}],predicateType:"https://slsa.dev/provenance/v1",predicate:{buildDefinition:{buildType:"https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml",externalParameters:{source:{uri:"https://github.com/telekom/k8s-breakglass",digest:{sha1:$sha}}},resolvedDependencies:[]},runDetails:{builder:{id:$workflow}}}}' > chart-provenance.json
-            cosign attest --yes --type slsaprovenance --predicate chart-provenance.json "${subject}"
+            bash hack/generate-slsa-provenance.sh \
+              --subject "${remote#oci://}" --digest "${digest}" --sha "${GITHUB_SHA}" \
+              --build-type "https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml" \
+              --builder-id "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              --output chart-provenance.json
+            cosign attest --yes --type slsaprovenance1 --predicate chart-provenance.json "${subject}"
             cosign verify "${subject}" \
               --certificate-identity-regexp="${SUPPLY_CHAIN_IDENTITY_REGEXP}" \
               --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
             cosign verify-attestation "${subject}" --type spdxjson \
               --certificate-identity-regexp="${SUPPLY_CHAIN_IDENTITY_REGEXP}" \
               --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
-            cosign verify-attestation "${subject}" --type slsaprovenance \
+            cosign verify-attestation "${subject}" --type slsaprovenance1 \
               --certificate-identity-regexp="${SUPPLY_CHAIN_IDENTITY_REGEXP}" \
               --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
             if [ "${chart_name}" = "debug-session-catalogue" ]; then
