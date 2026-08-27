@@ -1,0 +1,45 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+set -eu
+
+usage() {
+	cat >&2 <<'EOF'
+Usage: node-maintenance <command> [options]
+
+Commands (the only supported entrypoints):
+  node-recovery             Collect read-only node evidence.
+  network-repair           Run one explicitly selected network repair.
+
+The image does not provide an unrestricted shell entrypoint. Use a runbook and
+pass an explicit target, evidence directory, and confirmation token.
+EOF
+}
+
+if [ "$#" -eq 0 ]; then
+	cat /etc/motd >&2
+	usage
+	exit 2
+fi
+
+command_name=$1
+shift
+case "$command_name" in
+	node-recovery)
+		exec /usr/local/libexec/node-maintenance/node-recovery "$@"
+		;;
+	network-repair)
+		exec /usr/local/libexec/node-maintenance/network-repair "$@"
+		;;
+	-h|--help)
+		usage
+		exit 0
+		;;
+	*)
+		printf 'Unsupported command: %s\n' "$command_name" >&2
+		usage
+		exit 2
+		;;
+esac
