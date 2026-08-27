@@ -32,6 +32,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -2407,6 +2409,128 @@ rules: []
 	assert.Contains(t, err.Error(), "may only carry core/v1 ConfigMap")
 }
 
+func TestValidateRestrictedCatalogueRejectsPSSSurfaces(t *testing.T) {
+	trueValue := true
+	falseValue := false
+	baselineSecurity := &corev1.SecurityContext{
+		AllowPrivilegeEscalation: &falseValue,
+		ReadOnlyRootFilesystem:   &trueValue,
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+	}
+	baseline := func() corev1.PodSpec {
+		return corev1.PodSpec{
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot:   &trueValue,
+				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+			},
+			Containers: []corev1.Container{{Name: "debug", SecurityContext: baselineSecurity.DeepCopy()}},
+		}
+	}
+	tests := []struct {
+		name   string
+		mutate func(*corev1.PodSpec)
+		want   string
+	}{
+		{
+			name: "host port",
+			mutate: func(spec *corev1.PodSpec) {
+				spec.Containers[0].Ports = []corev1.ContainerPort{{ContainerPort: 8080, HostPort: 8080}}
+			},
+			want: "hostPort",
+		},
+		{
+			name: "unconfined AppArmor",
+			mutate: func(spec *corev1.PodSpec) {
+				spec.Containers[0].SecurityContext.AppArmorProfile = &corev1.AppArmorProfile{Type: corev1.AppArmorProfileTypeUnconfined}
+			},
+			want: "unconfined AppArmor",
+		},
+		{
+			name: "SELinux user",
+			mutate: func(spec *corev1.PodSpec) {
+				spec.SecurityContext.SELinuxOptions = &corev1.SELinuxOptions{User: "unconfined_u"}
+			},
+			want: "SELinux user or role",
+		},
+		{
+			name: "unsafe SELinux type",
+			mutate: func(spec *corev1.PodSpec) {
+				spec.Containers[0].SecurityContext.SELinuxOptions = &corev1.SELinuxOptions{Type: "malicious_t"}
+			},
+			want: "SELinux type",
+		},
+		{
+			name: "unsafe sysctl",
+			mutate: func(spec *corev1.PodSpec) {
+				spec.SecurityContext.Sysctls = []corev1.Sysctl{{Name: "kernel.kptr_restrict", Value: "0"}}
+			},
+			want: "unsafe sysctl",
+		},
+		{
+			name: "probe host",
+			mutate: func(spec *corev1.PodSpec) {
+				spec.Containers[0].ReadinessProbe = &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Host: "tenant.internal", Port: intstr.FromInt(8080)}}}
+			},
+			want: "host in readiness probe",
+		},
+		{
+			name: "lifecycle host",
+			mutate: func(spec *corev1.PodSpec) {
+				spec.Containers[0].Lifecycle = &corev1.Lifecycle{PreStop: &corev1.LifecycleHandler{HTTPGet: &corev1.HTTPGetAction{Host: "tenant.internal", Port: intstr.FromInt(8080)}}}
+			},
+			want: "host in preStop lifecycle hook",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := baseline()
+			tc.mutate(&spec)
+			err := validateRestrictedCataloguePodSpec(&spec, "workload-diagnostics")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+}
+
+func TestBuildWorkload_RestrictedCatalogueRejectsLegacyAppArmorAnnotationAfterMerge(t *testing.T) {
+	controller := newBuildWorkloadController()
+	ds := newBuildWorkloadSession("restricted-apparmor-annotation")
+	labels := map[string]string{
+		catalogueProfileLabel:  "workload-diagnostics",
+		catalogueIntentLabel:   "workload-diagnostics",
+		catalogueElevatedLabel: "false",
+	}
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: map[string]string{
+			"container.apparmor.security.beta.kubernetes.io/debug": "unconfined",
+		}},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{WorkloadType: breakglassv1alpha1.DebugWorkloadJob},
+	}
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{Labels: labels},
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{TemplateString: `apiVersion: v1
+kind: Pod
+spec:
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: debug
+      image: busybox:1.36
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+`},
+	}
+	_, _, err := controller.buildWorkload(ds, template, nil, podTemplate, "target-ns")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "legacy AppArmor annotations")
+}
+
 // ==================== Error Path Tests ====================
 
 func TestRenderPodTemplateStringMultiDoc_PodMissingSpec(t *testing.T) {
@@ -4203,6 +4327,28 @@ func TestDeployPodTemplateResource_MergesExistingAnnotations(t *testing.T) {
 	annotations := obj.GetAnnotations()
 	assert.Equal(t, "should-be-kept", annotations["existing-annotation"])
 	assert.Contains(t, annotations, "breakglass.t-caas.telekom.com/source-session")
+}
+
+func TestDeployPodTemplateResource_RejectsTenantConfigMapCollisionWithoutMutation(t *testing.T) {
+	ds := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "collision-session", Namespace: "breakglass-system", UID: "session-uid"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+	}
+	existing := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "tenant-config", Namespace: "target-ns"}, Data: map[string]string{"tenant": "must-remain"}}
+	targetClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(existing).Build()
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("ConfigMap"))
+	obj.SetName(existing.Name)
+	obj.SetNamespace(existing.Namespace)
+	obj.Object["data"] = map[string]interface{}{"controller": "must-not-apply"}
+
+	err := (&DebugSessionController{log: zap.NewNop().Sugar()}).deployPodTemplateResource(context.Background(), targetClient, ds, obj, existing.Namespace)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "refusing to overwrite pre-existing")
+
+	var unchanged corev1.ConfigMap
+	require.NoError(t, targetClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(existing), &unchanged))
+	assert.Equal(t, map[string]string{"tenant": "must-remain"}, unchanged.Data)
 }
 
 func TestDeployPodTemplateResource_UpdatesSessionStatus(t *testing.T) {
