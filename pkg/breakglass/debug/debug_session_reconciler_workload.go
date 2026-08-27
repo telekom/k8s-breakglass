@@ -457,7 +457,7 @@ func (c *DebugSessionController) useTemplateWorkload(
 		w.Labels = labels
 		w.Annotations = annotations
 		w.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
-		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels)
+		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels, selectorLabels)
 		w.Spec.Template.Annotations = mergeStringMaps(w.Spec.Template.Annotations, annotations)
 
 		// Apply the modified PodSpec back into the workload.
@@ -511,16 +511,34 @@ func (c *DebugSessionController) useTemplateWorkload(
 		w.Namespace = targetNs
 		w.Labels = labels
 		w.Annotations = annotations
-		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels)
+		manualSelector := true
+		w.Spec.ManualSelector = &manualSelector
+		w.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
+		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels, selectorLabels)
 		w.Spec.Template.Annotations = mergeStringMaps(w.Spec.Template.Annotations, annotations)
 		w.Spec.Template.Spec = renderResult.PodSpec
 		if w.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyNever && w.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyOnFailure {
 			w.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyNever
 		}
-		if w.Spec.BackoffLimit == nil {
-			backoffLimit := int32(0)
-			w.Spec.BackoffLimit = &backoffLimit
-		}
+		one := int32(1)
+		zero := int32(0)
+		activeDeadlineSeconds := max(int64(c.parseDuration(ds.Spec.RequestedDuration, template.Spec.Constraints).Seconds()), 1)
+		w.Spec.Parallelism = &one
+		w.Spec.Completions = &one
+		w.Spec.BackoffLimit = &zero
+		w.Spec.ActiveDeadlineSeconds = &activeDeadlineSeconds
+		// Template authors cannot expand one session into unbounded pods or make
+		// cleanup depend on Kubernetes Job lifecycle features. Session cleanup is
+		// the sole owner of the rendered workload.
+		w.Spec.TTLSecondsAfterFinished = nil
+		w.Spec.CompletionMode = nil
+		w.Spec.Suspend = nil
+		w.Spec.PodFailurePolicy = nil
+		w.Spec.SuccessPolicy = nil
+		w.Spec.BackoffLimitPerIndex = nil
+		w.Spec.MaxFailedIndexes = nil
+		w.Spec.PodReplacementPolicy = nil
+		w.Spec.ManagedBy = nil
 		return w, renderResult.AdditionalResources, nil
 
 	default:
@@ -641,6 +659,10 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 	}
 
 	spec := &renderResult.PodSpec
+	restrictedCatalogue, catalogueIntent, err := restrictedCatalogueProfile(template, podTemplate)
+	if err != nil {
+		return nil, err
+	}
 
 	// Apply podOverridesTemplate if specified (Go template producing overrides YAML)
 	if template.Spec.PodOverridesTemplate != "" {
@@ -648,12 +670,22 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 		if err != nil {
 			return nil, fmt.Errorf("failed to render podOverridesTemplate: %w", err)
 		}
+		if restrictedCatalogue {
+			if err := validateRestrictedCatalogueOverrides(overrides); err != nil {
+				return nil, err
+			}
+		}
 		c.applyPodOverridesStruct(spec, overrides)
 	}
 
 	// Apply static overrides from session template (legacy support)
 	if template.Spec.PodOverrides != nil && template.Spec.PodOverrides.Spec != nil {
 		overrides := template.Spec.PodOverrides.Spec
+		if restrictedCatalogue {
+			if err := validateRestrictedCatalogueOverrides(overrides); err != nil {
+				return nil, err
+			}
+		}
 		if overrides.HostNetwork != nil {
 			spec.HostNetwork = *overrides.HostNetwork
 		}
@@ -703,6 +735,11 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 			return nil, err
 		}
 	}
+	if restrictedCatalogue {
+		if err := validateRestrictedCataloguePodSpec(spec, catalogueIntent); err != nil {
+			return nil, err
+		}
+	}
 
 	// Verify if terminal sharing is enabled and inject multiplexer command
 	if template.Spec.TerminalSharing != nil && template.Spec.TerminalSharing.Enabled && len(spec.Containers) > 0 {
@@ -740,6 +777,94 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 	}
 
 	return renderResult, nil
+}
+
+const (
+	catalogueProfileLabel  = "breakglass.t-caas.telekom.com/catalogue-profile"
+	catalogueIntentLabel   = "breakglass.t-caas.telekom.com/catalogue-intent"
+	catalogueElevatedLabel = "breakglass.t-caas.telekom.com/elevated"
+)
+
+func restrictedCatalogueProfile(template *breakglassv1alpha1.DebugSessionTemplate, podTemplate *breakglassv1alpha1.DebugPodTemplate) (bool, string, error) {
+	templateProfile := template.Labels[catalogueProfileLabel]
+	podProfile := ""
+	if podTemplate != nil {
+		podProfile = podTemplate.Labels[catalogueProfileLabel]
+	}
+	if templateProfile == "" && podProfile == "" {
+		return false, "", nil
+	}
+	if templateProfile == "" || podProfile == "" || templateProfile != podProfile {
+		return false, "", fmt.Errorf("catalogue profile identity must match across session and pod templates")
+	}
+	templateIntent := template.Labels[catalogueIntentLabel]
+	podIntent := podTemplate.Labels[catalogueIntentLabel]
+	if templateIntent == "" || templateIntent != podIntent {
+		return false, "", fmt.Errorf("catalogue intent identity must match across session and pod templates")
+	}
+	templateElevated := template.Labels[catalogueElevatedLabel]
+	podElevated := podTemplate.Labels[catalogueElevatedLabel]
+	if templateElevated != podElevated || (templateElevated != "true" && templateElevated != "false") {
+		return false, "", fmt.Errorf("catalogue elevation identity must be explicit and match across session and pod templates")
+	}
+	return templateElevated == "false", templateIntent, nil
+}
+
+func validateRestrictedCatalogueOverrides(overrides *breakglassv1alpha1.DebugPodSpecOverrides) error {
+	if overrides == nil {
+		return nil
+	}
+	if (overrides.HostNetwork != nil && *overrides.HostNetwork) ||
+		(overrides.HostPID != nil && *overrides.HostPID) ||
+		(overrides.HostIPC != nil && *overrides.HostIPC) {
+		return fmt.Errorf("restricted catalogue profiles cannot enable host namespaces through pod overrides")
+	}
+	for _, container := range overrides.Containers {
+		if container.SecurityContext != nil || container.Resources != nil || len(container.Env) > 0 {
+			return fmt.Errorf("restricted catalogue profile container %q may override only command and args", container.Name)
+		}
+	}
+	return nil
+}
+
+func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) error {
+	if spec.HostNetwork || spec.HostPID || spec.HostIPC {
+		return fmt.Errorf("restricted catalogue profiles cannot use host namespaces")
+	}
+	if spec.SecurityContext == nil || spec.SecurityContext.RunAsNonRoot == nil || !*spec.SecurityContext.RunAsNonRoot {
+		return fmt.Errorf("restricted catalogue profiles must run as non-root")
+	}
+	if intent == "cluster-validation" {
+		if spec.ServiceAccountName == "" || spec.ServiceAccountName == "default" || spec.AutomountServiceAccountToken == nil || !*spec.AutomountServiceAccountToken {
+			return fmt.Errorf("cluster-validation requires its explicit dedicated service account identity")
+		}
+	} else if spec.ServiceAccountName != "" || spec.AutomountServiceAccountToken == nil || *spec.AutomountServiceAccountToken {
+		return fmt.Errorf("restricted catalogue profiles cannot receive a Kubernetes service account identity")
+	}
+	for _, volume := range spec.Volumes {
+		source := volume.VolumeSource
+		if source.EmptyDir == nil && source.ConfigMap == nil && source.DownwardAPI == nil {
+			return fmt.Errorf("restricted catalogue profile volume %q uses a disallowed source", volume.Name)
+		}
+	}
+	containers := make([]corev1.Container, 0, len(spec.InitContainers)+len(spec.Containers))
+	containers = append(containers, spec.InitContainers...)
+	containers = append(containers, spec.Containers...)
+	for _, container := range containers {
+		security := container.SecurityContext
+		if security == nil || security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem ||
+			(security.Privileged != nil && *security.Privileged) ||
+			(security.AllowPrivilegeEscalation != nil && *security.AllowPrivilegeEscalation) ||
+			(security.Capabilities != nil && len(security.Capabilities.Add) > 0) {
+			return fmt.Errorf("restricted catalogue profile container %q violates its security boundary", container.Name)
+		}
+		for _, env := range container.Env {
+			if env.ValueFrom != nil {
+				return fmt.Errorf("restricted catalogue profile container %q cannot source environment variable %q", container.Name, env.Name)
+			}
+		}
+	}
+	return nil
 }
 
 // buildPodRenderContext creates the render context for pod templates.

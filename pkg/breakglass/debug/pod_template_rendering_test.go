@@ -1805,18 +1805,40 @@ spec:
 	assert.Equal(t, corev1.RestartPolicyAlways, deploy.Spec.Template.Spec.RestartPolicy)
 }
 
-func TestBuildWorkload_JobRetainsNeverAndDoesNotRestart(t *testing.T) {
+func TestBuildWorkload_JobEnforcesBoundedSessionOwnership(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("one-shot")
 	template := &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 		WorkloadType: breakglassv1alpha1.DebugWorkloadJob,
-		PodTemplateString: `apiVersion: v1
-kind: Pod
+		Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+			DefaultDuration: "15m",
+			MaxDuration:     "30m",
+		},
+		PodTemplateString: `apiVersion: batch/v1
+kind: Job
+metadata:
+  name: attacker-controlled
 spec:
-  containers:
-    - name: debug
-      image: busybox:1.36
-      command: ["/bin/true"]
+  manualSelector: true
+  selector:
+    matchLabels:
+      unrelated: workload
+  parallelism: 20
+  completions: 20
+  backoffLimit: 10
+  activeDeadlineSeconds: 86400
+  ttlSecondsAfterFinished: 1
+  suspend: true
+  template:
+    metadata:
+      labels:
+        unrelated: workload
+    spec:
+      restartPolicy: Always
+      containers:
+        - name: debug
+          image: busybox:1.36
+          command: ["/bin/true"]
 `,
 	}}
 
@@ -1825,8 +1847,21 @@ spec:
 	job, ok := workload.(*batchv1.Job)
 	require.True(t, ok, "bounded diagnostics must be represented by a Job")
 	assert.Equal(t, corev1.RestartPolicyNever, job.Spec.Template.Spec.RestartPolicy)
+	require.NotNil(t, job.Spec.ManualSelector)
+	assert.True(t, *job.Spec.ManualSelector)
+	require.NotNil(t, job.Spec.Selector)
+	assert.Equal(t, map[string]string{DebugSessionLabelKey: ds.Name}, job.Spec.Selector.MatchLabels)
+	assert.Equal(t, ds.Name, job.Spec.Template.Labels[DebugSessionLabelKey])
+	require.NotNil(t, job.Spec.Parallelism)
+	assert.Equal(t, int32(1), *job.Spec.Parallelism)
+	require.NotNil(t, job.Spec.Completions)
+	assert.Equal(t, int32(1), *job.Spec.Completions)
 	require.NotNil(t, job.Spec.BackoffLimit)
 	assert.Zero(t, *job.Spec.BackoffLimit)
+	require.NotNil(t, job.Spec.ActiveDeadlineSeconds)
+	assert.Equal(t, int64(15*60), *job.Spec.ActiveDeadlineSeconds)
+	assert.Nil(t, job.Spec.TTLSecondsAfterFinished)
+	assert.Nil(t, job.Spec.Suspend)
 }
 
 func TestBuildWorkload_FullDeploymentTemplate(t *testing.T) {
@@ -2138,6 +2173,94 @@ spec:
 	require.Len(t, result.PodSpec.Containers, 1)
 	assert.Equal(t, "node-debug", result.PodSpec.Containers[0].Name)
 	assert.True(t, result.PodSpec.HostNetwork)
+}
+
+func TestBuildPodSpec_RestrictedCatalogueOverridesStayWithinDeclaredBoundary(t *testing.T) {
+	controller := newBuildWorkloadController()
+	ds := newBuildWorkloadSession("restricted-catalogue")
+	labels := map[string]string{
+		catalogueProfileLabel:  "workload-diagnostics",
+		catalogueIntentLabel:   "workload-diagnostics",
+		catalogueElevatedLabel: "false",
+	}
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{Labels: labels},
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{TemplateString: `apiVersion: v1
+kind: Pod
+spec:
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+  containers:
+    - name: debug
+      image: busybox:1.36
+      command: ["/bin/true"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+`},
+	}
+
+	tests := []struct {
+		name      string
+		overrides string
+		wantError string
+	}{
+		{
+			name:      "host namespace",
+			overrides: "hostPID: true\n",
+			wantError: "cannot enable host namespaces",
+		},
+		{
+			name: "container security context",
+			overrides: `containers:
+  - name: debug
+    securityContext:
+      privileged: true
+`,
+			wantError: "may override only command and args",
+		},
+		{
+			name: "external environment source",
+			overrides: `containers:
+  - name: debug
+    env:
+      - name: TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: credentials
+            key: token
+`,
+			wantError: "may override only command and args",
+		},
+		{
+			name: "bounded command arguments",
+			overrides: `containers:
+  - name: debug
+    args: ["--mode", "summary"]
+`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			template := &breakglassv1alpha1.DebugSessionTemplate{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+					PodOverridesTemplate: tc.overrides,
+				},
+			}
+			result, err := controller.buildPodSpec(ds, template, podTemplate)
+			if tc.wantError != "" {
+				require.ErrorContains(t, err, tc.wantError)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, result.PodSpec.Containers, 1)
+			assert.Equal(t, []string{"--mode", "summary"}, result.PodSpec.Containers[0].Args)
+		})
+	}
 }
 
 // ==================== Error Path Tests ====================
