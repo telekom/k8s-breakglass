@@ -278,7 +278,19 @@ trace_command() {
 	ACTIVE_PID=''
 	# timeout returns 124 when it delivered the primary signal; 137/143 are
 	# retained for compatible implementations that report the forced stop.
-	case "$status" in 0|124|130|137|141|143) ;; *) return 1 ;; esac
+	case "$status" in
+		0|124|130|137|141|143) ;;
+		*)
+			# Preserve actionable startup diagnostics before the EXIT trap removes
+			# private evidence. Drop packet-tuple lines so failure logs cannot
+			# become an alternate packet-content output channel.
+			printf 'net-debug: pwru exited with status %s\n' "$status" >&2
+			if [ -s "$TEMP_EVIDENCE" ]; then
+				sed '/->/d' "$TEMP_EVIDENCE" | sed -n '1,40p' >&2
+			fi
+			return 1
+		;;
+	esac
 	count=$(wc -l <"$TEMP_EVIDENCE" | tr -d ' ')
 	[ "$count" -le "$events" ] || usage_error 'trace evidence exceeded event limit'
 	bytes=$(wc -c <"$TEMP_EVIDENCE" | tr -d ' ')
