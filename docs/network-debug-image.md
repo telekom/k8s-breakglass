@@ -20,14 +20,14 @@ The image is advertised under the shared `network-diagnostics` intent; that
 intent identifies the diagnostic workflow and does not grant Kubernetes API
 permissions or authorize network mutation.
 
-The image also contains `pod-netns-capture`, a non-interactive primitive for a
-server-owned selected-pod capture Job. It accepts an immutable Pod UID plus
-bounded capture fields, discovers the exact pod cgroup through host procfs,
-rejects ambiguous or unknown runtime layouts, opens and revalidates the network
-namespace against PID reuse, enters it once, and invokes a fixed no-shell
-`tcpdump -p` command. It never uses a CRI socket or host path and emits only
-capture metadata and SHA-256; the pcap remains on the Job's protected
-`emptyDir`.
+Selected-Pod capture is not an image-side helper. The approved controller
+resolves the selected Pod immediately before use and appends one fixed,
+short-lived `net-debug capture` EphemeralContainer through the Kubernetes
+`ephemeralcontainers` subresource. The target container and immutable Pod UID
+are controller-owned; the operation runs in that Pod's existing network
+namespace and never infers cgroups, enters a namespace from host procfs, or
+uses a CRI socket or host path. Capture metadata and SHA-256 are emitted while
+the pcap remains on the server-owned `emptyDir`.
 
 ## Suggested sequence
 
@@ -70,11 +70,10 @@ repair API: commands such as `ip route`, `ip link`, and `ethtool` can mutate a
 shared namespace. Use the dedicated node-maintenance repair workflow for
 allowlisted repairs.
 
-The selected-pod helper is a separate privilege profile: `hostPID: true`,
-`hostNetwork: false`, and only `SYS_ADMIN`, `SYS_PTRACE`, and `NET_RAW` after
-dropping all capabilities. Those powers are valid only in the short-lived,
-server-owned Job with no service-account token, host path, or runtime socket.
-They must not be added to the generic interactive network-debug profile.
+The selected-pod EphemeralContainer is a separate privilege profile:
+`hostPID: false`, `hostNetwork: false`, and only `NET_RAW` after dropping all
+capabilities. It has no service-account token, host path, or runtime socket and
+must not be confused with the separate elevated host-trace profile.
 
 The repository's `config/samples/debug-pod-template-network.yaml` shows the
 canonical image reference with an intentionally invalid digest placeholder.
@@ -108,11 +107,12 @@ than reporting a partial pass. The operation and prerequisite contract is
 tracked in [`tool-contract.yaml`](../utils/network-debug/tests/tool-contract.yaml).
 
 Selected-pod capture has a separate Linux/kind workflow. It creates target and
-decoy traffic pods on one disposable node, passes only the target Pod UID to a
-host-PID/non-host-network capture Job, proves the pcap contains target traffic
-and excludes the decoy, and then checks exact namespace, Job, kind node,
-container, and temporary-directory cleanup. Required setns, capabilities, or
-recognized cgroup facilities are never skipped silently.
+decoy traffic Pods, resolves the target UID, appends the fixed EphemeralContainer
+through the `ephemeralcontainers` subresource, and proves the pcap contains
+target traffic while excluding the decoy. It verifies the admitted
+`privileged: false`, token-disabled, exact `emptyDir`, `NET_RAW`-only profile,
+non-host namespaces, and exact Pod/namespace/cluster cleanup. No cgroup,
+`setns`, host-path, or runtime-socket prerequisite is inferred or skipped.
 
 Built-in documentation remains at `/usr/share/breakglass/runbooks/upstream/network-debug/`. A downstream
 deployment may read-only mount an optional digest-pinned runbook bundle at

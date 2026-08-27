@@ -393,7 +393,7 @@ trace_command() {
 			''|*[!0-9]*) status=1 ;;
 			*) status=$candidate_status ;;
 		esac
-	elif [ -s "$TRACE_TIMED_OUT_FILE" ]; then
+	elif [ -e "$TRACE_TIMED_OUT_FILE" ]; then
 		# A group KILL can prevent the wrapper from publishing its child status.
 		# Treat that expected bounded termination as 137, but fail closed for any
 		# other missing status file.

@@ -279,6 +279,7 @@ chmod +x "$trace_fixture/bin/pwru"
 test_context='trace-long-child-timeout'
 printf 'CapEff: c001081000\n' >"$trace_fixture/status"
 rm -f "$trace_fixture/work/trace.log"
+trace_timeout_error="$trace_fixture/timeout-error"
 if NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" \
 	NETWORK_DEBUG_BTF_PATH="$trace_fixture/status" NETWORK_DEBUG_DEBUGFS_PATH="$trace_fixture/debug" \
 	NETWORK_DEBUG_TRACEFS_PATH="$trace_fixture/trace" NETWORK_DEBUG_SECURITYFS_PATH="$trace_fixture/security" \
@@ -286,10 +287,11 @@ if NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" \
 		PWRU_PID_FILE="$trace_fixture/pwru.pid" \
 		PWRU_CHILD_PID_FILE="$trace_fixture/pwru-child.pid" \
 		NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS=1 \
-	PATH="$trace_fixture/bin:/usr/bin:/bin" sh "$root/scripts/net-debug" trace --duration 1 --events 1 >/dev/null 2>&1; then
+	PATH="$trace_fixture/bin:/usr/bin:/bin" sh "$root/scripts/net-debug" trace --duration 1 --events 1 > /dev/null 2>"$trace_timeout_error"; then
 	printf '%s\n' 'trace unexpectedly succeeded when pwru ignored stop signals' >&2
 	exit 1
 fi
+grep -Fx 'net-debug: pwru exited with status 137' "$trace_timeout_error" >/dev/null
 test -s "$trace_fixture/pwru.pid"
 test -s "$trace_fixture/pwru-child.pid"
 trace_pwru_pid=$(cat "$trace_fixture/pwru.pid")
