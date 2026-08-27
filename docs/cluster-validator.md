@@ -48,7 +48,11 @@ Built-in checks use only public Kubernetes APIs:
 * API server version and API discovery are reachable;
 * at least one node exists and every node reports `Ready=True`;
 * no namespace is terminating; and
-* every non-Succeeded pod is Running and reports `PodReady=True`.
+* every non-Succeeded pod is Running and reports `PodReady=True`. When the
+  validator runs inside Kubernetes, it excludes only its exact current pod
+  (matching both `metadata.name` and `metadata.namespace`) from this check.
+  The two Downward API identity values are optional for standalone runs; if
+  either is missing or does not match, no pod is excluded.
 
 Pod checking can be disabled with `--skip-pods` where a read-only identity is
 not allowed to list pods. This is an explicit trade-off and is recorded in
@@ -106,6 +110,21 @@ rules:
 
 Review this RBAC against the target cluster's discovery behavior. The image
 does not request, create, patch, or delete any Kubernetes object.
+
+For an in-cluster invocation, inject the validator pod identity using the
+Kubernetes Downward API:
+
+```yaml
+env:
+  - name: VALIDATOR_POD_NAME
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.name
+  - name: VALIDATOR_POD_NAMESPACE
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.namespace
+```
 
 ## Use from a DebugSession
 

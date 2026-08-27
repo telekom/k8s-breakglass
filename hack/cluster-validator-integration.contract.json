@@ -12,6 +12,12 @@
     "disposable": true,
     "readOnlyServiceAccount": "validator-integration/cluster-validator"
   },
+  "selfPodIdentity": {
+    "nameEnvironment": "VALIDATOR_POD_NAME",
+    "namespaceEnvironment": "VALIDATOR_POD_NAMESPACE",
+    "source": "Downward API metadata.name and metadata.namespace",
+    "incompleteIdentity": "exclude nothing"
+  },
   "builtInChecks": [
     "api-discovery",
     "api-server",
