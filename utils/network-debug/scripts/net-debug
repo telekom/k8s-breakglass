@@ -203,7 +203,10 @@ capture_command() {
 	case "$status" in 0|130|143) ;; *) cat "$TEMP_EVIDENCE.err" >&2; return 1 ;; esac
 	[ -s "$TEMP_EVIDENCE" ] || usage_error 'tcpdump produced no capture'
 	readback=$TEMP_EVIDENCE.readback
-	tcpdump -nn -tt -r "$TEMP_EVIDENCE" -c "$packets" >"$readback" 2>/dev/null || return 1
+	# As with -w -, feed the root-owned private file through an inherited
+	# descriptor: reopening its 0600 pathname after tcpdump's privilege drop
+	# would fail for the packaged capture UID.
+	tcpdump -nn -tt -r - -c "$packets" <"$TEMP_EVIDENCE" >"$readback" 2>/dev/null || return 1
 	count=$(wc -l <"$readback" | tr -d ' ')
 	bytes=$(wc -c <"$TEMP_EVIDENCE" | tr -d ' ')
 	max_bytes=$((packets * (snaplen + 16) + 24))
