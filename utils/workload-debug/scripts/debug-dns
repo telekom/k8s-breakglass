@@ -1,0 +1,76 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+set -eu
+
+usage() { printf '%s\n' 'Usage: debug-dns [--server SERVER[#PORT]] NAME'; }
+server=
+timeout_seconds=${WORKLOAD_DEBUG_TIMEOUT:-10}
+max_output=${WORKLOAD_DEBUG_MAX_OUTPUT_BYTES:-65536}
+case "$timeout_seconds" in
+    ''|*[!0-9]*) printf '%s\n' 'debug-dns: timeout must be a positive integer' >&2; exit 2 ;;
+esac
+if [ "$timeout_seconds" -lt 1 ] || [ "$timeout_seconds" -gt 300 ]; then
+    printf '%s\n' 'debug-dns: timeout must be between 1 and 300' >&2
+    exit 2
+fi
+case "$max_output" in
+    ''|*[!0-9]*) printf '%s\n' 'debug-dns: max output must be a positive integer' >&2; exit 2 ;;
+esac
+if [ "$max_output" -lt 1 ] || [ "$max_output" -gt 1048576 ]; then
+    printf '%s\n' 'debug-dns: max output must be between 1 and 1048576 bytes' >&2
+    exit 2
+fi
+limit_output=/usr/local/bin/limit-output
+if [ ! -x "$limit_output" ]; then
+    script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+    limit_output=$script_dir/limit-output
+fi
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --server)
+            [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+            server=$2; shift 2 ;;
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+        -*) printf 'debug-dns: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+        *) break ;;
+    esac
+done
+[ "$#" -eq 1 ] || { usage >&2; exit 2; }
+name=$1
+
+if command -v nslookup >/dev/null 2>&1; then
+    if [ -n "$server" ]; then
+        case "$server" in
+            *'#'*)
+                resolver_host=${server%%#*}
+                resolver_port=${server##*#}
+                if [ -z "$resolver_host" ] || [ -z "$resolver_port" ]; then
+                    printf '%s\n' 'debug-dns: invalid resolver HOST#PORT' >&2
+                    exit 2
+                fi
+                case "$resolver_port" in
+                    ''|*[!0-9]*) printf '%s\n' 'debug-dns: resolver port must be numeric' >&2; exit 2 ;;
+                esac
+                if [ "$resolver_port" -lt 1 ] || [ "$resolver_port" -gt 65535 ]; then
+                    printf '%s\n' 'debug-dns: resolver port out of range' >&2
+                    exit 2
+                fi
+                exec "$limit_output" "$max_output" "$timeout_seconds" nslookup -port="$resolver_port" "$name" "$resolver_host"
+                ;;
+            *) exec "$limit_output" "$max_output" "$timeout_seconds" nslookup "$name" "$server" ;;
+        esac
+    fi
+    exec "$limit_output" "$max_output" "$timeout_seconds" nslookup "$name"
+fi
+
+command -v getent >/dev/null 2>&1 || {
+    printf '%s\n' 'debug-dns: neither nslookup nor getent is available' >&2
+    exit 127
+}
+[ -z "$server" ] || {
+    printf '%s\n' 'debug-dns: --server requires nslookup' >&2
+    exit 127
+}
+exec "$limit_output" "$max_output" "$timeout_seconds" getent hosts "$name"

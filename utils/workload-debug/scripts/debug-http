@@ -1,0 +1,107 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+set -eu
+
+usage() {
+    cat <<'EOF'
+Usage: debug-http [--method METHOD] [--timeout SECONDS] [--header NAME:VALUE] URL
+
+The response headers and body are printed. Authorization headers are never
+added implicitly; pass one explicitly only when the session policy permits it.
+EOF
+}
+
+method=GET
+timeout_seconds=${WORKLOAD_DEBUG_TIMEOUT:-15}
+max_bytes=${WORKLOAD_DEBUG_MAX_BYTES:-1048576}
+header_count=0
+header_args=
+
+validate_positive_integer() {
+    value=$1
+    label=$2
+    case "$value" in
+        ''|*[!0-9]*) printf 'debug-http: %s must be a positive integer\n' "$label" >&2; exit 2 ;;
+    esac
+    if [ "$value" -lt 1 ] || [ "$value" -gt 300 ]; then
+        printf 'debug-http: %s must be between 1 and 300\n' "$label" >&2
+        exit 2
+    fi
+}
+
+validate_max_bytes() {
+    case "$1" in
+        ''|*[!0-9]*) printf '%s\n' 'debug-http: max response size must be a positive integer' >&2; exit 2 ;;
+    esac
+    if [ "$1" -lt 1 ] || [ "$1" -gt 10485760 ]; then
+        printf '%s\n' 'debug-http: max response size must be between 1 and 10485760 bytes' >&2
+        exit 2
+    fi
+}
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --method)
+            [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+            method=$2
+            case "$method" in
+                GET|HEAD|OPTIONS) ;;
+                *) printf '%s\n' 'debug-http: method must be GET, HEAD, or OPTIONS' >&2; exit 2 ;;
+            esac
+            shift 2 ;;
+        --timeout)
+            [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+            timeout_seconds=$2; shift 2 ;;
+        --header)
+            [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+            header_count=$((header_count + 1))
+            newline=$(printf '\nX'); newline=${newline%X}
+            carriage_return=$(printf '\r')
+            case "$2" in
+                *'|'*|*"$newline"*|*"$carriage_return"*) printf '%s\n' 'debug-http: header contains an unsupported delimiter or line break' >&2; exit 2 ;;
+            esac
+            header_args="${header_args:+${header_args}|}$2"
+            shift 2 ;;
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+        -*) printf 'debug-http: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+        *) break ;;
+    esac
+done
+[ "$#" -eq 1 ] || { usage >&2; exit 2; }
+validate_positive_integer "$timeout_seconds" timeout
+validate_max_bytes "$max_bytes"
+url=$1
+case "$url" in
+    http://*|https://*) ;;
+    *) printf '%s\n' 'debug-http: URL must start with http:// or https://' >&2; exit 2 ;;
+esac
+
+# Convert the delimiter-separated header list to argv without eval, preserving
+# values exactly (including spaces). Header values are supplied by the caller.
+set -- curl --silent --show-error --fail-with-body \
+    --connect-timeout "$timeout_seconds" --max-time "$timeout_seconds" \
+    --max-filesize "$max_bytes"
+case "$method" in
+    HEAD) set -- "$@" --head ;;
+    OPTIONS) set -- "$@" --request OPTIONS ;;
+esac
+if [ "$header_count" -gt 0 ]; then
+    old_ifs=$IFS
+    IFS='|'
+    # Keep each header as one argv item, including values containing spaces.
+    # Disable pathname expansion while splitting on the private delimiter.
+    set -f
+    for header in $header_args; do
+        set -- "$@" --header "$header"
+    done
+    set +f
+    IFS=$old_ifs
+fi
+set -- "$@" "$url"
+limit_response=/usr/local/bin/limit-response
+if [ ! -x "$limit_response" ]; then
+    script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+    limit_response=$script_dir/limit-response
+fi
+exec "$limit_response" "$max_bytes" "$@"

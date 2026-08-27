@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "intent": "workload-diagnostics",
+  "image_role": "debug-workload",
+  "commands": {
+    "dns": {"binary": "debug-dns", "operations": ["resolve"]},
+    "tls": {"binary": "debug-tls", "operations": ["handshake", "verify"]},
+    "http": {"binary": "debug-http", "operations": ["GET", "HEAD", "OPTIONS"]},
+    "kube-api": {"binary": "debug-kube-api", "operations": ["read-only GET"]},
+    "report": {"binary": "debug-report", "operations": ["summarize"]}
+  },
+  "boundaries": {
+    "redirects": false,
+    "max_timeout_seconds": 300,
+    "max_response_bytes": 10485760,
+    "max_diagnostic_output_bytes": 1048576,
+    "default_diagnostic_output_bytes": 65536,
+    "implicit_credentials": false,
+    "filesystem_writes": false
+  },
+  "report": {
+    "schema_version": 1,
+    "statuses": ["ready", "not-ready"],
+    "deterministic": true,
+    "lifecycle": ["one-time", "post-upgrade"]
+  }
+}
