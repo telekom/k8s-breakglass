@@ -86,6 +86,15 @@ contains `/bin/sh` because the fixed helpers are POSIX scripts, but an
 entrypoint or shell override is an external immutable-template and admission
 control boundary, outside this image's support and incident-audit contract.
 
+## Optional downstream runbooks
+
+Built-in documentation is image-owned at `/usr/share/node-maintenance/`. A
+deployment may additionally mount a read-only, digest-pinned downstream bundle
+at `/runbooks/internal`; its optional index is
+`/runbooks/internal/INDEX.md`. The image neither hardcodes a bundle reference
+nor sources or executes any bundle content. Workload wiring and admission are
+external immutable-template responsibilities.
+
 ## Build, SBOM, and signing
 
 Run `make test` for helper tests. `make build` creates a local image;

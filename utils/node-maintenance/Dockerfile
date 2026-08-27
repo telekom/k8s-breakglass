@@ -33,8 +33,9 @@ RUN chmod 0555 /usr/local/bin/node-maintenance \
         /usr/share/node-maintenance/README.md \
         /usr/share/node-maintenance/runbooks/network-repair.md \
         /usr/share/node-maintenance/runbooks/node-recovery-preflight.md \
-    && mkdir -p /evidence \
-    && chmod 0700 /evidence
+    && mkdir -p /evidence /runbooks/internal \
+    && chmod 0700 /evidence \
+    && chmod 0755 /runbooks /runbooks/internal
 
 LABEL org.opencontainers.image.title="Kubernetes node maintenance" \
       org.opencontainers.image.description="Allowlisted, evidence-producing node network repair and recovery preflight helpers" \

@@ -20,6 +20,12 @@ contexts, controller-provided exact target, confirmation, and evidence
 workflow. Workload templates must inject `BREAKGLASS_NODE_NAME` from Downward
 API `spec.nodeName`; hostname is not a trust input.
 
+Built-in runbooks remain under `/usr/share/node-maintenance/`. A downstream
+deployment may read-only mount an optional, digest-pinned runbook bundle at
+`/runbooks/internal`, with an optional `INDEX.md`; the image does not hardcode,
+source, or execute bundle content. That wiring is an external immutable-
+template/admission responsibility.
+
 Builds target `linux/amd64` and `linux/arm64`, pin the Alpine manifest and APK
 package versions, request BuildKit provenance/SBOM attestations, and sign only
 the resulting immutable registry digest. No image is pushed by the local

@@ -9,3 +9,5 @@ interface, evidence directory, and confirmation token. There is no supported
 unrestricted shell or general-purpose network toolbox in this image.
 Read /usr/share/node-maintenance/README.md and the runbooks in
 /usr/share/node-maintenance/runbooks/ before use.
+An optional deployment-specific, read-only index may be mounted at
+/runbooks/internal/INDEX.md. It is not sourced or executed by this image.
