@@ -134,9 +134,14 @@ kubectl -n "$namespace" create serviceaccount workload-debug
 kubectl -n "$namespace" create role workload-debug --verb=get --resource=configmaps
 kubectl -n "$namespace" create rolebinding workload-debug --role=workload-debug --serviceaccount="$namespace:workload-debug"
 kubectl -n "$namespace" create configmap fixture-config --from-literal=value=fixture-config-value
+cat >"$fixture_dir/bundle.yaml" <<'EOF'
+schema: breakglass.runbook/v1
+intent: workload-diagnostics
+version: 0.1.0
+EOF
 kubectl -n "$namespace" create configmap internal-runbook \
-  --from-literal=INDEX.md='internal runbook fixture' \
-  --from-literal=bundle.yaml='schemaVersion: breakglass.telekom.com/v1alpha1'
+	--from-literal=INDEX.md='internal runbook fixture' \
+	--from-file=bundle.yaml="$fixture_dir/bundle.yaml"
 
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=workload-debug-fixture" \
   -keyout "$fixture_dir/ca.key" -out "$fixture_dir/ca.crt" >/dev/null 2>&1
@@ -281,7 +286,7 @@ if run_target "touch /runtime-write" >/dev/null 2>&1; then fail "read-only runne
 internal_notice=$(run_target "WORKLOAD_DEBUG_MOTD=0 /usr/local/bin/workload-debug-entrypoint /bin/true")
 assert_contains "$internal_notice" '/usr/share/breakglass/runbooks/internal/INDEX.md'
 bundle_metadata=$(run_target "cat /usr/share/breakglass/runbooks/internal/bundle.yaml")
-assert_contains "$bundle_metadata" 'schemaVersion: breakglass.telekom.com/v1alpha1'
+assert_contains "$bundle_metadata" 'schema: breakglass.runbook/v1'
 if run_target "printf modified >>/usr/share/breakglass/runbooks/internal/bundle.yaml" >/dev/null 2>&1; then
   fail "mounted internal runbook bundle was writable"
 fi
