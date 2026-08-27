@@ -52,6 +52,7 @@ profiles:
     description: Inspect node network connectivity with explicit elevation.
     enabled: false
     elevated: false
+    hostNetwork: false
     requiredElevation: true
     imageKey: network
     command: ["/usr/local/bin/net-debug"]
@@ -59,6 +60,13 @@ profiles:
     preset: elevated-node
     capabilities: [NET_ADMIN, NET_RAW, BPF, PERFMON]
     workloadType: Job
+    pod:
+      volumeMounts:
+        - name: work
+          mountPath: /work
+      volumes:
+        - name: work
+          emptyDir: {}
   - name: storage-diagnostics
     intent: storage-diagnostics
     displayName: Storage diagnostics
@@ -94,6 +102,7 @@ profiles:
       Read approved existing dump files; requires explicit elevated opt-in.
     enabled: false
     elevated: false
+    hostNetwork: false
     requiredElevation: true
     imageKey: dumpAccess
     command: ["sh", "-c"]
@@ -123,6 +132,7 @@ profiles:
       elevated opt-in.
     enabled: false
     elevated: false
+    hostNetwork: false
     requiredElevation: true
     imageKey: networkRepair
     workloadType: Job
@@ -198,6 +208,7 @@ profiles:
     description: Inspect and recover a node; requires explicit elevated opt-in.
     enabled: false
     elevated: false
+    hostNetwork: false
     requiredElevation: true
     imageKey: nodeRecovery
     workloadType: Job
@@ -263,6 +274,7 @@ profiles:
     description: Run read-only cluster validation checks from an isolated pod.
     enabled: false
     elevated: false
+    hostNetwork: false
     imageKey: clusterValidation
     workloadType: Job
     command: ["/cluster-validator"]

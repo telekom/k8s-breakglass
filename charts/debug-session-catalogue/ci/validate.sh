@@ -49,6 +49,14 @@ expect_rejected "invalid profile names" helm template debug-catalogue "${chart_d
 expect_rejected "legacy map-shaped profiles" helm template debug-catalogue "${chart_dir}" --values "${chart_dir}/ci/map-profile-values.yaml"
 expect_rejected "missing image references" helm template debug-catalogue "${chart_dir}" --values "${chart_dir}/ci/missing-image-values.yaml"
 expect_rejected "required-elevation profile without opt-in" helm template debug-catalogue "${chart_dir}" --values "${chart_dir}/ci/elevated-required-values.yaml"
+expect_rejected "hostNetwork without elevation" helm template debug-catalogue "${chart_dir}" \
+  --set-json 'profiles=[{"name":"unsafe-network","intent":"network-diagnostics","displayName":"Unsafe network","description":"Missing elevation","enabled":true,"elevated":false,"hostNetwork":true,"imageKey":"network","command":["sh"],"args":[]}]'
+
+expect_rejected "hostNetwork on an unrelated intent" helm template debug-catalogue "${chart_dir}" \
+  --set-json 'profiles=[{"name":"unsafe-network","intent":"dump-access","displayName":"Unsafe network","description":"Wrong intent","enabled":true,"elevated":true,"hostNetwork":true,"preset":"elevated-node","imageKey":"dumpAccess","command":["sh"],"args":[]}]'
+
+expect_rejected "hostPID without hostNetwork" helm template debug-catalogue "${chart_dir}" \
+  --set-json 'profiles=[{"name":"unsafe-pid","intent":"node-recovery","displayName":"Unsafe PID","description":"Missing host network","enabled":true,"elevated":true,"hostPID":true,"preset":"elevated-node","imageKey":"nodeRecovery","command":["sh"],"args":[]}]'
 
 helm template debug-catalogue "${chart_dir}" \
   --set-json 'profiles=[{"name":"digest-image","intent":"workload-diagnostics","displayName":"Digest image","description":"Digest precedence test","enabled":true,"elevated":false,"command":["sh"],"args":[],"image":{"repository":"example.invalid/workload-debug","tag":"ignored","digest":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}]' >"${digest_rendered}"
@@ -76,7 +84,7 @@ expect_rejected "restricted PVC volume override" helm template debug-catalogue "
   --set-json 'profiles=[{"name":"pvc-volume","intent":"workload-diagnostics","displayName":"PVC volume","description":"Unbounded volume test","enabled":true,"elevated":false,"imageKey":"workload","command":["sh"],"args":[],"pod":{"volumes":[{"name":"claim","persistentVolumeClaim":{"claimName":"external"}}]}}]'
 
 helm template debug-catalogue "${chart_dir}" \
-  --set-json 'profiles=[{"name":"elevated-host","intent":"node-recovery","displayName":"Elevated host","description":"Explicit elevation test","enabled":true,"elevated":true,"preset":"elevated-node","imageKey":"nodeRecovery","command":["/usr/local/bin/node-maintenance"],"args":["node-recovery"],"pod":{"volumes":[{"name":"host","hostPath":{"path":"/var/lib/example","type":"Directory"}}]}}]' >"${elevated_rendered}"
+  --set-json 'profiles=[{"name":"elevated-host","intent":"node-recovery","displayName":"Elevated host","description":"Explicit elevation test","enabled":true,"elevated":true,"hostNetwork":true,"preset":"elevated-node","imageKey":"nodeRecovery","command":["/usr/local/bin/node-maintenance"],"args":["node-recovery"],"pod":{"volumes":[{"name":"host","hostPath":{"path":"/var/lib/example","type":"Directory"}}]}}]' >"${elevated_rendered}"
 validate_rendered elevated "${elevated_rendered}"
 
 expect_rejected "cluster-validation service account without token opt-in" helm template debug-catalogue "${chart_dir}" \
