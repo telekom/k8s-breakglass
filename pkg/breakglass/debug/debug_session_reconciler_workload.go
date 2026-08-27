@@ -317,7 +317,7 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 
 	// If the template produced a full workload manifest, validate and use it directly
 	if renderResult.Workload != nil {
-		return c.useTemplateWorkload(renderResult, workloadType, workloadName, targetNs, ds, template, labels, annotations)
+		return c.useTemplateWorkload(renderResult, workloadType, workloadName, targetNs, ds, template, binding, labels, annotations)
 	}
 
 	// Enforce RestartPolicy: Always for DaemonSets and Deployments. Jobs retain
@@ -403,16 +403,28 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 		if podSpec.RestartPolicy != corev1.RestartPolicyNever && podSpec.RestartPolicy != corev1.RestartPolicyOnFailure {
 			podSpec.RestartPolicy = corev1.RestartPolicyNever
 		}
+		manualSelector := true
+		one := int32(1)
 		backoffLimit := int32(0)
+		activeDeadlineSeconds := max(int64(c.parseDuration(ds.Spec.RequestedDuration, effectiveDebugSessionConstraints(template, binding)).Seconds()), 1)
+		selectorLabels := debugSessionSelectorLabels(ds)
+		jobLabels := mergeStringMaps(labels, map[string]string{
+			DebugSessionUIDLabelKey: debugSessionIdentity(ds),
+		})
 		return &batchv1.Job{
 			TypeMeta: metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
 			ObjectMeta: metav1.ObjectMeta{
-				Name: workloadName, Namespace: targetNs, Labels: labels, Annotations: annotations,
+				Name: workloadName, Namespace: targetNs, Labels: jobLabels, Annotations: annotations,
 			},
 			Spec: batchv1.JobSpec{
-				BackoffLimit: &backoffLimit,
+				ManualSelector:        &manualSelector,
+				Selector:              &metav1.LabelSelector{MatchLabels: selectorLabels},
+				Parallelism:           &one,
+				Completions:           &one,
+				BackoffLimit:          &backoffLimit,
+				ActiveDeadlineSeconds: &activeDeadlineSeconds,
 				Template: corev1.PodTemplateSpec{
-					ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
+					ObjectMeta: metav1.ObjectMeta{Labels: mergeStringMaps(jobLabels, selectorLabels), Annotations: annotations},
 					Spec:       podSpec,
 				},
 			},
@@ -432,6 +444,7 @@ func (c *DebugSessionController) useTemplateWorkload(
 	workloadName, targetNs string,
 	ds *breakglassv1alpha1.DebugSession,
 	template *breakglassv1alpha1.DebugSessionTemplate,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
 	labels, annotations map[string]string,
 ) (ctrlclient.Object, []*unstructured.Unstructured, error) {
 	workload := renderResult.Workload
@@ -445,9 +458,7 @@ func (c *DebugSessionController) useTemplateWorkload(
 		)
 	}
 
-	selectorLabels := map[string]string{
-		DebugSessionLabelKey: ds.Name,
-	}
+	selectorLabels := debugSessionSelectorLabels(ds)
 
 	switch w := workload.(type) {
 	case *appsv1.Deployment:
@@ -509,7 +520,9 @@ func (c *DebugSessionController) useTemplateWorkload(
 	case *batchv1.Job:
 		w.Name = workloadName
 		w.Namespace = targetNs
-		w.Labels = labels
+		w.Labels = mergeStringMaps(labels, map[string]string{
+			DebugSessionUIDLabelKey: debugSessionIdentity(ds),
+		})
 		w.Annotations = annotations
 		manualSelector := true
 		w.Spec.ManualSelector = &manualSelector
@@ -522,7 +535,7 @@ func (c *DebugSessionController) useTemplateWorkload(
 		}
 		one := int32(1)
 		zero := int32(0)
-		activeDeadlineSeconds := max(int64(c.parseDuration(ds.Spec.RequestedDuration, template.Spec.Constraints).Seconds()), 1)
+		activeDeadlineSeconds := max(int64(c.parseDuration(ds.Spec.RequestedDuration, effectiveDebugSessionConstraints(template, binding)).Seconds()), 1)
 		w.Spec.Parallelism = &one
 		w.Spec.Completions = &one
 		w.Spec.BackoffLimit = &zero
@@ -618,6 +631,31 @@ func (c *DebugSessionController) deployPodTemplateResource(
 	return nil
 }
 
+// debugSessionIdentity returns the immutable identity used to fence a Job's
+// manual selector. UID is preferred because a deleted and recreated
+// DebugSession may legitimately reuse the same name; unit-created sessions do
+// not have a UID yet, so the name is the safe compatibility fallback.
+func debugSessionIdentity(ds *breakglassv1alpha1.DebugSession) string {
+	if ds != nil && ds.UID != "" {
+		return string(ds.UID)
+	}
+	if ds == nil {
+		return "unknown"
+	}
+	return ds.Name
+}
+
+func debugSessionSelectorLabels(ds *breakglassv1alpha1.DebugSession) map[string]string {
+	name := "unknown"
+	if ds != nil && ds.Name != "" {
+		name = ds.Name
+	}
+	return map[string]string{
+		DebugSessionLabelKey:    name,
+		DebugSessionUIDLabelKey: debugSessionIdentity(ds),
+	}
+}
+
 // buildPodSpec creates the pod spec from templates and overrides.
 // Supports both structured podTemplate and Go-templated podTemplateString.
 // Now supports multi-document YAML where the first document can be a bare PodSpec,
@@ -662,6 +700,11 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 	restrictedCatalogue, catalogueIntent, err := restrictedCatalogueProfile(template, podTemplate)
 	if err != nil {
 		return nil, err
+	}
+	if restrictedCatalogue {
+		if err := validateRestrictedCatalogueResources(renderResult.AdditionalResources); err != nil {
+			return nil, err
+		}
 	}
 
 	// Apply podOverridesTemplate if specified (Go template producing overrides YAML)
@@ -834,6 +877,15 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 	if spec.SecurityContext == nil || spec.SecurityContext.RunAsNonRoot == nil || !*spec.SecurityContext.RunAsNonRoot {
 		return fmt.Errorf("restricted catalogue profiles must run as non-root")
 	}
+	if spec.SecurityContext.RunAsUser != nil && *spec.SecurityContext.RunAsUser == 0 {
+		return fmt.Errorf("restricted catalogue profiles cannot override the pod user to root")
+	}
+	if spec.SecurityContext.RunAsGroup != nil && *spec.SecurityContext.RunAsGroup == 0 {
+		return fmt.Errorf("restricted catalogue profiles cannot override the pod group to root")
+	}
+	if err := validateRestrictedSeccomp(spec.SecurityContext.SeccompProfile); err != nil {
+		return err
+	}
 	if intent == "cluster-validation" {
 		if spec.ServiceAccountName == "" || spec.ServiceAccountName == "default" || spec.AutomountServiceAccountToken == nil || !*spec.AutomountServiceAccountToken {
 			return fmt.Errorf("cluster-validation requires its explicit dedicated service account identity")
@@ -854,14 +906,111 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 		security := container.SecurityContext
 		if security == nil || security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem ||
 			(security.Privileged != nil && *security.Privileged) ||
-			(security.AllowPrivilegeEscalation != nil && *security.AllowPrivilegeEscalation) ||
-			(security.Capabilities != nil && len(security.Capabilities.Add) > 0) {
+			security.AllowPrivilegeEscalation == nil || *security.AllowPrivilegeEscalation ||
+			security.Capabilities == nil || len(security.Capabilities.Add) > 0 || !dropsAllCapabilities(security.Capabilities.Drop) {
 			return fmt.Errorf("restricted catalogue profile container %q violates its security boundary", container.Name)
+		}
+		if security.RunAsNonRoot != nil && !*security.RunAsNonRoot {
+			return fmt.Errorf("restricted catalogue profile container %q cannot disable non-root execution", container.Name)
+		}
+		if security.RunAsUser != nil && *security.RunAsUser == 0 {
+			return fmt.Errorf("restricted catalogue profile container %q cannot run as root", container.Name)
+		}
+		if security.RunAsGroup != nil && *security.RunAsGroup == 0 {
+			return fmt.Errorf("restricted catalogue profile container %q cannot use root group", container.Name)
+		}
+		if security.ProcMount != nil && *security.ProcMount != corev1.DefaultProcMount {
+			return fmt.Errorf("restricted catalogue profile container %q cannot use an unmasked proc mount", container.Name)
+		}
+		if security.WindowsOptions != nil && security.WindowsOptions.HostProcess != nil && *security.WindowsOptions.HostProcess {
+			return fmt.Errorf("restricted catalogue profile container %q cannot use a host process", container.Name)
+		}
+		if err := validateRestrictedSeccomp(security.SeccompProfile); err != nil {
+			return fmt.Errorf("restricted catalogue profile container %q: %w", container.Name, err)
 		}
 		for _, env := range container.Env {
 			if env.ValueFrom != nil {
 				return fmt.Errorf("restricted catalogue profile container %q cannot source environment variable %q", container.Name, env.Name)
 			}
+		}
+		if len(container.EnvFrom) > 0 {
+			return fmt.Errorf("restricted catalogue profile container %q cannot use envFrom", container.Name)
+		}
+	}
+	for _, container := range spec.EphemeralContainers {
+		security := container.SecurityContext
+		if security == nil || security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem ||
+			(security.Privileged != nil && *security.Privileged) ||
+			security.AllowPrivilegeEscalation == nil || *security.AllowPrivilegeEscalation ||
+			security.Capabilities == nil || len(security.Capabilities.Add) > 0 || !dropsAllCapabilities(security.Capabilities.Drop) {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q violates its security boundary", container.Name)
+		}
+		if security.RunAsNonRoot != nil && !*security.RunAsNonRoot {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q cannot disable non-root execution", container.Name)
+		}
+		if security.RunAsUser != nil && *security.RunAsUser == 0 {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q cannot run as root", container.Name)
+		}
+		if security.RunAsGroup != nil && *security.RunAsGroup == 0 {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q cannot use root group", container.Name)
+		}
+		if err := validateRestrictedSeccomp(security.SeccompProfile); err != nil {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q: %w", container.Name, err)
+		}
+		if len(container.Env) > 0 || len(container.EnvFrom) > 0 {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q cannot source environment variables", container.Name)
+		}
+	}
+	return nil
+}
+
+func dropsAllCapabilities(drop []corev1.Capability) bool {
+	for _, capability := range drop {
+		if capability == "ALL" {
+			return true
+		}
+	}
+	return false
+}
+
+func validateRestrictedSeccomp(profile *corev1.SeccompProfile) error {
+	if profile == nil {
+		return fmt.Errorf("restricted catalogue profiles require a confined seccomp profile")
+	}
+	switch profile.Type {
+	case corev1.SeccompProfileTypeRuntimeDefault:
+		return nil
+	case corev1.SeccompProfileTypeLocalhost:
+		if profile.LocalhostProfile == nil || strings.TrimSpace(*profile.LocalhostProfile) == "" {
+			return fmt.Errorf("restricted catalogue profiles require a localhost seccomp profile name")
+		}
+		return nil
+	default:
+		return fmt.Errorf("restricted catalogue profiles require RuntimeDefault or named Localhost seccomp")
+	}
+}
+
+// validateRestrictedCatalogueResources is intentionally a small allowlist. A
+// restricted catalogue item may carry a namespaced ConfigMap for deterministic
+// input data, but cannot create a resource with its own controller, identity,
+// network, storage, or cluster scope. Namespaces are omitted so deployment
+// always assigns the session target namespace.
+func validateRestrictedCatalogueResources(resources []*unstructured.Unstructured) error {
+	for _, resource := range resources {
+		if resource == nil {
+			return fmt.Errorf("restricted catalogue profiles cannot contain empty additional resources")
+		}
+		if resource.GetAPIVersion() != "v1" || resource.GetKind() != "ConfigMap" {
+			return fmt.Errorf("restricted catalogue profiles may only carry core/v1 ConfigMap additional resources")
+		}
+		if resource.GetNamespace() != "" {
+			return fmt.Errorf("restricted catalogue ConfigMap %q must omit namespace so it stays in the session target namespace", resource.GetName())
+		}
+		if resource.GetName() == "" || resource.GetGenerateName() != "" {
+			return fmt.Errorf("restricted catalogue ConfigMaps require a fixed name")
+		}
+		if len(resource.GetFinalizers()) > 0 || len(resource.GetOwnerReferences()) > 0 {
+			return fmt.Errorf("restricted catalogue ConfigMap %q cannot define finalizers or owner references", resource.GetName())
 		}
 	}
 	return nil

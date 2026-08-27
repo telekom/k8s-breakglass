@@ -1850,8 +1850,12 @@ spec:
 	require.NotNil(t, job.Spec.ManualSelector)
 	assert.True(t, *job.Spec.ManualSelector)
 	require.NotNil(t, job.Spec.Selector)
-	assert.Equal(t, map[string]string{DebugSessionLabelKey: ds.Name}, job.Spec.Selector.MatchLabels)
+	assert.Equal(t, map[string]string{
+		DebugSessionLabelKey:    ds.Name,
+		DebugSessionUIDLabelKey: ds.Name,
+	}, job.Spec.Selector.MatchLabels)
 	assert.Equal(t, ds.Name, job.Spec.Template.Labels[DebugSessionLabelKey])
+	assert.Equal(t, ds.Name, job.Spec.Template.Labels[DebugSessionUIDLabelKey])
 	require.NotNil(t, job.Spec.Parallelism)
 	assert.Equal(t, int32(1), *job.Spec.Parallelism)
 	require.NotNil(t, job.Spec.Completions)
@@ -1862,6 +1866,46 @@ spec:
 	assert.Equal(t, int64(15*60), *job.Spec.ActiveDeadlineSeconds)
 	assert.Nil(t, job.Spec.TTLSecondsAfterFinished)
 	assert.Nil(t, job.Spec.Suspend)
+}
+
+func TestBuildWorkload_BareJobUsesBindingEffectiveDeadlineAndImmutableSelector(t *testing.T) {
+	controller := newBuildWorkloadController()
+	ds := newBuildWorkloadSession("bare-job")
+	ds.UID = "session-uid-123"
+	template := &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+		WorkloadType: breakglassv1alpha1.DebugWorkloadJob,
+		Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+			DefaultDuration: "20m",
+			MaxDuration:     "1h",
+		},
+		PodTemplateString: `containers:
+  - name: debug
+    image: busybox:1.36
+    command: ["/bin/true"]
+`,
+	}}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+		Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+			DefaultDuration: "45s",
+			MaxDuration:     "2m",
+		},
+	}}
+	ds.Spec.RequestedDuration = "1h"
+
+	workload, _, err := controller.buildWorkload(ds, template, binding, nil, "target-ns")
+	require.NoError(t, err)
+	job := workload.(*batchv1.Job)
+	require.NotNil(t, job.Spec.Selector)
+	assert.Equal(t, map[string]string{
+		DebugSessionLabelKey:    ds.Name,
+		DebugSessionUIDLabelKey: string(ds.UID),
+	}, job.Spec.Selector.MatchLabels)
+	assert.Equal(t, string(ds.UID), job.Labels[DebugSessionUIDLabelKey])
+	assert.Equal(t, int64(2*60), *job.Spec.ActiveDeadlineSeconds,
+		"the binding's maximum duration must bound the Job even when the request exceeds it")
+	assert.Equal(t, int32(1), *job.Spec.Parallelism)
+	assert.Equal(t, int32(1), *job.Spec.Completions)
+	assert.Zero(t, *job.Spec.BackoffLimit)
 }
 
 func TestBuildWorkload_FullDeploymentTemplate(t *testing.T) {
@@ -2191,6 +2235,8 @@ spec:
   automountServiceAccountToken: false
   securityContext:
     runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
   containers:
     - name: debug
       image: busybox:1.36
@@ -2261,6 +2307,98 @@ spec:
 			assert.Equal(t, []string{"--mode", "summary"}, result.PodSpec.Containers[0].Args)
 		})
 	}
+}
+
+func TestBuildPodSpec_RestrictedCatalogueRejectsIncompletePodSecurity(t *testing.T) {
+	controller := newBuildWorkloadController()
+	ds := newBuildWorkloadSession("restricted-security")
+	labels := map[string]string{
+		catalogueProfileLabel:  "workload-diagnostics",
+		catalogueIntentLabel:   "workload-diagnostics",
+		catalogueElevatedLabel: "false",
+	}
+
+	base := func(securityContext string, containerSecurity string, extra string) *breakglassv1alpha1.DebugPodTemplate {
+		return &breakglassv1alpha1.DebugPodTemplate{
+			ObjectMeta: metav1.ObjectMeta{Labels: labels},
+			Spec:       breakglassv1alpha1.DebugPodTemplateSpec{TemplateString: "apiVersion: v1\nkind: Pod\nspec:\n  automountServiceAccountToken: false\n  securityContext:\n" + securityContext + "  containers:\n    - name: debug\n      image: busybox:1.36\n      command: [\"/bin/true\"]\n      securityContext:\n" + containerSecurity + extra},
+		}
+	}
+
+	tests := []struct {
+		name string
+		pod  *breakglassv1alpha1.DebugPodTemplate
+		want string
+	}{
+		{
+			name: "missing seccomp",
+			pod:  base("    runAsNonRoot: true\n", "        allowPrivilegeEscalation: false\n        readOnlyRootFilesystem: true\n        capabilities:\n          drop: [\"ALL\"]\n", ""),
+			want: "confined seccomp",
+		},
+		{
+			name: "missing drop all",
+			pod:  base("    runAsNonRoot: true\n    seccompProfile:\n      type: RuntimeDefault\n", "        allowPrivilegeEscalation: false\n        readOnlyRootFilesystem: true\n        capabilities: {}\n", ""),
+			want: "security boundary",
+		},
+		{
+			name: "container root override",
+			pod:  base("    runAsNonRoot: true\n    seccompProfile:\n      type: RuntimeDefault\n", "        allowPrivilegeEscalation: false\n        readOnlyRootFilesystem: true\n        runAsUser: 0\n        capabilities:\n          drop: [\"ALL\"]\n", ""),
+			want: "run as root",
+		},
+		{
+			name: "envFrom source",
+			pod:  base("    runAsNonRoot: true\n    seccompProfile:\n      type: RuntimeDefault\n", "        allowPrivilegeEscalation: false\n        readOnlyRootFilesystem: true\n        capabilities:\n          drop: [\"ALL\"]\n", "      envFrom:\n        - configMapRef:\n            name: external\n"),
+			want: "envFrom",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := controller.buildPodSpec(ds, &breakglassv1alpha1.DebugSessionTemplate{}, tc.pod)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+}
+
+func TestBuildPodSpec_RestrictedCatalogueRejectsArbitraryAdditionalResources(t *testing.T) {
+	controller := newBuildWorkloadController()
+	ds := newBuildWorkloadSession("restricted-resource")
+	labels := map[string]string{
+		catalogueProfileLabel:  "workload-diagnostics",
+		catalogueIntentLabel:   "workload-diagnostics",
+		catalogueElevatedLabel: "false",
+	}
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{Labels: labels},
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{TemplateString: `apiVersion: v1
+kind: Pod
+spec:
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: debug
+      image: busybox:1.36
+      command: ["/bin/true"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: attacker
+rules: []
+`},
+	}
+
+	_, err := controller.buildPodSpec(ds, &breakglassv1alpha1.DebugSessionTemplate{}, podTemplate)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "may only carry core/v1 ConfigMap")
 }
 
 // ==================== Error Path Tests ====================
