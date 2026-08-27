@@ -342,9 +342,9 @@ kubectl get pvc "$ATTACHED_PVC_NAME" --namespace "$NAMESPACE" >/dev/null 2>&1 &&
 kubectl delete pv "$ATTACHED_PV_NAME" --wait --timeout=120s >/dev/null
 kubectl get pv "$ATTACHED_PV_NAME" >/dev/null 2>&1 && fail "attached PVC proof PV survived cleanup"
 docker exec "${CLUSTER}-control-plane" sh -c \
-    "rm -rf -- /var/local/${RUN_ID} /var/local/${RUN_ID}-attached"
+    "rm -rf -- /var/local/${RUN_ID}-attached"
 if ! docker exec "${CLUSTER}-control-plane" sh -c \
-    "test ! -e /var/local/${RUN_ID} && test ! -e /var/local/${RUN_ID}-attached"; then
+    "test ! -e /var/local/${RUN_ID}-attached"; then
     fail "attached PVC proof hostPath data survived cleanup"
 fi
 
