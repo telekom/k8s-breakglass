@@ -94,8 +94,51 @@ printf '%s\n' \
 	'schema: breakglass.runbook/v1' \
 	'intent: node-maintenance' \
 	'version: 0.1.0' \
+	'image:' \
+	'  name: ghcr.io/telekom/k8s-breakglass/utils/node-maintenance' \
+	'  digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' \
+	'  architectures:' \
+	'    - amd64' \
+	'    - arm64' \
+	'compatibility:' \
+	'  kubernetes: ">=1.31.0"' \
+	'  utility: node-maintenance' \
+	'  utilityVersions:' \
+	'    - dev' \
+	'index:' \
+	'  - id: node-maintenance-overview' \
+	'    title: Node maintenance overview' \
+	'    path: runbooks/node-maintenance.md' \
+	'    summary: Bounded node recovery and repair procedures.' \
+	'    security: Fixed commands, explicit capabilities, and disposable evidence.' \
+	'source:' \
+	'  repository: https://github.com/telekom/k8s-breakglass' \
+	'  revision: 0123456789abcdef0123456789abcdef01234567' \
+	'  generatedAt: "2026-08-27T00:00:00Z"' \
 	>"$runbook_bundle/bundle.yaml"
-printf '%s\n' '# Deployment runbook fixture' >"$runbook_bundle/INDEX.md"
+mkdir -p "$runbook_bundle/runbooks"
+printf '%s\n' \
+	'# Deployment runbook fixture' \
+	'' \
+	'Intent: node-maintenance' \
+	'Bundle version: 0.1.0' \
+	'Utility image digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' \
+	'Source revision: 0123456789abcdef0123456789abcdef01234567' \
+	'' \
+	'Prerequisites: Linux node, image-volume support, and an administrator-owned template.' \
+	'Limits: fixed node-recovery/network-repair commands and bounded probes.' \
+	'Evidence: use a dedicated /evidence volume and preserve the resulting bundle.' \
+	'Security boundary: read-only root, no privilege escalation, and explicit capabilities.' \
+	'Failure modes: stop on denied guards, failed pulls, or incomplete evidence.' \
+	'Cleanup: delete the disposable Pod, volume, and session-owned resources.' \
+	'' \
+	'- [Node maintenance overview](runbooks/node-maintenance.md)' \
+	>"$runbook_bundle/INDEX.md"
+printf '%s\n' \
+	'# Node maintenance overview' \
+	'' \
+	'Use the fixed node-recovery and network-repair commands with the required evidence and confirmation boundaries.' \
+	>"$runbook_bundle/runbooks/node-maintenance.md"
 docs_output=$(
 	"$docker_bin" run --rm --network none --read-only --cap-drop ALL \
 		--security-opt no-new-privileges --security-opt seccomp=builtin \
@@ -104,6 +147,8 @@ docs_output=$(
 			test -r /usr/share/breakglass/runbooks/upstream/node-maintenance/README.md
 			test -r /usr/share/breakglass/runbooks/upstream/node-maintenance/network-repair.md
 			test -r /usr/share/breakglass/runbooks/internal/bundle.yaml
+			test -r /usr/share/breakglass/runbooks/internal/INDEX.md
+			test -r /usr/share/breakglass/runbooks/internal/runbooks/node-maintenance.md
 			cat /usr/share/breakglass/runbooks/internal/bundle.yaml
 			if printf modified >>/usr/share/breakglass/runbooks/internal/bundle.yaml 2>/dev/null; then
 				exit 70
@@ -112,6 +157,10 @@ docs_output=$(
 ) || fail 'built-in and mounted runbooks were not readable with a read-only downstream bundle'
 printf '%s\n' "$docs_output" | grep -q '^schema: breakglass.runbook/v1$' \
 	|| fail 'mounted runbook bundle metadata was not discovered through the shared contract'
+printf '%s\n' "$docs_output" | grep -q '^  digest: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff$' \
+	|| fail 'mounted runbook bundle did not expose its immutable utility digest'
+printf '%s\n' "$docs_output" | grep -q '^index:$' \
+	|| fail 'mounted runbook bundle did not expose its required index metadata'
 pass 'generic and optional downstream runbooks are readable while the bundle remains read-only'
 
 new_fixture() {

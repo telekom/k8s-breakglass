@@ -22,11 +22,12 @@ API `spec.nodeName`; hostname is not a trust input.
 
 Built-in runbooks remain under
 `/usr/share/breakglass/runbooks/upstream/node-maintenance/`. A downstream
-deployment may mount an optional, digest-pinned runbook bundle read-only at the
-shared `/usr/share/breakglass/runbooks/internal` root, without `subPath` and
-with an optional `INDEX.md`; the image does not hardcode, source, or execute
-bundle content. That wiring is an external immutable-template/admission
-responsibility.
+deployment may mount an optional, digest-pinned [OCI runbook bundle](runbook-bundle-contract.md)
+read-only at the shared `/usr/share/breakglass/runbooks/internal` root,
+without `subPath`. When selected, the bundle must follow that contract,
+including its required `bundle.yaml` and `INDEX.md`; the image does not
+hardcode, source, or execute bundle content. That wiring is an external
+immutable-template/admission responsibility.
 
 Builds target `linux/amd64` and `linux/arm64`, pin the Alpine manifest and APK
 package versions, request BuildKit provenance/SBOM attestations, and sign only

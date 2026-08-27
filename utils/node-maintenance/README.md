@@ -86,16 +86,16 @@ contains `/bin/sh` because the fixed helpers are POSIX scripts, but an
 entrypoint or shell override is an external immutable-template and admission
 control boundary, outside this image's support and incident-audit contract.
 
-## Optional downstream runbooks
+## Optional downstream runbook bundle
 
 Built-in documentation is image-owned at
 `/usr/share/breakglass/runbooks/upstream/node-maintenance/`. A deployment may
-additionally mount a read-only, digest-pinned downstream bundle at the shared
-`/usr/share/breakglass/runbooks/internal` root; its optional index is
-`/usr/share/breakglass/runbooks/internal/INDEX.md`. The bundle root is mounted
-directly, without `subPath`. The image neither hardcodes a bundle reference nor
-sources or executes any bundle content. Workload wiring and admission are
-external immutable-template responsibilities.
+additionally mount a read-only, digest-pinned downstream [OCI runbook bundle](../../docs/runbook-bundle-contract.md)
+at the shared `/usr/share/breakglass/runbooks/internal` root. The bundle root
+is mounted directly, without `subPath`, and a selected bundle must include its
+contract-required `bundle.yaml` and `INDEX.md`. The image neither hardcodes a
+bundle reference nor sources or executes any bundle content. Workload wiring
+and admission are external immutable-template responsibilities.
 
 ## Build, SBOM, and signing
 
