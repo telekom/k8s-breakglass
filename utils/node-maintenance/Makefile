@@ -4,7 +4,7 @@
 
 SHELL := /bin/sh
 
-IMAGE ?= ghcr.io/telekom/k8s-breakglass/node-maintenance:dev
+IMAGE ?= ghcr.io/telekom/k8s-breakglass/utils/node-maintenance:dev
 PLATFORMS ?= linux/amd64,linux/arm64
 VERSION ?= dev
 VCS_REF ?= $(shell git rev-parse --short HEAD 2>/dev/null || printf unknown)
