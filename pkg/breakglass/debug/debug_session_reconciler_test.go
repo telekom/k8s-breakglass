@@ -5309,7 +5309,7 @@ func TestDebugSessionController_CleanupPodTemplateResourcesPreservesReplacement(
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ownership precondition failed")
 	var unchanged corev1.ConfigMap
-	require.NoError(t, targetClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(replacement), &unchanged))
+	require.NoError(t, targetClient.Get(context.Background(), client.ObjectKeyFromObject(replacement), &unchanged))
 	assert.Equal(t, map[string]string{"tenant": "must-remain"}, unchanged.Data)
 }
 
