@@ -29,14 +29,16 @@ Debug sessions support three operational modes:
 
 ### Workload Mode (default)
 
-Deploys debug pods as a DaemonSet or Deployment to the target cluster:
+Deploys debug workloads to the target cluster as a DaemonSet, Deployment, or bounded Job:
 
 ```yaml
 mode: workload
-workloadType: DaemonSet  # or Deployment
+workloadType: DaemonSet  # or Deployment/Job
 ```
 
 **Labels & annotations**: `spec.labels`/`spec.annotations` from the template (and binding overrides) are applied to created workloads, pod templates, and supporting resources (e.g., PDBs and ResourceQuotas). Session-level labels/annotations are also propagated.
+
+`workloadType: Job` is intended for one-shot diagnostics. The controller enforces a single completion with bounded retries (`completions: 1`, `parallelism: 1`, `restartPolicy: Never`) and keeps the completed Job for inspection until normal debug-session cleanup removes it.
 
 **Use cases:**
 - Node-level debugging requiring host namespaces

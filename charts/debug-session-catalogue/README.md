@@ -60,16 +60,15 @@ does not silently select a node path or artifact name. It never starts an
 interactive or host-network shell.
 
 The node-oriented profiles are elevated. Enable them only with an explicit
-two-part opt-in, including host networking only for profiles that need it,
-for example:
+two-part opt-in, including host networking only for profiles that need it.
+Because Helm replaces list values instead of merging list items by `name`,
+use a complete profiles fixture (for example
+`ci/elevated-optin-values.yaml`) or copy the full `profiles` list from
+`values.yaml` before editing:
 
-```yaml
-profiles:
-  - name: dump-access
-    intent: dump-access
-    enabled: true
-    elevated: false
-    hostNetwork: false
+```bash
+helm template catalogue charts/debug-session-catalogue \
+  -f charts/debug-session-catalogue/ci/elevated-optin-values.yaml
 ```
 
 The chart fails closed when an elevated profile is enabled without
@@ -100,13 +99,27 @@ administrator-controlled value beneath `/input` and must be paired with a
 reviewed source volume:
 
 ```yaml
+# ci/all-enabled-values.yaml (or a full copy of values.yaml)
 profiles:
   - name: dump-access
+    intent: dump-access
+    displayName: Dump access (opt-in)
+    description: Copy one approved existing dump file to a bounded output volume.
     enabled: true
     elevated: false
     hostNetwork: false
+    imageKey: dumpAccess
+    workloadType: Job
+    command: ["/usr/local/bin/dump-reader"]
+    args: []
     sourcePath: /input/incident-123.dump
     pod:
+      volumeMounts:
+        - name: input
+          mountPath: /input
+          readOnly: true
+        - name: output
+          mountPath: /output
       volumes:
         - name: input
           hostPath:
