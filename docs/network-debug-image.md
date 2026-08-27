@@ -77,8 +77,9 @@ server-owned Job with no service-account token, host path, or runtime socket.
 They must not be added to the generic interactive network-debug profile.
 
 The repository's `config/samples/debug-pod-template-network.yaml` shows the
-same image in a `DebugPodTemplate`; replace its version tag with the reviewed
-final manifest digest before applying it to a cluster.
+canonical image reference with an intentionally invalid digest placeholder.
+Replace that placeholder with the published, signed final manifest digest
+before applying it to a cluster; the sample must not be applied unchanged.
 
 ## Reproducible evidence
 

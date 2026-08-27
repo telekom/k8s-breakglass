@@ -404,10 +404,14 @@ host_network=$(kubectl get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NA
 kubectl get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" -o json | jq -e '
 		.spec.automountServiceAccountToken == false and
 		(.spec.containers | length == 1) and
+		(.spec.containers[0].securityContext.privileged // false) == false and
 		.spec.containers[0].securityContext.allowPrivilegeEscalation == false and
 		.spec.containers[0].securityContext.capabilities.drop == ["ALL"] and
 		.spec.containers[0].securityContext.capabilities.add == ["NET_RAW"] and
-		(.spec.hostPID // false) == false
+		(.spec.hostPID // false) == false and
+		(.spec.volumes | length == 1 and .[0].name == "work" and .[0].emptyDir != null and all(.[]; (.hostPath // null) == null)) and
+		(.spec.containers[0].volumeMounts | all(.[]; .mountPath == "/work")) and
+		([.spec.containers[]] | all(.volumeMounts[]?; (.mountPath | IN("/run/containerd/containerd.sock", "/var/run/containerd/containerd.sock", "/var/run/docker.sock") | not)))
 	' >/dev/null || requirement "host-network capture pod security boundary was not retained by the cluster"
 
 capture_pod_traffic() {

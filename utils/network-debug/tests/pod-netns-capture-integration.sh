@@ -28,7 +28,7 @@ case "${cluster}" in pod-capture-proof-[a-z0-9-]*) ;; *) requirement 'generated 
 temp_parent=${RUNNER_TEMP:-/tmp}
 work_dir=$(mktemp -d "${temp_parent%/}/network-debug-pod-capture-proof.XXXXXX")
 kubeconfig="${work_dir}/kubeconfig"
-cluster_created=false
+cluster_create_attempted=false
 namespace_created=false
 
 cleanup() {
@@ -41,8 +41,10 @@ cleanup() {
 			status=1
 		fi
 	fi
-	if [ "${cluster_created}" = true ]; then
-		kind delete cluster --name "${cluster}" >/dev/null 2>&1
+	if [ "${cluster_create_attempted}" = true ]; then
+		if ! kind delete cluster --name "${cluster}" >/dev/null 2>&1; then
+			status=1
+		fi
 	fi
 	if kind get clusters 2>/dev/null | grep -Fx "${cluster}" >/dev/null; then
 		printf 'REQUIREMENT: owned kind cluster survived cleanup\n' >&2
@@ -61,8 +63,8 @@ trap 'exit 130' HUP INT TERM
 if kind get clusters | grep -Fx "${cluster}" >/dev/null; then
 	requirement "refusing to reuse existing kind cluster ${cluster}"
 fi
+cluster_create_attempted=true
 kind create cluster --name "${cluster}" --image "${node_image}" --kubeconfig "${kubeconfig}" --wait 120s
-cluster_created=true
 kind load docker-image --name "${cluster}" "${image}"
 
 export KUBECONFIG="${kubeconfig}"
@@ -201,6 +203,30 @@ spec:
         - name: evidence
           emptyDir: {}
 EOF
+
+kubectl -n "${namespace}" get job capture -o json | jq -e '
+	.spec.template.spec.hostPID == true and
+	.spec.template.spec.hostNetwork == false and
+	.spec.template.spec.automountServiceAccountToken == false and
+	(.spec.template.spec.volumes | length == 1 and .[0].name == "evidence" and .[0].emptyDir != null and all(.[]; (.hostPath // null) == null)) and
+	(.spec.template.spec.containers | length == 2) and
+	(.spec.template.spec.initContainers | length == 1) and
+	(.spec.template.spec.initContainers[0].securityContext.privileged // false) == false and
+	.spec.template.spec.initContainers[0].securityContext.allowPrivilegeEscalation == false and
+	.spec.template.spec.initContainers[0].securityContext.capabilities.drop == ["ALL"] and
+	(.spec.template.spec.containers[0].securityContext.privileged // false) == false and
+	.spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation == false and
+	.spec.template.spec.containers[0].securityContext.capabilities.drop == ["ALL"] and
+	.spec.template.spec.containers[0].securityContext.capabilities.add == ["SYS_ADMIN", "SYS_PTRACE", "NET_RAW"] and
+	(.spec.template.spec.containers[0].volumeMounts | all(.[]; .mountPath == "/work")) and
+	(.spec.template.spec.initContainers[0].volumeMounts | all(.[]; .mountPath == "/work")) and
+	(.spec.template.spec.containers[1].securityContext.privileged // false) == false and
+	.spec.template.spec.containers[1].securityContext.allowPrivilegeEscalation == false and
+	(.spec.template.spec.containers[1].securityContext.capabilities.drop == ["ALL"]) and
+	(.spec.template.spec.containers[1].volumeMounts | all(.[]; .mountPath == "/work")) and
+	([.spec.template.spec.initContainers[], .spec.template.spec.containers[]]
+	 | all(.volumeMounts[]?; (.mountPath | IN("/run/containerd/containerd.sock", "/var/run/containerd/containerd.sock", "/var/run/docker.sock") | not)))
+' >/dev/null || requirement 'selected-pod capture Job security boundary was not retained by the cluster'
 
 if ! kubectl -n "${namespace}" wait job/capture --for=condition=Complete --timeout=90s; then
 	kubectl -n "${namespace}" logs job/capture --all-containers=true >&2 || true
