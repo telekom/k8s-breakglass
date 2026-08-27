@@ -26,6 +26,29 @@ func TestValidRelativePath(t *testing.T) {
 	}
 }
 
+func TestMetadataAcceptsSingleLinkRegularFile(t *testing.T) {
+	name := filepath.Join(t.TempDir(), "core.dump")
+	writeTestFile(t, name, []byte("coredump"))
+
+	info, err := os.Lstat(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := metadata(info)
+	if !ok {
+		t.Fatal("metadata() rejected a regular file")
+	}
+	if got.size != int64(len("coredump")) {
+		t.Fatalf("metadata().size = %d, want %d", got.size, len("coredump"))
+	}
+	if got.nlink != 1 {
+		t.Fatalf("metadata().nlink = %d, want 1", got.nlink)
+	}
+	if !regularSingleLink(info, got) {
+		t.Fatal("regularSingleLink() rejected a single-link regular file")
+	}
+}
+
 func TestCopyOneSuccessBytesAndMode(t *testing.T) {
 	sourceRoot, destinationRoot, sourceDir, destinationDir := testRoots(t)
 	defer sourceRoot.Close()

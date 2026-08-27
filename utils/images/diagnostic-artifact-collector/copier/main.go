@@ -154,23 +154,6 @@ func openDirectory(root *os.Root, name string) (*os.Root, error) {
 	return opened, nil
 }
 
-func metadata(info os.FileInfo) (fileMetadata, bool) {
-	if info == nil {
-		return fileMetadata{}, false
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return fileMetadata{}, false
-	}
-	return fileMetadata{
-		dev:     uint64(stat.Dev),
-		ino:     stat.Ino,
-		nlink:   uint64(stat.Nlink),
-		size:    info.Size(),
-		modTime: info.ModTime(),
-	}, true
-}
-
 func sameMetadata(a, b fileMetadata) bool {
 	return a.dev == b.dev && a.ino == b.ino && a.size == b.size && a.modTime.Equal(b.modTime)
 }

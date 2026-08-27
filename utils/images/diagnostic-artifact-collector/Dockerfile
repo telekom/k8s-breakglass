@@ -8,8 +8,8 @@ ARG TARGETARCH
 WORKDIR /src
 COPY uploader/main.go .
 RUN GO111MODULE=off CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH:-amd64} go build -trimpath -ldflags='-s -w' -o /out/diagnostic-artifact-upload .
-COPY copier/main.go /src/diagnostic-artifact-safe-copy.go
-RUN GO111MODULE=off CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH:-amd64} go build -trimpath -ldflags='-s -w' -o /out/diagnostic-artifact-safe-copy /src/diagnostic-artifact-safe-copy.go
+COPY copier/ /src/copier/
+RUN GO111MODULE=off CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH:-amd64} go build -trimpath -ldflags='-s -w' -o /out/diagnostic-artifact-safe-copy ./copier
 
 FROM busybox:1.37@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
 
