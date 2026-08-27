@@ -75,8 +75,8 @@ make validate-samples
 | `debug-session-template-comprehensive.yaml` | **Documentation-only** collection; elevated/node examples are deprecated |
 | `debug_pod_templates.yaml` | **Documentation-only** legacy collection; `privileged-debug` is quarantined |
 | `debug-pod-template-minimal.yaml` | Minimal debug pod |
-| `debug-pod-template-network.yaml` | Network debugging tools |
-| `debug-pod-template-log-inspector.yaml` | Log inspection tools |
+| `debug-pod-template-network.yaml` | **Documentation-only** network tools; deprecated until an immutable image is supplied |
+| `debug-pod-template-log-inspector.yaml` | **Documentation-only** host-log inspection; hostPath requires review |
 | `debug-pod-template-comprehensive.yaml` | **Documentation-only** collection; elevated/node examples are quarantined |
 | `debug_sessions.yaml` | DebugSession examples |
 | `debug_session_cluster_binding.yaml` | DebugSessionClusterBinding for delegating template access |

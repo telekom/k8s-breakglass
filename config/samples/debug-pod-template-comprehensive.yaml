@@ -157,6 +157,10 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugPodTemplate
 metadata:
   name: netshoot-standard
+  annotations:
+    breakglass.t-caas.telekom.com/deprecated: "true"
+    breakglass.t-caas.telekom.com/deprecation-message: "Do not apply without a reviewed capability policy; use the disabled network-diagnostics catalogue profile with approved images."
+    breakglass.t-caas.telekom.com/replacement: "debug-session-catalogue/network-diagnostics"
 spec:
   displayName: "Netshoot Standard"
   description: "nicolaka/netshoot with common network tools (curl, netcat, dig, nslookup, tcpdump)"

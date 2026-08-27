@@ -217,14 +217,12 @@ func TestSampleCoverage(t *testing.T) {
 // comments and key ordering.
 func TestDebugSampleSecurityContract(t *testing.T) {
 	decoder := sampleDecoder(t)
-	for _, filename := range []string{
-		"debug_pod_templates.yaml",
-		"debug-pod-template-comprehensive.yaml",
-		"debug_session_templates.yaml",
-		"debug-session-template-comprehensive.yaml",
-		"debug_session_template_namespace_selectors.yaml",
-	} {
-		path := filepath.Join(findSamplesDir(t), filename)
+	files, err := filepath.Glob(filepath.Join(findSamplesDir(t), "*.yaml"))
+	if err != nil {
+		t.Fatalf("find sample files: %v", err)
+	}
+	for _, path := range files {
+		filename := filepath.Base(path)
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", filename, err)
@@ -265,13 +263,16 @@ func validateDebugPodSample(t *testing.T, filename string, sample *DebugPodTempl
 	}
 
 	podSpec := sample.Spec.Template.Spec
-	elevated := podSpec.HostNetwork || podSpec.HostPID || podSpec.HostIPC || len(podSpec.Volumes) > 0 && hasHostPathVolume(podSpec.Volumes)
+	elevated := podSpec.HostNetwork || podSpec.HostPID || podSpec.HostIPC || hasHostPathVolume(podSpec.Volumes)
 	for _, container := range append(append([]corev1.Container{}, podSpec.InitContainers...), podSpec.Containers...) {
 		image := container.Image
 		if strings.Contains(image, "nicolaka/netshoot") && !strings.Contains(image, "@sha256:") {
 			t.Errorf("%s/%s uses a mutable netshoot image %q", filename, sample.Name, image)
 		}
 		if container.SecurityContext != nil && container.SecurityContext.Privileged != nil && *container.SecurityContext.Privileged {
+			elevated = true
+		}
+		if container.SecurityContext != nil && container.SecurityContext.Capabilities != nil && len(container.SecurityContext.Capabilities.Add) > 0 {
 			elevated = true
 		}
 	}

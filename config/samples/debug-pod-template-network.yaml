@@ -1,11 +1,15 @@
-# Network Debug Pod Template
-# Pre-built template for network troubleshooting with the standalone
-# network-diagnostics image. Pin the reviewed release manifest by digest in
-# production; the version tag is kept here so this sample follows releases.
+# Network Debug Pod Template (deprecated migration sample)
+# The standalone image's release digest is resolved by release automation.
+# Keep this object quarantined until an approved immutable image reference is
+# supplied; use the disabled network-diagnostics catalogue profile instead.
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugPodTemplate
 metadata:
   name: network-debug
+  annotations:
+    breakglass.t-caas.telekom.com/deprecated: "true"
+    breakglass.t-caas.telekom.com/deprecation-message: "Do not apply until an approved immutable network-debug image is supplied; use the disabled network-diagnostics catalogue profile."
+    breakglass.t-caas.telekom.com/replacement: "debug-session-catalogue/network-diagnostics"
 spec:
   displayName: "Network Debug"
   description: "Network diagnostics with NET_ADMIN and NET_RAW"
