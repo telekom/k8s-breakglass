@@ -23,8 +23,9 @@ bounded_integer() {
 	case "$value" in
 		''|*[!0-9]*) usage_error "$label must be an integer between $minimum and $maximum" ;;
 	esac
-	[ "$value" -ge "$minimum" ] && [ "$value" -le "$maximum" ] ||
+	if [ "$value" -lt "$minimum" ] || [ "$value" -gt "$maximum" ]; then
 		usage_error "$label must be an integer between $minimum and $maximum"
+	fi
 }
 
 validate_filter() {
@@ -46,9 +47,13 @@ validate_output() {
 		*[!A-Za-z0-9._-]*) usage_error 'output contains unsupported characters' ;;
 		?????????????????????????????????????????????????????????????????*) usage_error 'output filename is too long' ;;
 	esac
-	[ -d "$WORK_DIR" ] && [ ! -L "$WORK_DIR" ] || usage_error "/work is not available"
+	if [ ! -d "$WORK_DIR" ] || [ -L "$WORK_DIR" ]; then
+		usage_error "/work is not available"
+	fi
 	destination=$WORK_DIR/$output
-	[ ! -e "$destination" ] && [ ! -L "$destination" ] || usage_error 'output already exists'
+	if [ -e "$destination" ] || [ -L "$destination" ]; then
+		usage_error 'output already exists'
+	fi
 }
 
 validate_interface() {
@@ -227,9 +232,15 @@ trace_prerequisites() {
 	securityfs=${NETWORK_DEBUG_SECURITYFS_PATH:-/sys/kernel/security}
 	mounts=${NETWORK_DEBUG_MOUNTINFO_PATH:-/proc/self/mountinfo}
 	[ -r "$btf" ] || usage_error 'kernel BTF is unavailable or unreadable'
-	[ -d "$debugfs" ] && [ -r "$debugfs" ] || usage_error 'debugfs is unavailable or unreadable'
-	[ -d "$tracefs" ] && [ -r "$tracefs" ] || usage_error 'tracefs is unavailable or unreadable'
-	[ -d "$securityfs" ] && [ -r "$securityfs" ] || usage_error 'securityfs is unavailable or unreadable'
+	if [ ! -d "$debugfs" ] || [ ! -r "$debugfs" ]; then
+		usage_error 'debugfs is unavailable or unreadable'
+	fi
+	if [ ! -d "$tracefs" ] || [ ! -r "$tracefs" ]; then
+		usage_error 'tracefs is unavailable or unreadable'
+	fi
+	if [ ! -d "$securityfs" ] || [ ! -r "$securityfs" ]; then
+		usage_error 'securityfs is unavailable or unreadable'
+	fi
 	[ -r "$securityfs/lsm" ] || usage_error 'LSM policy information is unavailable'
 	[ -r "$mounts" ] || usage_error 'mount information is unavailable'
 	for mountpoint in "$debugfs" "$tracefs" "$securityfs"; do
@@ -244,8 +255,9 @@ trace_prerequisites() {
 	# require hostPID=true together with hostNetwork=true.
 	self_netns=$(readlink /proc/self/ns/net 2>/dev/null || true)
 	host_netns=$(readlink /proc/1/ns/net 2>/dev/null || true)
-	[ -n "$self_netns" ] && [ "$self_netns" = "$host_netns" ] || \
+	if [ -z "$self_netns" ] || [ "$self_netns" != "$host_netns" ]; then
 		usage_error 'trace requires the host network namespace (hostPID=true and hostNetwork=true)'
+	fi
 }
 
 trace_command() {
