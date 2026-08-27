@@ -18,6 +18,7 @@ root = ARGV.fetch(0)
 blob_dir = File.join(root, "blobs", "sha256")
 FileUtils.mkdir_p(blob_dir)
 descriptors = []
+attestation_descriptors = {}
 write_blob = lambda do |payload, media_type|
   digest = Digest::SHA256.hexdigest(payload)
   File.write(File.join(blob_dir, digest), payload)
@@ -43,34 +44,41 @@ end
     attestation_payload = JSON.generate(attestation)
     attestation_digest = Digest::SHA256.hexdigest(attestation_payload)
     File.write(File.join(blob_dir, attestation_digest), attestation_payload)
-    descriptors << { "mediaType" => attestation["mediaType"], "digest" => "sha256:#{attestation_digest}", "size" => attestation_payload.bytesize, "annotations" => { "vnd.docker.reference.type" => "attestation-manifest", "vnd.docker.reference.digest" => "sha256:#{image_digest}" } }
+    descriptor = { "mediaType" => attestation["mediaType"], "digest" => "sha256:#{attestation_digest}", "size" => attestation_payload.bytesize, "annotations" => { "vnd.docker.reference.type" => "attestation-manifest", "vnd.docker.reference.digest" => "sha256:#{image_digest}" } }
+    descriptors << descriptor
+    attestation_descriptors[[architecture, kind]] = descriptor
   end
 end
 
-nested = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.index.v1+json", "manifests" => descriptors }
-nested_payload = JSON.generate(nested)
-nested_digest = Digest::SHA256.hexdigest(nested_payload)
-File.write(File.join(blob_dir, nested_digest), nested_payload)
-root_index = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.index.v1+json", "manifests" => [{ "mediaType" => nested["mediaType"], "digest" => "sha256:#{nested_digest}", "size" => nested_payload.bytesize }] }
-File.write(File.join(root, "index.json"), JSON.generate(root_index))
-nested["manifests"].reject! { |descriptor| descriptor.dig("annotations", "vnd.docker.reference.type") == "attestation-manifest" }
-bad_nested_payload = JSON.generate(nested)
-bad_nested_digest = Digest::SHA256.hexdigest(bad_nested_payload)
-File.write(File.join(blob_dir, bad_nested_digest), bad_nested_payload)
-bad_root_index = root_index.merge("manifests" => [{ "mediaType" => nested["mediaType"], "digest" => "sha256:#{bad_nested_digest}", "size" => bad_nested_payload.bytesize }])
-File.write(File.join(root, "bad-index.json"), JSON.generate(bad_root_index))
+write_index = lambda do |filename, selected_descriptors|
+  nested = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.index.v1+json", "manifests" => selected_descriptors }
+  nested_payload = JSON.generate(nested)
+  nested_digest = Digest::SHA256.hexdigest(nested_payload)
+  File.write(File.join(blob_dir, nested_digest), nested_payload)
+  root_index = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.index.v1+json", "manifests" => [{ "mediaType" => nested["mediaType"], "digest" => "sha256:#{nested_digest}", "size" => nested_payload.bytesize }] }
+  File.write(File.join(root, filename), JSON.generate(root_index))
+end
+
+write_index.call("index.json", descriptors)
+write_index.call("bad-index.json", descriptors.reject { |descriptor| descriptor.dig("annotations", "vnd.docker.reference.type") == "attestation-manifest" })
+write_index.call("missing-sbom-index.json", descriptors.reject { |descriptor| descriptor["digest"] == attestation_descriptors.fetch(["amd64", "sbom"])["digest"] })
+write_index.call("missing-provenance-index.json", descriptors.reject { |descriptor| descriptor["digest"] == attestation_descriptors.fetch(["arm64", "provenance"])["digest"] })
 RUBY
 
 (cd "$test_root" && tar -cf "$test_root/good.tar" index.json blobs)
-mkdir "$test_root/bad"
-cp "$test_root/bad-index.json" "$test_root/bad/index.json"
-cp -R "$test_root/blobs" "$test_root/bad/"
-(cd "$test_root/bad" && tar -cf "$test_root/bad.tar" index.json blobs)
+for variant in bad missing-sbom missing-provenance; do
+    mkdir "$test_root/$variant"
+    cp "$test_root/$variant-index.json" "$test_root/$variant/index.json"
+    cp -R "$test_root/blobs" "$test_root/$variant/"
+    (cd "$test_root/$variant" && tar -cf "$test_root/$variant.tar" index.json blobs)
+done
 
 ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/good.tar" >/dev/null
-if ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/bad.tar" >/dev/null 2>&1; then
-    echo "archive without attestations was accepted" >&2
-    exit 1
-fi
+for variant in bad missing-sbom missing-provenance; do
+    if ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/$variant.tar" >/dev/null 2>&1; then
+        echo "invalid $variant archive was accepted" >&2
+        exit 1
+    fi
+done
 
 echo "OCI attestation inspection behavior passed"
