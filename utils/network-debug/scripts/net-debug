@@ -1,0 +1,364 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+set -eu
+
+# The image-owned commands intentionally have a small, fixed surface.  Keep
+# all evidence below /work (the only path normally mounted by a debug session)
+# and never interpolate a command through a shell.
+WORK_DIR=${NETWORK_DEBUG_WORK_DIR:-/work}
+STAGING_DIR=''
+MAX_FILTER_LENGTH=256
+MAX_CAPTURE_PACKETS=10000
+MAX_TRACE_EVENTS=10000
+
+usage_error() {
+	printf 'net-debug: %s\n' "$*" >&2
+	exit 2
+}
+
+bounded_integer() {
+	value=$1 minimum=$2 maximum=$3 label=$4
+	case "$value" in
+		''|*[!0-9]*) usage_error "$label must be an integer between $minimum and $maximum" ;;
+	esac
+	[ "$value" -ge "$minimum" ] && [ "$value" -le "$maximum" ] ||
+		usage_error "$label must be an integer between $minimum and $maximum"
+}
+
+validate_filter() {
+	filter=$1
+	[ "${#filter}" -le "$MAX_FILTER_LENGTH" ] || usage_error 'filter is too long'
+newline='
+'
+	carriage_return=$(printf '\rX')
+	carriage_return=${carriage_return%X}
+	case "$filter" in
+		*"$newline"*|*"$carriage_return"*) usage_error 'filter must not contain a newline' ;;
+	esac
+}
+
+validate_output() {
+	output=$1
+	case "$output" in
+		''|.|..|*/*|*\\*) usage_error 'output must be a filename under /work' ;;
+		*[!A-Za-z0-9._-]*) usage_error 'output contains unsupported characters' ;;
+		?????????????????????????????????????????????????????????????????*) usage_error 'output filename is too long' ;;
+	esac
+	[ -d "$WORK_DIR" ] && [ ! -L "$WORK_DIR" ] || usage_error "/work is not available"
+	destination=$WORK_DIR/$output
+	[ ! -e "$destination" ] && [ ! -L "$destination" ] || usage_error 'output already exists'
+}
+
+validate_interface() {
+	interface=$1
+	case "$interface" in
+		any) ;;
+		''|????????????????*) usage_error 'interface must be any or at most 15 characters' ;;
+		*[!A-Za-z0-9._-]*) usage_error 'interface contains unsupported characters' ;;
+	esac
+}
+
+cleanup_child() {
+	if [ -n "${ACTIVE_PID:-}" ]; then
+		kill -INT "$ACTIVE_PID" 2>/dev/null || true
+		kill -TERM "$ACTIVE_PID" 2>/dev/null || true
+	fi
+	if [ -n "${WATCHDOG_PID:-}" ]; then
+		kill "$WATCHDOG_PID" 2>/dev/null || true
+	fi
+	if [ -n "${READER_PID:-}" ]; then
+		kill "$READER_PID" 2>/dev/null || true
+	fi
+	if [ -n "${TEMP_EVIDENCE:-}" ]; then
+		rm -f "$TEMP_EVIDENCE" "$TEMP_EVIDENCE.err" "$TEMP_EVIDENCE.fifo" "$TEMP_EVIDENCE.readback"
+	fi
+	cleanup_stage
+}
+
+cleanup_stage() {
+	if [ -n "${STAGING_DIR:-}" ]; then
+		rm -f "$STAGING_DIR"/* 2>/dev/null || true
+		rmdir "$STAGING_DIR" 2>/dev/null || true
+		STAGING_DIR=''
+	fi
+}
+
+process_alive() {
+	pid=$1
+	kill -0 "$pid" 2>/dev/null || return 1
+	# A child which has exited but has not yet been waited for may be a zombie;
+	# it no longer needs a signal and must not make a graceful stop time out.
+	if [ -r "/proc/$pid/stat" ]; then
+		state=$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)
+		[ "$state" = Z ] && return 1
+	fi
+	return 0
+}
+
+stop_child() {
+	pid=$1
+	seconds=$2
+	settle_seconds=$3
+	kill -INT "$pid" 2>/dev/null || true
+	iterations=$((seconds * 10))
+	while [ "$iterations" -gt 0 ] && process_alive "$pid"; do
+		sleep 0.1
+		iterations=$((iterations - 1))
+	done
+	if process_alive "$pid"; then
+		# pwru can acknowledge SIGINT while BPF programs detach asynchronously.
+		# Keep that reconciliation separate from the primary stop deadline.
+		iterations=$((settle_seconds * 10))
+		while [ "$iterations" -gt 0 ] && process_alive "$pid"; do
+			sleep 0.1
+			iterations=$((iterations - 1))
+		done
+	fi
+	if process_alive "$pid"; then
+		kill -TERM "$pid" 2>/dev/null || true
+		kill -KILL "$pid" 2>/dev/null || true
+		return 1
+	fi
+	return 0
+}
+
+capture_command() {
+	umask 077
+	interface=any duration=30 packets=1000 snaplen=128 filter='' output=capture.pcap
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+			--interface|-i) [ "$#" -ge 2 ] || usage_error 'missing interface'; interface=$2; shift 2 ;;
+			--duration|-d) [ "$#" -ge 2 ] || usage_error 'missing duration'; duration=$2; shift 2 ;;
+			--packets|--count|--max-packets|-c) [ "$#" -ge 2 ] || usage_error 'missing packet limit'; packets=$2; shift 2 ;;
+			--snaplen|-s) [ "$#" -ge 2 ] || usage_error 'missing snaplen'; snaplen=$2; shift 2 ;;
+			--filter|-f) [ "$#" -ge 2 ] || usage_error 'missing filter'; filter=$2; shift 2 ;;
+			--output|--output-file|-o) [ "$#" -ge 2 ] || usage_error 'missing output'; output=$2; shift 2 ;;
+			--help|-h)
+				printf '%s\n' 'Usage: net-debug capture [--interface IF] [--duration SEC] [--packets N] [--snaplen BYTES] [--filter EXPR] [--output FILE]'
+				return 0 ;;
+			*) usage_error "unknown capture option: $1" ;;
+		esac
+	done
+	bounded_integer "$duration" 1 300 duration
+	bounded_integer "$packets" 1 "$MAX_CAPTURE_PACKETS" packets
+	bounded_integer "$snaplen" 64 256 snaplen
+	validate_interface "$interface"
+	validate_filter "$filter"
+	validate_output "$output"
+	command -v tcpdump >/dev/null 2>&1 || usage_error 'tcpdump is unavailable'
+
+	destination=$WORK_DIR/$output
+	# mktemp creates a private, mode-700 staging directory with O_EXCL.  Keep
+	# all intermediate files there, then publish with a no-clobber hard link.
+	STAGING_DIR=$(mktemp -d "$WORK_DIR/.net-debug.XXXXXX") || usage_error 'cannot create private staging directory'
+	TEMP_EVIDENCE=$STAGING_DIR/evidence
+	trap cleanup_child EXIT
+	trap 'cleanup_child; exit 130' HUP INT TERM
+	if [ -n "$filter" ]; then
+		# -d asks libpcap to compile the expression without opening the device.
+		tcpdump -d -- "$filter" >/dev/null 2>"$TEMP_EVIDENCE.err" || {
+			printf 'net-debug: filter rejected by libpcap\n' >&2
+			return 1
+		}
+	fi
+
+	# Keep this argv literal and reviewable: in particular, -p prevents
+	# tcpdump from enabling promiscuous mode on the target interface.
+	tcpdump -p -i "$interface" -s "$snaplen" -c "$packets" -w "$TEMP_EVIDENCE" -- ${filter:+"$filter"} >"$TEMP_EVIDENCE.err" 2>&1 &
+	ACTIVE_PID=$!
+	(
+		sleep "$duration"
+		kill -INT "$ACTIVE_PID" 2>/dev/null || true
+		sleep 2
+		kill -TERM "$ACTIVE_PID" 2>/dev/null || true
+		sleep 1
+		kill -KILL "$ACTIVE_PID" 2>/dev/null || true
+	) &
+	WATCHDOG_PID=$!
+	status=0
+	wait "$ACTIVE_PID" || status=$?
+	ACTIVE_PID=''
+	kill "$WATCHDOG_PID" 2>/dev/null || true
+	wait "$WATCHDOG_PID" 2>/dev/null || true
+	WATCHDOG_PID=''
+	case "$status" in 0|130|143) ;; *) cat "$TEMP_EVIDENCE.err" >&2; return 1 ;; esac
+	[ -s "$TEMP_EVIDENCE" ] || usage_error 'tcpdump produced no capture'
+	readback=$TEMP_EVIDENCE.readback
+	tcpdump -nn -tt -r "$TEMP_EVIDENCE" -c "$packets" >"$readback" 2>/dev/null || return 1
+	count=$(wc -l <"$readback" | tr -d ' ')
+	bytes=$(wc -c <"$TEMP_EVIDENCE" | tr -d ' ')
+	max_bytes=$((packets * (snaplen + 16) + 24))
+	[ "$bytes" -le "$max_bytes" ] || usage_error 'capture exceeds its bounded file size'
+	hash=$(sha256sum "$TEMP_EVIDENCE" | awk '{print $1}')
+	ln "$TEMP_EVIDENCE" "$destination" || usage_error 'output was created concurrently'
+	rm -f "$TEMP_EVIDENCE"
+	cleanup_stage
+	printf 'capture\ninterface %s\nduration %s\npacket_limit %s\nsnaplen %s\npacket_count %s\nbytes %s\nsha256 %s\nfile %s\n' \
+		"$interface" "$duration" "$packets" "$snaplen" "$count" "$bytes" "$hash" "$output"
+}
+
+capability_present() {
+	status_file=${NETWORK_DEBUG_CAPABILITY_FILE:-/proc/self/status}
+	cap=$1
+	case "$cap" in
+		NET_RAW) bit=13 ;; NET_ADMIN) bit=12 ;; SYS_RESOURCE) bit=24 ;; PERFMON) bit=38 ;; BPF) bit=39 ;;
+		*) return 1 ;;
+	esac
+	hex=$(awk '/^CapEff:/ {print $2}' "$status_file" 2>/dev/null || true)
+	[ -n "$hex" ] || return 1
+	nibble_index=$((bit / 4))
+	while [ "$nibble_index" -gt 0 ]; do
+		hex=${hex%?}
+		nibble_index=$((nibble_index - 1))
+	done
+	nibble=$(printf '%s' "$hex" | tail -c 1 | tr 'A-F' 'a-f')
+	case "$((bit % 4)):$nibble" in
+		0:[13579bdf]|1:[2367abef]|2:[4567cdef]|3:[89abcdef]) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+trace_prerequisites() {
+	btf=${NETWORK_DEBUG_BTF_PATH:-/sys/kernel/btf/vmlinux}
+	debugfs=${NETWORK_DEBUG_DEBUGFS_PATH:-/sys/kernel/debug}
+	tracefs=${NETWORK_DEBUG_TRACEFS_PATH:-/sys/kernel/tracing}
+	securityfs=${NETWORK_DEBUG_SECURITYFS_PATH:-/sys/kernel/security}
+	mounts=${NETWORK_DEBUG_MOUNTINFO_PATH:-/proc/self/mountinfo}
+	[ -r "$btf" ] || usage_error 'kernel BTF is unavailable or unreadable'
+	[ -d "$debugfs" ] && [ -r "$debugfs" ] || usage_error 'debugfs is unavailable or unreadable'
+	[ -d "$tracefs" ] && [ -r "$tracefs" ] || usage_error 'tracefs is unavailable or unreadable'
+	[ -d "$securityfs" ] && [ -r "$securityfs" ] || usage_error 'securityfs is unavailable or unreadable'
+	[ -r "$securityfs/lsm" ] || usage_error 'LSM policy information is unavailable'
+	[ -r "$mounts" ] || usage_error 'mount information is unavailable'
+	for mountpoint in "$debugfs" "$tracefs" "$securityfs"; do
+		grep -F " $mountpoint" "$mounts" >/dev/null 2>&1 || usage_error "$mountpoint is not mounted"
+	done
+	for capability in NET_ADMIN BPF PERFMON SYS_RESOURCE; do
+		capability_present "$capability" || usage_error "required capability $capability is unavailable"
+	done
+	[ "${NETWORK_DEBUG_HOST_NETNS:-true}" = true ] || usage_error 'trace requires the host network namespace'
+}
+
+trace_command() {
+	umask 077
+	duration=60 events=1000 filter='' output=trace.log
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+			--duration|-d) [ "$#" -ge 2 ] || usage_error 'missing duration'; duration=$2; shift 2 ;;
+			--events|--lines|--max-events|--max-lines|--line-limit|--limit|-e) [ "$#" -ge 2 ] || usage_error 'missing event limit'; events=$2; shift 2 ;;
+			--filter|-f) [ "$#" -ge 2 ] || usage_error 'missing filter'; filter=$2; shift 2 ;;
+			--output|--output-file|-o) [ "$#" -ge 2 ] || usage_error 'missing output'; output=$2; shift 2 ;;
+			--help|-h)
+				printf '%s\n' 'Usage: net-debug trace [--duration SEC] [--events N] [--filter EXPR] [--output FILE]'
+				return 0 ;;
+			*) usage_error "unknown trace option: $1" ;;
+		esac
+	done
+	bounded_integer "$duration" 1 60 duration
+	bounded_integer "$events" 1 "$MAX_TRACE_EVENTS" events
+	validate_filter "$filter"
+	validate_output "$output"
+	trace_prerequisites
+	command -v pwru >/dev/null 2>&1 || usage_error 'pwru is unavailable'
+	stop_timeout=${NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS:-15}
+	settle_timeout=${NETWORK_DEBUG_PWRU_STOP_SETTLE_SECONDS:-5}
+	bounded_integer "$stop_timeout" 1 60 stop-timeout
+	bounded_integer "$settle_timeout" 1 60 settle-timeout
+	# Use the same private O_EXCL staging directory as capture.  The FIFO and
+	# evidence file are never created in the caller-shared output namespace.
+	destination=$WORK_DIR/$output
+	STAGING_DIR=$(mktemp -d "$WORK_DIR/.net-debug.XXXXXX") || usage_error 'cannot create private staging directory'
+	TEMP_EVIDENCE=$STAGING_DIR/evidence
+	fifo=$TEMP_EVIDENCE.fifo
+	mkfifo "$fifo"
+	trap 'cleanup_child; exit 130' HUP INT TERM
+
+	# A FIFO reader enforces the event bound before evidence reaches disk. Once
+	# the limit is reached it closes the FIFO; the wrapper then sends SIGINT and
+	# gives pwru a bounded settle window for BPF detachment.
+	if [ -n "$filter" ]; then
+		pwru --output-tuple --timestamp none -- "$filter" >"$fifo" 2>&1 &
+	else
+		pwru --output-tuple --timestamp none >"$fifo" 2>&1 &
+	fi
+	ACTIVE_PID=$!
+	awk -v limit="$events" 'NR <= limit { if (length($0) > 4096) print substr($0, 1, 4096); else print } NR == limit { exit }' "$fifo" >"$TEMP_EVIDENCE" &
+	READER_PID=$!
+	(
+		sleep "$duration"
+		kill -INT "$ACTIVE_PID" 2>/dev/null || true
+		sleep 2
+		kill -TERM "$ACTIVE_PID" 2>/dev/null || true
+		sleep 1
+		kill -KILL "$ACTIVE_PID" 2>/dev/null || true
+	) &
+	WATCHDOG_PID=$!
+	wait "$READER_PID" 2>/dev/null || true
+	READER_PID=''
+	stop_child "$ACTIVE_PID" "$stop_timeout" "$settle_timeout" || {
+		printf '%s\n' 'net-debug: pwru did not stop within the bounded settle window' >&2
+		return 1
+	}
+	status=0
+	wait "$ACTIVE_PID" || status=$?
+	ACTIVE_PID=''
+	kill "$WATCHDOG_PID" 2>/dev/null || true
+	wait "$WATCHDOG_PID" 2>/dev/null || true
+	WATCHDOG_PID=''
+	case "$status" in 0|130|143|141) ;; *) return 1 ;; esac
+	count=$(wc -l <"$TEMP_EVIDENCE" | tr -d ' ')
+	[ "$count" -le "$events" ] || usage_error 'trace evidence exceeded event limit'
+	bytes=$(wc -c <"$TEMP_EVIDENCE" | tr -d ' ')
+	max_trace_bytes=$((events * 4097))
+	[ "$bytes" -le "$max_trace_bytes" ] || usage_error 'trace evidence exceeds its bounded file size'
+	hash=$(sha256sum "$TEMP_EVIDENCE" | awk '{print $1}')
+	ln "$TEMP_EVIDENCE" "$destination" || usage_error 'output was created concurrently'
+	rm -f "$TEMP_EVIDENCE"
+	rm -f "$fifo"
+	cleanup_stage
+	printf 'trace\nduration %s\nevent_limit %s\nevent_count %s\nsha256 %s\nfile %s\n' \
+		"$duration" "$events" "$count" "$hash" "$output"
+}
+
+help() {
+	cat <<'EOF'
+network-debug - a portable network troubleshooting toolbox
+
+Usage:
+  net-debug shell [COMMAND ...]   Start a shell (the default)
+  net-debug report                Print a stable, redaction-friendly report
+  net-debug tools                 List installed troubleshooting tools
+  net-debug capture               Run a bounded tcpdump capture under /work
+  net-debug trace                 Run a bounded pwru trace under /work
+  net-debug --help                Show this help
+  net-debug --version             Show the image version
+
+The image is intentionally generic. It contains no cluster, registry, cloud,
+or organization-specific configuration. tcpdump and pwru may require host
+network access, CAP_NET_RAW, CAP_NET_ADMIN, and (for pwru) BPF permissions.
+EOF
+}
+
+case "${1:-shell}" in
+	--help|-h|help) help ;;
+	--version|-V|version) printf 'network-debug %s\n' "${NETWORK_DEBUG_VERSION:-unknown}" ;;
+	report) exec /usr/local/bin/net-report ;;
+	tools) exec /usr/local/bin/net-report --tools ;;
+	capture) shift; capture_command "$@" ;;
+	trace) shift; trace_command "$@" ;;
+	shell)
+		shift || true
+		if [ "$#" -gt 0 ]; then exec "$@"; fi
+		if [ -t 0 ] && [ -t 1 ]; then
+			# /etc/profile prints the short MOTD for interactive shells.
+			exec /bin/sh -l
+		fi
+		exec /bin/sh
+		;;
+	*)
+		# Permit the image to be used as a transparent command wrapper.
+		exec "$@"
+		;;
+esac

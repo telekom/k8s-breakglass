@@ -1,0 +1,79 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+set -eu
+
+sanitize_metadata() {
+	value=$1
+	case "$value" in
+		''|*[!A-Za-z0-9._-]*) printf '%s' unknown ;;
+		*) printf '%s' "$value" ;;
+	esac
+}
+
+# These values may be overridden by a container caller. Keep control
+# characters and delimiters out of the line-oriented report rather than
+# allowing metadata to inject fields or carry caller-supplied secret text.
+version=$(sanitize_metadata "${NETWORK_DEBUG_VERSION:-unknown}")
+intent=$(sanitize_metadata "${NETWORK_DEBUG_INTENT:-network-diagnostics}")
+
+help() {
+	cat <<'EOF'
+net-report - print a deterministic network diagnostics report
+
+Usage: net-report [--help] [--version] [--tools]
+
+The report intentionally omits timestamps, hostnames, command history, and
+credentials. Values describe the current network namespace and may therefore
+change between invocations.
+EOF
+}
+
+tool_version() {
+	name=$1
+	if command -v "$name" >/dev/null 2>&1; then
+		case "$name" in
+			pwru)
+				value=$(pwru --version 2>/dev/null) || {
+					printf '%s\tunavailable\n' "$name"
+					return
+				}
+				;;
+			*) printf '%s\tinstalled\n' "$name"; return ;;
+		esac
+		version=$(printf '%s\n' "$value" | sed -nE 's/.*(v[0-9]+(\.[0-9]+){1,2}([.-][[:alnum:].-]+)?).*/\1/p' | sed -n '1p')
+		if [ -n "$version" ]; then
+			printf '%s\t%s %s\n' "$name" "$name" "$version"
+		else
+			printf '%s\tinstalled\n' "$name"
+		fi
+	else
+		printf '%s\tunavailable\n' "$name"
+	fi
+}
+
+case "${1:-}" in
+	--help|-h) help; exit 0 ;;
+	--version|-V) printf 'net-report %s\n' "$version"; exit 0 ;;
+	--tools)
+		printf 'tool\tstatus\n'
+		for tool in curl dig host nslookup nc ping tracepath traceroute mtr ip ss tcpdump ethtool pwru; do tool_version "$tool"; done
+		exit 0
+		;;
+	'') : ;;
+	*) printf 'net-report: unknown option: %s\n' "$1" >&2; help >&2; exit 2 ;;
+esac
+
+printf 'network-debug report %s\n' "$version"
+printf 'intent %s\n' "$intent"
+printf '\n[interfaces]\n'
+if command -v ip >/dev/null 2>&1; then ip -o address show 2>/dev/null | LC_ALL=C sort -k2,2 -k3,3 -k4,4 || true; else printf 'unavailable\n'; fi
+printf '\n[routes]\n'
+if command -v ip >/dev/null 2>&1; then ip -o route show 2>/dev/null | LC_ALL=C sort || true; else printf 'unavailable\n'; fi
+printf '\n[rules]\n'
+if command -v ip >/dev/null 2>&1; then ip -o rule show 2>/dev/null | LC_ALL=C sort || true; else printf 'unavailable\n'; fi
+printf '\n[dns]\n'
+awk '$1 == "nameserver" { print $2 }' /etc/resolv.conf 2>/dev/null | LC_ALL=C sort -u || true
+printf '\n[tools]\n'
+"$0" --tools

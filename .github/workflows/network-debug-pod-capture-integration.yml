@@ -1,0 +1,93 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: CC0-1.0
+
+name: Network-debug image behavior
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - "utils/network-debug/**"
+      - "docs/network-debug-image.md"
+      - "CHANGELOG.md"
+      - ".github/workflows/network-debug-pod-capture-integration.yml"
+  push:
+    branches: [main, deployment-testing]
+    paths:
+      - "utils/network-debug/**"
+      - "docs/network-debug-image.md"
+      - "CHANGELOG.md"
+      - ".github/workflows/network-debug-pod-capture-integration.yml"
+
+permissions:
+  contents: read
+
+env:
+  KIND_VERSION: v0.32.0
+  KIND_NODE_IMAGE: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
+  NETWORK_DEBUG_IMAGE: network-debug:pod-capture-integration
+
+jobs:
+  static:
+    name: Network-debug static behavior
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run image helper behavior
+        run: make -C utils/network-debug test
+      - name: ShellCheck image helpers
+        run: shellcheck utils/network-debug/scripts/* utils/network-debug/tests/*.sh
+      - name: Lint image Dockerfile
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: utils/network-debug/Dockerfile
+
+  host-network-capture-and-trace:
+    name: Network-debug host capture and trace behavior
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install checksum-verified kind
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" --output kind
+          curl --fail --silent --show-error --location "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum" --output kind.sha256sum
+          sed 's#kind-linux-amd64#kind#' kind.sha256sum | sha256sum --check --status
+          install -m 0755 kind "${RUNNER_TEMP}/kind"
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+      - name: Build image
+        run: docker build --file utils/network-debug/Dockerfile --tag network-debug:integration utils/network-debug
+      - name: Prove bounded host tcpdump, pwru, security, and cleanup
+        env:
+          NETWORK_DEBUG_IMAGE: network-debug:integration
+        run: make -C utils/network-debug integration
+
+  selected-pod-capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: utils/network-debug/cmd/pod-netns-capture/go.mod
+          cache-dependency-path: utils/network-debug/cmd/pod-netns-capture/go.mod
+      - name: Run fake-proc unit and fuzz-seed tests
+        run: go -C utils/network-debug/cmd/pod-netns-capture test ./...
+      - name: Install checksum-verified kind
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" --output kind
+          curl --fail --silent --show-error --location "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum" --output kind.sha256sum
+          sed 's#kind-linux-amd64#kind#' kind.sha256sum | sha256sum --check --status
+          install -m 0755 kind "${RUNNER_TEMP}/kind"
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+      - name: Build image with selected-pod helper
+        run: docker build --file utils/network-debug/Dockerfile --tag "${NETWORK_DEBUG_IMAGE}" utils/network-debug
+      - name: Prove target-versus-decoy capture and exact cleanup
+        run: make -C utils/network-debug pod-capture-integration
