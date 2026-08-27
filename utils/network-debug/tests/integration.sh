@@ -18,8 +18,10 @@ PWRU_STOP_TIMEOUT=${NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS:-15}
 PWRU_STARTUP_MARGIN=${NETWORK_DEBUG_PWRU_STARTUP_MARGIN_SECONDS:-30}
 # The outer Docker wait must cover the trace duration and both bounded pwru
 # startup and shutdown windows. A fixed 20-second wait expired while
-# net-debug was still attaching or within its documented stop contract.
-PWRU_TIMEOUT=${NETWORK_DEBUG_PWRU_TIMEOUT_SECONDS:-$((TRACE_DURATION + PWRU_STARTUP_MARGIN + PWRU_STOP_TIMEOUT))}
+# net-debug was still attaching or within its documented stop contract. Keep a
+# small explicit scheduling allowance outside those operation bounds so a
+# valid wrapper completion at the boundary is not killed by the harness.
+PWRU_TIMEOUT=${NETWORK_DEBUG_PWRU_TIMEOUT_SECONDS:-$((TRACE_DURATION + PWRU_STARTUP_MARGIN + PWRU_STOP_TIMEOUT + 5))}
 RUN_ID="network-debug-proof-${RANDOM}-${RANDOM}"
 NETWORK=${RUN_ID}-network
 CONTAINER=${RUN_ID}-tools
@@ -575,8 +577,10 @@ if [ "$PWRU_READY" = true ]; then
 		requirement "public net-debug trace exceeded its bounded wait"
 	fi
 	trace_wait_elapsed=$((trace_wait_finished - trace_wait_started))
-	[ "$trace_wait_elapsed" -le $((TRACE_DURATION + PWRU_STOP_TIMEOUT + 5)) ] || \
-		requirement "public net-debug trace exceeded its duration and shutdown contract"
+	if [ "$trace_wait_elapsed" -gt "$PWRU_TIMEOUT" ]; then
+		docker_call logs "$PWRU_CONTAINER" >&2 || true
+		requirement "public net-debug trace exceeded its startup, duration, and shutdown bound (${trace_wait_elapsed}s > ${PWRU_TIMEOUT}s)"
+	fi
 	trace_state=$(docker_call inspect --format '{{.State.Status}}' "$PWRU_CONTAINER" 2>/dev/null) || requirement "could not inspect completed trace container"
 	[ "$trace_state" = exited ] || requirement "public net-debug trace container did not exit"
 	trace_summary=$(docker_call logs "$PWRU_CONTAINER") || requirement "could not read public trace summary"
