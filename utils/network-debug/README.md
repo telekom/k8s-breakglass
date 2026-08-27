@@ -87,8 +87,10 @@ operation and prerequisite contract.
 
 The integration target creates and owns a uniquely named disposable kind
 cluster, including its kubeconfig, storage class, PV, namespace, and PVC. It
-never reads or mutates the caller's kubeconfig. The dedicated CI job runs this
-target on a Linux runner with Docker and kind.
+never reads or mutates the caller's kubeconfig. The generated name is
+preflight-checked; a failed bootstrap cleans only that attempted name and any
+matching labeled node containers, while a pre-existing name is rejected. The
+dedicated CI job runs this target on a Linux runner with Docker and kind.
 The `pwru` portion requires readable `/sys/kernel/btf/vmlinux`, debugfs,
 tracefs, securityfs, and BPF/PERFMON support. Local macOS/Windows Docker Desktop or a
 non-kind Kubernetes context is not a substitute for that job.

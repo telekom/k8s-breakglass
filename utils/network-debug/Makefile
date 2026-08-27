@@ -36,6 +36,7 @@ sign: ## Sign an immutable image digest with keyless cosign.
 
 test: ## Run hermetic helper behavior checks.
 	./tests/test.sh
+	./tests/test-kind-ownership.sh
 
 integration: ## Run real tool proofs in disposable Docker and kind resources.
 	./tests/integration.sh

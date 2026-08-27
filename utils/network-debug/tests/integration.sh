@@ -14,8 +14,13 @@ NETWORK=${RUN_ID}-network
 CONTAINER=${RUN_ID}-tools
 PWRU_CONTAINER=${RUN_ID}-pwru
 KUBESTR_NAMESPACE=${RUN_ID}-storage
-KIND_CLUSTER_NAME=${NETWORK_DEBUG_KIND_CLUSTER_NAME:-$RUN_ID}
+# Never accept a caller-selected cluster name: the random run ID is the only
+# name this invocation can own after its absent-name preflight.
+KIND_CLUSTER_NAME=$RUN_ID
 KIND_NODE_IMAGE=${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}
+KIND_BIN=${NETWORK_DEBUG_KIND_BIN:-kind}
+# shellcheck disable=SC2034 # consumed by the sourced ownership helper
+DOCKER_BIN=${NETWORK_DEBUG_DOCKER_BIN:-docker}
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/network-debug-proof.XXXXXX")
 KUBECONFIG_FILE=${WORK_DIR}/kubeconfig
 KUBESTR_PV_NAME=${RUN_ID}-pv
@@ -26,6 +31,9 @@ NETWORK_CREATED=false
 CONTAINER_CREATED=false
 PWRU_CONTAINER_CREATED=false
 KUBESTR_KUBECONFIG_FILE=${WORK_DIR}/kubestr-kubeconfig
+
+# shellcheck disable=SC1091
+. "$(dirname -- "$0")/kind-ownership.sh"
 
 requirement() {
 	printf 'REQUIREMENT: %s\n' "$*" >&2
@@ -43,10 +51,6 @@ cleanup() {
 	status=$?
 	set +e
 	cleanup_failed=false
-	kind_cluster_present() {
-		clusters=$(kind get clusters 2>/dev/null) || return 2
-		printf '%s\n' "$clusters" | grep -Fx "$KIND_CLUSTER_NAME" >/dev/null 2>&1
-	}
 	if [ "$KIND_CLUSTER_CREATED" = true ]; then
 		if [ "$KUBESTR_NAMESPACE_CREATED" = true ] && command -v kubectl >/dev/null 2>&1; then
 			if ! kubectl --kubeconfig "$KUBECONFIG_FILE" delete namespace "$KUBESTR_NAMESPACE" --ignore-not-found --wait=true --timeout=60s >/dev/null 2>&1; then
@@ -72,18 +76,9 @@ cleanup() {
 				cleanup_failed=true
 			fi
 		fi
-		if kind_cluster_present; then
-			if ! kind delete cluster --name "$KIND_CLUSTER_NAME" >/dev/null 2>&1; then
-				cleanup_failed=true
-			fi
-		elif [ "$?" -eq 2 ]; then
+	fi
+	if ! kind_cleanup_owned_cluster; then
 			cleanup_failed=true
-		fi
-		if kind_cluster_present; then
-			cleanup_failed=true
-		elif [ "$?" -eq 2 ]; then
-			cleanup_failed=true
-		fi
 	fi
 	for docker_container in "$PWRU_CONTAINER" "$CONTAINER"; do
 		container_owned=false
@@ -132,7 +127,7 @@ trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
 command -v docker >/dev/null 2>&1 || requirement "docker is required to run disposable integration containers"
-command -v kind >/dev/null 2>&1 || requirement "kind is required to run the disposable Kubernetes integration cluster"
+command -v "$KIND_BIN" >/dev/null 2>&1 || requirement "kind is required to run the disposable Kubernetes integration cluster"
 command -v kubectl >/dev/null 2>&1 || requirement "kubectl is required to run the disposable Kubernetes integration cluster"
 command -v jq >/dev/null 2>&1 || requirement "jq is required to validate the structured kubestr fio result"
 command -v timeout >/dev/null 2>&1 || requirement "GNU timeout is required for bounded integration commands"
@@ -142,16 +137,19 @@ docker image inspect "$KUBESTR_FIXTURE_IMAGE" >/dev/null 2>&1 || requirement "fi
 # Never mutate a caller-selected Kubernetes context. The proof owns the kind
 # cluster and its kubeconfig from creation through cleanup, so invoking this
 # script locally cannot accidentally create a namespace or PVC in production.
-kind_clusters=$(kind get clusters) || requirement "could not inspect existing kind clusters before creating the disposable cluster"
-if printf '%s\n' "$kind_clusters" | grep -Fx "$KIND_CLUSTER_NAME" >/dev/null; then
-	requirement "refusing to reuse an existing kind cluster named $KIND_CLUSTER_NAME"
+create_status=0
+kind_create_owned_cluster || create_status=$?
+if [ "$create_status" -ne 0 ]; then
+	case "$create_status" in
+		2) requirement "refusing to reuse an existing kind cluster named $KIND_CLUSTER_NAME" ;;
+		3) requirement "could not inspect existing kind clusters before creating the disposable cluster" ;;
+		4) requirement "could not clean up a partial disposable kind cluster" ;;
+		*) requirement "could not create the disposable kind cluster" ;;
+	esac
 fi
-kind create cluster --name "$KIND_CLUSTER_NAME" --image "$KIND_NODE_IMAGE" \
-	--kubeconfig "$KUBECONFIG_FILE" --wait 120s || requirement "could not create the disposable kind cluster"
-KIND_CLUSTER_CREATED=true
 export KUBECONFIG="$KUBECONFIG_FILE"
 kubectl wait --for=condition=Ready nodes --all --timeout=180s >/dev/null || requirement "disposable kind nodes did not become ready"
-kind load docker-image "$KUBESTR_FIXTURE_IMAGE" --name "$KIND_CLUSTER_NAME" || requirement "could not load the disposable fio fixture into kind"
+"$KIND_BIN" load docker-image "$KUBESTR_FIXTURE_IMAGE" --name "$KIND_CLUSTER_NAME" || requirement "could not load the disposable fio fixture into kind"
 
 docker network create "$NETWORK" >/dev/null || requirement "Docker could not create an ephemeral network"
 NETWORK_CREATED=true
