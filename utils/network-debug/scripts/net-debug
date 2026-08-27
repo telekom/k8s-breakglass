@@ -67,8 +67,9 @@ validate_interface() {
 
 cleanup_child() {
 	if [ -n "${ACTIVE_PID:-}" ]; then
-		kill -INT "$ACTIVE_PID" 2>/dev/null || true
-		kill -TERM "$ACTIVE_PID" 2>/dev/null || true
+		kill_process_group INT "$ACTIVE_PID"
+		kill_process_group TERM "$ACTIVE_PID"
+		kill_process_group KILL "$ACTIVE_PID"
 	fi
 	if [ -n "${WATCHDOG_PID:-}" ]; then
 		kill "$WATCHDOG_PID" 2>/dev/null || true
@@ -85,6 +86,25 @@ cleanup_stage() {
 		rmdir "$STAGING_DIR" 2>/dev/null || true
 		STAGING_DIR=''
 	fi
+}
+
+process_alive() {
+	pid=$1
+	kill -0 "$pid" 2>/dev/null || return 1
+	# A child which has exited but has not yet been waited for may be a zombie;
+	# it no longer needs to be waited for and must not make a stop timeout fail closed.
+	if [ -r "/proc/$pid/stat" ]; then
+		state=$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)
+		[ "$state" = Z ] && return 1
+	fi
+	return 0
+}
+
+kill_process_group() {
+	signal=$1 pid=$2
+	# setsid gives the owned trace a distinct process group, so this cannot
+	# signal the wrapper or unrelated work in the caller's namespace.
+	kill -"$signal" -- "-$pid" 2>/dev/null || kill -"$signal" "$pid" 2>/dev/null || true
 }
 
 capture_command() {
@@ -245,7 +265,7 @@ trace_command() {
 	command -v pwru >/dev/null 2>&1 || usage_error 'pwru is unavailable'
 	stop_timeout=${NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS:-15}
 	bounded_integer "$stop_timeout" 1 60 stop-timeout
-	command -v timeout >/dev/null 2>&1 || usage_error 'timeout is unavailable'
+	command -v setsid >/dev/null 2>&1 || usage_error 'setsid is unavailable'
 	# Use the same private O_EXCL staging directory as capture. Evidence is
 	# written directly to an owned regular file; a FIFO can deadlock when either
 	# endpoint is waiting for the other during startup or shutdown.
@@ -261,25 +281,40 @@ trace_command() {
 	max_trace_blocks=$(((max_trace_bytes + 511) / 512))
 	if [ -n "$filter" ]; then
 		# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
-		(timeout -s INT -k "$stop_timeout" "$duration" \
-			sh -c 'ulimit -f "$1"; shift; exec "$@"' sh "$max_trace_blocks" pwru \
-			--backend kprobe --output-tuple --timestamp none --output-limit-lines "$events" -- "$filter") \
+		setsid sh -c 'ulimit -f "$1"; shift; exec "$@"' sh "$max_trace_blocks" pwru \
+			--backend kprobe --output-tuple --timestamp none --output-limit-lines "$events" -- "$filter" \
 			>"$TEMP_EVIDENCE" 2>&1 &
 	else
 		# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
-		(timeout -s INT -k "$stop_timeout" "$duration" \
-			sh -c 'ulimit -f "$1"; shift; exec "$@"' sh "$max_trace_blocks" pwru \
-			--backend kprobe --output-tuple --timestamp none --output-limit-lines "$events") \
+		setsid sh -c 'ulimit -f "$1"; shift; exec "$@"' sh "$max_trace_blocks" pwru \
+			--backend kprobe --output-tuple --timestamp none --output-limit-lines "$events" \
 			>"$TEMP_EVIDENCE" 2>&1 &
 	fi
 	ACTIVE_PID=$!
+	# Own the complete process group. BusyBox timeout only signals its
+	# immediate child and can leave a tracing descendant alive; group-directed
+	# INT then KILL makes the bound apply to pwru and any children.
+	(
+		sleep "$duration"
+		if process_alive "$ACTIVE_PID"; then
+			kill_process_group INT "$ACTIVE_PID"
+			sleep "$stop_timeout"
+			if process_alive "$ACTIVE_PID"; then
+				kill_process_group KILL "$ACTIVE_PID"
+			fi
+		fi
+	) &
+	WATCHDOG_PID=$!
 	status=0
 	wait "$ACTIVE_PID" || status=$?
 	ACTIVE_PID=''
-	# timeout returns 124 when it delivered the primary signal; 137/143 are
-	# retained for compatible implementations that report the forced stop.
+	kill "$WATCHDOG_PID" 2>/dev/null || true
+	wait "$WATCHDOG_PID" 2>/dev/null || true
+	WATCHDOG_PID=''
+	# Normal pwru exits 0; signal termination is expected at the bounded
+	# duration. Other statuses indicate startup/runtime failure.
 	case "$status" in
-		0|124|130|137|141|143) ;;
+		0|130|137|141|143) ;;
 		*)
 			# Preserve actionable startup diagnostics before the EXIT trap removes
 			# private evidence. Drop packet-tuple lines so failure logs cannot

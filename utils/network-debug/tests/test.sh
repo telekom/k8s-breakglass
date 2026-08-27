@@ -5,13 +5,15 @@
 set -eu
 
 root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+test_context='startup'
 
 command -v jq >/dev/null 2>&1 || {
 	printf '%s\n' 'jq is required for deterministic report checks' >&2
 	exit 1
 }
 fixture=$(mktemp -d)
-trap 'rm -rf "$fixture"' EXIT HUP INT TERM
+# shellcheck disable=SC2154 # status is assigned by the EXIT trap at runtime.
+trap 'status=$?; if [ "$status" -ne 0 ]; then printf "FAIL: test.sh assertion (%s)\n" "$test_context" >&2; fi; rm -rf "$fixture"; exit "$status"' EXIT HUP INT TERM
 
 cat >"$fixture/ip" <<'EOF'
 #!/bin/sh
@@ -68,6 +70,7 @@ printf '%s\n' "$first" | grep -E '^pwru[[:space:]]+pwru v1\.0\.12$' >/dev/null
 
 # The image-owned capture command uses a literal tcpdump argv, bounds every
 # caller-controlled value, and emits metadata rather than packet contents.
+test_context='capture-basic'
 capture_fixture=$(mktemp -d)
 mkdir -p "$capture_fixture/bin" "$capture_fixture/work"
 cat >"$capture_fixture/bin/tcpdump" <<'EOF'
@@ -124,6 +127,7 @@ fi
 rm -rf "$capture_fixture"
 
 # A destination appearing while tcpdump is running must never be replaced.
+test_context='capture-race'
 capture_fixture=$(mktemp -d)
 mkdir -p "$capture_fixture/bin" "$capture_fixture/work"
 cat >"$capture_fixture/bin/tcpdump" <<'EOF'
@@ -165,6 +169,7 @@ test -z "$(find "$race_work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
 rm -rf "$race_work" "$capture_fixture"
 
 # Actual carriage returns, not only the literal characters '\\r', are rejected.
+test_context='capture-filter-carriage-return'
 capture_fixture=$(mktemp -d)
 mkdir -p "$capture_fixture/bin" "$capture_fixture/work"
 cat >"$capture_fixture/bin/tcpdump" <<'EOF'
@@ -195,6 +200,7 @@ rm -rf "$capture_fixture"
 # Trace refuses an incomplete kernel/capability environment before invoking
 # pwru. This proves the fail-closed boundary without needing BPF on the test
 # runner.
+test_context='trace-prerequisite-fail-closed'
 if NETWORK_DEBUG_WORK_DIR=/tmp sh "$root/scripts/net-debug" trace >/dev/null 2>&1; then
     printf '%s\n' 'trace accepted an unavailable host prerequisite' >&2
     exit 1
@@ -230,8 +236,14 @@ case "${1:-}" in
 esac
 EOF
 chmod +x "$trace_fixture/bin/readlink"
+cat >"$trace_fixture/bin/setsid" <<'EOF'
+#!/bin/sh
+exec /usr/bin/setsid "$@"
+EOF
+chmod +x "$trace_fixture/bin/setsid"
 if [ "$(uname -s)" = Linux ]; then
 for required_cap_hex in c001081000 c001001000 c001000000 c000001000 8001001000 4001001000; do
+    test_context="trace-capability-$required_cap_hex"
     printf 'CapEff: %s\n' "$required_cap_hex" >"$trace_fixture/status"
     if NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" \
         NETWORK_DEBUG_BTF_PATH="$trace_fixture/status" NETWORK_DEBUG_DEBUGFS_PATH="$trace_fixture/debug" \
@@ -253,24 +265,29 @@ cat >"$trace_fixture/bin/pwru" <<'EOF'
 #!/bin/sh
 set -eu
 printf '%s\n' "$$" >"$PWRU_PID_FILE"
+sleep 300 &
+printf '%s\n' "$!" >"$PWRU_CHILD_PID_FILE"
 trap '' INT TERM
 printf '%s\n' trace-event
 sleep 300
 EOF
 chmod +x "$trace_fixture/bin/pwru"
+test_context='trace-long-child-timeout'
 printf 'CapEff: c001081000\n' >"$trace_fixture/status"
 if NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" \
 	NETWORK_DEBUG_BTF_PATH="$trace_fixture/status" NETWORK_DEBUG_DEBUGFS_PATH="$trace_fixture/debug" \
 	NETWORK_DEBUG_TRACEFS_PATH="$trace_fixture/trace" NETWORK_DEBUG_SECURITYFS_PATH="$trace_fixture/security" \
 		NETWORK_DEBUG_MOUNTINFO_PATH="$trace_fixture/mountinfo" NETWORK_DEBUG_CAPABILITY_FILE="$trace_fixture/status" \
 		PWRU_PID_FILE="$trace_fixture/pwru.pid" \
+		PWRU_CHILD_PID_FILE="$trace_fixture/pwru-child.pid" \
 		NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS=1 \
 	PATH="$trace_fixture/bin:/usr/bin:/bin" sh "$root/scripts/net-debug" trace --duration 1 --events 1 >/dev/null 2>&1; then
 	printf '%s\n' 'trace unexpectedly succeeded when pwru ignored stop signals' >&2
 	exit 1
 fi
 test -s "$trace_fixture/pwru.pid"
-if kill -0 "$(cat "$trace_fixture/pwru.pid")" 2>/dev/null; then
+test -s "$trace_fixture/pwru-child.pid"
+if kill -0 "$(cat "$trace_fixture/pwru.pid")" 2>/dev/null || kill -0 "$(cat "$trace_fixture/pwru-child.pid")" 2>/dev/null; then
 	printf '%s\n' 'bounded timeout left the deliberately long pwru child running' >&2
 	exit 1
 fi
