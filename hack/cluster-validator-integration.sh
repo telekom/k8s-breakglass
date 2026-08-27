@@ -494,6 +494,15 @@ spec:
   restartPolicy: Never
   containers:
     - name: validator
+      env:
+        - name: VALIDATOR_POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: VALIDATOR_POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
       image: ${IMAGE}
       imagePullPolicy: Never
       command: ["/cluster-validator"]
@@ -575,6 +584,15 @@ spec:
   restartPolicy: Never
   containers:
     - name: validator
+      env:
+        - name: VALIDATOR_POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: VALIDATOR_POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
       image: ${IMAGE}
       imagePullPolicy: Never
       command: ["/cluster-validator"]

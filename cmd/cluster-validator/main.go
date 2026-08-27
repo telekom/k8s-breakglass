@@ -73,7 +73,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return writeResult(report, opts.reportPath, stdout, stderr, 2)
 	}
 
-	report := clustervalidator.NewValidator(clustervalidator.BuiltinChecks(opts.skipPods)...).Validate(ctx, client, discoveryClient, opts.mode, opts.includeTimestamp)
+	report := clustervalidator.NewValidator(clustervalidator.BuiltinChecks(opts.skipPods)...).ValidateWithPodIdentity(
+		ctx,
+		client,
+		discoveryClient,
+		opts.mode,
+		opts.includeTimestamp,
+		clustervalidator.PodIdentity{
+			Name:      os.Getenv("VALIDATOR_POD_NAME"),
+			Namespace: os.Getenv("VALIDATOR_POD_NAMESPACE"),
+		},
+	)
 	if err := writeReport(report, opts.reportPath); err != nil {
 		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
 		return 2

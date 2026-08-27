@@ -67,6 +67,75 @@ func TestValidateReportsPostUpgradeAndFailure(t *testing.T) {
 	require.Contains(t, report.Checks, CheckResult{Name: "nodes-ready", Status: StatusNotReady, Message: "cluster has no nodes"})
 }
 
+func TestPodsCheckExcludesExactCurrentPod(t *testing.T) {
+	client := k8sfake.NewSimpleClientset(
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "validator", Namespace: "validator-system"},
+			Status:     corev1.PodStatus{Phase: corev1.PodPending},
+		},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default"},
+			Status: corev1.PodStatus{
+				Phase:      corev1.PodRunning,
+				Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+			},
+		},
+	)
+
+	result := runPodsCheckWithIdentity(t, client, PodIdentity{Name: "validator", Namespace: "validator-system"})
+
+	require.Equal(t, CheckResult{Name: "pods-ready", Status: StatusReady, Message: "1 active pod(s) Ready"}, result)
+}
+
+func TestPodsCheckFailsForUnrelatedUnreadyPod(t *testing.T) {
+	client := k8sfake.NewSimpleClientset(
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "validator", Namespace: "validator-system"},
+			Status:     corev1.PodStatus{Phase: corev1.PodPending},
+		},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "unready-app", Namespace: "default"},
+			Status:     corev1.PodStatus{Phase: corev1.PodPending},
+		},
+	)
+
+	result := runPodsCheckWithIdentity(t, client, PodIdentity{Name: "validator", Namespace: "validator-system"})
+
+	require.Equal(t, StatusNotReady, result.Status)
+	require.Contains(t, result.Message, "active pods are not Ready")
+}
+
+func TestPodsCheckFailsSafeForIncompleteOrMismatchedIdentity(t *testing.T) {
+	identities := map[string]PodIdentity{
+		"missing name":      {Namespace: "validator-system"},
+		"missing namespace": {Name: "validator"},
+		"mismatched name":   {Name: "other-validator", Namespace: "validator-system"},
+		"mismatched namespace": {
+			Name: "validator", Namespace: "other-system",
+		},
+	}
+
+	for name, identity := range identities {
+		t.Run(name, func(t *testing.T) {
+			client := k8sfake.NewSimpleClientset(&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "validator", Namespace: "validator-system"},
+				Status:     corev1.PodStatus{Phase: corev1.PodPending},
+			})
+			result := runPodsCheckWithIdentity(t, client, identity)
+			require.Equal(t, StatusNotReady, result.Status)
+		})
+	}
+}
+
+func runPodsCheckWithIdentity(t *testing.T, client kubernetes.Interface, identity PodIdentity) CheckResult {
+	t.Helper()
+	report := NewValidator(podsCheck{}).ValidateWithPodIdentity(
+		context.Background(), client, nil, ModeOneTime, false, identity,
+	)
+	require.Len(t, report.Checks, 1)
+	return report.Checks[0]
+}
+
 func TestInvalidModeIsError(t *testing.T) {
 	client, discoveryClient := readyClient()
 	report := NewValidator().Validate(context.Background(), client, discoveryClient, "internal", false)

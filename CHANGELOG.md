@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Cluster-validator pod checks now exclude only the exact in-cluster validator
+  pod when both Downward API identity values match; incomplete identity fails
+  safe by excluding nothing.
 - Cluster-validator reports now reject traversal and symlink escapes, use
   owner-only report permissions, and preserve post-upgrade diagnostics in a
   credential-free CI artifact on failure.

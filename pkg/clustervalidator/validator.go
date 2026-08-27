@@ -84,6 +84,19 @@ type ReadOnlyDiscovery interface {
 
 type readOnlyClient struct{ client kubernetes.Interface }
 
+// PodIdentity identifies the validator pod running the check. Both fields are
+// required before a pod can be excluded from the readiness result; this keeps
+// a missing or mismatched Downward API value fail-safe.
+type PodIdentity struct {
+	Name      string
+	Namespace string
+}
+
+type validatorClient struct {
+	readOnlyClient
+	selfPod PodIdentity
+}
+
 type readOnlyDiscovery struct{ client discovery.DiscoveryInterface }
 
 func (d readOnlyDiscovery) ServerGroups() (*metav1.APIGroupList, error) {
@@ -106,6 +119,26 @@ func (c readOnlyClient) ListPods(ctx context.Context, opts metav1.ListOptions) (
 	return c.client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, opts)
 }
 
+func (c validatorClient) ListPods(ctx context.Context, opts metav1.ListOptions) (*corev1.PodList, error) {
+	pods, err := c.readOnlyClient.ListPods(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	if c.selfPod.Name == "" || c.selfPod.Namespace == "" {
+		return pods, nil
+	}
+	filtered := pods.DeepCopy()
+	kept := make([]corev1.Pod, 0, len(filtered.Items))
+	for _, pod := range filtered.Items {
+		if pod.Name == c.selfPod.Name && pod.Namespace == c.selfPod.Namespace {
+			continue
+		}
+		kept = append(kept, pod)
+	}
+	filtered.Items = kept
+	return filtered, nil
+}
+
 // Validator executes checks serially, then sorts results by name. Serial
 // execution keeps API load predictable and deterministic across runs.
 type Validator struct {
@@ -120,7 +153,15 @@ func NewValidator(checks ...Check) *Validator {
 // Validate runs all checks and returns a report for mode. A check must return
 // StatusReady or StatusNotReady; unknown values are normalized to error.
 func (v *Validator) Validate(ctx context.Context, client kubernetes.Interface, discoveryClient discovery.DiscoveryInterface, mode string, includeTimestamp bool) Report {
-	readOnlyClient := readOnlyClient{client: client}
+	return v.ValidateWithPodIdentity(ctx, client, discoveryClient, mode, includeTimestamp, PodIdentity{})
+}
+
+// ValidateWithPodIdentity runs checks while excluding exactly the current
+// validator pod from the built-in pod readiness check. The identity is
+// intentionally passed through the read-only facade so extensions see the
+// same pod view as built-in checks. An incomplete identity excludes nothing.
+func (v *Validator) ValidateWithPodIdentity(ctx context.Context, client kubernetes.Interface, discoveryClient discovery.DiscoveryInterface, mode string, includeTimestamp bool, selfPod PodIdentity) Report {
+	readOnlyClient := validatorClient{readOnlyClient: readOnlyClient{client: client}, selfPod: selfPod}
 	readOnlyDiscovery := readOnlyDiscovery{client: discoveryClient}
 	results := make([]CheckResult, 0, len(v.checks))
 	for _, check := range v.checks {
