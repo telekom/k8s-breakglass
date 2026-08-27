@@ -65,14 +65,49 @@ validate_mac_address() {
 
 validate_neighbor_address() {
 	value=$1
-	validate_value "neighbor address" "$value"
-	# The selected family is consumed by the calling fixed-action helper.
-	# shellcheck disable=SC2034
+	[ -n "$value" ] || die "neighbor address is required"
+	[ "${#value}" -le 45 ] || die "neighbor address must be an IPv4 or IPv6 literal"
 	case "$value" in
-		*.*) NEIGHBOR_FAMILY=-4 ;;
-		*:*) NEIGHBOR_FAMILY=-6 ;;
-		*) die "neighbor address must be an IPv4 or IPv6 address" ;;
+		*[!0-9A-Fa-f:.]*) die "neighbor address must be an IPv4 or IPv6 literal" ;;
 	esac
+	if printf '%s\n' "$value" | awk '
+		/^[0-9]+(\.[0-9]+){3}$/ {
+			n = split($0, octet, ".")
+			for (i = 1; i <= n; i++) {
+				if (octet[i] !~ /^(0|[1-9][0-9]{0,2})$/ || octet[i] > 255) exit 1
+			}
+			exit 0
+		}
+		{ exit 1 }
+	'; then
+		# The selected family is consumed by the calling fixed-action helper.
+		# shellcheck disable=SC2034
+		NEIGHBOR_FAMILY=-4
+		return
+	fi
+	if printf '%s\n' "$value" | awk '
+		{
+			if ($0 !~ /^[0-9A-Fa-f:]+$/ || $0 ~ /:::/) exit 1
+			compressed = index($0, "::") > 0
+			tmp = $0
+			sub(/::/, "", tmp)
+			if (index(tmp, "::") > 0) exit 1
+			if (($0 ~ /^:/ && $0 !~ /^::/) || ($0 ~ /:$/ && $0 !~ /::$/)) exit 1
+			n = split($0, part, ":"); groups = 0
+			for (i = 1; i <= n; i++) {
+				if (part[i] == "") continue
+				if (part[i] !~ /^[0-9A-Fa-f]{1,4}$/) exit 1
+				groups++
+			}
+			if ((compressed && groups < 8) || (!compressed && groups == 8)) exit 0
+			exit 1
+		}
+	'; then
+		# shellcheck disable=SC2034
+		NEIGHBOR_FAMILY=-6
+		return
+	fi
+	die "neighbor address must be an IPv4 or IPv6 literal"
 }
 
 validate_vlan() {

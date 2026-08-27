@@ -40,6 +40,39 @@ network_repair="$root_dir/lib/network-repair.sh"
 preflight="$root_dir/lib/node-recovery-preflight.sh"
 kexec_validate="$root_dir/lib/kexec-recovery-validate.sh"
 
+assert_neighbor_literal_accepted() {
+	address=$1
+	family=$2
+	actual=$(sh -c '. "$1"; validate_neighbor_address "$2"; printf "%s" "$NEIGHBOR_FAMILY"' sh \
+		"$root_dir/lib/common.sh" "$address") || fail "literal neighbor address $address was rejected"
+	[ "$actual" = "$family" ] || fail "literal neighbor address $address selected $actual, want $family"
+	pass "literal neighbor address $address is accepted as $family"
+}
+
+assert_neighbor_literal_rejected_before_network() {
+	address=$1
+	if BREAKGLASS_NODE_NAME=node-a BREAKGLASS_OPERATION_ID=op-a BREAKGLASS_RECORDING_ID=record-a \
+		BREAKGLASS_APPROVAL_ID=approval-a BREAKGLASS_APPROVED_ACTION=neighbor-replace \
+		sh -x "$network_repair" --target-node node-a --interface lo --action neighbor-replace \
+		--neighbor-address "$address" --entry-mac 02:00:00:00:00:02 \
+		--evidence-dir /evidence --confirm NETWORK-REPAIR >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"; then
+		fail "non-literal neighbor address $address was accepted"
+	fi
+	grep -F 'neighbor address must be an IPv4 or IPv6 literal' "$tmp_dir/stderr" >/dev/null \
+		|| fail "non-literal neighbor address $address did not fail literal validation"
+	if grep -E '[[:space:]]ip([[:space:]]|$)' "$tmp_dir/stderr" >/dev/null; then
+		fail "non-literal neighbor address $address reached an ip command"
+	fi
+	pass "non-literal neighbor address $address is rejected before network access"
+}
+
+assert_neighbor_literal_accepted 192.0.2.2 -4
+assert_neighbor_literal_accepted 2001:db8::2 -6
+assert_neighbor_literal_accepted ::1 -6
+for invalid_neighbor in example.com 192.0.2.256 192.0.2.01 192.0.2 2001:db8:::1 2001:db8::1::2 2001:db8:1; do
+	assert_neighbor_literal_rejected_before_network "$invalid_neighbor"
+done
+
 assert_rejected 'network repair without target' "$network_repair" \
 	--interface eth0 --action flush-neighbors --evidence-dir /evidence --confirm NETWORK-REPAIR
 assert_rejected 'network repair without confirmation' "$network_repair" \

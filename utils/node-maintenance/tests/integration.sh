@@ -496,7 +496,7 @@ run_command guard-neighbor-injection 2 none neighbor-replace network-repair \
 	--target-node node-a --interface lo --action neighbor-replace \
 	--neighbor-address '192.0.2.2;touch-/evidence/injected' --entry-mac 02:00:00:00:00:02 \
 	--evidence-dir /evidence --confirm NETWORK-REPAIR
-grep -q 'unsupported characters' "$fixture_dir/output" || fail 'neighbor argument injection produced no denial'
+grep -q 'neighbor address must be an IPv4 or IPv6 literal' "$fixture_dir/output" || fail 'neighbor argument injection produced no literal-address denial'
 assert_volume_path_absent injected
 destroy_fixture
 pass 'neighbor-replace rejects command-like entry data without evaluation'
