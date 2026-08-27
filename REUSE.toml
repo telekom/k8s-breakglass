@@ -29,6 +29,18 @@ path = ["*.sh", "Makefile", "Dockerfile", "hack/**", "tools/**", "e2e/**.sh", "e
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "Apache-2.0"
 
+[[annotations]]
+precedence = "aggregate"
+path = ["utils/workload-debug/**.sh", "utils/workload-debug/**.yaml", "utils/workload-debug/Dockerfile", "utils/workload-debug/Makefile", "utils/workload-debug/deps.lock"]
+SPDX-FileCopyrightText = "2026 Deutsche Telekom AG"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+precedence = "aggregate"
+path = ["utils/workload-debug/**.md", "utils/workload-debug/MOTD"]
+SPDX-FileCopyrightText = "2026 Deutsche Telekom AG"
+SPDX-License-Identifier = "CC-BY-4.0"
+
 # Documentation
 [[annotations]]
 precedence = "aggregate"

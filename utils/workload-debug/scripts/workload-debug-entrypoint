@@ -1,0 +1,14 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+set -eu
+
+if [ "$#" -eq 0 ]; then
+    set -- /bin/sh
+fi
+
+if [ "${WORKLOAD_DEBUG_MOTD:-1}" = "1" ] && [ -t 1 ] && [ -r /usr/local/share/workload-debug/MOTD ]; then
+    cat /usr/local/share/workload-debug/MOTD
+fi
+
+exec "$@"

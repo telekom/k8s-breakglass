@@ -1,0 +1,117 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+set -eu
+
+usage() {
+    cat <<'EOF'
+Usage: debug-kube-api [--server URL] [--ca FILE] [--token FILE] [PATH]
+
+PATH defaults to /version. The Kubernetes service environment is used only
+when --server is omitted; no pod, namespace, session, or controller metadata
+is required. The service-account token is never printed.
+EOF
+}
+
+service_port=${KUBERNETES_SERVICE_PORT_HTTPS:-${KUBERNETES_SERVICE_PORT:-443}}
+server=${KUBERNETES_SERVICE_HOST:+https://${KUBERNETES_SERVICE_HOST}:${service_port}}
+ca_file=${KUBE_CA_FILE:-/var/run/secrets/kubernetes.io/serviceaccount/ca.crt}
+token_file=${KUBE_TOKEN_FILE:-/var/run/secrets/kubernetes.io/serviceaccount/token}
+timeout_seconds=${WORKLOAD_DEBUG_TIMEOUT:-10}
+path=/version
+
+case "$timeout_seconds" in
+    ''|*[!0-9]*) printf '%s\n' 'debug-kube-api: timeout must be a positive integer' >&2; exit 2 ;;
+esac
+if [ "$timeout_seconds" -lt 1 ] || [ "$timeout_seconds" -gt 300 ]; then
+    printf '%s\n' 'debug-kube-api: timeout must be between 1 and 300' >&2
+    exit 2
+fi
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --server|--ca|--token)
+            [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+            case "$1" in
+                --server) server=$2 ;;
+                --ca) ca_file=$2 ;;
+                --token) token_file=$2 ;;
+            esac
+            shift 2 ;;
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+        -*) printf 'debug-kube-api: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+        *) path=$1; shift; break ;;
+    esac
+done
+[ "$#" -eq 0 ] || { usage >&2; exit 2; }
+
+if [ -z "$server" ]; then
+    printf '%s\n' 'debug-kube-api: --server is required outside a Kubernetes Pod' >&2
+    exit 2
+fi
+case "$server" in
+    http://*|https://*) ;;
+    *) printf '%s\n' 'debug-kube-api: server must be an http(s) URL' >&2; exit 2 ;;
+esac
+case "$path" in /*) ;; *) path=/$path ;; esac
+url=${server%/}$path
+
+max_bytes=${WORKLOAD_DEBUG_MAX_BYTES:-1048576}
+case "$max_bytes" in
+    ''|*[!0-9]*) printf '%s\n' 'debug-kube-api: max response size must be a positive integer' >&2; exit 2 ;;
+esac
+if [ "$max_bytes" -lt 1 ] || [ "$max_bytes" -gt 10485760 ]; then
+    printf '%s\n' 'debug-kube-api: max response size must be between 1 and 10485760 bytes' >&2
+    exit 2
+fi
+set -- curl --silent --show-error --fail-with-body --connect-timeout "$timeout_seconds" \
+    --max-time "$timeout_seconds" --max-filesize "$max_bytes"
+if [ -r "$ca_file" ]; then set -- "$@" --cacert "$ca_file"; fi
+limit_response=/usr/local/bin/limit-response
+if [ ! -x "$limit_response" ]; then
+    script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+    limit_response=$script_dir/limit-response
+fi
+
+# curl's --header @- form is useful for keeping a token out of argv, but it
+# also makes curl consume the caller's stdin. Run the authenticated request
+# through limit-response as well by placing the header in a private ephemeral
+# file. The file contains only the short-lived request header, is mode 0600,
+# and is removed on every exit path. In particular, do not call curl directly
+# here: --max-filesize does not bound chunked or unknown-length responses.
+auth_dir=
+cleanup_auth() {
+    if [ -n "$auth_dir" ]; then
+        rm -rf -- "$auth_dir"
+    fi
+}
+trap cleanup_auth EXIT HUP INT TERM
+
+if [ -r "$token_file" ]; then
+    token=$(tr -d '\r\n' < "$token_file")
+    [ -n "$token" ] && {
+        for temporary_base in "${TMPDIR:-}" /dev/shm /tmp; do
+            [ -n "$temporary_base" ] || continue
+            if [ ! -d "$temporary_base" ] || [ ! -w "$temporary_base" ]; then
+                continue
+            fi
+            if auth_dir=$(mktemp -d "$temporary_base/workload-debug-auth.XXXXXX" 2>/dev/null); then
+                break
+            fi
+            auth_dir=
+        done
+        [ -n "$auth_dir" ] || {
+            printf '%s\n' 'debug-kube-api: no writable ephemeral directory for authentication header' >&2
+            exit 1
+        }
+        auth_header=$auth_dir/header
+        umask 077
+        printf 'Authorization: Bearer %s' "$token" >"$auth_header"
+        chmod 0600 "$auth_header"
+        set -- "$@" --header "@$auth_header" "$url"
+        "$limit_response" "$max_bytes" "$@"
+        exit $?
+    }
+fi
+set -- "$@" "$url"
+"$limit_response" "$max_bytes" "$@"

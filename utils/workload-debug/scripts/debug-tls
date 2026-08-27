@@ -1,0 +1,60 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+set -eu
+
+usage() { printf '%s\n' 'Usage: debug-tls [--ca FILE] [--timeout SECONDS] HOST[:PORT]'; }
+timeout_seconds=${WORKLOAD_DEBUG_TIMEOUT:-10}
+ca_file=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --ca)
+            [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+            ca_file=$2; shift 2 ;;
+        --timeout)
+            [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+            timeout_seconds=$2; shift 2 ;;
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+        -*) printf 'debug-tls: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+        *) break ;;
+    esac
+done
+[ "$#" -eq 1 ] || { usage >&2; exit 2; }
+case "$timeout_seconds" in
+    ''|*[!0-9]*) printf '%s\n' 'debug-tls: timeout must be a positive integer' >&2; exit 2 ;;
+esac
+if [ "$timeout_seconds" -lt 1 ] || [ "$timeout_seconds" -gt 300 ]; then
+    printf '%s\n' 'debug-tls: timeout must be between 1 and 300' >&2
+    exit 2
+fi
+endpoint=$1
+case "$endpoint" in
+    \[*\]:*) host=${endpoint#\[}; host=${host%%\]*}; port=${endpoint##*\]:} ;;
+    *:*:*) printf '%s\n' 'debug-tls: IPv6 endpoints must use [HOST]:PORT' >&2; exit 2 ;;
+    *:*) host=${endpoint%:*}; port=${endpoint##*:} ;;
+    *) host=$endpoint; port=443 ;;
+esac
+if [ -z "$host" ] || [ -z "$port" ]; then
+    printf '%s\n' 'debug-tls: invalid endpoint' >&2
+    exit 2
+fi
+case "$port" in
+    ''|*[!0-9]*) printf '%s\n' 'debug-tls: port must be numeric' >&2; exit 2 ;;
+esac
+if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+    printf '%s\n' 'debug-tls: port out of range' >&2
+    exit 2
+fi
+
+printf 'TLS endpoint: %s:%s\n' "$host" "$port"
+connect_host=$host
+case "$host" in
+    *:*) connect_host="[$host]" ;;
+esac
+set -- openssl s_client -connect "$connect_host:$port" -servername "$host" -brief
+if [ -n "$ca_file" ]; then
+    [ -r "$ca_file" ] || { printf 'debug-tls: CA file is not readable: %s\n' "$ca_file" >&2; exit 2; }
+    set -- "$@" -CAfile "$ca_file" -verify 1 -verify_return_error
+fi
+printf '\n' | timeout "$timeout_seconds" "$@" 2>&1

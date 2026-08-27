@@ -1,0 +1,55 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+set -eu
+
+usage() { printf '%s\n' 'Usage: debug-dns [--server SERVER[#PORT]] NAME'; }
+server=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --server)
+            [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+            server=$2; shift 2 ;;
+        --help|-h) usage; exit 0 ;;
+        --) shift; break ;;
+        -*) printf 'debug-dns: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+        *) break ;;
+    esac
+done
+[ "$#" -eq 1 ] || { usage >&2; exit 2; }
+name=$1
+
+if command -v nslookup >/dev/null 2>&1; then
+    if [ -n "$server" ]; then
+        case "$server" in
+            *'#'*)
+                resolver_host=${server%%#*}
+                resolver_port=${server##*#}
+                if [ -z "$resolver_host" ] || [ -z "$resolver_port" ]; then
+                    printf '%s\n' 'debug-dns: invalid resolver HOST#PORT' >&2
+                    exit 2
+                fi
+                case "$resolver_port" in
+                    ''|*[!0-9]*) printf '%s\n' 'debug-dns: resolver port must be numeric' >&2; exit 2 ;;
+                esac
+                if [ "$resolver_port" -lt 1 ] || [ "$resolver_port" -gt 65535 ]; then
+                    printf '%s\n' 'debug-dns: resolver port out of range' >&2
+                    exit 2
+                fi
+                exec nslookup -port="$resolver_port" "$name" "$resolver_host"
+                ;;
+            *) exec nslookup "$name" "$server" ;;
+        esac
+    fi
+    exec nslookup "$name"
+fi
+
+command -v getent >/dev/null 2>&1 || {
+    printf '%s\n' 'debug-dns: neither nslookup nor getent is available' >&2
+    exit 127
+}
+[ -z "$server" ] || {
+    printf '%s\n' 'debug-dns: --server requires nslookup' >&2
+    exit 127
+}
+exec getent hosts "$name"

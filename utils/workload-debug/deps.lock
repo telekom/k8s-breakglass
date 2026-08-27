@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+#
+# Runtime dependency inventory for Dockerfile. The base manifest digest and
+# Alpine release are immutable; refresh this inventory and the generated SBOM
+# together when the package repository is refreshed.
+base=alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+repository=https://dl-cdn.alpinelinux.org/alpine/v3.24/main
+repository=https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+bash=5.3.9-r1
+bind-tools=9.20.26-r0
+ca-certificates=20260611-r0
+curl=8.21.0-r0
+jq=1.8.1-r0
+openssl=3.5.8-r0
+tini=0.19.0-r3

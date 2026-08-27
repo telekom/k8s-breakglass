@@ -1,0 +1,34 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+set -eu
+
+usage() {
+    cat <<'EOF'
+Usage: workload-debug <command> [options]
+
+Commands:
+  dns       Resolve a DNS name (debug-dns)
+  tls       Inspect a TLS endpoint (debug-tls)
+  http      Make a safe HTTP request (debug-http)
+  kube-api  Query the Kubernetes API (debug-kube-api)
+  report    Print a non-invasive diagnostic report (debug-report)
+EOF
+}
+
+if [ "$#" -eq 0 ]; then
+    usage
+    exit 0
+fi
+
+command=$1
+shift
+case "$command" in
+    dns) exec debug-dns "$@" ;;
+    tls) exec debug-tls "$@" ;;
+    http) exec debug-http "$@" ;;
+    kube-api) exec debug-kube-api "$@" ;;
+    report) exec debug-report "$@" ;;
+    help|-h|--help) usage ;;
+    *) printf 'workload-debug: unknown command: %s\n' "$command" >&2; usage >&2; exit 2 ;;
+esac
