@@ -224,8 +224,8 @@ kubectl -n "${namespace}" get job capture -o json | jq -e '
 	.spec.template.spec.containers[1].securityContext.allowPrivilegeEscalation == false and
 	(.spec.template.spec.containers[1].securityContext.capabilities.drop == ["ALL"]) and
 	(.spec.template.spec.containers[1].volumeMounts | all(.[]; .mountPath == "/work")) and
-	([.spec.template.spec.initContainers[], .spec.template.spec.containers[]]
-	 | all(.volumeMounts[]?; (.mountPath | IN("/run/containerd/containerd.sock", "/var/run/containerd/containerd.sock", "/var/run/docker.sock") | not)))
+	all([.spec.template.spec.initContainers[], .spec.template.spec.containers[]][];
+		all(.volumeMounts[]?; (.mountPath | IN("/run/containerd/containerd.sock", "/var/run/containerd/containerd.sock", "/var/run/docker.sock") | not)))
 ' >/dev/null || requirement 'selected-pod capture Job security boundary was not retained by the cluster'
 
 if ! kubectl -n "${namespace}" wait job/capture --for=condition=Complete --timeout=90s; then
