@@ -34,8 +34,14 @@ spec:
           imagePullPolicy: {{ $.Values.imagePullPolicy }}
           command:
 {{ toYaml $profile.command | nindent 12 }}
+          {{- if eq (default "" $profile.intent) "dump-access" }}
+          args:
+            - copy
+            - {{ required (printf "profiles[%s].sourcePath is required when dump-access is enabled" $profile.name) $profile.sourcePath | quote }}
+          {{- else }}
           args:
 {{ toYaml $profile.args | nindent 12 }}
+          {{- end }}
           {{- $validatorIdentity := eq (default "" $profile.intent) "cluster-validation" }}
           {{- if or $validatorIdentity (and $profile.pod $profile.pod.env) }}
           env:
