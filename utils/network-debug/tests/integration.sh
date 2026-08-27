@@ -523,10 +523,15 @@ if [ "$PWRU_READY" = true ]; then
 		fi
 		requirement "public net-debug trace exceeded its bounded wait"
 	fi
-	case "$trace_exit" in 0|130|141|143) ;; *) requirement "public net-debug trace exited unsuccessfully: $trace_exit" ;; esac
 	trace_state=$(docker_call inspect --format '{{.State.Status}}' "$PWRU_CONTAINER" 2>/dev/null) || requirement "could not inspect completed trace container"
 	[ "$trace_state" = exited ] || requirement "public net-debug trace container did not exit"
 	trace_summary=$(docker_call logs "$PWRU_CONTAINER") || requirement "could not read public trace summary"
+	case "$trace_exit" in 0|130|141|143) ;; *)
+		printf '%s\n' 'public net-debug trace logs (owned invocation):' >&2
+		printf '%s\n' "$trace_summary" >&2
+		requirement "public net-debug trace exited unsuccessfully: $trace_exit"
+		;;
+	esac
 	printf '%s\n' "$trace_summary" >"$WORK_DIR/trace-summary.txt"
 	grep -Fx 'trace' "$WORK_DIR/trace-summary.txt" >/dev/null || requirement "public trace summary missing operation marker"
 	grep -Fx "duration $TRACE_DURATION" "$WORK_DIR/trace-summary.txt" >/dev/null || requirement "public trace summary missing duration bound"
