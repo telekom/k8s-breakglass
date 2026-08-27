@@ -63,139 +63,18 @@ jobs:
             echo "make_latest=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # Build and publish every standalone utility as an immutable, signed
-  # multi-architecture release artifact. These jobs are intentionally separate
-  # from normal CI: release tags are the only refs that are pushed.
-  utility-images:
-    needs: [validate-tag]
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: workload
-            path: utils/workload-debug
-            file: Dockerfile
-            image: workload-debug
-          - name: network
-            path: utils/network-debug
-            file: Dockerfile
-            image: network-debug
-          - name: storage
-            path: utils/images/storage-debug
-            file: Dockerfile
-            image: storage-debug
-          - name: dump
-            path: utils/images/dump-reader
-            file: Dockerfile
-            image: dump-reader
-          - name: node
-            path: utils/node-maintenance
-            file: Dockerfile
-            image: node-maintenance
-          - name: validator
-            path: .
-            file: utils/cluster-validator/Dockerfile
-            image: cluster-validator
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-      - name: Build, sign, attest, and verify utility
-        env:
-          IMAGE: ghcr.io/telekom/k8s-breakglass/${{ matrix.image }}
-        run: |
-          set -euo pipefail
-          build_date="$(git show -s --format=%cI "${GITHUB_SHA}")"
-          docker buildx build --platform linux/amd64,linux/arm64 \
-            --file "${{ matrix.path }}/${{ matrix.file }}" \
-            --tag "${IMAGE}:${GITHUB_REF_NAME}" --provenance=true --sbom=true --push \
-            --build-arg VERSION="${GITHUB_REF_NAME}" --build-arg VCS_REF="${GITHUB_SHA}" \
-            --build-arg GIT_COMMIT="${GITHUB_SHA}" --build-arg BUILD_DATE="${build_date}" \
-            "${{ matrix.path }}"
-      - name: Resolve immutable utility digest
-        id: resolve
-        env:
-          IMAGE: ghcr.io/telekom/k8s-breakglass/${{ matrix.image }}
-        run: |
-          set -euo pipefail
-          for attempt in $(seq 1 30); do
-            digest="$(docker buildx imagetools inspect "${IMAGE}:${GITHUB_REF_NAME}" 2>/dev/null | awk '/^Digest:[[:space:]]+sha256:[0-9a-f]{64}$/ {print $2; exit}')"
-            if [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-              echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
-              echo "subject=${IMAGE}@${digest}" >> "${GITHUB_OUTPUT}"
-              echo "Resolved ${IMAGE}:${GITHUB_REF_NAME} to ${digest} after ${attempt} attempt(s)."
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "Could not resolve an immutable digest for ${IMAGE}:${GITHUB_REF_NAME} after push" >&2
-          exit 1
-      - name: Generate SPDX SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          image: ${{ steps.resolve.outputs.subject }}
-          format: spdx-json
-          output-file: ${{ matrix.name }}.spdx.json
-          upload-release-assets: false
-      - name: Sign, attest, and verify utility
-        env:
-          IMAGE: ghcr.io/telekom/k8s-breakglass/${{ matrix.image }}
-          DIGEST: ${{ steps.resolve.outputs.digest }}
-          SUBJECT: ${{ steps.resolve.outputs.subject }}
-        run: |
-          set -euo pipefail
-          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
-          [[ "${SUBJECT}" = "${IMAGE}@${DIGEST}" ]]
-          digest="${DIGEST}"
-          subject="${SUBJECT}"
-          cosign sign --yes "${subject}"
-          cosign attest --yes --type spdxjson --predicate "${{ matrix.name }}.spdx.json" "${subject}"
-          bash hack/generate-slsa-provenance.sh \
-            --subject "${IMAGE}" --digest "${digest}" --sha "${GITHUB_SHA}" \
-            --build-type "https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml" \
-            --builder-id "github-actions" --output "${{ matrix.name }}.provenance.json"
-          cosign attest --yes --type slsaprovenance1 --predicate "${{ matrix.name }}.provenance.json" "${subject}"
-          cosign verify "${subject}" --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
-          cosign verify-attestation "${subject}" --type spdxjson --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
-          cosign verify-attestation "${subject}" --type slsaprovenance1 --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
-          printf '%s|%s|%s\n' '${{ matrix.name }}' "${IMAGE}" "${digest}" > '${{ matrix.name }}.ref'
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: utility-ref-${{ matrix.name }}
-          path: ${{ matrix.name }}.ref
-
   # ---------------------------------------------------------------------------
   # Build release manifests, Helm chart package, and bgctl CLI binaries
   # ---------------------------------------------------------------------------
   prepare:
-    needs: [validate-tag, utility-images]
+    needs: [validate-tag]
+    outputs:
+      chart_names: ${{ steps.package-charts.outputs.chart_names }}
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Download signed utility release references
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: utility-ref-*
-          merge-multiple: true
-          path: /tmp/utility-refs
-      - name: Generate immutable catalogue image values
-        run: |
-          set -euo pipefail
-          hack/generate-release-values.sh /tmp/utility-refs release-values.yaml
-          cat release-values.yaml
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -242,6 +121,7 @@ jobs:
             manifests-debug.yaml
             manifests-crds.yaml
       - name: Package escalation Helm chart
+        id: package-charts
         run: |
           set -euo pipefail
 
@@ -251,28 +131,31 @@ jobs:
             --destination chart-dist \
             --app-version "${{ github.ref_name }}"
           # The standalone catalogue is introduced by the foundation stack.
-          # Keep the base release valid before that chart lands, while making
-          # its package part of the same immutable release once present.
+          # Keep the base release valid before that chart lands. Utility image
+          # publication and digest injection are owned by the follow-up dev
+          # publication workflow, so this foundation release only packages the
+          # chart's generic defaults.
           if [ -d charts/debug-session-catalogue ]; then
-            catalogue_stage="$(mktemp -d)/debug-session-catalogue"
-            cp -R charts/debug-session-catalogue "${catalogue_stage}"
-            ruby -ryaml -e '
-              chart = ARGV.fetch(0)
-              release = YAML.safe_load(File.read(ARGV.fetch(1)), aliases: false)
-              values_path = File.join(chart, "values.yaml")
-              values = YAML.safe_load(File.read(values_path), aliases: false)
-              values["images"] = release.fetch("images")
-              File.write(values_path, YAML.dump(values))
-            ' "${catalogue_stage}" release-values.yaml
-            helm lint "${catalogue_stage}" --strict
-            helm template release-proof "${catalogue_stage}" >/dev/null
-            helm package "${catalogue_stage}" \
+            helm lint charts/debug-session-catalogue --strict
+            helm template release-proof charts/debug-session-catalogue >/dev/null
+            helm package charts/debug-session-catalogue \
               --destination chart-dist \
               --app-version "${{ github.ref_name }}"
           fi
 
           echo "Packaged chart artifacts:"
           ls -la chart-dist
+          shopt -s nullglob
+          chart_packages=(chart-dist/*.tgz)
+          [ "${#chart_packages[@]}" -gt 0 ] || { echo "No chart packages found" >&2; exit 1; }
+          chart_names_json="$({
+            for chart_package in "${chart_packages[@]}"; do
+              helm show chart "${chart_package}" | awk '/^name:/ {print $2; exit}'
+            done
+          } | jq -Rsc 'split("\n") | map(select(length > 0)) | unique')"
+          jq -e 'length == '"${#chart_packages[@]}"' and all(.[]; type == "string" and length > 0)' \
+            <<<"${chart_names_json}" >/dev/null
+          echo "chart_names=${chart_names_json}" >> "${GITHUB_OUTPUT}"
       - name: Upload chart artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -644,12 +527,76 @@ jobs:
             echo "Warning: Artifact path not confirmed after retries (HTTP ${HTTP_STATUS_AFTER}). It might be a permission issue or Artifactory indexing delay."
           fi
 
+  # Generate one SBOM for each packaged chart. Keeping this as a matrix makes
+  # the package selected for scanning explicit and prevents one aggregate SBOM
+  # from being reused for multiple OCI subjects.
+  chart-sbom:
+    needs: [prepare]
+    strategy:
+      fail-fast: false
+      matrix:
+        chart: ${{ fromJSON(needs.prepare.outputs.chart_names) }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-chart
+          path: chart-dist
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.2
+      - name: Select exactly one chart package
+        id: select
+        env:
+          CHART_NAME: ${{ matrix.chart }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          chart_packages=(chart-dist/*.tgz)
+          matches=()
+          for chart_package in "${chart_packages[@]}"; do
+            chart_name="$(helm show chart "${chart_package}" | awk '/^name:/ {print $2; exit}')"
+            if [ "${chart_name}" = "${CHART_NAME}" ]; then
+              matches+=("${chart_package}")
+            fi
+          done
+          [ "${#matches[@]}" -eq 1 ] || {
+            echo "Expected exactly one package for ${CHART_NAME}, found ${#matches[@]}" >&2
+            exit 1
+          }
+          for chart_package in "${chart_packages[@]}"; do
+            [ "${chart_package}" = "${matches[0]}" ] || rm -- "${chart_package}"
+          done
+          echo "package=${matches[0]}" >> "${GITHUB_OUTPUT}"
+      - name: Generate chart-specific SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: chart-dist
+          format: spdx-json
+          output-file: ${{ matrix.chart }}.spdx.json
+          upload-release-assets: false
+      - name: Bind and validate SBOM subject
+        run: |
+          set -euo pipefail
+          bash hack/attach-chart-subject.sh \
+            "${{ steps.select.outputs.package }}" "${{ matrix.chart }}.spdx.json"
+          bash hack/verify-chart-sbom.sh \
+            "${{ steps.select.outputs.package }}" "${{ matrix.chart }}.spdx.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chart-sbom-${{ matrix.chart }}
+          path: ${{ matrix.chart }}.spdx.json
+
   # ---------------------------------------------------------------------------
   # Publish Helm charts to GHCR OCI; the following step signs and verifies
   # every packaged chart, including the optional standalone catalogue.
   # ---------------------------------------------------------------------------
   publish-chart:
-    needs: [prepare]
+    needs: [prepare, chart-sbom]
     permissions:
       contents: read
       packages: write
@@ -661,6 +608,12 @@ jobs:
         with:
           name: release-chart
           path: chart-dist
+      - name: Download chart-specific SBOMs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: chart-sbom-*
+          merge-multiple: true
+          path: chart-sboms
       - name: Set up Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
@@ -671,12 +624,6 @@ jobs:
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: v3.0.2
-      - name: Generate chart SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          path: chart-dist
-          format: spdx-json
-          output-file: chart-sbom.spdx.json
       - name: Login to GHCR for Helm OCI
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} \
@@ -709,8 +656,10 @@ jobs:
             digest="$(docker buildx imagetools inspect "${docker_remote}:${chart_version}" | awk '/^Digest:[[:space:]]+sha256:[0-9a-f]{64}$/ {print $2; exit}')"
             [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "No immutable digest for ${remote}:${chart_version}" >&2; exit 1; }
             subject="${docker_remote}@${digest}"
+            sbom="chart-sboms/${chart_name}.spdx.json"
+            bash hack/verify-chart-sbom.sh "${chart_package}" "${sbom}"
             cosign sign --yes "${subject}"
-            cosign attest --yes --type spdxjson --predicate chart-sbom.spdx.json "${subject}"
+            cosign attest --yes --type spdxjson --predicate "${sbom}" "${subject}"
             bash hack/generate-slsa-provenance.sh \
               --subject "${remote#oci://}" --digest "${digest}" --sha "${GITHUB_SHA}" \
               --build-type "https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml" \
