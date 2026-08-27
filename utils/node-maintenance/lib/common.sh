@@ -80,7 +80,9 @@ validate_vlan() {
 	case "$value" in
 		''|*[!0-9]*) die "VLAN must be an integer from 1 through 4094" ;;
 	esac
-	[ "$value" -ge 1 ] && [ "$value" -le 4094 ] || die "VLAN must be an integer from 1 through 4094"
+	if [ "$value" -lt 1 ] || [ "$value" -gt 4094 ]; then
+		die "VLAN must be an integer from 1 through 4094"
+	fi
 }
 
 validate_confirmation() {
