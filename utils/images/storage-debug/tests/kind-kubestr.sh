@@ -56,12 +56,28 @@ CLUSTER_CREATED=true
 kind load docker-image "$IMAGE" --name "$CLUSTER" >/dev/null
 export KUBECONFIG=$KUBECONFIG_FILE
 
-source_ref=$(docker exec "${CLUSTER}-control-plane" ctr --namespace k8s.io images list --quiet | \
-    awk -v image="$IMAGE" '$0 == image || (length($0) > length(image) && substr($0, length($0) - length(image) + 1) == image) { print }')
-[ "$(printf '%s\n' "$source_ref" | sed '/^$/d' | wc -l | tr -d '[:space:]')" -eq 1 ] || \
-    fail "could not resolve exactly one Kind containerd reference for $IMAGE"
+image_with_default_tag="${IMAGE}:latest"
+mapfile -t source_refs < <(docker exec "${CLUSTER}-control-plane" ctr --namespace k8s.io images list --quiet | \
+    awk -v image="$IMAGE" -v image_latest="$image_with_default_tag" '
+        $0 == image || $0 == image_latest ||
+        (length($0) > length(image) && substr($0, length($0) - length(image) + 1) == image) ||
+        (length($0) > length(image_latest) && substr($0, length($0) - length(image_latest) + 1) == image_latest) { print }
+    ')
+[ "${#source_refs[@]}" -ge 1 ] || fail "could not find a Kind containerd reference for $IMAGE"
+
+source_ref="${source_refs[0]}"
 manifest_digest=$(docker exec "${CLUSTER}-control-plane" ctr --namespace k8s.io images list | \
     awk -v ref="$source_ref" '$1 == ref { print $3 }')
+if [ "${#source_refs[@]}" -gt 1 ]; then
+    mapfile -t matching_digests < <(docker exec "${CLUSTER}-control-plane" ctr --namespace k8s.io images list | \
+        awk -v image="$IMAGE" -v image_latest="$image_with_default_tag" '
+            $1 == image || $1 == image_latest ||
+            (length($1) > length(image) && substr($1, length($1) - length(image) + 1) == image) ||
+            (length($1) > length(image_latest) && substr($1, length($1) - length(image_latest) + 1) == image_latest) { print $3 }
+        ' | sort -u)
+    [ "${#matching_digests[@]}" -eq 1 ] || fail "could not resolve exactly one Kind image digest for $IMAGE"
+    manifest_digest="${matching_digests[0]}"
+fi
 printf '%s\n' "$manifest_digest" | grep -Eq '^sha256:[0-9a-f]{64}$' || \
     fail "Kind did not expose a manifest digest for loaded image $IMAGE"
 loaded_ref="docker.io/library/storage-debug@${manifest_digest}"
