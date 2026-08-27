@@ -7,7 +7,6 @@ set -Eeuo pipefail
 IMAGE=${NETWORK_DEBUG_IMAGE:-network-debug:integration}
 EXEC_TIMEOUT=${NETWORK_DEBUG_EXEC_TIMEOUT_SECONDS:-20}
 DOCKER_TIMEOUT=${NETWORK_DEBUG_DOCKER_TIMEOUT_SECONDS:-30}
-PWRU_TIMEOUT=${NETWORK_DEBUG_PWRU_TIMEOUT_SECONDS:-20}
 PWRU_REQUIRED=${NETWORK_DEBUG_REQUIRE_PWRU:-true}
 TRACE_DURATION=10
 TRACE_EVENTS=10000
@@ -15,6 +14,11 @@ TRACE_EVENTS=10000
 # while allowing the daemon a short, evidence-backed detach window.
 PWRU_STOP_TIMEOUT=${NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS:-15}
 PWRU_STOP_SETTLE=${NETWORK_DEBUG_PWRU_STOP_SETTLE_SECONDS:-5}
+# The outer Docker wait must cover the trace duration and both bounded pwru
+# shutdown windows, plus a small scheduling margin. A fixed 20-second wait
+# expired while net-debug was still within its documented 15+5 second stop
+# contract, falsely reporting a trace failure.
+PWRU_TIMEOUT=${NETWORK_DEBUG_PWRU_TIMEOUT_SECONDS:-$((TRACE_DURATION + PWRU_STOP_TIMEOUT + PWRU_STOP_SETTLE + 5))}
 RUN_ID="network-debug-proof-${RANDOM}-${RANDOM}"
 NETWORK=${RUN_ID}-network
 CONTAINER=${RUN_ID}-tools

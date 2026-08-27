@@ -491,7 +491,9 @@ func validSystemdLayout(components []string, podIndex int, marker string, parent
 			return false
 		}
 		if podIndex == 1 {
-			return components[1] == "kubepods-"+marker+".slice"
+			return components[1] == "kubepods-"+marker+".slice" ||
+				components[1] == "kubepods-burstable-"+marker+".slice" ||
+				components[1] == "kubepods-besteffort-"+marker+".slice"
 		}
 		qosIndex := 1
 		if components[1] == "kubepods.slice" {
