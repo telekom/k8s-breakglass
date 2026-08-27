@@ -47,10 +47,18 @@ end
   end
 end
 
-index = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.index.v1+json", "manifests" => descriptors }
-File.write(File.join(root, "index.json"), JSON.generate(index))
-index["manifests"].reject! { |descriptor| descriptor.dig("annotations", "vnd.docker.reference.type") == "attestation-manifest" }
-File.write(File.join(root, "bad-index.json"), JSON.generate(index))
+nested = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.index.v1+json", "manifests" => descriptors }
+nested_payload = JSON.generate(nested)
+nested_digest = Digest::SHA256.hexdigest(nested_payload)
+File.write(File.join(blob_dir, nested_digest), nested_payload)
+root_index = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.index.v1+json", "manifests" => [{ "mediaType" => nested["mediaType"], "digest" => "sha256:#{nested_digest}", "size" => nested_payload.bytesize }] }
+File.write(File.join(root, "index.json"), JSON.generate(root_index))
+nested["manifests"].reject! { |descriptor| descriptor.dig("annotations", "vnd.docker.reference.type") == "attestation-manifest" }
+bad_nested_payload = JSON.generate(nested)
+bad_nested_digest = Digest::SHA256.hexdigest(bad_nested_payload)
+File.write(File.join(blob_dir, bad_nested_digest), bad_nested_payload)
+bad_root_index = root_index.merge("manifests" => [{ "mediaType" => nested["mediaType"], "digest" => "sha256:#{bad_nested_digest}", "size" => bad_nested_payload.bytesize }])
+File.write(File.join(root, "bad-index.json"), JSON.generate(bad_root_index))
 RUBY
 
 (cd "$test_root" && tar -cf "$test_root/good.tar" index.json blobs)
