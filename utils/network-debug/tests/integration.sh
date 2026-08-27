@@ -24,6 +24,7 @@ RUN_ID="network-debug-proof-${RANDOM}-${RANDOM}"
 NETWORK=${RUN_ID}-network
 CONTAINER=${RUN_ID}-tools
 PWRU_CONTAINER=${RUN_ID}-pwru
+TRACE_TRAFFIC_CONTAINER=${RUN_ID}-trace-traffic
 NETWORK_NAMESPACE=${RUN_ID}-network
 NETWORK_HOST_POD_NAME=${RUN_ID}-host-network
 # Never accept a caller-selected cluster name: the random run ID is the only
@@ -40,6 +41,7 @@ NETWORK_NAMESPACE_CREATED=false
 NETWORK_CREATED=false
 CONTAINER_CREATED=false
 PWRU_CONTAINER_CREATED=false
+TRACE_TRAFFIC_CONTAINER_CREATED=false
 DOCKER_OWNER_LABEL=com.telekom.network-debug.run
 # shellcheck disable=SC2034 # consumed by the sourced pwru lifecycle helper
 PWRU_OWNER_LABEL=$DOCKER_OWNER_LABEL
@@ -85,9 +87,11 @@ cleanup() {
 	if ! kind_cleanup_owned_cluster; then
 			cleanup_failed=true
 	fi
-	for docker_container in "$PWRU_CONTAINER" "$CONTAINER"; do
+	for docker_container in "$PWRU_CONTAINER" "$TRACE_TRAFFIC_CONTAINER" "$CONTAINER"; do
 		container_owned=false
 		if [ "$docker_container" = "$PWRU_CONTAINER" ] && [ "$PWRU_CONTAINER_CREATED" = true ]; then
+			container_owned=true
+		elif [ "$docker_container" = "$TRACE_TRAFFIC_CONTAINER" ] && [ "$TRACE_TRAFFIC_CONTAINER_CREATED" = true ]; then
 			container_owned=true
 		elif [ "$docker_container" = "$CONTAINER" ] && [ "$CONTAINER_CREATED" = true ]; then
 			container_owned=true
@@ -486,6 +490,24 @@ if [ "$PWRU_READY" = true ]; then
 	fi
 fi
 if [ "$PWRU_READY" = true ]; then
+	# Keep matching traffic flowing before and during attachment. A single
+	# request after a slow kprobe startup is not a behavioral pwru proof: it can
+	# finish before the hooks begin listening. This client has no capabilities,
+	# is owner-labelled, and is removed by the same failure cleanup as the trace.
+	if docker_call inspect "$TRACE_TRAFFIC_CONTAINER" >/dev/null 2>&1; then
+		requirement "refusing to reuse an existing trace traffic container named $TRACE_TRAFFIC_CONTAINER"
+	fi
+	TRACE_TRAFFIC_CONTAINER_CREATED=true
+	docker_call run --detach --name "$TRACE_TRAFFIC_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" \
+		--network host --cap-drop ALL --security-opt no-new-privileges=true "$IMAGE" sh -ec '
+			while :; do
+				curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18080/ >/dev/null || true
+				sleep 0.1
+			done
+		' >/dev/null 2>&1 || requirement "could not start owned trace traffic generator"
+	docker_call run --rm --network host --cap-drop ALL --security-opt no-new-privileges=true \
+		"$IMAGE" curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18080/ >/dev/null || \
+		requirement "trace HTTP traffic generator could not reach the fixture"
 	# A generated name is expected to be absent. Refuse a collision before
 	# claiming ownership so cleanup can never remove another run's container.
 	if docker_call inspect "$PWRU_CONTAINER" >/dev/null 2>&1; then
@@ -503,12 +525,9 @@ if [ "$PWRU_READY" = true ]; then
 	docker_call run --detach --name "$PWRU_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" \
 		-e NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS="$PWRU_STOP_TIMEOUT" \
 		"${PWRU_RUN_ARGS[@]}" --network host "$IMAGE" trace \
-			--duration "$TRACE_DURATION" --events "$TRACE_EVENTS" --output trace.log \
+			--duration "$TRACE_DURATION" --events "$TRACE_EVENTS" --filter 'tcp port 18080' --output trace.log \
 		>"$WORK_DIR/trace-start.log" 2>&1 || trace_start_status=$?
 	[ "$trace_start_status" -eq 0 ] || requirement "could not start public net-debug trace operation"
-	sleep 2
-	docker_call run --rm --network host "$IMAGE" curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18080/ >/dev/null || requirement "trace HTTP traffic generator failed"
-	docker_call run --rm --network host "$IMAGE" ping -n -c 1 -W 1 127.0.0.1 >/dev/null || requirement "trace traffic generator failed"
 	# The wrapper's duration is itself bounded. Wait only through a separate
 	# bounded Docker wait, then validate its public summary and evidence file.
 	trace_wait_status=0
