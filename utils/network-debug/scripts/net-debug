@@ -108,20 +108,25 @@ process_alive() {
 
 process_group_alive() {
 	pid=$1
-	# The session leader can become a zombie while a child is still running.
-	# Check the complete owned process group so that state never allows a trace
-	# descendant to escape the watchdog.
-	kill -0 "-$pid" 2>/dev/null && return 0
-	# `kill --` is not implemented by every minimal shell. Keep it as a
-	# compatibility retry, but never fall back to the leader on Linux: doing so
-	# could report a dead group while an adopted descendant is still running.
-	kill -0 -- "-$pid" 2>/dev/null && return 0
-	if [ ! -d /proc ]; then
-		# Non-Linux platforms without /proc cannot expose adopted descendants;
-		# retain the direct check there for portability of the image helper tests.
-		process_alive "$pid"
+	# A session leader can become a zombie after its group is killed while a
+	# shell parent has not reaped it yet. `kill -0 -PGID` reports that zombie as
+	# alive and would hold the public wrapper until its whole polling bound.
+	# On Linux, inspect every process in the owned group and count only live
+	# members; a surviving descendant still keeps the group alive and therefore
+	# remains subject to the watchdog's KILL and fail-closed checks.
+	if [ -d /proc ]; then
+		for stat_file in /proc/[0-9]*/stat; do
+			[ -r "$stat_file" ] || continue
+			stat_tail=$(awk -F') ' '{print $NF}' "$stat_file" 2>/dev/null || true)
+			state=$(printf '%s\n' "$stat_tail" | awk '{print $1}')
+			process_group=$(printf '%s\n' "$stat_tail" | awk '{print $3}')
+			[ "$process_group" = "$pid" ] && [ "$state" != Z ] && return 0
+		done
+		return 1
 	fi
-	return 1
+	# Non-Linux platforms without /proc cannot expose adopted descendants;
+	# retain the direct check there for portability of the image helper tests.
+	process_alive "$pid"
 }
 
 kill_process_group() {
