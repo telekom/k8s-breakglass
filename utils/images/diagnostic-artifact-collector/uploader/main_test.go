@@ -8,6 +8,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -292,6 +293,17 @@ func TestUploadRejectsEmptyTokenAndURLQuery(t *testing.T) {
 	}
 }
 
+func TestUploadTokenRejectsEmbeddedWhitespace(t *testing.T) {
+	for _, token := range []string{"one two", "one\ttwo", "one\u00a0two"} {
+		t.Run(fmt.Sprintf("token-%q", token), func(t *testing.T) {
+			t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_TOKEN", token)
+			if _, err := uploadToken(); err == nil {
+				t.Fatal("uploadToken() accepted embedded whitespace")
+			}
+		})
+	}
+}
+
 func TestUploadRejectsInvalidOrNarrowedArchiveCap(t *testing.T) {
 	path, ready := uploadFixture(t, []byte("archive-bytes"))
 	oldPath, oldReady := artifactPath, readyPath
@@ -448,6 +460,7 @@ func TestRecipeArchiveLimitRejectsMissingWrongAndCrossRecipeIdentity(t *testing.
 		{name: "missing recipe version", body: strings.Replace(validSummary, `"recipe_version":1,`, "", 1)},
 		{name: "wrong recipe version", body: strings.Replace(validSummary, `"recipe_version":1`, `"recipe_version":2`, 1)},
 		{name: "wrong archive format", body: strings.Replace(validSummary, `"archive_format":"tar.gz"`, `"archive_format":"zip"`, 1)},
+		{name: "non-hex payload checksum", body: strings.Replace(validSummary, strings.Repeat("0", sha256.Size*2), strings.Repeat("g", sha256.Size*2), 1)},
 		{name: "summary with crashdump identity", body: strings.Replace(validSummary, `"node":null,"archive_format"`, `"node":"node-a","archive_format"`, 1)},
 		{name: "crashdump with summary identity", body: strings.Replace(validCrashdump, `"node":"node-a","archive_format"`, `"node":null,"archive_format"`, 1)},
 	} {

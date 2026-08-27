@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +25,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 )
 
 const (
@@ -209,6 +211,9 @@ func validateManifestContract(contract artifactManifest) (int64, error) {
 		len(contract.PayloadSHA256) != sha256.Size*2 || contract.FileCount < 0 || contract.Bytes < 0 {
 		return 0, errors.New("artifact manifest identity is invalid")
 	}
+	if _, err := hex.DecodeString(contract.PayloadSHA256); err != nil {
+		return 0, errors.New("artifact manifest payload checksum is invalid")
+	}
 
 	var immutableLimit int64
 	switch contract.Recipe {
@@ -393,7 +398,7 @@ func uploadURL() (*url.URL, error) {
 func uploadToken() (string, error) {
 	token := os.Getenv("BREAKGLASS_ARTIFACT_UPLOAD_TOKEN")
 	if token == "" || len(token) > maxTokenBytes || strings.TrimSpace(token) != token ||
-		strings.ContainsAny(token, "\r\n\t\x00") {
+		strings.IndexFunc(token, unicode.IsSpace) >= 0 || strings.ContainsRune(token, '\x00') {
 		return "", errors.New("upload token is invalid")
 	}
 	return token, nil
