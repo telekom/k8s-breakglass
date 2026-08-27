@@ -46,7 +46,7 @@ The chart includes these profiles:
 | `workload-diagnostics` | enabled | Isolated workload diagnostics |
 | `network-diagnostics` | disabled | Elevated node-network diagnostics |
 | `storage-diagnostics` | enabled | Ephemeral storage inspection |
-| `dump-access` | disabled | Host-network packet capture |
+| `dump-access` | disabled | Inspect and copy approved existing dump files |
 | `network-repair` | disabled | Host-network network repair |
 | `node-recovery` | disabled | Host-network/host-PID node recovery |
 | `cluster-validation` | disabled | Isolated read-only validation checks (explicit RBAC opt-in) |

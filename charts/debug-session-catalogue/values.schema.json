@@ -96,9 +96,28 @@
                 "additionalProperties": false,
                 "properties": {
                   "name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
-                  "value": { "type": "string" }
+                  "value": { "type": "string" },
+                  "valueFrom": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "fieldRef": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "fieldPath": { "type": "string", "minLength": 1 }
+                        },
+                        "required": ["fieldPath"]
+                      }
+                    },
+                    "required": ["fieldRef"]
+                  }
                 },
-                "required": ["name", "value"]
+                "required": ["name"],
+                "oneOf": [
+                  { "required": ["value"], "not": { "required": ["valueFrom"] } },
+                  { "required": ["valueFrom"], "not": { "required": ["value"] } }
+                ]
               }
             }
           }
