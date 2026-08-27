@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: CC0-1.0
+
+name: Storage image behavior
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - "utils/images/storage-debug/**"
+      - ".github/workflows/storage-image-behavior.yml"
+  push:
+    branches: [main, deployment-testing]
+    paths:
+      - "utils/images/storage-debug/**"
+      - ".github/workflows/storage-image-behavior.yml"
+
+permissions:
+  contents: read
+
+env:
+  KIND_VERSION: v0.32.0
+  KIND_NODE_IMAGE: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
+
+jobs:
+  storage:
+    name: storage-diagnostics Docker and Kind behavior
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Install Kind
+        run: |
+          set -Eeuo pipefail
+          curl --fail --silent --show-error --location \
+            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" \
+            --output ./kind
+          chmod 0755 ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+      - name: Verify client prerequisites
+        run: |
+          set -Eeuo pipefail
+          docker info
+          kubectl version --client
+          jq --version
+      - name: Exercise storage image contract and real resources
+        run: make -C utils/images/storage-debug integration

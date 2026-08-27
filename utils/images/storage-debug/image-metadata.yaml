@@ -1,0 +1,72 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+---
+
+image: ghcr.io/telekom/k8s-breakglass/utils/storage-debug
+context: utils/images/storage-debug
+platforms:
+  - linux/amd64
+  - linux/arm64
+base:
+  image: alpine:3.24
+  digest: sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+runtime:
+  user: "65532:65532"
+  writable_paths:
+    - /scratch
+    - /reports
+  capabilities: []
+  privileged: false
+  network_required: operation-dependent
+dependencies:
+  - name: fio
+    version: 3.41-r0
+  - name: ioping
+    version: 1.3-r0
+  - name: kubestr
+    version: v0.4.49
+    commit: 01940ed37be9a0c7a70d80cd26c648eaa11e5174
+contract:
+  schema_version: storage-diagnostics/v1
+  executable: /usr/local/bin/storage-diagnostics
+  intents:
+    - storage-diagnostics
+  modes:
+    - mounted-volume
+    - performance
+    - snapshot-restore
+    - snapshot-source-clone
+    - block-volume
+    - plan
+    - docs
+    - runbook
+  bounds:
+    size_mib: 1024
+    runtime_seconds: 60
+    ioping_count: 20
+  provider_owned:
+    - namespace
+    - workload-image-digest
+    - service-account
+    - rbac
+    - admission-policy
+    - optional-read-only-internal-runbook-image-volume
+  denied_user_input:
+    - command
+    - image
+    - namespace
+    - node-selector
+    - fio-file
+    - test-name
+    - capability
+    - service-account
+    - rbac
+attestations:
+  sbom: required
+  provenance: required
+  signature: cosign-keyless
+signing:
+  tool: cosign
+  identity: keyless
+  verify_command: cosign verify IMAGE@DIGEST

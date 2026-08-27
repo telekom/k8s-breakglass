@@ -14,6 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   templates through Kubernetes image volumes. The controller continues to use
   the built-in runbooks when an optional bundle is absent and leaves capability,
   signature, and provenance enforcement to the platform admission pipeline.
+- **Storage diagnostics utility image**: Added the bounded `storage-debug`
+  image with mounted-volume fio/ioping checks and controller-owned kubestr
+  storage workflows.
+
+### Fixed
+
+- **Storage image behavior CI cleanup**: The storage-debug integration cleanup
+  now tolerates auto-removed Docker containers recorded in cidfiles while still
+  refusing to delete foreign, still-existing containers.
+- **Storage image behavior Kind image resolution**: The Kind integration proof
+  now accepts both explicit and implicit `:latest` containerd references and
+  deduplicates by manifest digest before creating the immutable local image
+  reference.
 
 ## [0.1.0-rc.8] - 2026-08-22
 

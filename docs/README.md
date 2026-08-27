@@ -49,6 +49,8 @@ Complete documentation for the breakglass privilege escalation system.
 
 ## Resources
 
+- **[Storage diagnostics image](../utils/images/storage-debug/README.md)** -
+  Bounded attached-volume and provider-dependent kubestr storage workflows
 - **[ClusterConfig](./cluster-config.md)** - Manage tenant cluster connections
 - **[BreakglassEscalation](./breakglass-escalation.md)** - Define privilege escalation policies
 - **[BreakglassSession](./breakglass-session.md)** - Active escalation sessions

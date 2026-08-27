@@ -1,0 +1,56 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+---
+schemaVersion: 1
+intent: storage-diagnostics
+image: ghcr.io/telekom/k8s-breakglass/utils/storage-debug
+operations:
+  - id: mounted-volume
+    apiAccess: false
+    interactive: true
+    tools: [fio, ioping]
+    privileges: []
+  - id: performance
+    apiAccess: controller-owned-service-account
+    interactive: false
+    tools: [kubestr, fio]
+    inputs: [storage-class, bounded-pvc-size]
+  - id: snapshot-restore
+    apiAccess: controller-owned-service-account
+    interactive: false
+    tools: [kubestr]
+    inputs: [storage-class, volume-snapshot-class]
+    providerAcceptance: required
+    clusterScopedMutation: false
+  - id: snapshot-source-clone
+    apiAccess: escalation-service-account
+    interactive: false
+    tools: [kubestr]
+    inputs: [storage-class, volume-snapshot-class]
+    providerAcceptance: required
+    clusterScopedMutation: temporary-volume-snapshot-class
+  - id: block-volume
+    apiAccess: controller-owned-service-account
+    interactive: false
+    tools: [kubestr]
+    inputs: [storage-class]
+    providerAcceptance: required
+fixed:
+  childImage: immutable-provider-owned-digest
+  namespace: downward-api
+  cleanup: true
+  runAsUser: 65532
+  upstreamRunbookRoot: /usr/share/breakglass/runbooks/upstream/storage-diagnostics
+  internalRunbookRoot: /usr/share/breakglass/runbooks/internal
+  internalRunbookMount: root-owned-read-only-image-volume-without-subPath
+deniedUserInput:
+  - command
+  - image
+  - namespace
+  - node-selector
+  - fio-file
+  - test-name
+  - capability
+  - service-account
+  - rbac
