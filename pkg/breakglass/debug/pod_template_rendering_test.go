@@ -2419,6 +2419,7 @@ func TestValidateRestrictedCatalogueRejectsPSSSurfaces(t *testing.T) {
 	}
 	baseline := func() corev1.PodSpec {
 		return corev1.PodSpec{
+			AutomountServiceAccountToken: &falseValue,
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot:   &trueValue,
 				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
@@ -2501,10 +2502,11 @@ func TestBuildWorkload_RestrictedCatalogueRejectsLegacyAppArmorAnnotationAfterMe
 		catalogueElevatedLabel: "false",
 	}
 	template := &breakglassv1alpha1.DebugSessionTemplate{
-		ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: map[string]string{
-			"container.apparmor.security.beta.kubernetes.io/debug": "unconfined",
-		}},
-		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{WorkloadType: breakglassv1alpha1.DebugWorkloadJob},
+		ObjectMeta: metav1.ObjectMeta{Labels: labels},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Annotations:  map[string]string{"container.apparmor.security.beta.kubernetes.io/debug": "unconfined"},
+			WorkloadType: breakglassv1alpha1.DebugWorkloadJob,
+		},
 	}
 	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		ObjectMeta: metav1.ObjectMeta{Labels: labels},
@@ -2527,6 +2529,20 @@ spec:
 `},
 	}
 	_, _, err := controller.buildWorkload(ds, template, nil, podTemplate, "target-ns")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "legacy AppArmor annotations")
+}
+
+func TestValidateRestrictedWorkloadAnnotationsRejectsFinalPodTemplateAnnotation(t *testing.T) {
+	workload := &batchv1.Job{
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+				"container.apparmor.security.beta.kubernetes.io/debug": "unconfined",
+			}}},
+		},
+	}
+
+	err := validateRestrictedWorkloadAnnotations(workload)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "legacy AppArmor annotations")
 }
