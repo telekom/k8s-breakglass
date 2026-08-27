@@ -13,8 +13,8 @@ changing the upstream utility image.
 
 ## Two documentation trees
 
-Every utility image should ship generic documentation at
-`/usr/share/breakglass/runbooks/upstream`. An approved platform may add an
+Every utility image should ship generic documentation below
+`/usr/share/breakglass/runbooks/upstream/<utility-or-intent>`. An approved platform may add an
 OCI artifact as a Kubernetes [image volume][k8s-image-volume], mounted
 read-only at `/usr/share/breakglass/runbooks/internal`.
 
@@ -135,10 +135,25 @@ values. The image reference must be allowlisted, digest-pinned, signed, and
 available to the target nodes using the normal image-pull-secret mechanism.
 
 `IfNotPresent` is appropriate for an immutable digest and allows nodes to use
-their cached copy. `Always` is also valid when the platform requires a fresh
-signature check at every pod start. Mutable tags are not valid for a runbook
-bundle. The volume is read-only by Kubernetes; callers must still use a
-read-only `volumeMount` and a read-only security context.
+their cached copy. `Always` is also valid when the platform accepts registry
+availability as a startup dependency. `Never` and mutable tags are not valid
+for a production runbook bundle. The volume is read-only by Kubernetes;
+callers must still use a read-only `volumeMount` and a read-only security
+context. `AlwaysPullImages` applies to image volumes too.
+
+Image-volume support depends on the cluster version and components:
+
+| Kubernetes version | Required platform decision |
+| --- | --- |
+| Before 1.31 | Unsupported; omit the optional bundle. |
+| 1.31–1.34 | Enable the `ImageVolume` feature gate on the API server and every eligible kubelet, and prove CRI support before selecting the bundle. |
+| 1.35 | The beta feature is enabled by default; still prove the actual kubelet/runtime path. |
+| 1.36 and later | The API is GA and always enabled; CRI support and registry access remain prerequisites. |
+
+`subPath` is intentionally excluded even where the cluster version supports
+it. Do not depend on image-volume digest reporting in Pod status; that is a
+separate feature and the immutable reference in the administrator-owned
+template remains the source of truth.
 
 Image volumes are resolved by the target kubelet and runtime, not by the
 Breakglass controller. The target cluster must support the ImageVolume API,
@@ -152,7 +167,9 @@ only, if the selected profile declares the internal bundle optional.
 The Kubernetes image-volume cache can remain on a node after a Pod is deleted.
 Session cleanup deletes the Pod and its owned resources; it does not promise
 node cache eviction. Consequently bundles must never contain secrets or
-incident evidence. Pull failures surface as Pod startup failures and are
+incident evidence. Image-volume mounts cannot currently be made `noexec`, so
+publishers must reject executable modes and utility images must never execute
+bundle content. Pull failures surface as Pod startup failures and are
 handled as an unmet prerequisite, not as a successful run with reduced docs.
 
 ## Review and test requirements
@@ -162,7 +179,9 @@ YAML strings:
 
 1. Build the bundle as an OCI artifact, inspect its manifest digest, verify its
    signature, SBOM, provenance, schema, paths, file modes, and absence of
-   executable or secret material.
+   executable or secret material. Do not assume that an admission rule which
+   verifies container images also examines `volumes[*].image.reference`;
+   release or admission CI must prove that coverage before relying on it.
 2. Render the administrator-owned DebugPodTemplate and create it in a cluster
    with image-volume support. Start a disposable debug Pod using a local
    registry fixture and verify that `bundle.yaml`, `INDEX.md`, and an indexed
