@@ -92,6 +92,15 @@ else
   docker image inspect "$image" >/dev/null 2>&1 || fail "WORKLOAD_DEBUG_IMAGE '$image' is not available"
 fi
 
+docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges --entrypoint /bin/sh "$image" -c '
+    test -r /usr/share/breakglass/runbooks/upstream/workload-debug/README.md
+    test -r /usr/share/breakglass/runbooks/upstream/workload-debug/RUNBOOK.md
+    test -d /usr/share/breakglass/runbooks/internal
+    test ! -e /usr/share/breakglass/runbooks/internal/INDEX.md
+    workload-debug --help >/dev/null
+  ' || fail "standalone image did not expose generic runbooks and helper behavior"
+
 GOOS=linux CGO_ENABLED=0 go build -trimpath -o "$fixture_dir/fixture-server" "$root/tests/fixture-server.go"
 
 # The fixture must reject an arbitrary token-file path rather than following
@@ -125,7 +134,9 @@ kubectl -n "$namespace" create serviceaccount workload-debug
 kubectl -n "$namespace" create role workload-debug --verb=get --resource=configmaps
 kubectl -n "$namespace" create rolebinding workload-debug --role=workload-debug --serviceaccount="$namespace:workload-debug"
 kubectl -n "$namespace" create configmap fixture-config --from-literal=value=fixture-config-value
-kubectl -n "$namespace" create configmap internal-runbook --from-literal=INDEX.md='internal runbook fixture'
+kubectl -n "$namespace" create configmap internal-runbook \
+  --from-literal=INDEX.md='internal runbook fixture' \
+  --from-literal=bundle.yaml='schemaVersion: breakglass.telekom.com/v1alpha1'
 
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=workload-debug-fixture" \
   -keyout "$fixture_dir/ca.key" -out "$fixture_dir/ca.crt" >/dev/null 2>&1
@@ -269,6 +280,11 @@ security=$(kubectl -n "$namespace" get pod "$runner" -o json | jq -c '.spec.cont
 if run_target "touch /runtime-write" >/dev/null 2>&1; then fail "read-only runner allowed a filesystem write"; fi
 internal_notice=$(run_target "WORKLOAD_DEBUG_MOTD=0 /usr/local/bin/workload-debug-entrypoint /bin/true")
 assert_contains "$internal_notice" '/usr/share/breakglass/runbooks/internal/INDEX.md'
+bundle_metadata=$(run_target "cat /usr/share/breakglass/runbooks/internal/bundle.yaml")
+assert_contains "$bundle_metadata" 'schemaVersion: breakglass.telekom.com/v1alpha1'
+if run_target "printf modified >>/usr/share/breakglass/runbooks/internal/bundle.yaml" >/dev/null 2>&1; then
+  fail "mounted internal runbook bundle was writable"
+fi
 
 http_security=$(kubectl -n "$namespace" get pod http-fixture -o json)
 [[ "$(jq -r '.spec.automountServiceAccountToken' <<<"$http_security")" == false ]] || fail "HTTP fixture has a service-account token"

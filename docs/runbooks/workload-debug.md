@@ -67,6 +67,12 @@ securityContext:
     type: RuntimeDefault
 ```
 
+The default interactive shell can invoke packaged binaries directly; helper
+allowlists are not an authorization boundary. Provider-owned RBAC,
+NetworkPolicy, immutable image/security-context fields, and the session
+lifetime must enforce the chosen intent. Do not expose credentials or network
+destinations that the session does not require.
+
 The Kubernetes helper uses the standard service-account CA and token files
 when they are mounted. Outside a Kubernetes Pod, pass `--server`; no
 controller metadata is inferred:
@@ -89,7 +95,8 @@ at 64 KiB by default. Set `WORKLOAD_DEBUG_MAX_OUTPUT_BYTES` to a value from 1
 byte through 1 MiB for a different bounded limit. If the deployment mounts
 the optional internal runbook volume, its index is available at
 `/usr/share/breakglass/runbooks/internal/INDEX.md`; it is documentation only
-and is never sourced.
+and is never sourced. The bundle root is mounted directly without `subPath`;
+`bundle.yaml` at the same root records its compatibility and provenance.
 
 The checked-in `tool-contract.json` records the stable `workload-diagnostics`
 intent and each helper's allowed operation. `debug-report --json` emits a

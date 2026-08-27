@@ -27,6 +27,13 @@ the optional internal runbook index at
 `/usr/share/breakglass/runbooks/internal/INDEX.md`; it is
 documentation only and is never sourced or executed by the image.
 
+The helper allowlists are safe defaults and an auditable operator interface,
+not a sandbox: the interactive shell can invoke the packaged binaries
+directly. Kubernetes RBAC, NetworkPolicy, the immutable image and security
+context, and the session lifetime are the enforcement boundaries. Do not grant
+this image credentials or network reachability that the selected intent does
+not require.
+
 HTTP and Kubernetes API helpers only allow GET, HEAD, and OPTIONS requests,
 do not follow redirects, and cap each response at 1 MiB by default. Set
 `WORKLOAD_DEBUG_TIMEOUT` (1–300 seconds) or `WORKLOAD_DEBUG_MAX_BYTES` (1–10

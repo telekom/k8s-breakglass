@@ -23,7 +23,9 @@ RUN apk add --no-cache \
     && addgroup -S -g 65532 debug \
     && adduser -S -D -H -u 65532 -G debug debug \
     && mkdir -p /home/debug /usr/share/breakglass/runbooks/upstream/workload-debug \
+      /usr/share/breakglass/runbooks/internal \
     && chown 65532:65532 /home/debug \
+    && chmod 0555 /usr/share/breakglass/runbooks/internal \
     && update-ca-certificates
 
 COPY scripts/ /usr/local/bin/

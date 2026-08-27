@@ -31,3 +31,9 @@ DNS and TLS output is bounded to 64 KiB by default and uses the same
 different limit is required. An optional deployment-provided runbook index may
 be mounted at `/usr/share/breakglass/runbooks/internal/INDEX.md`; consult it as
 documentation only.
+
+The interactive shell can invoke packaged tools without the dispatcher, so
+helper argument validation is not an authorization boundary. Enforce the
+selected intent with provider-owned RBAC, NetworkPolicy, immutable image and
+security-context fields, and a bounded session lifetime. The image must not be
+given broader credentials or egress than the incident requires.
