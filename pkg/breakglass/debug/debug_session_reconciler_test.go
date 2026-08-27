@@ -3862,6 +3862,40 @@ func TestConvertDebugPodSpec(t *testing.T) {
 		assert.Equal(t, "config", spec.Volumes[0].Name)
 	})
 
+	t.Run("preserves an immutable image volume for a runbook bundle", func(t *testing.T) {
+		dps := breakglassv1alpha1.DebugPodSpecInner{
+			Containers: []corev1.Container{
+				{
+					Name:  "debug",
+					Image: "example/network-debug@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+					VolumeMounts: []corev1.VolumeMount{
+						{Name: "internal-runbooks", MountPath: "/usr/share/breakglass/runbooks/internal", ReadOnly: true},
+					},
+				},
+			},
+			Volumes: []corev1.Volume{
+				{
+					Name: "internal-runbooks",
+					VolumeSource: corev1.VolumeSource{
+						Image: &corev1.ImageVolumeSource{
+							Reference:  "example/runbooks/network-diagnostics@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+							PullPolicy: corev1.PullIfNotPresent,
+						},
+					},
+				},
+			},
+		}
+
+		spec := ctrl.convertDebugPodSpec(dps)
+		require.Len(t, spec.Volumes, 1)
+		require.NotNil(t, spec.Volumes[0].Image)
+		assert.Equal(t, "example/runbooks/network-diagnostics@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", spec.Volumes[0].Image.Reference)
+		assert.Equal(t, corev1.PullIfNotPresent, spec.Volumes[0].Image.PullPolicy)
+		require.Len(t, spec.Containers[0].VolumeMounts, 1)
+		assert.Equal(t, "/usr/share/breakglass/runbooks/internal", spec.Containers[0].VolumeMounts[0].MountPath)
+		assert.True(t, spec.Containers[0].VolumeMounts[0].ReadOnly)
+	})
+
 	t.Run("converts pod spec with node selector", func(t *testing.T) {
 		dps := breakglassv1alpha1.DebugPodSpecInner{
 			Containers: []corev1.Container{

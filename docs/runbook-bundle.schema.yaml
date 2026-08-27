@@ -1,0 +1,110 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+#
+
+# JSON Schema for the OCI runbook bundle.yaml contract. It is YAML so it can be
+# read by the same tooling used for bundle metadata.
+$schema: https://json-schema.org/draft/2020-12/schema
+title: Breakglass OCI runbook bundle
+type: object
+additionalProperties: false
+required:
+  - schema
+  - intent
+  - version
+  - image
+  - compatibility
+  - index
+  - source
+properties:
+  schema:
+    const: breakglass.runbook/v1
+  intent:
+    type: string
+    pattern: '^[a-z][a-z0-9-]{1,62}$'
+  version:
+    type: string
+    minLength: 1
+    maxLength: 128
+  image:
+    type: object
+    additionalProperties: false
+    required: [name, digest]
+    properties:
+      name:
+        type: string
+        minLength: 1
+        maxLength: 255
+        pattern: '^[a-z0-9]+([._/-][a-z0-9]+)*$'
+      digest:
+        type: string
+        pattern: '^sha256:[0-9a-f]{64}$'
+      architectures:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items:
+          type: string
+          enum: [amd64, arm64, arm, ppc64le, s390x, riscv64]
+  compatibility:
+    type: object
+    additionalProperties: false
+    required: [kubernetes, utility, utilityVersions]
+    properties:
+      kubernetes:
+        type: string
+        minLength: 1
+        maxLength: 128
+      utility:
+        type: string
+        pattern: '^[a-z][a-z0-9-]{1,62}$'
+      utilityVersions:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items:
+          type: string
+          minLength: 1
+          maxLength: 128
+  index:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      additionalProperties: false
+      required: [id, title, path, summary, security]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{1,62}$'
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        path:
+          type: string
+          pattern: '^(?!/)(?!.*(?:^|/)\.\.(?:/|$))(?!.*\\)(?!.*//)[^\\x00]+$'
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        security:
+          type: string
+          minLength: 1
+          maxLength: 2000
+  source:
+    type: object
+    additionalProperties: false
+    required: [repository, revision, generatedAt]
+    properties:
+      repository:
+        type: string
+        format: uri-reference
+        minLength: 1
+        maxLength: 2000
+      revision:
+        type: string
+        pattern: '^[0-9a-f]{40,64}$'
+      generatedAt:
+        type: string
+        format: date-time
