@@ -411,6 +411,15 @@ func matchCgroupPath(path string, representations []string) (bool, string, bool)
 	for representationIndex, representation := range representations {
 		classicMarker := "pod" + representation
 		for index, component := range components {
+			if podComponent, runtime, ok := inlineSystemdRuntime(component, classicMarker); ok {
+				layout := append([]string(nil), components[:index]...)
+				layout = append(layout, podComponent, runtime)
+				if representationIndex == 0 || !validSystemdLayout(layout, index, classicMarker, parentCount) {
+					return false, "", true
+				}
+				family, ok := runtimeComponent(runtime)
+				return ok, family, !ok
+			}
 			if component == classicMarker {
 				if !validClassicLayout(components, index, parentCount) {
 					return false, "", true
@@ -431,6 +440,20 @@ func matchCgroupPath(path string, representations []string) (bool, string, bool)
 		return false, "", true
 	}
 	return false, "", false
+}
+
+func inlineSystemdRuntime(component, marker string) (string, string, bool) {
+	suffix := "-" + marker + ".slice:"
+	index := strings.Index(component, suffix)
+	if index < 0 {
+		return "", "", false
+	}
+	podComponent := component[:index+len(suffix)-1]
+	runtimeParts := strings.Split(component[index+len(suffix):], ":")
+	if len(runtimeParts) != 2 {
+		return "", "", false
+	}
+	return podComponent, runtimeParts[0] + "-" + runtimeParts[1], true
 }
 
 func validClassicLayout(components []string, podIndex, parentCount int) bool {
