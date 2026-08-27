@@ -272,7 +272,7 @@ for required_cap_hex in c001081000 c001001000 c001000000 c000001000 8001001000 4
         fi
         test -f "$trace_fixture/work/trace.log"
         test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
-    elif [ "$required_cap_hex" = c001001000 ]; then
+    elif [ "$required_cap_hex" = c001081000 ]; then
         printf '%s\n' 'trace rejected approved capability set' >&2
         exit 1
     fi
