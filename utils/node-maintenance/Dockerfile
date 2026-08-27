@@ -22,11 +22,17 @@ COPY lib/common.sh /usr/local/libexec/node-maintenance/common.sh
 COPY lib/network-repair.sh /usr/local/libexec/node-maintenance/network-repair
 COPY lib/node-recovery-preflight.sh /usr/local/libexec/node-maintenance/node-recovery
 COPY MOTD /etc/motd
+COPY README.md /usr/share/node-maintenance/README.md
+COPY runbooks/network-repair.md /usr/share/node-maintenance/runbooks/network-repair.md
+COPY runbooks/node-recovery-preflight.md /usr/share/node-maintenance/runbooks/node-recovery-preflight.md
 
 RUN chmod 0555 /usr/local/bin/node-maintenance \
         /usr/local/libexec/node-maintenance/network-repair \
         /usr/local/libexec/node-maintenance/node-recovery \
     && chmod 0444 /usr/local/libexec/node-maintenance/common.sh /etc/motd \
+        /usr/share/node-maintenance/README.md \
+        /usr/share/node-maintenance/runbooks/network-repair.md \
+        /usr/share/node-maintenance/runbooks/node-recovery-preflight.md \
     && mkdir -p /evidence \
     && chmod 0700 /evidence
 
@@ -44,7 +50,9 @@ LABEL org.opencontainers.image.title="Kubernetes node maintenance" \
       io.telekom.breakglass.node-maintenance.shell="not-supported" \
       io.telekom.breakglass.node-maintenance.capabilities="NET_ADMIN"
 
-# Network repair requires a privileged pod and host networking. The command
-# dispatcher rejects every operation outside its two fixed helper names.
+# The image is root only for the explicitly allowlisted host-network operation.
+# Controller-owned immutable templates must use a no-capabilities preflight
+# context and a separate NET_ADMIN-only repair context; privileged is not part
+# of this image contract. The dispatcher rejects every other helper name.
 USER 0
 ENTRYPOINT ["/usr/local/bin/node-maintenance"]

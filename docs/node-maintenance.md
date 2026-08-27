@@ -15,8 +15,10 @@ unrestricted shell or ship a general-purpose network toolbox.
 
 See the utility README and its [preflight](../utils/node-maintenance/runbooks/node-recovery-preflight.md)
 and [repair](../utils/node-maintenance/runbooks/network-repair.md) runbooks for
-the required host-networked pod, minimal `NET_ADMIN` capability, exact target,
-confirmation, and evidence workflow.
+the required separate no-capability preflight and `NET_ADMIN`-only repair
+contexts, controller-provided exact target, confirmation, and evidence
+workflow. Workload templates must inject `BREAKGLASS_NODE_NAME` from Downward
+API `spec.nodeName`; hostname is not a trust input.
 
 Builds target `linux/amd64` and `linux/arm64`, pin the Alpine manifest and APK
 package versions, request BuildKit provenance/SBOM attestations, and sign only
@@ -25,7 +27,7 @@ Makefile.
 
 The Linux-only integration target (`make -C utils/node-maintenance integration`)
 builds and runs the image in disposable `--network none` namespaces with the
-intended `NET_ADMIN` capability boundary. It executes every allowlisted action,
+separate preflight/repair capability boundaries. It executes every allowlisted action,
 checks real before/after evidence and denial guards, and verifies container and
 volume cleanup. Missing Docker, namespace support, or security flags fails the
 job with diagnostics; the proof never silently skips.

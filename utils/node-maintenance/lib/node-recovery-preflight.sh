@@ -56,6 +56,7 @@ capture "$bundle/neighbors.txt" ip neigh show dev "$interface" || true
 capture "$bundle/ethtool.txt" ethtool "$interface" || true
 capture "$bundle/resolver.txt" cat /etc/resolv.conf || true
 capture "$bundle/kernel.txt" uname -a || true
+assert_safe_bundle "$bundle"
 printf 'completed_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$bundle/metadata"
 
 printf 'Preflight completed for target %s, interface %s. Evidence: %s\n' \

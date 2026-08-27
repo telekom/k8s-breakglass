@@ -24,7 +24,7 @@ SPDX-License-Identifier = "Apache-2.0"
 
 [[annotations]]
 precedence = "aggregate"
-path = ["utils/node-maintenance/**.yaml", "utils/node-maintenance/**.lock"]
+path = ["utils/node-maintenance/**.yaml", "utils/node-maintenance/**.json", "utils/node-maintenance/**.lock"]
 SPDX-FileCopyrightText = "2026 Deutsche Telekom AG"
 SPDX-License-Identifier = "Apache-2.0"
 

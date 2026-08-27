@@ -71,7 +71,7 @@ require_command sed
 "$docker_bin" info >/dev/null 2>&1 || fail "Docker daemon is unavailable; install/start Docker and rerun (no feature skip is allowed)"
 
 docker_help=$($docker_bin run --help 2>&1) || fail "Docker cannot advertise run capabilities"
-for required_flag in '--network' '--hostname' '--read-only' '--cap-drop' '--cap-add' '--security-opt' '--mount'; do
+for required_flag in '--network' '--read-only' '--cap-drop' '--cap-add' '--security-opt' '--mount'; do
 	printf '%s\n' "$docker_help" | grep -F -- "$required_flag" >/dev/null || fail "Docker lacks required '$required_flag' support"
 done
 
@@ -95,6 +95,19 @@ new_fixture() {
 	fixture_dir="$tmp_dir/$label"
 	mkdir -p "$fixture_dir"
 	"$docker_bin" volume create "$volume_name" >/dev/null || fail "could not create disposable volume '$volume_name'"
+	case "$label" in
+		guard-evidence-symlink)
+			"$docker_bin" run --rm --entrypoint /bin/sh \
+				--mount "source=$volume_name,destination=/evidence" "$image" \
+				-c 'ln -s /host/etc /evidence/escaped' || fail 'could not seed symlink attack fixture'
+			;;
+		guard-evidence-rename)
+			"$docker_bin" run --rm --entrypoint /bin/sh \
+				--mount "source=$volume_name,destination=/evidence" "$image" \
+				-c 'mkdir /evidence/race && mv /evidence/race /evidence/race-original && ln -s /host/etc /evidence/race' \
+				|| fail 'could not seed rename attack fixture'
+			;;
+	esac
 }
 
 destroy_fixture() {
@@ -111,26 +124,31 @@ destroy_fixture() {
 run_command() {
 	label=$1
 	expected_exit=$2
-	shift 2
+	capability=$3
+	shift 3
 	new_fixture "$label"
 	output_file="$fixture_dir/output"
 	set +e
-	"$docker_bin" run \
-		--name "$container_name" \
-		--user 0 \
-		--hostname node-a \
-		--network none \
-		--read-only \
-		--cap-drop ALL \
-		--cap-add NET_ADMIN \
-		--security-opt no-new-privileges \
-		--security-opt seccomp=builtin \
-		--mount "source=$volume_name,destination=/evidence" \
-		"$image" "$@" >"$output_file" 2>&1
+	if [ "$capability" = none ]; then
+		"$docker_bin" run \
+			--name "$container_name" --user 0 --env BREAKGLASS_NODE_NAME=node-a \
+			--network none --read-only --cap-drop ALL \
+			--security-opt no-new-privileges --security-opt seccomp=builtin \
+			--mount "source=$volume_name,destination=/evidence" \
+			"$image" "$@" >"$output_file" 2>&1
+	else
+		[ "$capability" = NET_ADMIN ] || fail "unsupported requested test capability '$capability'"
+		"$docker_bin" run \
+			--name "$container_name" --user 0 --env BREAKGLASS_NODE_NAME=node-a \
+			--network none --read-only --cap-drop ALL --cap-add NET_ADMIN \
+			--security-opt no-new-privileges --security-opt seccomp=builtin \
+			--mount "source=$volume_name,destination=/evidence" \
+			"$image" "$@" >"$output_file" 2>&1
+	fi
 	actual_exit=$?
 	set -e
 	cat "$output_file"
-	assert_container_security "$container_name"
+	assert_container_security "$container_name" "$capability"
 	if [ "$expected_exit" = nonzero ]; then
 		[ "$actual_exit" -ne 0 ] || fail "$label unexpectedly succeeded"
 	else
@@ -140,6 +158,7 @@ run_command() {
 
 assert_container_security() {
 	name=$1
+	expected_capability=$2
 	network_mode=$("$docker_bin" inspect --format '{{.HostConfig.NetworkMode}}' "$name") || fail "could not inspect container '$name'"
 	readonly_root=$("$docker_bin" inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$name") || fail "could not inspect read-only root for '$name'"
 	user=$("$docker_bin" inspect --format '{{.Config.User}}' "$name") || fail "could not inspect user for '$name'"
@@ -150,7 +169,10 @@ assert_container_security() {
 	[ "$readonly_root" = true ] || fail "$name did not use a read-only root filesystem"
 	[ "$user" = 0 ] || fail "$name did not run as UID 0 for the capability-bound helper"
 	[ "$cap_drop" = ALL ] || fail "$name did not drop all capabilities (got '$cap_drop')"
-	[ "$cap_add" = NET_ADMIN ] || fail "$name did not add only NET_ADMIN (got '$cap_add')"
+	case "$expected_capability" in
+		none) [ -z "$cap_add" ] || fail "$name added capabilities for a read-only preflight (got '$cap_add')" ;;
+		NET_ADMIN) [ "$cap_add" = NET_ADMIN ] || fail "$name did not add only NET_ADMIN (got '$cap_add')" ;;
+	esac
 	case ",$security_opts," in
 		*,no-new-privileges,* ) ;;
 		*) fail "$name did not set no-new-privileges (got '$security_opts')" ;;
@@ -187,7 +209,7 @@ assert_capture_statuses() {
 	done
 }
 
-run_command preflight 0 node-recovery --target-node node-a --interface lo \
+run_command preflight 0 none node-recovery --target-node node-a --interface lo \
 	--evidence-dir /evidence --confirm NODE-RECOVERY-PREFLIGHT
 preflight_bundle=$(bundle_from_output "$fixture_dir/output")
 preflight_host_bundle=$(copy_bundle "$fixture_dir/output" "$preflight_bundle")
@@ -206,7 +228,7 @@ pass 'node-recovery runs in isolated namespace and records evidence'
 run_repair() {
 	action=$1
 	expected_exit=$2
-	run_command "repair-$action" "$expected_exit" network-repair --target-node node-a --interface lo \
+	run_command "repair-$action" "$expected_exit" NET_ADMIN network-repair --target-node node-a --interface lo \
 		--action "$action" --evidence-dir /evidence --confirm NETWORK-REPAIR
 	repair_bundle=$(bundle_from_output "$fixture_dir/output")
 	repair_host_bundle=$(copy_bundle "$fixture_dir/output" "$repair_bundle")
@@ -232,25 +254,37 @@ run_repair flush-neighbors 0
 # path and proves that failure evidence is retained rather than hidden.
 run_repair restart-autonegotiation nonzero
 
-run_command guard-missing-confirmation 2 network-repair --target-node node-a --interface lo \
+run_command guard-missing-confirmation 2 none network-repair --target-node node-a --interface lo \
 	--action flush-neighbors --evidence-dir /evidence
 grep -q 'confirmation' "$fixture_dir/output" || fail 'missing confirmation produced no actionable denial'
 destroy_fixture
 pass 'missing confirmation is denied'
 
-run_command guard-target-mismatch 2 node-recovery --target-node node-b --interface lo \
+run_command guard-target-mismatch 2 none node-recovery --target-node node-b --interface lo \
 	--evidence-dir /evidence --confirm NODE-RECOVERY-PREFLIGHT
-grep -q 'does not match local node' "$fixture_dir/output" || fail 'target mismatch produced no actionable denial'
+grep -q 'does not match controller-provided node' "$fixture_dir/output" || fail 'target mismatch produced no actionable denial'
 destroy_fixture
 pass 'target mismatch is denied'
 
-run_command guard-unsafe-path 2 node-recovery --target-node node-a --interface lo \
+run_command guard-unsafe-path 2 none node-recovery --target-node node-a --interface lo \
 	--evidence-dir / --confirm NODE-RECOVERY-PREFLIGHT
 grep -q 'evidence directory' "$fixture_dir/output" || fail 'unsafe evidence path produced no actionable denial'
 destroy_fixture
 pass 'unsafe evidence path is denied'
 
-run_command guard-unknown-command 2 unsupported-command
+run_command guard-evidence-symlink 2 none node-recovery --target-node node-a --interface lo \
+	--evidence-dir /evidence/escaped --confirm NODE-RECOVERY-PREFLIGHT
+grep -q 'symlink\|resolv' "$fixture_dir/output" || fail 'evidence symlink produced no actionable denial'
+destroy_fixture
+pass 'evidence symlink is denied'
+
+run_command guard-evidence-rename 2 none node-recovery --target-node node-a --interface lo \
+	--evidence-dir /evidence/race --confirm NODE-RECOVERY-PREFLIGHT
+grep -q 'symlink\|resolv' "$fixture_dir/output" || fail 'evidence rename attack produced no actionable denial'
+destroy_fixture
+pass 'evidence rename attack is denied'
+
+run_command guard-unknown-command 2 none unsupported-command
 grep -q 'Unsupported command' "$fixture_dir/output" || fail 'unknown command produced no actionable denial'
 destroy_fixture
 pass 'dispatcher rejects unknown commands'

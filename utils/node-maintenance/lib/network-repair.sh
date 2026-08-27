@@ -67,14 +67,21 @@ printf 'Confirmation accepted. Applying the allowlisted action...\n'
 set +e
 case "$action" in
 	link-cycle)
-		ip link set dev "$interface" down
-		first_status=$?
-		if [ "$first_status" -eq 0 ]; then ip link set dev "$interface" up; fi
-		action_status=$?
-		[ "$first_status" -eq 0 ] || action_status=$first_status
+		if capture "$bundle/action-link-down.txt" ip link set dev "$interface" down; then
+			capture "$bundle/action-link-up.txt" ip link set dev "$interface" up
+			action_status=$?
+		else
+			action_status=$?
+		fi
 		;;
-	flush-neighbors) ip neigh flush dev "$interface"; action_status=$? ;;
-	restart-autonegotiation) ethtool -r "$interface"; action_status=$? ;;
+	flush-neighbors)
+		capture "$bundle/action-flush-neighbors.txt" ip neigh flush dev "$interface"
+		action_status=$?
+		;;
+	restart-autonegotiation)
+		capture "$bundle/action-restart-autonegotiation.txt" ethtool -r "$interface"
+		action_status=$?
+		;;
 esac
 set -e
 
@@ -82,6 +89,7 @@ capture "$bundle/after-link.txt" ip -details link show dev "$interface" || true
 capture "$bundle/after-addresses.txt" ip -brief address show dev "$interface" || true
 capture "$bundle/after-routes.txt" ip route show dev "$interface" || true
 capture "$bundle/after-neighbors.txt" ip neigh show dev "$interface" || true
+assert_safe_bundle "$bundle"
 printf 'action_exit_status=%s\ncompleted_at_utc=%s\n' "$action_status" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$bundle/metadata"
 
 if [ "$action_status" -ne 0 ]; then

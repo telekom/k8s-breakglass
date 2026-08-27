@@ -12,7 +12,10 @@
     "seccompProfile": "runtime-default",
     "seccompOption": "builtin",
     "capabilitiesDrop": ["ALL"],
-    "capabilitiesAdd": ["NET_ADMIN"]
+    "contexts": {
+      "node-recovery": {"capabilitiesAdd": []},
+      "network-repair": {"capabilitiesAdd": ["NET_ADMIN"]}
+    }
   },
   "disposableResources": {
     "evidenceVolume": true,
@@ -22,6 +25,7 @@
   "commands": {
     "node-recovery": {
       "target": "node-a",
+      "nodeIdentityEnvironment": "BREAKGLASS_NODE_NAME",
       "interface": "lo",
       "confirmation": "NODE-RECOVERY-PREFLIGHT",
       "expectedExit": 0,
@@ -29,6 +33,7 @@
     },
     "network-repair": {
       "target": "node-a",
+      "nodeIdentityEnvironment": "BREAKGLASS_NODE_NAME",
       "interface": "lo",
       "confirmation": "NETWORK-REPAIR",
       "actions": {
@@ -43,6 +48,8 @@
     "missing-confirmation",
     "target-mismatch",
     "unsafe-evidence-path",
+    "evidence-symlink",
+    "evidence-rename",
     "unknown-dispatch-command"
   ]
 }

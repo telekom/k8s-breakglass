@@ -19,23 +19,23 @@ The image exposes exactly two supported commands:
 
 There is no supported unrestricted shell, package manager, compiler, packet
 capture tool, port scanner, or general-purpose network toolbox. The entrypoint
-dispatches only the two fixed command names. The image must run as root with a
-privileged, host-networked pod for repairs; preflight is read-only but still
-requires the same explicit target and confirmation gates.
+dispatches only the two fixed command names. It does not support kexec or
+reboot, crashdump collection, packet capture, arbitrary commands, sysctl
+changes, route replacement, or node discovery.
 
 ## Guardrails
 
 Every helper requires `--target-node NODE`, `--interface IFACE`,
 `--evidence-dir ABSOLUTE_PATH`, and the command-specific confirmation token.
-No default interface or node is inferred. The target must also exactly match
-the local host identity returned by `hostname`; a target name is never treated
-as merely descriptive. Targets accept only shell-safe identifiers, and repair
-actions are validated against a fixed allowlist before any mutation. Evidence
-must be a dedicated evidence mount or child directory (for example
-`/evidence/run-123`), may
-not be a system root, and may not resolve through a symlink. Evidence includes
-command exit statuses and metadata and is produced before and after a repair
-even when the action fails.
+No default interface or node is inferred. `BREAKGLASS_NODE_NAME` is required
+and must be injected by the controller-owned immutable workload template from
+the Downward API `spec.nodeName`; the requested target must exactly match it.
+`hostname` is never trusted for node identity. Targets accept only shell-safe
+identifiers, and repair actions are validated against a fixed allowlist before
+any mutation. Evidence is limited to `/evidence` or `/evidence/SAFE_CHILD`;
+the image rejects system paths and symlink or rename changes. Every probe and
+action has a fixed time and output limit, and evidence has a fixed total quota.
+Timeout and quota failures are recorded deterministically in the bundle.
 
 ## Invocation
 
@@ -62,10 +62,11 @@ normal, separately approved host-debug process.
 
 ## Pod security boundary
 
-Use host networking and the smallest required capability. The preflight is
-read-only; repairs require `NET_ADMIN`, not blanket privileged mode. Mount a
-dedicated empty directory at `/evidence` and do not mount `/`, `/etc`, `/proc`,
-`/sys`, or another host-system path. A representative security context is:
+Use separate immutable workload templates and the smallest required
+capability. Preflight drops `ALL` and adds none; repair drops `ALL` and adds
+only `NET_ADMIN`. Blanket `privileged: true` is not part of this contract.
+Mount a dedicated empty directory at `/evidence` and do not mount `/`, `/etc`,
+`/proc`, `/sys`, or another host-system path. A repair context is:
 
 ```yaml
 hostNetwork: true
@@ -81,9 +82,9 @@ securityContext:
 ```
 
 The command dispatcher is the only supported entrypoint. The Alpine runtime
-contains `/bin/sh` because the fixed helpers are POSIX scripts, but invoking a
-shell or any other binary by overriding the entrypoint is outside the support
-and incident-audit boundary.
+contains `/bin/sh` because the fixed helpers are POSIX scripts, but an
+entrypoint or shell override is an external immutable-template and admission
+control boundary, outside this image's support and incident-audit contract.
 
 ## Build, SBOM, and signing
 
@@ -100,8 +101,9 @@ signing subject. Package versions and the base manifest are in [`deps.lock`](dep
 
 `make integration` is a real-tool proof, not a help/argument smoke test. On a
 Linux Docker runner it builds the image and runs every command in disposable
-containers with `--network none`, a read-only root filesystem, all capabilities
-dropped except `NET_ADMIN`, and a disposable evidence volume. It exercises
+containers with `--network none`, a read-only root filesystem, and a
+disposable evidence volume. Preflight drops all capabilities with no add;
+repair adds only `NET_ADMIN` after dropping all capabilities. It exercises
 `node-recovery`, all three repair actions, failure evidence, confirmation and
 target guards, unsafe-path rejection, dispatcher rejection, and explicit
 container/volume cleanup. The harness explicitly verifies Docker's built-in

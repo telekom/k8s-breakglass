@@ -5,6 +5,13 @@
 
 set -eu
 
+# These limits are deliberately fixed in the image rather than configurable by
+# a request. They keep a failed driver, command, or mounted evidence volume
+# from turning a bounded maintenance request into unbounded work or storage.
+capture_timeout_seconds=10
+capture_max_bytes=32768
+evidence_max_bytes=393216
+
 die() {
 	printf 'node-maintenance: %s\n' "$*" >&2
 	exit 2
@@ -23,9 +30,9 @@ validate_value() {
 validate_target() {
 	target=$1
 	validate_value "target node" "$target"
-	actual_node=$(hostname 2>/dev/null || true)
-	[ -n "$actual_node" ] || die "cannot determine the local node identity"
-	[ "$target" = "$actual_node" ] || die "target node '$target' does not match local node '$actual_node'"
+	actual_node=${BREAKGLASS_NODE_NAME:-}
+	validate_value "BREAKGLASS_NODE_NAME" "$actual_node"
+	[ "$target" = "$actual_node" ] || die "target node '$target' does not match controller-provided node '$actual_node'"
 }
 
 validate_interface() {
@@ -40,41 +47,60 @@ validate_confirmation() {
 
 prepare_evidence_dir() {
 	directory=$1
-	[ -n "$directory" ] || die "evidence directory is required"
 	case "$directory" in
-		/*) ;;
-		*) die "evidence directory must be an absolute path" ;;
+		/evidence) ;;
+		/evidence/*)
+			child=${directory#/evidence/}
+			case "$child" in
+				''|*/*|.|..|*[!A-Za-z0-9_.-]*) die "evidence directory must be /evidence or one safe child" ;;
+			esac
+			;;
+		*) die "evidence directory must be /evidence or one safe child" ;;
 	esac
+	[ -d /evidence ] || die "/evidence must be a mounted directory"
+	[ ! -L /evidence ] || die "/evidence may not be a symlink"
+	root=$(readlink -f /evidence 2>/dev/null || true)
+	[ "$root" = /evidence ] || die "/evidence did not resolve safely"
+	if [ "$directory" != /evidence ]; then
+		mkdir "$directory" 2>/dev/null || [ -d "$directory" ] || die "cannot create evidence directory '$directory'"
+	fi
+	assert_safe_evidence_dir "$directory"
+	chmod 0700 "$directory" || die "cannot protect evidence directory '$directory'"
+	EVIDENCE_DIR=$directory
+}
+
+assert_safe_evidence_dir() {
+	directory=$1
 	case "$directory" in
-		*..*) die "evidence directory may not contain '..'" ;;
+		/evidence) ;;
+		/evidence/*)
+			child=${directory#/evidence/}
+			case "$child" in ''|*/*|.|..|*[!A-Za-z0-9_.-]*) die "unsafe evidence directory" ;; esac
+			;;
+		*) die "unsafe evidence directory" ;;
 	esac
-	case "$directory" in
-		/|/bin|/dev|/etc|/home|/proc|/root|/run|/sbin|/sys|/tmp|/usr|/var)
-			die "evidence directory must be a dedicated child directory, not '$directory'" ;;
-		/evidence|/evidence/*) ;;
-		/*/*) ;;
-		*) die "evidence directory must be a dedicated child directory" ;;
-	esac
-	mkdir -p "$directory" || die "cannot create evidence directory '$directory'"
+	[ -d /evidence ] && [ ! -L /evidence ] || die "/evidence changed while handling evidence"
 	[ ! -L "$directory" ] || die "evidence directory may not be a symlink"
 	resolved_directory=$(readlink -f "$directory" 2>/dev/null || true)
-	[ -n "$resolved_directory" ] || die "cannot resolve evidence directory safely"
-	protected_directory=$resolved_directory
-	case "$protected_directory" in
-		/private/*) protected_directory=${protected_directory#/private} ;;
-	esac
-	case "$protected_directory" in
-		/|/bin|/bin/*|/dev|/dev/*|/etc|/etc/*|/home|/home/*|/proc|/proc/*|/root|/root/*|/run|/run/*|/sbin|/sbin/*|/sys|/sys/*|/usr|/usr/*|/var|/var/run|/var/run/*|/var/lib|/var/lib/*|/var/log|/var/log/*|/var/db|/var/db/*|/var/root|/var/root/*)
-		die "evidence directory resolves to a protected system path" ;;
-	esac
-	chmod 0700 "$directory" || die "cannot protect evidence directory '$directory'"
+	[ "$resolved_directory" = "$directory" ] || die "evidence directory changed or resolves outside /evidence"
+}
+
+assert_safe_bundle() {
+	bundle=$1
+	assert_safe_evidence_dir "${EVIDENCE_DIR:?evidence directory is not initialized}"
+	case "$bundle" in "$EVIDENCE_DIR"/*) ;; *) die "unsafe evidence bundle" ;; esac
+	[ -d "$bundle" ] && [ ! -L "$bundle" ] || die "evidence bundle changed while handling evidence"
+	resolved_bundle=$(readlink -f "$bundle" 2>/dev/null || true)
+	[ "$resolved_bundle" = "$bundle" ] || die "evidence bundle did not resolve safely"
 }
 
 new_bundle() {
 	parent=$1
 	command_name=$2
+	assert_safe_evidence_dir "$parent"
 	timestamp=$(date -u +%Y%m%dT%H%M%SZ)
 	bundle=$(mktemp -d "$parent/${command_name}-${timestamp}-XXXXXX") || die "cannot create evidence bundle"
+	assert_safe_bundle "$bundle"
 	chmod 0700 "$bundle" || die "cannot protect evidence bundle"
 	printf '%s\n' "$bundle"
 }
@@ -82,11 +108,25 @@ new_bundle() {
 capture() {
 	output_file=$1
 	shift
+	case "$output_file" in "${bundle:?bundle is not initialized}"/*) ;; *) die "unsafe evidence output path" ;; esac
+	assert_safe_bundle "$bundle"
+	command -v timeout >/dev/null 2>&1 || die "timeout utility is required for bounded evidence capture"
+	temporary_file=$(mktemp "$bundle/.capture.XXXXXX") || die "cannot create bounded capture temporary file"
 	set +e
-	"$@" >"$output_file" 2>&1
+	timeout "$capture_timeout_seconds" "$@" >"$temporary_file" 2>&1
 	status=$?
 	set -e
+	bytes=$(wc -c <"$temporary_file" | tr -d ' ')
+	if [ "$bytes" -gt "$capture_max_bytes" ]; then
+		head -c "$capture_max_bytes" "$temporary_file" >"$output_file"
+		printf '\ncapture_result=output-quota-exceeded\nexit_status=75\n' >>"$output_file"
+		rm -f "$temporary_file"
+		return 75
+	fi
+	mv "$temporary_file" "$output_file"
 	printf '\nexit_status=%s\n' "$status" >>"$output_file"
+	used_kib=$(du -sk "$bundle" | awk '{print $1}')
+	[ "$used_kib" -le $((evidence_max_bytes / 1024)) ] || die "evidence quota exceeded"
 	return "$status"
 }
 
@@ -96,6 +136,7 @@ write_metadata() {
 	target_node=$3
 	interface=$4
 	action=$5
+	assert_safe_bundle "$(dirname "$metadata_file")"
 	{
 		printf 'command=%s\n' "$command_name"
 		printf 'target_node=%s\n' "$target_node"
