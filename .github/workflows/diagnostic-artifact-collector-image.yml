@@ -38,3 +38,13 @@ jobs:
         uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
         with:
           dockerfile: utils/images/diagnostic-artifact-collector/Dockerfile
+      - name: Install Kind
+        env:
+          KIND_VERSION: v0.32.0
+        run: |
+          curl -Lo ./kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          chmod 0755 ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+      - name: Prove non-root emptyDir fsGroup hand-off
+        run: make -C utils/images/diagnostic-artifact-collector kind-test

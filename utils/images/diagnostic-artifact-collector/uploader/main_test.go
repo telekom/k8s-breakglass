@@ -4,6 +4,8 @@
 package main
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -12,6 +14,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -51,7 +54,11 @@ func TestUploadUsesBoundedPUTAndTokenWithoutLoggingSecrets(t *testing.T) {
 	if err := upload(context.Background()); err != nil {
 		t.Fatalf("upload() error = %v", err)
 	}
-	if method != http.MethodPut || auth != "Bearer one-time-token" || body != "archive-bytes" {
+	expected, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPut || auth != "Bearer one-time-token" || body != string(expected) {
 		t.Fatalf("unexpected request: method=%q auth=%q body=%q", method, auth, body)
 	}
 }
@@ -174,6 +181,70 @@ func TestUploadRejectsRedirectAndDoesNotFollowIt(t *testing.T) {
 	}
 	if followed {
 		t.Fatal("redirect target was contacted")
+	}
+}
+
+func TestUploadRejectsCorruptOrTamperedArchive(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		make func(t *testing.T, path string, sidecar []byte)
+		want string
+	}{
+		{
+			name: "corrupt gzip",
+			make: func(t *testing.T, path string, _ []byte) {
+				if err := os.WriteFile(path, []byte("not-a-gzip"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "valid gzip",
+		},
+		{
+			name: "tampered payload",
+			make: func(t *testing.T, path string, sidecar []byte) {
+				if err := os.WriteFile(path, gzipBytes(t, tarBytes(t, []byte("changed-bytes"), sidecar)), 0600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "checksum",
+		},
+		{
+			name: "forged embedded manifest",
+			make: func(t *testing.T, path string, sidecar []byte) {
+				forged := append([]byte(nil), sidecar...)
+				forged[len(forged)-2] = 'x'
+				if err := os.WriteFile(path, gzipBytes(t, tarBytes(t, []byte("archive-bytes"), forged)), 0600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "differs from sidecar",
+		},
+		{
+			name: "duplicate payload",
+			make: func(t *testing.T, path string, sidecar []byte) {
+				if err := os.WriteFile(path, gzipBytes(t, duplicateTarBytes(t, []byte("archive-bytes"), sidecar)), 0600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "duplicate",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path, ready := uploadFixture(t, []byte("archive-bytes"))
+			oldPath, oldReady := artifactPath, readyPath
+			defer func() { artifactPath, readyPath = oldPath, oldReady }()
+			artifactPath, readyPath = path, ready
+			t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_URL", "https://upload.example.invalid/object")
+			t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_TOKEN", "one-time-token")
+			sidecar, err := os.ReadFile(filepath.Join(filepath.Dir(path), "artifact.manifest.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			test.make(t, path, sidecar)
+			if err := upload(context.Background()); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("upload() error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
@@ -390,7 +461,7 @@ func TestUploadRejectsArchiveMutationDuringTransfer(t *testing.T) {
 			return &http.Response{StatusCode: http.StatusCreated, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
 		})}
 	}
-	if err := upload(context.Background()); !strings.Contains(err.Error(), "changed or was truncated") {
+	if err := upload(context.Background()); !strings.Contains(err.Error(), "changed") {
 		t.Fatalf("mutation error = %v", err)
 	}
 }
@@ -521,8 +592,8 @@ func TestRetryableUsesTypedFailures(t *testing.T) {
 	if err == nil {
 		t.Fatal("http.Client timeout unexpectedly succeeded")
 	}
-	if !retryable(err) {
-		t.Fatalf("retryable(http.Client timeout %T: %v) = false, want true", err, err)
+	if retryable(err) {
+		t.Fatalf("retryable(http.Client timeout %T: %v) = true, want false", err, err)
 	}
 }
 
@@ -617,11 +688,12 @@ func TestUploadRejectsMissingReadyAndOversizedArchive(t *testing.T) {
 	}
 }
 
-func TestUploadRejectsHTTPUnlessExplicitDevelopmentOptIn(t *testing.T) {
+func TestUploadRejectsHTTPWithoutDowngrade(t *testing.T) {
 	path, ready := uploadFixture(t, []byte("archive-bytes"))
 	oldPath, oldReady := artifactPath, readyPath
 	defer func() { artifactPath, readyPath = oldPath, oldReady }()
 	artifactPath, readyPath = path, ready
+	t.Setenv("BREAKGLASS_ARTIFACT_ALLOW_INSECURE_HTTP", "true")
 	t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_URL", "http://upload.example.invalid/object")
 	if err := upload(context.Background()); !strings.Contains(err.Error(), "HTTPS") {
 		t.Fatalf("HTTP error = %v", err)
@@ -633,17 +705,101 @@ func uploadFixture(t *testing.T, content []byte) (string, string) {
 	dir := t.TempDir()
 	archive := filepath.Join(dir, "artifact.tar.gz")
 	ready := filepath.Join(dir, "artifact.ready")
-	if err := os.WriteFile(archive, content, 0600); err != nil {
+	payload := tarBytes(t, content, nil)
+	payloadHash := sha256.Sum256(payload)
+	manifestBytes := validCrashdumpManifest(maxArchiveBytes, hex.EncodeToString(payloadHash[:]), 1, int64(len(content)))
+	archiveBytes := tarBytes(t, content, manifestBytes)
+	var compressed strings.Builder
+	zipWriter := gzip.NewWriter(&compressed)
+	if _, err := zipWriter.Write(archiveBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err := zipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, []byte(compressed.String()), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(ready, []byte("ready\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	manifest := filepath.Join(dir, "artifact.manifest.json")
-	if err := os.WriteFile(manifest, crashdumpManifest(maxArchiveBytes), 0600); err != nil {
+	if err := os.WriteFile(manifest, manifestBytes, 0600); err != nil {
 		t.Fatal(err)
 	}
 	return archive, ready
+}
+
+func gzipBytes(t *testing.T, raw []byte) []byte {
+	t.Helper()
+	var compressed strings.Builder
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write(raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return []byte(compressed.String())
+}
+
+func duplicateTarBytes(t *testing.T, content, manifest []byte) []byte {
+	t.Helper()
+	var output strings.Builder
+	writer := tar.NewWriter(&output)
+	write := func(header *tar.Header, body []byte) {
+		t.Helper()
+		if err := writer.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if len(body) > 0 {
+			if _, err := writer.Write(body); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	write(&tar.Header{Name: "files", Mode: 0755, Typeflag: tar.TypeDir}, nil)
+	write(&tar.Header{Name: "files/coredumps", Mode: 0755, Typeflag: tar.TypeDir}, nil)
+	for i := 0; i < 2; i++ {
+		write(&tar.Header{Name: "files/coredumps/artifact.dump", Mode: 0600, Size: int64(len(content))}, content)
+	}
+	write(&tar.Header{Name: "manifest.json", Mode: 0600, Size: int64(len(manifest))}, manifest)
+	write(&tar.Header{Name: "stderr.log", Mode: 0600}, nil)
+	write(&tar.Header{Name: "stdout.log", Mode: 0600}, nil)
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return []byte(output.String())
+}
+
+func tarBytes(t *testing.T, content, manifest []byte) []byte {
+	t.Helper()
+	var output strings.Builder
+	writer := tar.NewWriter(&output)
+	writeHeader := func(name string, mode int64, size int64, typeflag byte) {
+		t.Helper()
+		if err := writer.WriteHeader(&tar.Header{Name: name, Mode: mode, Size: size, Typeflag: typeflag}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeHeader("files", 0755, 0, tar.TypeDir)
+	writeHeader("files/coredumps", 0755, 0, tar.TypeDir)
+	writeHeader("files/coredumps/artifact.dump", 0600, int64(len(content)), tar.TypeReg)
+	if _, err := writer.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if manifest != nil {
+		writeHeader("manifest.json", 0600, int64(len(manifest)), tar.TypeReg)
+		if _, err := writer.Write(manifest); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeHeader("stderr.log", 0600, 0, tar.TypeReg)
+	writeHeader("stdout.log", 0600, 0, tar.TypeReg)
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return []byte(output.String())
 }
 
 func systemSummaryManifest(maxBytes int64) []byte {
@@ -652,6 +808,10 @@ func systemSummaryManifest(maxBytes int64) []byte {
 
 func crashdumpManifest(maxBytes int64) []byte {
 	return []byte(fmt.Sprintf(`{"schema_version":"diagnostic-artifact/v1","recipe":"crashdump-collection.v1","recipe_version":1,"node":"node-a","archive_format":"tar.gz","inputs":{"maxAgeMinutes":1440,"node":"node-a","maxArchiveBytes":%d},"payload_sha256":"0000000000000000000000000000000000000000000000000000000000000000","file_count":0,"bytes":0,"exit_code":0,"exit_semantics":"0=complete; non-zero=not published"}`+"\n", maxBytes))
+}
+
+func validCrashdumpManifest(maxBytes int64, payloadSHA string, fileCount, bytes int64) []byte {
+	return []byte(fmt.Sprintf(`{"schema_version":"diagnostic-artifact/v1","recipe":"crashdump-collection.v1","recipe_version":1,"node":"node-a","archive_format":"tar.gz","inputs":{"maxAgeMinutes":1440,"node":"node-a","maxArchiveBytes":%d},"payload_sha256":"%s","file_count":%d,"bytes":%d,"exit_code":0,"exit_semantics":"0=complete; non-zero=not published"}`+"\n", maxBytes, payloadSHA, fileCount, bytes))
 }
 
 func writeCertificateBundle(t *testing.T, path string, certificateDER []byte) {

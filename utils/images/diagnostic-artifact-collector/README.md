@@ -64,6 +64,16 @@ output declaration input. The image writes a deterministic-entry-order tar.gz
 archive, an identical manifest sidecar, and finally /output/artifact.ready as
 the uploader hand-off. Existing destinations are rejected.
 
+## Deployment-owned output volume
+
+The controller or chart owns the `/output` emptyDir hand-off. Its pod-level
+security context must set `runAsUser: 65532`, `runAsGroup: 65532`, and
+`fsGroup: 65532` (with `fsGroupChangePolicy: OnRootMismatch`) so the non-root
+collector can create its private hand-off on a fresh volume. The image does not
+assume that a bind mount or host directory is writable. The checked-in
+`tests/kind-emptydir.sh` creates the reference pod in Kind and proves this
+contract with the real image and an emptyDir.
+
 The archive includes manifest.json, redacted stdout.log and stderr.log, and
 only the recipe's declared files. It enforces a 15-minute duration, at most
 8192 total filesystem entries and 4096 regular candidates before sorting
@@ -100,11 +110,22 @@ The collector never opens a network connection. Only the uploader performs
 bounded PUT attempts to the controller-issued HTTPS endpoint. The uploader
 rejects redirects, URLs with queries/fragments or
 credentials, empty tokens, symlinked archives, and archives whose private
-regular-file identity or size changes during transfer. The image carries the
-pinned builder's CA bundle for normal certificate verification and ignores
-ambient `SSL_CERT_FILE`, `SSL_CERT_DIR`, and proxy variables. A development
-HTTP endpoint requires a separate controller-rendered pod value; that opt-in
-is never accepted from the token-only Secret.
+regular-file identity or size changes during transfer. Retries are limited to
+HTTP 408/429, 5xx, request timeouts, and explicitly classified connection
+reset/refused/broken-pipe failures; TLS, DNS, authorization, and caller
+cancellation are terminal. The image carries the pinned builder's CA bundle
+for normal certificate verification and ignores
+ambient `SSL_CERT_FILE`, `SSL_CERT_DIR`, and proxy variables. HTTP endpoints
+are never accepted; development fixtures must use certificate-verified HTTPS
+with an injected test transport.
+
+Before the first PUT and again after every successful response, the uploader
+streams and validates the gzip/tar contract: exactly one embedded manifest
+matching the private sidecar byte-for-byte, only expected regular files and
+directories, no duplicate or unsafe members, recipe-specific payload paths,
+manifest `file_count`/`bytes`, and the raw payload SHA-256. A malformed gzip,
+truncated stream, changed payload, forged manifest, or post-response mutation
+fails closed and cannot be retried as a transient transport error.
 
 Private staging is deleted on every exit. Publication uses create-only hard
 links and writes the ready marker last. If publication is interrupted after an

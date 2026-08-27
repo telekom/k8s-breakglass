@@ -33,13 +33,18 @@ approved hand-off identities (UID/GID 65532 mode 0600, or root:65532 mode
 0640), opens them with no-follow semantics, enforces the manifest's immutable
 per-recipe ceiling, and verifies archive bytes and identity before and after
 transfer. It then performs bounded HTTPS PUT attempts to the
-exact controller-assigned URL, with a bounded retry budget for transient
-transport or server failures. Redirects, URLs containing queries/fragments,
-non-TLS URLs (unless an explicit development-only HTTP opt-in is set), empty
+exact controller-assigned URL, with a bounded retry budget for HTTP 408/429,
+5xx, request timeouts, and explicitly classified connection
+reset/refused/broken-pipe failures. Redirects, URLs containing queries/fragments,
+non-TLS URLs, empty
 tokens, arbitrary headers, and methods are rejected. The URL and token are
 never logged. Only the image-pinned CA bundle is trusted; ambient
 `SSL_CERT_FILE`, `SSL_CERT_DIR`, and proxy variables are ignored. The
 controller should always issue a non-empty HMAC token.
+Before a PUT and after each successful response, the uploader streams the
+gzip/tar archive and verifies the embedded manifest, payload paths, duplicate
+members, source counts/bytes, and raw payload checksum against the private
+sidecar. Corrupt, forged, or changed content is terminal.
 The controller claims a durable, session-status upload lease before accepting
 bytes. A `409` means another attempt is active or the create-only object was
 already consumed; do not mint a new command or bypass the endpoint.

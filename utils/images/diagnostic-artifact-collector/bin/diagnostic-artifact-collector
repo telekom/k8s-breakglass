@@ -19,6 +19,13 @@ fi
 set -eu
 # shellcheck disable=SC3040
 set -o pipefail
+# The image is intentionally self-contained. Do not inherit a caller-provided
+# PATH: every utility below must resolve to one of the reviewed BusyBox image
+# locations, and the readonly export prevents a later assignment from
+# changing that trust boundary.
+PATH=/usr/local/bin:/usr/bin:/bin
+export PATH
+readonly PATH
 umask 077
 
 OUTPUT_DIR=/output

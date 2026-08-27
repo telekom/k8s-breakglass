@@ -212,6 +212,15 @@ assert_unique_members_and_payload_sha "$test_dir/smoke-output/artifact.readable.
 run_image_default "$test_dir/default-output-created-by-helper" -- collect --recipe system-summary.v1 --output /output/artifact.tar.gz
 [ -f "$test_dir/default-output-created-by-helper/artifact.tar.gz" ]
 
+# A caller-controlled PATH must not select a helper. The collector resets it to
+# the image-owned locations before any bare BusyBox utility is resolved.
+mkdir "$test_dir/hostile-path" "$test_dir/hostile-path-output"
+printf '%s\n' '#!/bin/sh' 'printf hostile-path-executed >&2' 'exit 99' >"$test_dir/hostile-path/find"
+chmod 0755 "$test_dir/hostile-path/find"
+run_image "$test_dir/hostile-path-output" --env PATH=/tmp/hostile-path \
+	--volume "$test_dir/hostile-path:/tmp/hostile-path:ro" -- collect --recipe system-summary.v1 --output /output/artifact.tar.gz
+[ -f "$test_dir/hostile-path-output/artifact.tar.gz" ]
+
 mkdir "$test_dir/extended-output"
 run_image "$test_dir/extended-output" --env DIAGNOSTIC_DETAIL_LEVEL=extended -- \
 	collect --recipe system-summary.v1 --output /output/artifact.tar.gz
