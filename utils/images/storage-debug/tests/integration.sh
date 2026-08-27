@@ -34,6 +34,9 @@ cleanup() {
     for cidfile in "$work"/*.cid; do
         [ -s "$cidfile" ] || continue
         cid=$(cat "$cidfile")
+        if ! container_exists "$cid"; then
+            continue
+        fi
         if container_belongs_to_run "$cid"; then
             docker rm -f "$cid" >/dev/null 2>&1 || true
         else
@@ -49,6 +52,10 @@ cleanup() {
 container_belongs_to_run() {
     cid=$1
     [ "$(docker inspect --format '{{index .Config.Labels "io.telekom.storage-debug.test-run"}}' "$cid" 2>/dev/null || true)" = "$run_id" ]
+}
+
+container_exists() {
+    docker inspect "$1" >/dev/null 2>&1
 }
 
 trap cleanup EXIT HUP INT TERM
@@ -76,8 +83,10 @@ run_docker() {
         case "$cid" in
             *[!0-9a-f]*|'') fail "Docker wrote an invalid container ID" ;;
         esac
-        container_belongs_to_run "$cid" || fail "Docker cidfile did not identify an owned container"
-        docker rm -f "$cid" >/dev/null 2>&1 || true
+        if container_exists "$cid"; then
+            container_belongs_to_run "$cid" || fail "Docker cidfile did not identify an owned container"
+            docker rm -f "$cid" >/dev/null 2>&1 || true
+        fi
     fi
     rm -f "$cidfile"
     return "$status"
