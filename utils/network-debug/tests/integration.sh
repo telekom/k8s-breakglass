@@ -9,6 +9,8 @@ EXEC_TIMEOUT=${NETWORK_DEBUG_EXEC_TIMEOUT_SECONDS:-20}
 DOCKER_TIMEOUT=${NETWORK_DEBUG_DOCKER_TIMEOUT_SECONDS:-30}
 PWRU_TIMEOUT=${NETWORK_DEBUG_PWRU_TIMEOUT_SECONDS:-20}
 PWRU_REQUIRED=${NETWORK_DEBUG_REQUIRE_PWRU:-true}
+TRACE_DURATION=10
+TRACE_EVENTS=10000
 # BPF detach is asynchronous on some kernels; keep graceful shutdown bounded
 # while allowing the daemon a short, evidence-backed detach window.
 PWRU_STOP_TIMEOUT=${NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS:-15}
@@ -490,35 +492,52 @@ if [ "$PWRU_READY" = true ]; then
 	# return an error (or be interrupted), and EXIT cleanup must still force
 	# remove that exact run-scoped name and verify it is gone.
 	PWRU_CONTAINER_CREATED=true
-	docker_call run --detach --name "$PWRU_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" "${PWRU_RUN_ARGS[@]}" --network host \
-		"$IMAGE" pwru --output-tuple --output-file /work/pwru.log --timestamp none \
-				host 127.0.0.1 \
-		>"$WORK_DIR/pwru-start.log" 2>&1 || requirement "could not start pwru proof container"
+	# Exercise the public bounded operation. This is deliberately not a raw
+	# pwru command: net-debug performs the host-netns check, event/file bounds,
+	# FIFO backpressure, graceful stop, pcap-free summary, and hash publication.
+	trace_start_status=0
+	docker_call run --detach --name "$PWRU_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" \
+		-e NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS="$PWRU_STOP_TIMEOUT" \
+		-e NETWORK_DEBUG_PWRU_STOP_SETTLE_SECONDS="$PWRU_STOP_SETTLE" \
+		"${PWRU_RUN_ARGS[@]}" --network host "$IMAGE" trace \
+			--duration "$TRACE_DURATION" --events "$TRACE_EVENTS" --output trace.log \
+		>"$WORK_DIR/trace-start.log" 2>&1 || trace_start_status=$?
+	[ "$trace_start_status" -eq 0 ] || requirement "could not start public net-debug trace operation"
 	sleep 2
-	docker_call run --rm --network host "$IMAGE" curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18080/ >/dev/null || requirement "pwru HTTP traffic generator failed"
-	docker_call run --rm --network host "$IMAGE" ping -n -c 1 -W 1 127.0.0.1 >/dev/null || requirement "pwru traffic generator failed"
-	# --output-limit-lines only exits after enough events have been observed;
-	# sparse traffic can therefore leave pwru running indefinitely. Poll the
-	# output file for a real tuple from the generated traffic, then explicitly
-	# stop pwru. This gives the proof a bounded observation window independent of
-	# pwru's event loop and proves that the graceful signal was honoured.
-	pwru_wait_for_event "$PWRU_CONTAINER" "$WORK_DIR/pwru.log" "$PWRU_TIMEOUT" \
-		'127\.0\.0\.1.*->.*127\.0\.0\.1|127\.0\.0\.1.*18080' || {
-		pwru_state=$(docker_call inspect --format '{{.State.Status}}' "$PWRU_CONTAINER" || true)
-		if [ "$pwru_state" = exited ]; then
-			requirement "pwru exited before controlled shutdown"
-		fi
-		requirement "pwru produced no packet tuple for generated traffic within ${PWRU_TIMEOUT}s"
-	}
-	pwru_stop_gracefully "$PWRU_CONTAINER" "$PWRU_STOP_TIMEOUT" || {
-		pwru_exit=$(docker_call inspect --format '{{.State.ExitCode}}' "$PWRU_CONTAINER" || true)
-		docker_call logs "$PWRU_CONTAINER" >&2 || true
-		requirement "pwru did not cleanly exit after SIGINT (exit ${pwru_exit:-unknown}); the compatible runner needs BTF, BPF, and PERFMON support"
-	}
-	docker_call cp "$PWRU_CONTAINER:/work/pwru.log" "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru did not produce an event log"
-	[ -s "$WORK_DIR/pwru.log" ] || requirement "pwru event log is empty after generated traffic"
-	grep -F -- '->' "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru produced no packet tuple after generated traffic"
-	grep -E -- '127\.0\.0\.1.*->.*127\.0\.0\.1|127\.0\.0\.1.*18080' "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru did not observe the generated loopback HTTP traffic"
+	docker_call run --rm --network host "$IMAGE" curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18080/ >/dev/null || requirement "trace HTTP traffic generator failed"
+	docker_call run --rm --network host "$IMAGE" ping -n -c 1 -W 1 127.0.0.1 >/dev/null || requirement "trace traffic generator failed"
+	# The wrapper's duration is itself bounded. Wait only through a separate
+	# bounded Docker wait, then validate its public summary and evidence file.
+	trace_wait_status=0
+	trace_exit=$(timeout --foreground "${PWRU_TIMEOUT}s" docker wait "$PWRU_CONTAINER" 2>/dev/null) || trace_wait_status=$?
+	[ "$trace_wait_status" -eq 0 ] || requirement "public net-debug trace exceeded its bounded wait"
+	case "$trace_exit" in 0|130|141|143) ;; *) requirement "public net-debug trace exited unsuccessfully: $trace_exit" ;; esac
+	trace_state=$(docker_call inspect --format '{{.State.Status}}' "$PWRU_CONTAINER" 2>/dev/null) || requirement "could not inspect completed trace container"
+	[ "$trace_state" = exited ] || requirement "public net-debug trace container did not exit"
+	trace_summary=$(docker_call logs "$PWRU_CONTAINER") || requirement "could not read public trace summary"
+	printf '%s\n' "$trace_summary" >"$WORK_DIR/trace-summary.txt"
+	grep -Fx 'trace' "$WORK_DIR/trace-summary.txt" >/dev/null || requirement "public trace summary missing operation marker"
+	grep -Fx "duration $TRACE_DURATION" "$WORK_DIR/trace-summary.txt" >/dev/null || requirement "public trace summary missing duration bound"
+	grep -Fx "event_limit $TRACE_EVENTS" "$WORK_DIR/trace-summary.txt" >/dev/null || requirement "public trace summary missing event bound"
+	trace_count=$(sed -n 's/^event_count //p' "$WORK_DIR/trace-summary.txt")
+	case "$trace_count" in ''|*[!0-9]*) requirement "public trace summary has an invalid event count" ;; esac
+	[ "$trace_count" -le "$TRACE_EVENTS" ] || requirement "public trace exceeded its event bound"
+	grep -E '^sha256 [0-9a-f]{64}$' "$WORK_DIR/trace-summary.txt" >/dev/null || requirement "public trace summary missing SHA-256"
+	grep -Fx 'file trace.log' "$WORK_DIR/trace-summary.txt" >/dev/null || requirement "public trace summary missing output name"
+	docker_call cp "$PWRU_CONTAINER:/work/trace.log" "$WORK_DIR/trace.log" >/dev/null || requirement "public trace did not produce evidence"
+	[ -s "$WORK_DIR/trace.log" ] || requirement "public trace evidence is empty"
+	trace_bytes=$(wc -c <"$WORK_DIR/trace.log" | tr -d ' ')
+	[ "$trace_bytes" -le $((TRACE_EVENTS * 4097)) ] || requirement "public trace evidence exceeds its size bound"
+	grep -F -- '->' "$WORK_DIR/trace.log" >/dev/null || requirement "public trace evidence has no packet tuple"
+	grep -E -- '127\.0\.0\.1.*->.*127\.0\.0\.1|127\.0\.0\.1.*18080' "$WORK_DIR/trace.log" >/dev/null || requirement "public trace missed generated loopback HTTP traffic"
+	pwru_force_remove "$PWRU_CONTAINER" 15 || requirement "public trace container cleanup failed"
+	PWRU_CONTAINER_CREATED=false
+	if docker_resource_present container "$PWRU_CONTAINER"; then
+		requirement "public trace container survived cleanup"
+	else
+		resource_status=$?
+		[ "$resource_status" -eq 1 ] || requirement "could not verify public trace container cleanup"
+	fi
 fi
 
 
