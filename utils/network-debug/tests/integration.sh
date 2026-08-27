@@ -7,6 +7,7 @@ set -Eeuo pipefail
 IMAGE=${NETWORK_DEBUG_IMAGE:-network-debug:integration}
 EXEC_TIMEOUT=${NETWORK_DEBUG_EXEC_TIMEOUT_SECONDS:-20}
 PWRU_TIMEOUT=${NETWORK_DEBUG_PWRU_TIMEOUT_SECONDS:-20}
+PWRU_STOP_TIMEOUT=${NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS:-5}
 KUBESTR_TIMEOUT=${NETWORK_DEBUG_KUBESTR_TIMEOUT_SECONDS:-60}
 KUBESTR_FIXTURE_IMAGE=${NETWORK_DEBUG_KUBESTR_FIXTURE_IMAGE:-network-debug-kubestr-fio:integration}
 RUN_ID="network-debug-proof-${RANDOM}-${RANDOM}"
@@ -34,13 +35,15 @@ KUBESTR_KUBECONFIG_FILE=${WORK_DIR}/kubestr-kubeconfig
 
 # shellcheck disable=SC1091
 . "$(dirname -- "$0")/kind-ownership.sh"
+# shellcheck disable=SC1091
+. "$(dirname -- "$0")/pwru-lifecycle.sh"
 
 requirement() {
 	printf 'REQUIREMENT: %s\n' "$*" >&2
 	exit 2
 }
 
-for timeout_value in "$EXEC_TIMEOUT" "$PWRU_TIMEOUT" "$KUBESTR_TIMEOUT"; do
+for timeout_value in "$EXEC_TIMEOUT" "$PWRU_TIMEOUT" "$PWRU_STOP_TIMEOUT" "$KUBESTR_TIMEOUT"; do
 	case "$timeout_value" in
 		''|*[!0-9]*) requirement "timeout settings must be positive integers" ;;
 	esac
@@ -88,7 +91,11 @@ cleanup() {
 			container_owned=true
 		fi
 		if [ "$container_owned" = true ]; then
-			if docker inspect "$docker_container" >/dev/null 2>&1; then
+			if [ "$docker_container" = "$PWRU_CONTAINER" ]; then
+				if ! pwru_force_remove "$docker_container"; then
+					cleanup_failed=true
+				fi
+			elif docker inspect "$docker_container" >/dev/null 2>&1; then
 				if ! docker rm -f "$docker_container" >/dev/null 2>&1; then
 					cleanup_failed=true
 				fi
@@ -270,7 +277,6 @@ PWRU_RUN_ARGS=(
 	--cap-add BPF
 	--cap-add PERFMON
 	--cap-add NET_ADMIN
-	--cap-add NET_RAW
 	--cap-add SYS_RESOURCE
 	--security-opt seccomp=unconfined
 	--security-opt apparmor=unconfined
@@ -294,27 +300,39 @@ if [ "$PWRU_READY" = true ]; then
 	fi
 fi
 if [ "$PWRU_READY" = true ]; then
-	docker run --detach --name "$PWRU_CONTAINER" "${PWRU_RUN_ARGS[@]}" --network "container:$CONTAINER" \
-		"$IMAGE" pwru --output-limit-lines 20 --output-tuple --output-file /work/pwru.log --timestamp none \
-			 host 127.0.0.1 \
-		>"$WORK_DIR/pwru-start.log" 2>&1 || requirement "could not start pwru proof container"
+	# A generated name is expected to be absent. Refuse a collision before
+	# claiming ownership so cleanup can never remove another run's container.
+	if docker inspect "$PWRU_CONTAINER" >/dev/null 2>&1; then
+		requirement "refusing to reuse an existing pwru proof container named $PWRU_CONTAINER"
+	fi
+	# Mark ownership before creation. docker can create a container and then
+	# return an error (or be interrupted), and EXIT cleanup must still force
+	# remove that exact run-scoped name and verify it is gone.
 	PWRU_CONTAINER_CREATED=true
+	docker run --detach --name "$PWRU_CONTAINER" "${PWRU_RUN_ARGS[@]}" --network "container:$CONTAINER" \
+		"$IMAGE" pwru --output-tuple --output-file /work/pwru.log --timestamp none \
+				host 127.0.0.1 \
+		>"$WORK_DIR/pwru-start.log" 2>&1 || requirement "could not start pwru proof container"
 	sleep 2
 	exec_in curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18080/ >/dev/null || requirement "pwru HTTP traffic generator failed"
 	exec_in ping -n -c 1 -W 1 127.0.0.1 >/dev/null || requirement "pwru traffic generator failed"
-	pwru_state=running
-	for _ in $(seq 1 "$((PWRU_TIMEOUT * 2))"); do
-		pwru_state=$(docker inspect --format '{{.State.Status}}' "$PWRU_CONTAINER")
+	# --output-limit-lines only exits after enough events have been observed;
+	# sparse traffic can therefore leave pwru running indefinitely. Poll the
+	# output file for a real tuple from the generated traffic, then explicitly
+	# stop pwru. This gives the proof a bounded observation window independent of
+	# pwru's event loop and proves that the graceful signal was honoured.
+	pwru_wait_for_event "$PWRU_CONTAINER" "$WORK_DIR/pwru.log" "$PWRU_TIMEOUT" \
+		'127\.0\.0\.1.*->.*127\.0\.0\.1|127\.0\.0\.1.*18080' || {
+		pwru_state=$(docker inspect --format '{{.State.Status}}' "$PWRU_CONTAINER" || true)
 		if [ "$pwru_state" = exited ]; then
-			break
+			requirement "pwru exited before controlled shutdown"
 		fi
-		sleep 0.5
-	done
-	[ "$pwru_state" = exited ] || requirement "pwru exceeded its ${PWRU_TIMEOUT}s bounded event window"
-	pwru_exit=$(docker inspect --format '{{.State.ExitCode}}' "$PWRU_CONTAINER")
-	[ "$pwru_exit" = 0 ] || {
+		requirement "pwru produced no packet tuple for generated traffic within ${PWRU_TIMEOUT}s"
+	}
+	pwru_stop_gracefully "$PWRU_CONTAINER" "$PWRU_STOP_TIMEOUT" || {
+		pwru_exit=$(docker inspect --format '{{.State.ExitCode}}' "$PWRU_CONTAINER" || true)
 		docker logs "$PWRU_CONTAINER" >&2 || true
-		requirement "pwru could not attach/observe events; the compatible runner needs BTF, BPF, and PERFMON support"
+		requirement "pwru did not cleanly exit after SIGINT (exit ${pwru_exit:-unknown}); the compatible runner needs BTF, BPF, and PERFMON support"
 	}
 	docker cp "$PWRU_CONTAINER:/work/pwru.log" "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru did not produce an event log"
 	[ -s "$WORK_DIR/pwru.log" ] || requirement "pwru event log is empty after generated traffic"
