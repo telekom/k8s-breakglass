@@ -86,6 +86,47 @@ func TestUploadHTTPClientIgnoresAmbientCABundleOverrides(t *testing.T) {
 	}
 }
 
+func TestUploadHTTPClientIgnoresAmbientProxyOverrides(t *testing.T) {
+	pinnedServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer pinnedServer.Close()
+
+	proxyRequests := make(chan struct{}, 1)
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case proxyRequests <- struct{}{}:
+		default:
+		}
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer proxy.Close()
+
+	bundle := filepath.Join(t.TempDir(), "pinned.pem")
+	writeCertificateBundle(t, bundle, pinnedServer.Certificate().Raw)
+	t.Setenv("HTTP_PROXY", proxy.URL)
+	t.Setenv("HTTPS_PROXY", proxy.URL)
+	t.Setenv("NO_PROXY", "")
+
+	client, err := uploadHTTPClientForCABundle(bundle)
+	if err != nil {
+		t.Fatalf("uploadHTTPClientForCABundle() error = %v", err)
+	}
+	response, err := client.Get(pinnedServer.URL)
+	if err != nil {
+		t.Fatalf("direct pinned request failed with ambient proxy: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("direct pinned request status = %d, want %d", response.StatusCode, http.StatusNoContent)
+	}
+	select {
+	case <-proxyRequests:
+		t.Fatal("ambient proxy received the pinned request")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestUploadHTTPClientFailsClosedForMissingOrInvalidCABundle(t *testing.T) {
 	for name, content := range map[string][]byte{
 		"missing": nil,
@@ -347,6 +388,22 @@ func TestUploadEnforcesImmutableRecipeArchiveCeilings(t *testing.T) {
 	}
 	if err := upload(context.Background()); !strings.Contains(err.Error(), "not allowlisted") {
 		t.Fatalf("unknown recipe error = %v", err)
+	}
+}
+
+func TestUploadRejectsManifestWithUnknownFields(t *testing.T) {
+	path, ready := uploadFixture(t, []byte("archive-bytes"))
+	oldPath, oldReady := artifactPath, readyPath
+	defer func() { artifactPath, readyPath = oldPath, oldReady }()
+	artifactPath, readyPath = path, ready
+	t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_URL", "https://upload.example.invalid/object")
+	t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_TOKEN", "one-time-token")
+	manifest := filepath.Join(filepath.Dir(path), "artifact.manifest.json")
+	if err := os.WriteFile(manifest, []byte(`{"recipe":"system-summary.v1","inputs":{"maxArchiveBytes":16777216},"forged":"field"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := upload(context.Background()); !strings.Contains(err.Error(), "manifest is invalid") {
+		t.Fatalf("unknown-field manifest error = %v", err)
 	}
 }
 

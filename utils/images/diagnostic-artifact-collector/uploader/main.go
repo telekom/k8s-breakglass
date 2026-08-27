@@ -158,12 +158,25 @@ func recipeArchiveLimit(path string) (int64, error) {
 	}
 	defer func() { _ = file.Close() }()
 	var contract struct {
-		Recipe string `json:"recipe"`
-		Inputs struct {
-			MaxArchiveBytes int64 `json:"maxArchiveBytes"`
+		SchemaVersion string  `json:"schema_version"`
+		Recipe        string  `json:"recipe"`
+		RecipeVersion int     `json:"recipe_version"`
+		Node          *string `json:"node"`
+		ArchiveFormat string  `json:"archive_format"`
+		Inputs        struct {
+			MaxArchiveBytes int64   `json:"maxArchiveBytes"`
+			MaxAgeMinutes   *int64  `json:"maxAgeMinutes"`
+			Node            *string `json:"node"`
+			DetailLevel     *string `json:"detailLevel"`
 		} `json:"inputs"`
+		PayloadSHA256 string `json:"payload_sha256"`
+		FileCount     int64  `json:"file_count"`
+		Bytes         int64  `json:"bytes"`
+		ExitCode      int    `json:"exit_code"`
+		ExitSemantics string `json:"exit_semantics"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(file, maxManifestBytes+1))
+	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&contract); err != nil {
 		return 0, errors.New("artifact manifest is invalid")
 	}
@@ -300,10 +313,14 @@ func uploadHTTPClientForCABundle(caBundlePath string) (*http.Client, error) {
 			// A presigned URL is an exact target. Ambient proxy variables and
 			// ambient CA environment variables are deliberately ignored so they
 			// cannot redirect or re-trust the bearer token.
-			Proxy:           nil,
+			Proxy:           noProxy,
 			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: rootCAs},
 		},
 	}, nil
+}
+
+func noProxy(*http.Request) (*url.URL, error) {
+	return nil, nil
 }
 
 func uploadURL() (*url.URL, error) {

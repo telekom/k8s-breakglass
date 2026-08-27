@@ -10,9 +10,13 @@ test_dir=$(mktemp -d /tmp/diagnostic-artifact-test.XXXXXX)
 root_volume=diagnostic-artifact-test-${test_dir##*/}
 upload_volume=diagnostic-artifact-upload-${test_dir##*/}
 https_pid=
+proxy_pid=
 cleanup() {
 	if [ -n "$https_pid" ]; then
 		kill "$https_pid" >/dev/null 2>&1 || true
+	fi
+	if [ -n "$proxy_pid" ]; then
+		kill "$proxy_pid" >/dev/null 2>&1 || true
 	fi
 	rm -rf "$test_dir"
 	docker volume rm "$root_volume" "$upload_volume" >/dev/null 2>&1 || true
@@ -323,6 +327,50 @@ printf '%s\n' "$attacker_ca_result" | grep -Eiq 'certificate|authority|tls' || {
 	exit 1
 }
 
+# A hostile proxy must not see the presigned URL or bearer token. The real
+# request below still succeeds directly against the certificate-pinned fixture.
+proxy_port_file="$test_dir/proxy-port"
+proxy_seen_file="$test_dir/proxy-seen"
+python3 - "$proxy_port_file" "$proxy_seen_file" <<'PY' &
+import http.server
+import sys
+
+port_file, seen_file = sys.argv[1:]
+
+class ProxyHandler(http.server.BaseHTTPRequestHandler):
+    def _record(self):
+        with open(seen_file, "w", encoding="utf-8") as seen:
+            seen.write(self.command + " " + self.path)
+        self.send_error(502)
+
+    def do_CONNECT(self):  # noqa: N802
+        self._record()
+
+    def do_PUT(self):  # noqa: N802
+        self._record()
+
+    def log_message(self, *_args):
+        pass
+
+server = http.server.HTTPServer(("0.0.0.0", 0), ProxyHandler)
+with open(port_file, "w", encoding="utf-8") as port:
+    port.write(str(server.server_port))
+    port.flush()
+server.serve_forever()
+server.server_close()
+PY
+proxy_pid=$!
+attempt=0
+while [ ! -s "$proxy_port_file" ] && [ "$attempt" -lt 30 ]; do
+	sleep 1
+	attempt=$((attempt + 1))
+done
+[ -s "$proxy_port_file" ] || {
+	echo 'hostile proxy fixture did not publish a port' >&2
+	exit 1
+}
+proxy_port=$(cat "$proxy_port_file")
+
 # Mount the disposable CA only over the immutable image CA path to exercise a
 # real certificate-verified packaged upload without creating an environment
 # override path in the production contract.
@@ -330,12 +378,21 @@ docker run --rm --read-only --cap-drop=ALL \
 	--add-host=host.docker.internal:host-gateway \
 	--volume "$upload_volume:/output" \
 	--volume "$https_cert:/etc/ssl/certs/ca-certificates.crt:ro" \
+	--env HTTP_PROXY="http://host.docker.internal:$proxy_port" \
+	--env HTTPS_PROXY="http://host.docker.internal:$proxy_port" \
 	--env BREAKGLASS_ARTIFACT_UPLOAD_URL="https://host.docker.internal:$https_port/exact-object" \
 	--env BREAKGLASS_ARTIFACT_UPLOAD_TOKEN=packaged-upload-token \
 	--entrypoint /usr/local/bin/diagnostic-artifact-upload "$image" \
 	--archive /output/artifact.tar.gz
 cmp "$expected_upload" "$https_body_file"
 [ "$(cat "$https_path_file")" = /exact-object ]
+[ ! -e "$proxy_seen_file" ] || {
+	echo 'hostile proxy received the packaged upload request' >&2
+	exit 1
+}
+kill "$proxy_pid"
+wait "$proxy_pid" 2>/dev/null || true
+proxy_pid=
 kill "$https_pid"
 wait "$https_pid" 2>/dev/null || true
 https_pid=
