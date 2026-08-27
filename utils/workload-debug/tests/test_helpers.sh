@@ -83,14 +83,24 @@ if WORKLOAD_DEBUG_MAX_BYTES=0 debug-http https://invalid.example >/dev/null 2>&1
     exit 1
 fi
 
-# Curl can reject a malformed URL before opening the header FIFO. The bounded
-# response helper must return promptly rather than leaving its reader blocked.
+# Curl can reject a malformed URL before opening the header FIFO. Use a
+# deterministic rejecting fixture here so the test covers that early-failure
+# path consistently across curl implementations and host platforms.
+cat >"$fixture/curl" <<'EOF'
+#!/bin/sh
+case "$*" in
+    *'http://[::1'*) exit 3 ;;
+    *) printf '%s\n' 'unexpected curl fixture request' >&2; exit 2 ;;
+esac
+EOF
+chmod +x "$fixture/curl"
 malformed_status=0
 timeout 5 debug-http 'http://[::1' >"$fixture/malformed-output" 2>"$fixture/malformed-error" || malformed_status=$?
 [ "$malformed_status" -ne 124 ] || {
   printf '%s\n' 'debug-http hung after curl rejected a malformed URL' >&2
   exit 1
 }
+rm -f "$fixture/curl"
 
 # DNS/TLS diagnostic output is finite even when a peer emits an unusually
 # large response. The command returns failure after emitting the configured

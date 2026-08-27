@@ -7,6 +7,8 @@ All notable changes to the standalone workload-debug image are documented here.
 
 ## Unreleased
 
+- Close bounded-response FIFO descriptors in curl and body-reader children so
+  early curl failures cannot leave the response helper blocked.
 - Publish the utility image at the canonical `utils/workload-debug` GHCR path.
 - Require the real projected service-account bearer token in the Kubernetes
   API integration fixture and verify authenticated output, process arguments,

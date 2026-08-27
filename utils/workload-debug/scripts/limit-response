@@ -88,7 +88,11 @@ header_guard_pid=$!
 curl_status=0
 head_status=0
 set +e
-"$@" --dump-header "$header_pipe" --output - | head -c "$((max_bytes + 1))" >"$body_file"
+# Do not leak the dummy FIFO descriptor into either pipeline child. In
+# particular, a curl implementation that rejects the URL before opening the
+# dump-header path must still be able to exit without leaving a writer alive.
+3>&- "$@" --dump-header "$header_pipe" --output - |
+    { exec 3>&-; head -c "$((max_bytes + 1))"; } >"$body_file"
 pipeline_status=("${PIPESTATUS[@]}")
 curl_status=${pipeline_status[0]}
 head_status=${pipeline_status[1]}
