@@ -6,127 +6,112 @@ SPDX-License-Identifier: CC-BY-4.0
 
 # Kubernetes node-maintenance image
 
-This is a generic, standalone image for a narrowly scoped node-network
-incident workflow. It is multi-architecture (`linux/amd64` and `linux/arm64`)
-and starts from the digest-pinned Alpine base in [`Dockerfile`](Dockerfile).
+This digest-pinnable, multi-architecture image provides three controller-
+targeted incident interfaces:
 
-The image exposes exactly two supported commands:
+* `node-recovery` collects read-only link, address, route, neighbor, NIC,
+  resolver, and kernel evidence for one exact interface;
+* `network-repair` performs one independently approved allowlisted action:
+  `link-cycle`, `restart-autonegotiation`, `neighbor-replace`, or
+  `bridge-fdb-replace`;
+* `kexec-recovery-validate` validates fixed provider-owned recovery files and
+  digests. It never loads or executes a kernel.
 
-* `node-recovery` collects read-only link, address, route, neighbor,
-  NIC, resolver, and kernel evidence.
-* `network-repair` performs exactly one of `link-cycle`, `flush-neighbors`, or
-  `restart-autonegotiation`.
+Broad neighbor flushing is not supported. Neighbor replacement requires one
+exact IP/MAC/interface tuple. FDB replacement requires one exact
+bridge/port/MAC/VLAN tuple and verifies bridge membership and VLAN presence
+before mutation. There is no caller-selected shell, command, command argument,
+path, recovery image, route, or sysctl interface. The image has no kexec
+executable, package manager, compiler, packet capture tool, or port scanner.
 
-There is no supported unrestricted shell, package manager, compiler, packet
-capture tool, port scanner, or general-purpose network toolbox. The entrypoint
-dispatches only the two fixed command names. It does not support kexec or
-reboot, crashdump collection, packet capture, arbitrary commands, sysctl
-changes, route replacement, or node discovery.
+## Controller and approval contract
 
-## Guardrails
+Every invocation requires `BREAKGLASS_NODE_NAME`, `BREAKGLASS_OPERATION_ID`,
+and `BREAKGLASS_RECORDING_ID` from the controller-owned immutable workload.
+The requested node must exactly equal `BREAKGLASS_NODE_NAME`, which must come
+from Downward API `spec.nodeName`; hostname discovery is not trusted.
 
-Every helper requires `--target-node NODE`, `--interface IFACE`,
-`--evidence-dir ABSOLUTE_PATH`, and the command-specific confirmation token.
-No default interface or node is inferred. `BREAKGLASS_NODE_NAME` is required
-and must be injected by the controller-owned immutable workload template from
-the Downward API `spec.nodeName`; the requested target must exactly match it.
-`hostname` is never trusted for node identity. Targets accept only shell-safe
-identifiers, and repair actions are validated against a fixed allowlist before
-any mutation. Evidence is limited to `/evidence` or `/evidence/SAFE_CHILD`;
-the image rejects system paths and symlink or rename changes. Every probe and
-action has a fixed time and output limit, and evidence has a fixed total quota.
-Timeout and quota failures are recorded deterministically in the bundle.
+Every mutating repair and kexec validation additionally requires
+`BREAKGLASS_APPROVAL_ID` and an exact `BREAKGLASS_APPROVED_ACTION` match. The
+command confirmation string is an operator error guard, not authorization.
+Preflight, each network action, kexec validation, and any future provider
+executor need independent approval decisions; approval for one must never be
+reused as approval for another.
+
+Each command creates `metadata` plus `events.jsonl` recording hooks correlated
+by operation and recording IDs. Repair captures before/action/after evidence;
+kexec validation records fixed-file digests and an explicit
+`execution_performed=false`. Captures have fixed 10-second, 32 KiB per-file,
+and 384 KiB per-bundle bounds. An atomic evidence-volume lease permits one
+operation at a time and is released on exit. The controller must also enforce
+one active workload per node because separate volumes cannot coordinate.
+Containers, evidence volumes, and controller leases must have bounded
+lifetimes and deterministic cleanup.
 
 ## Invocation
 
-Use the runbooks in [`runbooks/`](runbooks/) and substitute every placeholder:
+Use the complete runbooks in [`runbooks/`](runbooks/). Representative commands
+are:
 
 ```text
 node-recovery \
-  --target-node NODE_NAME \
-  --interface IFACE_NAME \
-  --evidence-dir /evidence \
-  --confirm NODE-RECOVERY-PREFLIGHT
+  --target-node NODE --interface IFACE \
+  --evidence-dir /evidence --confirm NODE-RECOVERY-PREFLIGHT
 
 network-repair \
-  --target-node NODE_NAME \
-  --interface IFACE_NAME \
-  --action ACTION \
-  --evidence-dir /evidence \
-  --confirm NETWORK-REPAIR
+  --target-node NODE --interface IFACE --action neighbor-replace \
+  --neighbor-address IP --entry-mac MAC \
+  --evidence-dir /evidence --confirm NETWORK-REPAIR
+
+network-repair \
+  --target-node NODE --interface BRIDGE_PORT --bridge BRIDGE \
+  --action bridge-fdb-replace --entry-mac MAC --vlan VLAN \
+  --evidence-dir /evidence --confirm NETWORK-REPAIR
+
+kexec-recovery-validate \
+  --target-node NODE --recovery-profile PROVIDER_PROFILE \
+  --evidence-dir /evidence --confirm KEXEC-RECOVERY-VALIDATE
 ```
 
-Do not add `sh`, `bash`, or arbitrary commands to a pod specification. If the
-allowlisted helpers cannot diagnose an incident, stop and use the platform's
-normal, separately approved host-debug process.
+Evidence is restricted to `/evidence` or one safe child. System paths,
+symlinks, rename substitutions, and unbounded output are rejected. Unsupported
+or action-irrelevant options are rejected instead of ignored.
 
-## Pod security boundary
+## Runtime security contexts
 
-Use separate immutable workload templates and the smallest required
-capability. Preflight drops `ALL` and adds none; repair drops `ALL` and adds
-only `NET_ADMIN`. Blanket `privileged: true` is not part of this contract.
-Mount a dedicated empty directory at `/evidence` and do not mount `/`, `/etc`,
-`/proc`, `/sys`, or another host-system path. A repair context is:
+Use separate immutable workloads and pin this image by digest. All contexts
+run with a read-only root, `allowPrivilegeEscalation: false`, RuntimeDefault
+seccomp, and capabilities dropped. Add only `NET_ADMIN` for `network-repair`;
+`node-recovery` and `kexec-recovery-validate` add none. Blanket privileged
+mode, `SYS_BOOT`, host PID, and host-root mounts are outside this contract.
 
-```yaml
-hostNetwork: true
-securityContext:
-  runAsUser: 0
-  allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: true
-  capabilities:
-    drop: [ALL]
-    add: [NET_ADMIN]
-  seccompProfile:
-    type: RuntimeDefault
-```
+Kexec validation consumes only a distinct read-only `/recovery` mount with
+fixed files `kernel`, `initrd`, and `cmdline`. Exact provider profile and
+SHA-256 values come from immutable controller fields. The validator does not
+evaluate cmdline contents or establish bootability. Kernel signature,
+lockdown/measured-boot compatibility, device quiescence, rollback, health
+checking, and execution remain unresolved provider responsibilities documented
+in [`runbooks/kexec-recovery-validation.md`](runbooks/kexec-recovery-validation.md).
 
-The command dispatcher is the only supported entrypoint. The Alpine runtime
-contains `/bin/sh` because the fixed helpers are POSIX scripts, but an
-entrypoint or shell override is an external immutable-template and admission
-control boundary, outside this image's support and incident-audit contract.
+The Alpine runtime contains `/bin/sh` because the fixed helpers are POSIX
+scripts. An entrypoint override is an external admission-policy boundary, not
+a supported feature.
 
-## Optional downstream runbook bundle
+## Runbook bundle, build, and proof
 
-Built-in documentation is image-owned at
+Built-in runbooks are image-owned at
 `/usr/share/breakglass/runbooks/upstream/node-maintenance/`. A deployment may
-additionally mount a read-only, digest-pinned downstream [OCI runbook bundle](../../docs/runbook-bundle-contract.md)
-at the shared `/usr/share/breakglass/runbooks/internal` root. The bundle root
-is mounted directly, without `subPath`, and a selected bundle must include its
-contract-required `bundle.yaml` and `INDEX.md`. The image neither hardcodes a
-bundle reference nor sources or executes any bundle content. Workload wiring
-and admission are external immutable-template responsibilities.
+mount a digest-pinned downstream documentation bundle read-only at
+`/usr/share/breakglass/runbooks/internal`; it is never sourced or executed.
 
-## Build, SBOM, and signing
+`make test` runs fast behavioral denial checks. `make integration` uses a
+Linux Docker daemon and exercises every action in disposable Docker network
+namespaces, including real veth neighbor and VLAN bridge-FDB changes, exact-
+target adversarial cases, immutable kexec input checks, recording evidence,
+time/concurrency boundaries, and cleanup. The proof refuses to skip when its
+Linux/Docker prerequisites are absent.
 
-Run `make test` for helper tests. `make build` creates a local image;
-`make build-multiarch` uses BuildKit for both supported platforms and requests
-in-toto provenance plus an SPDX SBOM (`--provenance=true --sbom=true`), writing
-a local OCI archive (`node-maintenance.oci.tar` by default).
-Release automation must resolve and retain the immutable registry digest, then
-run `make sign DIGEST=...` and `make sbom DIGEST=... SBOM=...`. The Makefile
-refuses signing or attestation without a digest, so a mutable tag is never the
-signing subject. Package versions and the base manifest are in [`deps.lock`](deps.lock).
-
-## Integration proof
-
-`make integration` is a real-tool proof, not a help/argument smoke test. On a
-Linux Docker runner it builds the image and runs every command in disposable
-containers with `--network none`, a read-only root filesystem, and a
-disposable evidence volume. Preflight drops all capabilities with no add;
-repair adds only `NET_ADMIN` after dropping all capabilities. It exercises
-`node-recovery`, all three repair actions, failure evidence, confirmation and
-target guards, unsafe-path rejection, dispatcher rejection, and explicit
-container/volume cleanup. The harness explicitly verifies Docker's built-in
-RuntimeDefault seccomp profile and the requested capability boundary from
-container metadata. The loopback interface is used so no runner host
-network namespace is joined or modified; auto-negotiation is expected to fail
-and its evidence is required.
-
-The harness refuses to skip when Docker, Linux namespaces, or required Docker
-security flags are unavailable. Run it with `NODE_MAINTENANCE_TEST_IMAGE`
-to test an already-built image, or inspect the machine-readable
-[`integration-contract.json`](tests/integration-contract.json) used by
-aggregate CI/reference jobs. A macOS/Windows developer machine should run the
-unit helper tests locally and use the Linux integration workflow; the workflow
-failure is intentional rather than a feature skip.
+`make build-multiarch` requests provenance and an SPDX SBOM for amd64/arm64.
+Release automation must sign and attest only an immutable registry digest via
+`make sign DIGEST=...` and `make sbom DIGEST=... SBOM=...`; local targets do
+not push images. Pinned packages are recorded in [`deps.lock`](deps.lock).

@@ -38,12 +38,17 @@ done
 validate_target "$target_node"
 validate_interface "$interface"
 validate_confirmation NODE-RECOVERY-PREFLIGHT "$confirmation"
+validate_recording_context
 prepare_evidence_dir "$evidence_dir"
+trap 'release_operation_lock || true' EXIT
+acquire_operation_lock "$evidence_dir"
 
 bundle=$(new_bundle "$evidence_dir" node-recovery)
 write_metadata "$bundle/metadata" node-recovery "$target_node" "$interface" read-only
+record_event operation-started accepted
 
 if ! capture "$bundle/interface.txt" ip -details link show dev "$interface"; then
+	record_event operation-completed preflight-failed
 	printf 'Interface %s was not found; evidence bundle is incomplete: %s\n' "$interface" "$bundle" >&2
 	exit 1
 fi
@@ -58,6 +63,7 @@ capture "$bundle/resolver.txt" cat /etc/resolv.conf || true
 capture "$bundle/kernel.txt" uname -a || true
 assert_safe_bundle "$bundle"
 printf 'completed_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$bundle/metadata"
+record_event operation-completed succeeded
 
 printf 'Preflight completed for target %s, interface %s. Evidence: %s\n' \
 	"$target_node" "$interface" "$bundle"

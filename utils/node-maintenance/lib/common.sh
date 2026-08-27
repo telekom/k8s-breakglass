@@ -11,6 +11,7 @@ set -eu
 capture_timeout_seconds=10
 capture_max_bytes=32768
 evidence_max_bytes=393216
+operation_lock_name=.node-maintenance-operation.lock
 
 die() {
 	printf 'node-maintenance: %s\n' "$*" >&2
@@ -39,10 +40,70 @@ validate_interface() {
 	validate_value "interface" "$1"
 }
 
+validate_mac_address() {
+	label=$1
+	value=$2
+	case "$value" in
+		[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]) ;;
+		*) die "$label must be an exact six-octet MAC address" ;;
+	esac
+	[ "$value" != 00:00:00:00:00:00 ] || die "$label may not be the all-zero address"
+	first_octet=${value%%:*}
+	second_nibble=${first_octet#?}
+	case "$second_nibble" in
+		1|3|5|7|9|[Bb]|[Dd]|[Ff]) die "$label must be a unicast MAC address" ;;
+	esac
+}
+
+validate_neighbor_address() {
+	value=$1
+	validate_value "neighbor address" "$value"
+	# The selected family is consumed by the calling fixed-action helper.
+	# shellcheck disable=SC2034
+	case "$value" in
+		*.*) NEIGHBOR_FAMILY=-4 ;;
+		*:*) NEIGHBOR_FAMILY=-6 ;;
+		*) die "neighbor address must be an IPv4 or IPv6 address" ;;
+	esac
+}
+
+validate_vlan() {
+	value=$1
+	case "$value" in
+		''|*[!0-9]*) die "VLAN must be an integer from 1 through 4094" ;;
+	esac
+	[ "$value" -ge 1 ] && [ "$value" -le 4094 ] || die "VLAN must be an integer from 1 through 4094"
+}
+
 validate_confirmation() {
 	expected=$1
 	actual=$2
 	[ "$actual" = "$expected" ] || die "confirmation must be exactly '$expected'"
+}
+
+validate_sha256() {
+	label=$1
+	value=$2
+	[ "${#value}" -eq 64 ] || die "$label must be an exact SHA-256 digest without a prefix"
+	case "$value" in
+		*[!0-9A-Fa-f]*) die "$label must be an exact SHA-256 digest without a prefix" ;;
+	esac
+}
+
+validate_recording_context() {
+	operation_id=${BREAKGLASS_OPERATION_ID:-}
+	recording_id=${BREAKGLASS_RECORDING_ID:-}
+	validate_value "BREAKGLASS_OPERATION_ID" "$operation_id"
+	validate_value "BREAKGLASS_RECORDING_ID" "$recording_id"
+}
+
+validate_approved_action() {
+	expected_action=$1
+	approval_id=${BREAKGLASS_APPROVAL_ID:-}
+	approved_action=${BREAKGLASS_APPROVED_ACTION:-}
+	validate_value "BREAKGLASS_APPROVAL_ID" "$approval_id"
+	validate_value "BREAKGLASS_APPROVED_ACTION" "$approved_action"
+	[ "$approved_action" = "$expected_action" ] || die "controller-approved action '$approved_action' does not match requested action '$expected_action'"
 }
 
 prepare_evidence_dir() {
@@ -68,6 +129,30 @@ prepare_evidence_dir() {
 	assert_safe_evidence_dir "$directory"
 	chmod 0700 "$directory" || die "cannot protect evidence directory '$directory'"
 	EVIDENCE_DIR=$directory
+}
+
+acquire_operation_lock() {
+	directory=$1
+	assert_safe_evidence_dir "$directory"
+	lock_candidate="$directory/$operation_lock_name"
+	if ! mkdir "$lock_candidate" 2>/dev/null; then
+		die "another node-maintenance operation is active for this evidence lease"
+	fi
+	operation_lock=$lock_candidate
+	[ ! -L "$operation_lock" ] || die "operation lock may not be a symlink"
+	resolved_lock=$(readlink -f "$operation_lock" 2>/dev/null || true)
+	[ "$resolved_lock" = "$operation_lock" ] || die "operation lock did not resolve safely"
+	chmod 0700 "$operation_lock" || die "cannot protect operation lock"
+}
+
+release_operation_lock() {
+	if [ -n "${operation_lock:-}" ]; then
+		[ -n "${EVIDENCE_DIR:-}" ] && [ -d "$EVIDENCE_DIR" ] && [ ! -L "$EVIDENCE_DIR" ] || return 1
+		case "$operation_lock" in "$EVIDENCE_DIR/$operation_lock_name") ;; *) return 1 ;; esac
+		[ ! -L "$operation_lock" ] || return 1
+		rmdir "$operation_lock" 2>/dev/null || return 1
+		operation_lock=
+	fi
 }
 
 assert_safe_evidence_dir() {
@@ -168,6 +253,22 @@ write_metadata() {
 		printf 'target_node=%s\n' "$target_node"
 		printf 'interface=%s\n' "$interface"
 		printf 'action=%s\n' "$action"
+		printf 'operation_id=%s\n' "${operation_id:?recording context is not initialized}"
+		printf 'recording_id=%s\n' "${recording_id:?recording context is not initialized}"
+		if [ -n "${approval_id:-}" ]; then
+			printf 'approval_id=%s\n' "$approval_id"
+		fi
 		printf 'started_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	} >"$metadata_file"
+}
+
+record_event() {
+	event_name=$1
+	result=$2
+	assert_safe_bundle "${bundle:?bundle is not initialized}"
+	validate_value "recording event" "$event_name"
+	validate_value "recording result" "$result"
+	printf '{"time":"%s","event":"%s","result":"%s","operation_id":"%s","recording_id":"%s","target_node":"%s"}\n' \
+		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$event_name" "$result" "$operation_id" "$recording_id" "$target_node" \
+		>>"$bundle/events.jsonl"
 }

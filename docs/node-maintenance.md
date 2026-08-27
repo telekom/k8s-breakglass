@@ -8,17 +8,21 @@ SPDX-License-Identifier: CC-BY-4.0
 
 The standalone [`utils/node-maintenance`](../utils/node-maintenance/) image is
 for a narrowly scoped node-network incident workflow. It supports a read-only
-`node-recovery` preflight and three explicitly selected `network-repair`
-actions. It is not a
+`node-recovery` preflight, exact-entry neighbor and bridge-FDB repair alongside
+the interface actions, and fail-closed `kexec-recovery-validate`. The kexec
+interface verifies fixed provider-owned read-only files and immutable digests;
+it cannot execute or claim bootability. It is not a
 replacement for a host-debug image and intentionally does not document an
 unrestricted shell or ship a general-purpose network toolbox.
 
 See the utility README and its [preflight](../utils/node-maintenance/runbooks/node-recovery-preflight.md)
 and [repair](../utils/node-maintenance/runbooks/network-repair.md) runbooks for
-the required separate no-capability preflight and `NET_ADMIN`-only repair
-contexts, controller-provided exact target, confirmation, and evidence
-workflow. Workload templates must inject `BREAKGLASS_NODE_NAME` from Downward
-API `spec.nodeName`; hostname is not a trust input.
+the required separate no-capability preflight, `NET_ADMIN`-only repair, and
+[kexec validation](../utils/node-maintenance/runbooks/kexec-recovery-validation.md)
+contexts. Workload templates must inject exact controller-owned node,
+operation, recording, approval, and approved-action bindings. The node comes
+from Downward API `spec.nodeName`; hostname is not a trust input. Confirmation
+is not authorization, and approval for one operation cannot authorize another.
 
 Built-in runbooks remain under
 `/usr/share/breakglass/runbooks/upstream/node-maintenance/`. A downstream
@@ -34,9 +38,22 @@ package versions, request BuildKit provenance/SBOM attestations, and sign only
 the resulting immutable registry digest. No image is pushed by the local
 Makefile.
 
-The Linux-only integration target (`make -C utils/node-maintenance integration`)
-builds and runs the image in disposable `--network none` namespaces with the
+The Linux-container integration target (`make -C utils/node-maintenance integration`)
+builds and runs the image against a Linux Docker daemon in disposable
+`--network none` namespaces with the
 separate preflight/repair capability boundaries. It executes every allowlisted action,
-checks real before/after evidence and denial guards, and verifies container and
-volume cleanup. Missing Docker, namespace support, or security flags fails the
-job with diagnostics; the proof never silently skips.
+including real veth neighbor and VLAN bridge-FDB replacement, checks exact-
+target and injection denials, and verifies fixed-path kexec inputs without
+invoking even a fixture executable. Tests also exercise recording evidence,
+shared-volume concurrency denial, read-only recovery assets, digest mismatch,
+container and volume cleanup, and fixed timeout/output quotas. Missing Docker,
+namespace support, or security flags fails the job with diagnostics; the proof
+never silently skips.
+
+The controller remains responsible for pinning the image by digest, enforcing
+one active workload per node, expiring approvals independently, bounding pod
+and evidence-volume lifetimes, and recording cleanup. An actual kexec executor
+is deliberately unresolved: a provider must separately define immutable
+signed assets, platform/kernel compatibility, lockdown and measured-boot
+policy, health/rollback behavior, node quiescence, its own approval, and a
+bounded cleanup contract before execution can be considered.

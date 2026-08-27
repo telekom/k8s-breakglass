@@ -1,10 +1,12 @@
 {
-  "contractVersion": "node-maintenance.integration/v1",
+  "contractVersion": "node-maintenance.integration/v2",
   "imageContext": "utils/node-maintenance",
   "network": {
     "mode": "none",
     "hostNetwork": false,
-    "hostNetworkMutation": false
+    "hostNetworkMutation": false,
+    "disposableVethNeighborFixture": true,
+    "disposableVLANBridgeFixture": true
   },
   "security": {
     "readOnlyRootFilesystem": true,
@@ -14,8 +16,25 @@
     "capabilitiesDrop": ["ALL"],
     "contexts": {
       "node-recovery": {"capabilitiesAdd": []},
-      "network-repair": {"capabilitiesAdd": ["NET_ADMIN"]}
+      "network-repair": {"capabilitiesAdd": ["NET_ADMIN"]},
+      "kexec-recovery-validate": {"capabilitiesAdd": [], "execution": false}
     }
+  },
+  "controllerBindings": {
+    "nodeIdentityEnvironment": "BREAKGLASS_NODE_NAME",
+    "operationEnvironment": "BREAKGLASS_OPERATION_ID",
+    "recordingEnvironment": "BREAKGLASS_RECORDING_ID",
+    "approvalEnvironment": "BREAKGLASS_APPROVAL_ID",
+    "approvedActionEnvironment": "BREAKGLASS_APPROVED_ACTION",
+    "exactActionMatch": true,
+    "independentApprovalRequired": true
+  },
+  "bounds": {
+    "captureTimeoutSeconds": 10,
+    "captureMaxBytes": 32768,
+    "evidenceMaxBytes": 393216,
+    "sharedEvidenceLeaseConcurrency": 1,
+    "controllerNodeConcurrencyRequired": 1
   },
   "disposableResources": {
     "evidenceVolume": true,
@@ -25,31 +44,49 @@
   "commands": {
     "node-recovery": {
       "target": "node-a",
-      "nodeIdentityEnvironment": "BREAKGLASS_NODE_NAME",
       "interface": "lo",
       "confirmation": "NODE-RECOVERY-PREFLIGHT",
       "expectedExit": 0,
-      "requiredEvidence": ["interface.txt", "addresses.txt", "routes.txt", "neighbors.txt", "ethtool.txt", "resolver.txt", "kernel.txt", "metadata"]
+      "requiredEvidence": ["interface.txt", "addresses.txt", "routes.txt", "neighbors.txt", "ethtool.txt", "resolver.txt", "kernel.txt", "metadata", "events.jsonl"]
     },
     "network-repair": {
       "target": "node-a",
-      "nodeIdentityEnvironment": "BREAKGLASS_NODE_NAME",
-      "interface": "lo",
       "confirmation": "NETWORK-REPAIR",
       "actions": {
-        "link-cycle": {"expectedExit": 0},
-        "flush-neighbors": {"expectedExit": 0},
-        "restart-autonegotiation": {"expectedExit": "nonzero"}
+        "link-cycle": {"interface": "lo", "expectedExit": 0},
+        "restart-autonegotiation": {"interface": "lo", "expectedExit": "nonzero"},
+        "neighbor-replace": {"interface": "repair0", "address": "192.0.2.2", "mac": "02:00:00:00:00:02", "expectedExit": 0},
+        "bridge-fdb-replace": {"interface": "fdb0", "bridge": "br0", "mac": "02:00:00:00:01:00", "vlan": 100, "expectedExit": 0}
       },
-      "requiredEvidence": ["before-link.txt", "before-addresses.txt", "before-routes.txt", "before-neighbors.txt", "after-link.txt", "after-addresses.txt", "after-routes.txt", "after-neighbors.txt", "metadata"]
+      "requiredEvidence": ["before-link.txt", "after-link.txt", "metadata", "events.jsonl"]
+    },
+    "kexec-recovery-validate": {
+      "target": "node-a",
+      "profile": "rescue-a",
+      "fixedPaths": ["/recovery/kernel", "/recovery/initrd", "/recovery/cmdline"],
+      "recoveryMountReadOnly": true,
+      "confirmation": "KEXEC-RECOVERY-VALIDATE",
+      "expectedExit": 0,
+      "executionPerformed": false,
+      "requiredEvidence": ["kernel.sha256.txt", "initrd.sha256.txt", "cmdline.sha256.txt", "validation-result.txt", "metadata", "events.jsonl"]
     }
   },
   "guards": [
     "missing-confirmation",
     "target-mismatch",
+    "approval-action-mismatch",
     "unsafe-evidence-path",
     "evidence-symlink",
     "evidence-rename",
+    "shared-evidence-concurrency",
+    "neighbor-argument-injection",
+    "fdb-bridge-mismatch",
+    "fdb-vlan-mismatch",
+    "kexec-profile-mismatch",
+    "kexec-missing-digest",
+    "kexec-digest-mismatch",
+    "kexec-caller-selected-path",
+    "kexec-writable-mount",
     "unknown-dispatch-command"
   ]
 }

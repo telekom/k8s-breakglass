@@ -6,37 +6,69 @@ SPDX-License-Identifier: CC-BY-4.0
 
 # Allowlisted network repair
 
-Use this procedure only after preflight evidence has been reviewed and the
-incident ticket has explicit approval. Repairs can interrupt traffic.
+Use this procedure only after reviewing preflight evidence and obtaining an
+approval for this exact action and tuple. A confirmation token is not approval.
+Do not reuse approval for another repair, node, interface, bridge, entry, or
+kexec validation.
 
-Allowed actions are `link-cycle` (take the named interface down/up),
-`flush-neighbors` (flush neighbor entries for the interface), and
-`restart-autonegotiation` (ask the NIC to restart auto-negotiation).
+The four actions are:
 
-Run exactly one action, replacing every uppercase placeholder:
+* `link-cycle` for the named interface;
+* `restart-autonegotiation` for the named interface;
+* `neighbor-replace` for one IP/MAC/interface tuple;
+* `bridge-fdb-replace` for one bridge/port/MAC/VLAN tuple.
+
+Broad neighbor flush, FDB flush, delete-all, inferred interfaces, and inferred
+bridges are intentionally absent. Run exactly one action:
 
 ```text
 network-repair \
   --target-node NODE_NAME \
   --interface IFACE_NAME \
-  --action ACTION \
+  --action link-cycle \
+  --evidence-dir /evidence \
+  --confirm NETWORK-REPAIR
+
+network-repair \
+  --target-node NODE_NAME \
+  --interface IFACE_NAME \
+  --action neighbor-replace \
+  --neighbor-address IP_ADDRESS \
+  --entry-mac MAC_ADDRESS \
+  --evidence-dir /evidence \
+  --confirm NETWORK-REPAIR
+
+network-repair \
+  --target-node NODE_NAME \
+  --interface BRIDGE_PORT \
+  --bridge BRIDGE_NAME \
+  --action bridge-fdb-replace \
+  --entry-mac MAC_ADDRESS \
+  --vlan VLAN_ID \
   --evidence-dir /evidence \
   --confirm NETWORK-REPAIR
 ```
 
-The helper refuses a target node that does not exactly match the controller-
-provided `BREAKGLASS_NODE_NAME` (from Downward API `spec.nodeName`) and refuses
-evidence paths other than `/evidence` or one safe child, including symlink or
-rename changes. Run with
-`hostNetwork: true`, `allowPrivilegeEscalation: false`, all capabilities
-dropped except `NET_ADMIN`, and a read-only root filesystem; blanket
-`privileged: true` is not required.
+The immutable controller template must inject `BREAKGLASS_NODE_NAME` from
+Downward API `spec.nodeName`, unique operation/recording/approval identifiers,
+and `BREAKGLASS_APPROVED_ACTION` equal to the requested action. It must pin the
+image by digest and enforce one active operation per node. The helper also
+takes an atomic evidence-volume lease, but that cannot coordinate distinct
+volumes.
 
-The helper captures link, address, route, and neighbor state before and after
-the action. Preserve the bundle even if the action exits non-zero. Verify node
-readiness and application health through the normal platform process; this
-image has no unrestricted shell or general-purpose diagnostic toolbox.
-Every action and probe has a fixed time/output budget. This command cannot
-perform route replacement, sysctl changes, capture, crashdump collection,
-node discovery, arbitrary commands, kexec, or reboot. An entrypoint override
-is outside the external immutable-template and admission-control boundary.
+Run with `hostNetwork: true`, a read-only root, RuntimeDefault seccomp,
+`allowPrivilegeEscalation: false`, all capabilities dropped except
+`NET_ADMIN`, no host PID, and no host filesystem mount. The helper verifies the
+exact interface. Neighbor repair also verifies the address routes through that
+interface. FDB repair verifies the exact bridge exists, the port is enslaved
+to it, and the exact VLAN is configured before changing one entry.
+
+Preserve `metadata`, `events.jsonl`, and all before/action/after captures even
+on non-zero exit. Each command and capture has a fixed timeout and quota. A
+link cycle makes one bounded attempt to bring the interface up after bringing
+it down. Verify node and application health through normal platform controls,
+then allow the controller to clean up the workload, evidence volume, and
+node-scoped lease within their configured deadlines.
+
+This helper cannot run caller commands or arguments, select paths or images,
+replace routes, mutate sysctls, capture traffic, reboot, or execute kexec.
