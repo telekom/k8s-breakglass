@@ -328,6 +328,7 @@ run_trace_fixture() {
 cat >"$trace_fixture/bin/pwru" <<'EOF'
 #!/bin/sh
 set -eu
+printf '%s\n' 'SKB CPU PROCESS TUPLE FUNC' 'header-only metadata'
 printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80' '10.0.0.1:12346 -> 10.0.0.2:80' '10.0.0.1:12347 -> 10.0.0.2:80'
 printf '%s\n' '2026/08/27 20:00:00 INFO Printed events, exiting program.. count=3' >&2
 exit 1
@@ -338,6 +339,22 @@ rm -f "$trace_fixture/work/trace.log"
 run_trace_fixture 3 >"$trace_fixture/limit-summary"
 grep -Fx 'event_count 3' "$trace_fixture/limit-summary" >/dev/null
 test "$(wc -l <"$trace_fixture/work/trace.log" | tr -d ' ')" -eq 3
+test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
+
+cat >"$trace_fixture/bin/pwru" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' 'SKB CPU PROCESS TUPLE FUNC' 'header-only metadata'
+exit 0
+EOF
+chmod +x "$trace_fixture/bin/pwru"
+test_context='trace-empty-evidence'
+rm -f "$trace_fixture/work/trace.log"
+if run_trace_fixture 3 >"$trace_fixture/empty-summary" 2>"$trace_fixture/empty-error"; then
+	printf '%s\n' 'trace accepted header-only output as packet evidence' >&2
+	exit 1
+fi
+test ! -e "$trace_fixture/work/trace.log"
 test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
 
 cat >"$trace_fixture/bin/pwru" <<'EOF'

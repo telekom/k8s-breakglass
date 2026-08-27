@@ -445,17 +445,23 @@ trace_command() {
 			return 1
 		;;
 	esac
-	count=$(wc -l <"$TEMP_EVIDENCE" | tr -d ' ')
+	# pwru's text mode writes a fixed header before tuple records. Publish only
+	# the tuple records promised by this image contract so the header cannot
+	# consume an event bound or be mistaken for packet evidence.
+	TEMP_TUPLES=$STAGING_DIR/tuples
+	sed -n '/->/p' "$TEMP_EVIDENCE" >"$TEMP_TUPLES" || true
+	count=$(wc -l <"$TEMP_TUPLES" | tr -d ' ')
 	[ "$count" -le "$events" ] || usage_error 'trace evidence exceeded event limit'
 	if [ "$limit_completed" = true ] && [ "$count" -ne "$events" ]; then
 		printf 'net-debug: bounded-completion marker claimed %s events but evidence contained %s\n' "$events" "$count" >&2
 		return 1
 	fi
-	bytes=$(wc -c <"$TEMP_EVIDENCE" | tr -d ' ')
+	bytes=$(wc -c <"$TEMP_TUPLES" | tr -d ' ')
 	[ "$bytes" -le "$max_trace_bytes" ] || usage_error 'trace evidence exceeds its bounded file size'
-	hash=$(sha256sum "$TEMP_EVIDENCE" | awk '{print $1}')
-	ln "$TEMP_EVIDENCE" "$destination" || usage_error 'output was created concurrently'
-	rm -f "$TEMP_EVIDENCE"
+	[ "$count" -gt 0 ] || usage_error 'trace produced no packet tuple evidence'
+	hash=$(sha256sum "$TEMP_TUPLES" | awk '{print $1}')
+	ln "$TEMP_TUPLES" "$destination" || usage_error 'output was created concurrently'
+	rm -f "$TEMP_EVIDENCE" "$TEMP_TUPLES"
 	cleanup_stage
 	printf 'trace\nduration %s\nevent_limit %s\nevent_count %s\nsha256 %s\nfile %s\n' \
 		"$duration" "$events" "$count" "$hash" "$output"
