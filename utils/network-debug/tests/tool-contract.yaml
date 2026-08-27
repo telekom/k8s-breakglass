@@ -24,11 +24,10 @@ checks:
     requirements: [CAP_NET_RAW, writable-work-mount]
     bounds: {durationSeconds: [1, 300], packets: [1, 10000], snaplenBytes: [64, 256], filterCharacters: 256}
   - id: selected-pod-capture
-    operation: exact-pod-uid-to-netns-bounded-capture
-    tools: [pod-netns-capture, tcpdump]
-    requirements: [linux-kernel, hostPID, non-hostNetwork, CAP_SYS_ADMIN, CAP_SYS_PTRACE, CAP_NET_RAW, recognized-kubernetes-cgroup-layout, disposable-kind-cluster, owner-only-emptyDir]
-    prohibited: [caller-pid, caller-pod-name, caller-node-name, shell-argv, hostPath, CRI-socket, privileged, hostNetwork]
-    targetRepresentations: [canonical-dashed-uid, systemd-underscore-escaped-uid, systemd-backslash-x2d-escaped-uid]
+    operation: approved-target-ephemeral-container-bounded-capture
+    tools: [tcpdump]
+    requirements: [linux-kernel, target-container-network-namespace, non-hostNetwork, CAP_NET_RAW, disposable-kind-cluster, owner-only-emptyDir]
+    prohibited: [caller-pid, caller-pod-name, caller-node-name, shell-argv, hostPath, CRI-socket, privileged, hostPID, hostNetwork]
     bounds: {durationSeconds: [1, 300], packets: [1, 10000], snaplenBytes: [64, 256], filterBytes: 256, outputFilenameBytes: 64}
   - id: kernel-packet-tracing
     operation: bounded-image-owned-host-netns-trace
@@ -44,14 +43,11 @@ bounded:
   traceEvents: 10000
   filterCharacters: 256
   packetTraceTimeoutSeconds: 60
-  selectedPodCaptureDurationSeconds: 300
-  selectedPodCapturePackets: 10000
-  selectedPodCaptureSnaplenBytes: 256
-  selectedPodCaptureFilterBytes: 256
-  selectedPodCaptureOutputFilenameBytes: 64
+  selectedPodCaptureDurationSeconds: 15
+  selectedPodCapturePackets: 8
+  selectedPodCaptureSnaplenBytes: 128
 cleanup:
   container: required
   networkNamespace: required
   networkDiagnosticsPod: required
-  selectedPodCaptureJob: required
-  selectedPodCaptureEvidence: required
+  selectedPodCaptureEphemeralContainer: required

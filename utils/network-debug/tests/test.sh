@@ -6,38 +6,10 @@ set -eu
 
 root=$(cd -- "$(dirname -- "$0")/.." && pwd)
 
-# Exercise the selected-pod admission contract against API-shaped JSON. The
-# API may omit false-valued hostNetwork, but must still reject host networking
-# and runtime socket mounts.
 command -v jq >/dev/null 2>&1 || {
-	printf '%s\n' 'jq is required for selected-pod admission contract checks' >&2
+	printf '%s\n' 'jq is required for deterministic report checks' >&2
 	exit 1
 }
-admitted_job=$(jq -n '{spec:{template:{spec:{hostPID:true,automountServiceAccountToken:false,volumes:[{name:"evidence",emptyDir:{}}],initContainers:[{securityContext:{allowPrivilegeEscalation:false,capabilities:{drop:["ALL"]}},volumeMounts:[{mountPath:"/work"}]}],containers:[{securityContext:{allowPrivilegeEscalation:false,capabilities:{drop:["ALL"],add:["SYS_ADMIN","SYS_PTRACE","NET_RAW"]}},volumeMounts:[{mountPath:"/work"}]},{securityContext:{allowPrivilegeEscalation:false,capabilities:{drop:["ALL"]}},volumeMounts:[{mountPath:"/work"}]}]}}}}')
-selected_job_filter='(.spec.template.spec.hostPID == true) and
-((.spec.template.spec.hostNetwork // false) == false) and
-(.spec.template.spec.automountServiceAccountToken == false) and
-(.spec.template.spec.volumes | length == 1 and .[0].emptyDir != null and all(.[]; (.hostPath // null) == null)) and
-(.spec.template.spec.initContainers | length == 1) and
-(.spec.template.spec.containers | length == 2) and
-(.spec.template.spec.initContainers[0].securityContext.allowPrivilegeEscalation == false) and
-(.spec.template.spec.initContainers[0].securityContext.capabilities.drop == ["ALL"]) and
-(.spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation == false) and
-(.spec.template.spec.containers[0].securityContext.capabilities.drop == ["ALL"]) and
-(.spec.template.spec.containers[0].securityContext.capabilities.add == ["SYS_ADMIN", "SYS_PTRACE", "NET_RAW"]) and
-(.spec.template.spec.containers[1].securityContext.allowPrivilegeEscalation == false) and
-(.spec.template.spec.containers[1].securityContext.capabilities.drop == ["ALL"]) and
-all([.spec.template.spec.initContainers[], .spec.template.spec.containers[]][]; all(.volumeMounts[]?; (.mountPath == "/work" and (.mountPath | IN("/run/containerd/containerd.sock", "/var/run/containerd/containerd.sock", "/var/run/docker.sock") | not))))'
-printf '%s\n' "$admitted_job" | jq -e "$selected_job_filter" >/dev/null
-if printf '%s\n' "$admitted_job" | jq '.spec.template.spec.hostNetwork = true' | jq -e "$selected_job_filter" >/dev/null; then
-	printf '%s\n' 'selected-pod admission check accepted host networking' >&2
-	exit 1
-fi
-if printf '%s\n' "$admitted_job" | jq '.spec.template.spec.containers[0].volumeMounts[0].mountPath = "/var/run/containerd/containerd.sock"' | jq -e "$selected_job_filter" >/dev/null; then
-	printf '%s\n' 'selected-pod admission check accepted a runtime socket mount' >&2
-	exit 1
-fi
-
 fixture=$(mktemp -d)
 trap 'rm -rf "$fixture"' EXIT HUP INT TERM
 
@@ -292,7 +264,7 @@ if NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" \
 	NETWORK_DEBUG_BTF_PATH="$trace_fixture/status" NETWORK_DEBUG_DEBUGFS_PATH="$trace_fixture/debug" \
 	NETWORK_DEBUG_TRACEFS_PATH="$trace_fixture/trace" NETWORK_DEBUG_SECURITYFS_PATH="$trace_fixture/security" \
 	NETWORK_DEBUG_MOUNTINFO_PATH="$trace_fixture/mountinfo" NETWORK_DEBUG_CAPABILITY_FILE="$trace_fixture/status" \
-	NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS=1 NETWORK_DEBUG_PWRU_STOP_SETTLE_SECONDS=1 \
+	NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS=1 \
 	PATH="$trace_fixture/bin:/usr/bin:/bin" sh "$root/scripts/net-debug" trace --duration 1 --events 1 >/dev/null 2>&1; then
 	printf '%s\n' 'trace unexpectedly succeeded when pwru ignored stop signals' >&2
 	exit 1

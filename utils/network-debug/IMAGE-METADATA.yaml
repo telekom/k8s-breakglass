@@ -45,7 +45,6 @@ image:
       - jq
     additions:
       - pwru
-      - pod-netns-capture
       - net-debug
       - net-report
       - network-debug-profile.sh
@@ -63,15 +62,8 @@ image:
     - BPF
     - PERFMON
     - SYS_RESOURCE
-    - SYS_ADMIN
-    - SYS_PTRACE
-  selectedPodCaptureCapabilities:
-    - NET_RAW
-    - SYS_ADMIN
-    - SYS_PTRACE
   operationCapabilities:
-    podNamespaceCapture: [NET_RAW]
-    selectedPodCapture: [NET_RAW, SYS_ADMIN, SYS_PTRACE]
+    selectedPodCapture: [NET_RAW]
     hostNamespaceTrace: [BPF, PERFMON, NET_ADMIN, SYS_RESOURCE, SYS_PTRACE]
   droppedCapabilities:
     hostNamespaceTrace: [NET_RAW]

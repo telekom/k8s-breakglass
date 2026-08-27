@@ -7,8 +7,8 @@ SPDX-License-Identifier: CC-BY-4.0
 
 The runtime is inherited from the immutable netshoot v0.16 multi-architecture
 manifest. Its overlapping network tools are retained as shipped by netshoot;
-this image adds only the bounded `net-debug`/`net-report` contract, selected-
-pod capture, pinned `pwru`, and the documentation mounted under
+this image adds only the bounded `net-debug`/`net-report` contract, approved
+ephemeral pod capture, pinned `pwru`, and the documentation mounted under
 `/usr/share/breakglass/runbooks/upstream/network-debug`.
 
 Use `net-report` for a deterministic overview, then invoke only the helper
@@ -47,37 +47,26 @@ never hardcodes, sources, or executes that bundle.
 
 ## Server-owned selected-pod capture
 
-Do not expose `pod-netns-capture` through an interactive template or pass
-requester-authored commands to it. It exists for the bounded server-owned
-`network-diagnostics` pod-capture Job. Resolve the selected Pod immediately
-before Job creation and pass its immutable lowercase UID, not its mutable name,
-PID, namespace, or node. A representative image-side invocation is:
+Selected-pod capture is an approved controller operation. Resolve the selected
+Pod immediately before use, then append one fixed ephemeral container through
+the Kubernetes `ephemeralcontainers` subresource. Do not expose an interactive
+helper or accept requester-authored commands, PIDs, pod names, nodes,
+capabilities, mounts, or output paths. The ephemeral container targets the
+selected Pod's existing application container and runs bounded `tcpdump` in
+that Pod network namespace; it never uses host PID/network namespaces,
+cgroup inference, host paths, or a CRI/runtime socket.
 
-```console
-pod-netns-capture \
-  --pod-uid 12345678-1234-4abc-8def-1234567890ab \
-  --interface any --duration 30 --count 1000 --snaplen 128 \
-  --filter 'tcp port 443' --output capture.pcap
-```
+The admitted Pod must retain `hostNetwork: false`, `hostPID: false`,
+`automountServiceAccountToken: false`, exactly one owner-only `emptyDir` at
+`/work`, `privileged: false`, `allowPrivilegeEscalation: false`, and
+`readOnlyRootFilesystem: true`. Drop all capabilities and add only `NET_RAW`.
+Verify the admitted ephemeral-container object, capture target-versus-decoy
+traffic in a real Linux/kind test, and delete the selected and decoy Pods with
+absence checks even after failure or interruption.
 
-Run it only in a one-shot Job with `hostPID: true`, `hostNetwork: false`,
-`automountServiceAccountToken: false`, a root-owned `emptyDir` at `/work`, a
-mode of `0700` on that directory, a read-only root filesystem, and all
-capabilities dropped before adding
-`SYS_ADMIN`, `SYS_PTRACE`, and `NET_RAW`. Do not mount a host path, containerd,
-CRI-O, or Docker socket. Delete the Job and evidence volume through the normal
-session cleanup path even after failure or interruption.
-
-The helper deliberately refuses unfamiliar cgroup roots/runtime scope names,
-ambiguous namespace inodes, target churn, output replacement, and excessive
-evidence. A failure saying the cgroup/runtime layout is unsupported is a
-platform compatibility finding—not permission to add fuzzy UID matching or a
-CRI socket. Validate a new runtime layout with real `/proc/PID/cgroup` fixtures
-and the target-versus-decoy Linux workflow before allowlisting it.
-
-The real-tool proof sends `SIGINT` to `pwru`, waits up to 15 seconds for the
-container to exit, and then reconciles asynchronous BPF detachment for up to
-5 additional seconds. Configure the primary and settle bounds with
-`NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS` and
-`NETWORK_DEBUG_PWRU_STOP_SETTLE_SECONDS`; a still-running container is a
-failed proof and is cleaned up only when its invocation ownership is verified.
+The real-tool proof runs `pwru --backend kprobe` with a native event-line bound
+and an independent regular-file size bound. `timeout --foreground` sends
+SIGINT at the trace duration and forces SIGKILL after the bounded
+`NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS` grace period (15 seconds by default).
+A still-running container is a failed proof and is cleaned up only when its
+invocation ownership is verified.

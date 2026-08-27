@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 `network-debug` is a generic toolbox for investigating connectivity from a
 Kubernetes pod or node network namespace. It inherits the runtime toolset from
 the immutable multi-architecture `ghcr.io/nicolaka/netshoot:v0.16` manifest and
-adds a bounded command/report contract, `pod-netns-capture`, `pwru`,
+adds a bounded command/report contract, `pwru`,
 and the local runbook/docs. It is free of cluster names, cloud credentials,
 private registries, and organization-specific assumptions. The image is
 published for `linux/amd64` and `linux/arm64`.
@@ -28,9 +28,9 @@ the additions are listed in [`IMAGE-METADATA.yaml`](./IMAGE-METADATA.yaml).
 - Interfaces and routing: `ip`, `ss`, `ethtool`, policy routing, and socket
   state inspection.
 - Capture: `tcpdump` (including pcap output to a mounted directory).
-- Server-owned selected-pod capture: `pod-netns-capture`, which resolves an
-  immutable Pod UID through host procfs without a CRI socket and enters only an
-  exact, unambiguous pod network namespace before bounded `tcpdump` execution.
+- Server-owned selected-pod capture: an approved ephemeral container injected
+  into the selected Pod, sharing only that Pod's network namespace and running
+  bounded `tcpdump` with `NET_RAW`.
 - Kernel packet tracing: the pinned `pwru` release on kernels with BPF/BTF and
   the capabilities described by `pwru --help`. `pwru` is present for both
   supported architectures; kernel support is evaluated at runtime.
@@ -48,9 +48,9 @@ metadata (count, size, and SHA-256), never packet payloads. For example:
 ```
 
 `net-debug trace` is the bounded host-network-namespace `pwru` wrapper. It
-limits duration to 60 seconds and evidence to 10,000 lines, sends SIGINT, and
-waits through a separate bounded BPF-detach settle window. It refuses to run
-unless BTF, debugfs, tracefs, securityfs/LSM, and the required BPF/PERFMON,
+limits duration to 60 seconds and evidence to 10,000 lines, sends SIGINT via
+`timeout --foreground`, and forces KILL after the bounded grace period. It
+refuses to run unless BTF, debugfs, tracefs, securityfs/LSM, and the required BPF/PERFMON,
 NET_ADMIN, SYS_RESOURCE, and SYS_PTRACE capabilities are available. SYS_PTRACE
 is limited to the kernel-enforced host-PID namespace identity check. It never
 uses privileged, SYS_ADMIN, or capability fallbacks.
@@ -145,52 +145,41 @@ bootstrap cleans only that attempted name and any matching labeled node
 containers, while a pre-existing name is rejected. The dedicated CI job runs
 this target on a Linux runner with Docker and kind.
 
-`pod-netns-capture` is an image-owned primitive for a later server-owned
-`network-diagnostics` pod-capture variant. It is not an interactive command
-surface and does not make the current generic kubectl-debug API safe for
-selected-pod capture. The future dispatcher must supply the immutable target
-Pod UID itself; requesters must never supply a PID, pod name, node, executable,
-or raw argv.
+Selected-pod capture is performed by an approved controller injecting a
+short-lived ephemeral container into the selected Pod through the Kubernetes
+`ephemeralcontainers` subresource. Requesters never provide commands, PIDs,
+pod names, nodes, or raw argv.
 
-The helper accepts only `--pod-uid`, `--interface`, `--duration`, `--count`,
-`--snaplen`, `--filter`, and `--output`. Duration is 1–300 seconds, packet
-count is 1–10,000, snaplen is 64–256 bytes, filters are printable ASCII up to
-256 bytes, interfaces are IFNAMSIZ-safe, and output is a new safe filename
-below `/work`. It uses `tcpdump -p` through a literal argv (no shell), applies
-an `RLIMIT_FSIZE` derived from the pcap record bound, validates the resulting
-pcap, and prints only deterministic metadata, byte count, and SHA-256—not
-packet contents.
+The selected-pod operation is an API-level controller action, not an image-side
+helper. The controller resolves the selected Pod, appends one ephemeral
+container through the `ephemeralcontainers` subresource, and supplies the fixed
+image-owned command and bounds. The admitted object must retain
+`hostNetwork: false`, `hostPID: false`, token automount disabled, one exact
+`emptyDir` mounted at `/work`, `privileged: false`, no privilege escalation,
+`readOnlyRootFilesystem: true`, and only `NET_RAW` after dropping `ALL`.
+Requesters cannot provide pod names, PIDs, nodes, commands, capabilities,
+mounts, or output paths. The container captures generated traffic in the
+selected Pod network namespace and proves a same-cluster decoy is not visible;
+the Linux/kind workflow then deletes both Pods and verifies namespace/cluster
+cleanup.
 
-The intended one-shot Job has `hostPID: true`, `hostNetwork: false`, no host
-path or CRI socket, a protected `emptyDir` at `/work`, and exactly
-`SYS_ADMIN`, `SYS_PTRACE`, and `NET_RAW` added after dropping all capabilities.
-The helper rejects a caller in the host network namespace or with a visible
-runtime socket. It scans numeric `/proc/*/cgroup` entries for exact dashed,
-underscore-escaped, or `\\x2d`-escaped Pod UID components in recognized
-cgroupfs/systemd Kubernetes layouts for containerd, CRI-O, or Docker. Unknown
-layouts, UID substrings/confusables, mixed runtime clues, target disappearance,
-or multiple network namespace inodes fail closed. A bounded leading run of
-kernel-rendered `..` components is accepted for host PIDs viewed from a private
-cgroup namespace; embedded traversal is rejected. The helper opens the
-namespace FD before final process start-time/cgroup revalidation, calls
-`setns` once, and then starts the fixed tcpdump command.
-
-The dedicated Linux/kind behavioral workflow captures target-versus-decoy
-traffic and verifies exact Job, namespace, cluster, container, and temporary
-directory cleanup. Missing host PID visibility, setns/capability support, or a
-recognized CRI cgroup layout is a failed requirement; macOS and Docker Desktop
-cannot run this behavioral proof. Unit and fuzz tests use an adversarial fake
-proc tree and remain platform-independent.
+The host trace remains a separate host-network/host-PID operation. Its wrapper
+executes the pinned `pwru --backend kprobe` with a native event-line bound into
+a private regular staging file, applies an independent kernel file-size bound,
+and runs it under `timeout --foreground` with bounded INT-to-KILL shutdown.
+Only after the process exits does it no-clobber publish the file below `/work`.
+This avoids FIFO startup/shutdown deadlocks while preserving real packet-tuple
+evidence and exact cleanup. Missing BTF, tracing filesystems, capabilities, or
+host namespace identity remains a fail-closed result; no SYS_ADMIN or
+privileged fallback is permitted.
 The `pwru` portion requires readable `/sys/kernel/btf/vmlinux`, debugfs,
 tracefs, securityfs, and BPF/PERFMON support. Local macOS/Windows Docker Desktop or a
 non-kind Kubernetes context is not a substitute for that job.
 
 Graceful `pwru` shutdown is bounded by `NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS`
-(15 seconds by default) plus a separate
-`NETWORK_DEBUG_PWRU_STOP_SETTLE_SECONDS` reconciliation window (5 seconds by
-default). The second window covers asynchronous BPF detachment at the primary
-deadline; a container that is still running when it expires fails the proof and
-is removed only after the run-ownership checks.
+(15 seconds by default) after the primary duration. The wrapper sends INT via
+`timeout --foreground` and then forces KILL at that deadline; a still-running
+container is removed only after the run-ownership checks.
 
 `build-multiarch` writes a local OCI archive and never pushes a mutable tag.
 Publish the reviewed manifest, resolve its immutable digest, then run

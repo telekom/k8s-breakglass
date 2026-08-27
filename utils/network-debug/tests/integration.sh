@@ -10,19 +10,16 @@ DOCKER_TIMEOUT=${NETWORK_DEBUG_DOCKER_TIMEOUT_SECONDS:-30}
 PWRU_REQUIRED=${NETWORK_DEBUG_REQUIRE_PWRU:-true}
 TRACE_DURATION=10
 TRACE_EVENTS=10000
-# BPF detach is asynchronous on some kernels; keep graceful shutdown bounded
-# while allowing the daemon a short, evidence-backed detach window.
+# BPF detach is asynchronous on some kernels; keep graceful shutdown bounded.
 PWRU_STOP_TIMEOUT=${NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS:-15}
-PWRU_STOP_SETTLE=${NETWORK_DEBUG_PWRU_STOP_SETTLE_SECONDS:-5}
 # Loading and attaching pwru's kprobes can take substantially longer than
 # the trace itself on a busy CI kernel. Keep that startup allowance separate
 # from the bounded shutdown windows so the outer wait remains auditable.
 PWRU_STARTUP_MARGIN=${NETWORK_DEBUG_PWRU_STARTUP_MARGIN_SECONDS:-30}
 # The outer Docker wait must cover the trace duration and both bounded pwru
 # startup and shutdown windows. A fixed 20-second wait expired while
-# net-debug was still attaching or within its documented 15+5 second stop
-# contract, falsely reporting a trace failure.
-PWRU_TIMEOUT=${NETWORK_DEBUG_PWRU_TIMEOUT_SECONDS:-$((TRACE_DURATION + PWRU_STARTUP_MARGIN + PWRU_STOP_TIMEOUT + PWRU_STOP_SETTLE))}
+# net-debug was still attaching or within its documented stop contract.
+PWRU_TIMEOUT=${NETWORK_DEBUG_PWRU_TIMEOUT_SECONDS:-$((TRACE_DURATION + PWRU_STARTUP_MARGIN + PWRU_STOP_TIMEOUT))}
 RUN_ID="network-debug-proof-${RANDOM}-${RANDOM}"
 NETWORK=${RUN_ID}-network
 CONTAINER=${RUN_ID}-tools
@@ -61,7 +58,7 @@ requirement() {
 	exit 2
 }
 
-for timeout_value in "$EXEC_TIMEOUT" "$DOCKER_TIMEOUT" "$PWRU_TIMEOUT" "$PWRU_STARTUP_MARGIN" "$PWRU_STOP_TIMEOUT" "$PWRU_STOP_SETTLE"; do
+for timeout_value in "$EXEC_TIMEOUT" "$DOCKER_TIMEOUT" "$PWRU_TIMEOUT" "$PWRU_STARTUP_MARGIN" "$PWRU_STOP_TIMEOUT"; do
 	case "$timeout_value" in
 		''|*[!0-9]*) requirement "timeout settings must be positive integers" ;;
 	esac
@@ -71,12 +68,6 @@ case "$PWRU_REQUIRED" in
 	true|false) ;;
 	*) requirement "NETWORK_DEBUG_REQUIRE_PWRU must be true or false" ;;
 esac
-# The lifecycle helper reads this value while reconciling the daemon after the
-# primary docker-wait timeout. Keep the configured bound explicit in the
-# integration proof rather than relying on the helper default.
-# shellcheck disable=SC2034 # consumed by the sourced pwru lifecycle helper
-PWRU_STOP_SETTLE_SECONDS=$PWRU_STOP_SETTLE
-
 cleanup() {
 	status=$?
 	set +e
@@ -507,11 +498,10 @@ if [ "$PWRU_READY" = true ]; then
 	PWRU_CONTAINER_CREATED=true
 	# Exercise the public bounded operation. This is deliberately not a raw
 	# pwru command: net-debug performs the host-netns check, event/file bounds,
-	# FIFO backpressure, graceful stop, pcap-free summary, and hash publication.
+	# Native event/file bounds, graceful stop, pcap-free summary, and hash publication.
 	trace_start_status=0
 	docker_call run --detach --name "$PWRU_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" \
 		-e NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS="$PWRU_STOP_TIMEOUT" \
-		-e NETWORK_DEBUG_PWRU_STOP_SETTLE_SECONDS="$PWRU_STOP_SETTLE" \
 		"${PWRU_RUN_ARGS[@]}" --network host "$IMAGE" trace \
 			--duration "$TRACE_DURATION" --events "$TRACE_EVENTS" --output trace.log \
 		>"$WORK_DIR/trace-start.log" 2>&1 || trace_start_status=$?
@@ -524,10 +514,13 @@ if [ "$PWRU_READY" = true ]; then
 	trace_wait_status=0
 	trace_exit=$(timeout --foreground "${PWRU_TIMEOUT}s" docker wait "$PWRU_CONTAINER" 2>/dev/null) || trace_wait_status=$?
 	if [ "$trace_wait_status" -ne 0 ]; then
-		# Keep the bounded failure actionable without changing the public
-		# contract: pwru diagnostics are emitted only for this owned container.
+		# Keep the bounded failure actionable and terminate only this owned
+		# invocation. The EXIT trap repeats ownership-checked cleanup.
 		docker_call logs "$PWRU_CONTAINER" >&2 || true
 		docker_call top "$PWRU_CONTAINER" >&2 || true
+		if pwru_validate_owner "$PWRU_CONTAINER"; then
+			docker_call kill --signal KILL "$PWRU_CONTAINER" >/dev/null 2>&1 || true
+		fi
 		requirement "public net-debug trace exceeded its bounded wait"
 	fi
 	case "$trace_exit" in 0|130|141|143) ;; *) requirement "public net-debug trace exited unsuccessfully: $trace_exit" ;; esac

@@ -10,7 +10,7 @@ Help:        net-debug --help
 Tool list:   net-debug tools
 Capture:      net-debug capture --help
 Trace:        net-debug trace --help (host netns + BPF prerequisites)
-Pod capture: pod-netns-capture --help (server-owned Job only)
+Selected-pod capture: controller-approved ephemeral container only
 Docs:        /usr/share/breakglass/runbooks/upstream/network-debug/README.md
 Runbook:     /usr/share/breakglass/runbooks/upstream/network-debug/RUNBOOK.md
 Optional:    /usr/share/breakglass/runbooks/internal/INDEX.md (read-only downstream bundle)

@@ -3,23 +3,13 @@
 
 # netshoot v0.16 supplies the overlapping network troubleshooting tools. Keep
 # the release tag and immutable multi-architecture manifest digest together.
-# The upstream package set is inherited as a unit; only the project-owned
-# selected-pod helper, pwru, and the contract/docs below are added here.
+# The upstream package set is inherited as a unit; only pwru and the
+# contract/docs below are added here.
 FROM ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70 AS runtime
 
 ARG VERSION=0.1.0
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
-
-# The selected-pod helper is project-owned and has no third-party Go module
-# dependencies. Unit and fuzz seeds run before the static target build.
-FROM golang:1.27@sha256:c5b07c17f54c5f22230c4b4da6e90249165cf55368e01a52808cb92064e18836 AS capture-helper
-ARG TARGETARCH
-WORKDIR /src/pod-netns-capture
-COPY cmd/pod-netns-capture/ ./
-RUN go test ./... \
-	&& CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH:-amd64}" \
-		go build -trimpath -ldflags='-s -w' -o /go/bin/pod-netns-capture .
 
 # pwru is fetched from an immutable release in the tool stage. Storage tooling
 # is intentionally excluded; kubestr belongs to storage-debug.
@@ -74,9 +64,8 @@ LABEL org.opencontainers.image.title="Network Debug Utility" \
 	org.opencontainers.image.vendor="Deutsche Telekom AG" \
 	io.telekom.breakglass.intent="network-diagnostics" \
 	io.telekom.breakglass.image.role="debug-network" \
-	io.telekom.breakglass.security.capabilities="NET_RAW,NET_ADMIN,BPF,PERFMON,SYS_RESOURCE,SYS_ADMIN,SYS_PTRACE"
+	io.telekom.breakglass.security.capabilities="NET_RAW,NET_ADMIN,BPF,PERFMON,SYS_RESOURCE"
 
-COPY --from=capture-helper /go/bin/pod-netns-capture /usr/local/bin/pod-netns-capture
 COPY --from=tools /go/bin/pwru /usr/local/bin/pwru
 COPY scripts/net-debug /usr/local/bin/net-debug
 COPY scripts/net-report /usr/local/bin/net-report
@@ -86,7 +75,7 @@ COPY LICENSES /licenses
 COPY versions.env /usr/share/breakglass/runbooks/upstream/network-debug/versions.env
 COPY README.md RUNBOOK.md /usr/share/breakglass/runbooks/upstream/network-debug/
 
-RUN chmod 0755 /usr/local/bin/net-debug /usr/local/bin/net-report /usr/local/bin/pod-netns-capture /etc/profile.d/network-debug.sh \
+RUN chmod 0755 /usr/local/bin/net-debug /usr/local/bin/net-report /etc/profile.d/network-debug.sh \
 	&& chmod 0644 /etc/motd /usr/share/breakglass/runbooks/upstream/network-debug/versions.env \
 		/usr/share/breakglass/runbooks/upstream/network-debug/README.md /usr/share/breakglass/runbooks/upstream/network-debug/RUNBOOK.md \
 	&& printf '%s\n' "${VERSION}" > /usr/share/breakglass/runbooks/upstream/network-debug/version \

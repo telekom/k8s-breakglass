@@ -73,11 +73,8 @@ cleanup_child() {
 	if [ -n "${WATCHDOG_PID:-}" ]; then
 		kill "$WATCHDOG_PID" 2>/dev/null || true
 	fi
-	if [ -n "${READER_PID:-}" ]; then
-		kill "$READER_PID" 2>/dev/null || true
-	fi
 	if [ -n "${TEMP_EVIDENCE:-}" ]; then
-		rm -f "$TEMP_EVIDENCE" "$TEMP_EVIDENCE.err" "$TEMP_EVIDENCE.fifo" "$TEMP_EVIDENCE.readback"
+		rm -f "$TEMP_EVIDENCE" "$TEMP_EVIDENCE.err"
 	fi
 	cleanup_stage
 }
@@ -88,45 +85,6 @@ cleanup_stage() {
 		rmdir "$STAGING_DIR" 2>/dev/null || true
 		STAGING_DIR=''
 	fi
-}
-
-process_alive() {
-	pid=$1
-	kill -0 "$pid" 2>/dev/null || return 1
-	# A child which has exited but has not yet been waited for may be a zombie;
-	# it no longer needs a signal and must not make a graceful stop time out.
-	if [ -r "/proc/$pid/stat" ]; then
-		state=$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)
-		[ "$state" = Z ] && return 1
-	fi
-	return 0
-}
-
-stop_child() {
-	pid=$1
-	seconds=$2
-	settle_seconds=$3
-	kill -INT "$pid" 2>/dev/null || true
-	iterations=$((seconds * 10))
-	while [ "$iterations" -gt 0 ] && process_alive "$pid"; do
-		sleep 0.1
-		iterations=$((iterations - 1))
-	done
-	if process_alive "$pid"; then
-		# pwru can acknowledge SIGINT while BPF programs detach asynchronously.
-		# Keep that reconciliation separate from the primary stop deadline.
-		iterations=$((settle_seconds * 10))
-		while [ "$iterations" -gt 0 ] && process_alive "$pid"; do
-			sleep 0.1
-			iterations=$((iterations - 1))
-		done
-	fi
-	if process_alive "$pid"; then
-		kill -TERM "$pid" 2>/dev/null || true
-		kill -KILL "$pid" 2>/dev/null || true
-		return 1
-	fi
-	return 0
 }
 
 capture_command() {
@@ -286,65 +244,48 @@ trace_command() {
 	trace_prerequisites
 	command -v pwru >/dev/null 2>&1 || usage_error 'pwru is unavailable'
 	stop_timeout=${NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS:-15}
-	settle_timeout=${NETWORK_DEBUG_PWRU_STOP_SETTLE_SECONDS:-5}
 	bounded_integer "$stop_timeout" 1 60 stop-timeout
-	bounded_integer "$settle_timeout" 1 60 settle-timeout
-	# Use the same private O_EXCL staging directory as capture.  The FIFO and
-	# evidence file are never created in the caller-shared output namespace.
+	command -v timeout >/dev/null 2>&1 || usage_error 'timeout is unavailable'
+	# Use the same private O_EXCL staging directory as capture. Evidence is
+	# written directly to an owned regular file; a FIFO can deadlock when either
+	# endpoint is waiting for the other during startup or shutdown.
 	destination=$WORK_DIR/$output
 	STAGING_DIR=$(mktemp -d "$WORK_DIR/.net-debug.XXXXXX") || usage_error 'cannot create private staging directory'
 	TEMP_EVIDENCE=$STAGING_DIR/evidence
-	fifo=$TEMP_EVIDENCE.fifo
-	mkfifo "$fifo"
 	trap cleanup_child EXIT
 	trap 'cleanup_child; exit 130' HUP INT TERM
 
-	# A FIFO reader enforces the event bound before evidence reaches disk. Once
-	# the limit is reached it closes the FIFO; the wrapper then sends SIGINT and
-	# gives pwru a bounded settle window for BPF detachment.
-	# Open the reader before starting pwru. Opening a FIFO for writing blocks
-	# until a reader exists; starting the writer first can leave a shell child
-	# stuck in that open on some /bin/sh implementations, making the public
-	# stop signal target the shell rather than pwru.
-	awk -v limit="$events" 'NR <= limit { if (length($0) > 4096) print substr($0, 1, 4096); else print } NR == limit { exit }' "$fifo" >"$TEMP_EVIDENCE" &
-	READER_PID=$!
+	# pwru has a native line bound. The file-size limit is an independent kernel
+	# bound for malformed or unexpectedly large event records (512-byte units).
+	max_trace_bytes=$((events * 4097))
+	max_trace_blocks=$(((max_trace_bytes + 511) / 512))
 	if [ -n "$filter" ]; then
-		pwru --backend kprobe --output-tuple --timestamp none -- "$filter" >"$fifo" 2>&1 &
+		# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
+		(timeout --foreground --signal=INT --kill-after="${stop_timeout}s" "${duration}s" \
+			sh -c 'ulimit -f "$1"; shift; exec "$@"' sh "$max_trace_blocks" pwru \
+			--backend kprobe --output-tuple --timestamp none --output-limit-lines "$events" -- "$filter") \
+			>"$TEMP_EVIDENCE" 2>&1 &
 	else
-		pwru --backend kprobe --output-tuple --timestamp none >"$fifo" 2>&1 &
+		# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
+		(timeout --foreground --signal=INT --kill-after="${stop_timeout}s" "${duration}s" \
+			sh -c 'ulimit -f "$1"; shift; exec "$@"' sh "$max_trace_blocks" pwru \
+			--backend kprobe --output-tuple --timestamp none --output-limit-lines "$events") \
+			>"$TEMP_EVIDENCE" 2>&1 &
 	fi
 	ACTIVE_PID=$!
-	(
-		sleep "$duration"
-		kill -INT "$ACTIVE_PID" 2>/dev/null || true
-		sleep 2
-		kill -TERM "$ACTIVE_PID" 2>/dev/null || true
-		sleep 1
-		kill -KILL "$ACTIVE_PID" 2>/dev/null || true
-	) &
-	WATCHDOG_PID=$!
-	wait "$READER_PID" 2>/dev/null || true
-	READER_PID=''
-	stop_child "$ACTIVE_PID" "$stop_timeout" "$settle_timeout" || {
-		printf '%s\n' 'net-debug: pwru did not stop within the bounded settle window' >&2
-		return 1
-	}
 	status=0
 	wait "$ACTIVE_PID" || status=$?
 	ACTIVE_PID=''
-	kill "$WATCHDOG_PID" 2>/dev/null || true
-	wait "$WATCHDOG_PID" 2>/dev/null || true
-	WATCHDOG_PID=''
-	case "$status" in 0|130|143|141) ;; *) return 1 ;; esac
+	# timeout returns 124 when it delivered the primary signal; 137/143 are
+	# retained for compatible implementations that report the forced stop.
+	case "$status" in 0|124|130|137|141|143) ;; *) return 1 ;; esac
 	count=$(wc -l <"$TEMP_EVIDENCE" | tr -d ' ')
 	[ "$count" -le "$events" ] || usage_error 'trace evidence exceeded event limit'
 	bytes=$(wc -c <"$TEMP_EVIDENCE" | tr -d ' ')
-	max_trace_bytes=$((events * 4097))
 	[ "$bytes" -le "$max_trace_bytes" ] || usage_error 'trace evidence exceeds its bounded file size'
 	hash=$(sha256sum "$TEMP_EVIDENCE" | awk '{print $1}')
 	ln "$TEMP_EVIDENCE" "$destination" || usage_error 'output was created concurrently'
 	rm -f "$TEMP_EVIDENCE"
-	rm -f "$fifo"
 	cleanup_stage
 	printf 'trace\nduration %s\nevent_limit %s\nevent_count %s\nsha256 %s\nfile %s\n' \
 		"$duration" "$events" "$count" "$hash" "$output"

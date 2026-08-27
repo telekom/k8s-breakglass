@@ -34,8 +34,7 @@ sign: ## Sign an immutable image digest with keyless cosign.
 	@test -n "$(DIGEST)" || (printf '%s\n' 'DIGEST is required' >&2; exit 2)
 	cosign sign --yes "$(IMAGE)@$(DIGEST)"
 
-test: ## Run hermetic helper behavior checks.
-	go -C cmd/pod-netns-capture test ./...
+test: ## Run hermetic image behavior checks.
 	./tests/test.sh
 	./tests/test-kind-ownership.sh
 	./tests/test-pwru-lifecycle.sh
