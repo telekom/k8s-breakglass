@@ -6,6 +6,7 @@ package clustervalidator
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,7 @@ import (
 	discoveryfake "k8s.io/client-go/discovery/fake"
 	"k8s.io/client-go/kubernetes"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	coretyped "k8s.io/client-go/kubernetes/typed/core/v1"
 )
 
 type fakeDiscovery struct{ *discoveryfake.FakeDiscovery }
@@ -127,6 +129,96 @@ func TestPodsCheckFailsSafeForIncompleteOrMismatchedIdentity(t *testing.T) {
 	}
 }
 
+func TestPodsCheckPaginatesWithBoundedContinueTokens(t *testing.T) {
+	var requests []metav1.ListOptions
+	client := newPagedPodClient(func(_ context.Context, options metav1.ListOptions) (*corev1.PodList, error) {
+		requests = append(requests, options)
+		switch options.Continue {
+		case "":
+			return &corev1.PodList{
+				ListMeta: metav1.ListMeta{Continue: "page-2"},
+				Items:    []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "first", Namespace: "default"}, Status: readyPodStatus()}},
+			}, nil
+		case "page-2":
+			return &corev1.PodList{
+				Items: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "second", Namespace: "default"}, Status: readyPodStatus()}},
+			}, nil
+		default:
+			t.Fatalf("unexpected continuation token %q", options.Continue)
+			return nil, nil
+		}
+	})
+
+	result := runPodsCheckWithIdentity(t, client, PodIdentity{})
+
+	require.Equal(t, CheckResult{Name: "pods-ready", Status: StatusReady, Message: "2 active pod(s) Ready"}, result)
+	require.Len(t, requests, 2)
+	require.Equal(t, podListPageSize, requests[0].Limit)
+	require.Equal(t, "", requests[0].Continue)
+	require.Equal(t, podListPageSize, requests[1].Limit)
+	require.Equal(t, "page-2", requests[1].Continue)
+}
+
+func TestPodsCheckStopsBeforeLaterPagesWhenAnActivePodIsUnready(t *testing.T) {
+	var requests []metav1.ListOptions
+	client := newPagedPodClient(func(_ context.Context, options metav1.ListOptions) (*corev1.PodList, error) {
+		requests = append(requests, options)
+		return &corev1.PodList{
+			Items: []corev1.Pod{
+				{ObjectMeta: metav1.ObjectMeta{Name: "ready", Namespace: "default"}, Status: readyPodStatus()},
+				{ObjectMeta: metav1.ObjectMeta{Name: "unready", Namespace: "default"}, Status: corev1.PodStatus{Phase: corev1.PodPending}},
+			},
+			ListMeta: metav1.ListMeta{Continue: "must-not-be-requested"},
+		}, nil
+	})
+
+	result := runPodsCheckWithIdentity(t, client, PodIdentity{})
+
+	require.Equal(t, StatusNotReady, result.Status)
+	require.Len(t, requests, 1, "the check must stop after the first unhealthy active Pod")
+}
+
+func TestPodsCheckPaginationPreservesSelfExclusion(t *testing.T) {
+	var requests []metav1.ListOptions
+	client := newPagedPodClient(func(_ context.Context, options metav1.ListOptions) (*corev1.PodList, error) {
+		requests = append(requests, options)
+		if options.Continue == "" {
+			return &corev1.PodList{
+				ListMeta: metav1.ListMeta{Continue: "page-2"},
+				Items: []corev1.Pod{{
+					ObjectMeta: metav1.ObjectMeta{Name: "validator", Namespace: "validator-system"},
+					Status:     corev1.PodStatus{Phase: corev1.PodPending},
+				}},
+			}, nil
+		}
+		return &corev1.PodList{Items: []corev1.Pod{{
+			ObjectMeta: metav1.ObjectMeta{Name: "application", Namespace: "default"},
+			Status:     readyPodStatus(),
+		}}}, nil
+	})
+
+	result := runPodsCheckWithIdentity(t, client, PodIdentity{Name: "validator", Namespace: "validator-system"})
+
+	require.Equal(t, CheckResult{Name: "pods-ready", Status: StatusReady, Message: "1 active pod(s) Ready"}, result)
+	require.Len(t, requests, 2)
+}
+
+func TestPodsCheckPaginationFailsClosedOnPageError(t *testing.T) {
+	var requests []metav1.ListOptions
+	client := newPagedPodClient(func(_ context.Context, options metav1.ListOptions) (*corev1.PodList, error) {
+		requests = append(requests, options)
+		if options.Continue == "" {
+			return &corev1.PodList{ListMeta: metav1.ListMeta{Continue: "page-2"}}, nil
+		}
+		return nil, errors.New("simulated pod list failure")
+	})
+
+	result := runPodsCheckWithIdentity(t, client, PodIdentity{})
+
+	require.Equal(t, CheckResult{Name: "pods-ready", Status: StatusNotReady, Message: "could not list pods"}, result)
+	require.Len(t, requests, 2)
+}
+
 func runPodsCheckWithIdentity(t *testing.T, client kubernetes.Interface, identity PodIdentity) CheckResult {
 	t.Helper()
 	report := NewValidator(podsCheck{}).ValidateWithPodIdentity(
@@ -134,6 +226,48 @@ func runPodsCheckWithIdentity(t *testing.T, client kubernetes.Interface, identit
 	)
 	require.Len(t, report.Checks, 1)
 	return report.Checks[0]
+}
+
+func readyPodStatus() corev1.PodStatus {
+	return corev1.PodStatus{
+		Phase:      corev1.PodRunning,
+		Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+	}
+}
+
+// pagedPodClient is a real client-go fake with only the Pod List call
+// replaced. Embedding the generated interfaces keeps all other Kubernetes
+// operations available while allowing tests to observe Limit and Continue.
+type pagedPodClient struct {
+	kubernetes.Interface
+	list func(context.Context, metav1.ListOptions) (*corev1.PodList, error)
+}
+
+func newPagedPodClient(list func(context.Context, metav1.ListOptions) (*corev1.PodList, error)) kubernetes.Interface {
+	base := k8sfake.NewSimpleClientset()
+	return pagedPodClient{Interface: base, list: list}
+}
+
+func (c pagedPodClient) CoreV1() coretyped.CoreV1Interface {
+	return pagedCoreClient{CoreV1Interface: c.Interface.CoreV1(), list: c.list}
+}
+
+type pagedCoreClient struct {
+	coretyped.CoreV1Interface
+	list func(context.Context, metav1.ListOptions) (*corev1.PodList, error)
+}
+
+func (c pagedCoreClient) Pods(namespace string) coretyped.PodInterface {
+	return pagedPods{PodInterface: c.CoreV1Interface.Pods(namespace), list: c.list}
+}
+
+type pagedPods struct {
+	coretyped.PodInterface
+	list func(context.Context, metav1.ListOptions) (*corev1.PodList, error)
+}
+
+func (p pagedPods) List(ctx context.Context, options metav1.ListOptions) (*corev1.PodList, error) {
+	return p.list(ctx, options)
 }
 
 func TestInvalidModeIsError(t *testing.T) {
