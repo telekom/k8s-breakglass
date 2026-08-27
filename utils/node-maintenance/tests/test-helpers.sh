@@ -25,6 +25,17 @@ assert_rejected() {
 	pass "$name"
 }
 
+assert_rejected_with_message() {
+	name=$1
+	expected=$2
+	shift 2
+	if "$@" >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"; then
+		fail "$name was accepted"
+	fi
+	grep -F "$expected" "$tmp_dir/stderr" >/dev/null || fail "$name did not report '$expected'"
+	pass "$name"
+}
+
 network_repair="$root_dir/lib/network-repair.sh"
 preflight="$root_dir/lib/node-recovery-preflight.sh"
 kexec_validate="$root_dir/lib/kexec-recovery-validate.sh"
@@ -41,6 +52,11 @@ assert_rejected 'neighbor repair without an exact address and MAC' "$network_rep
 	--target-node node-a --interface eth0 --action neighbor-replace --evidence-dir /evidence --confirm NETWORK-REPAIR
 assert_rejected 'bridge FDB repair without an exact bridge MAC and VLAN' "$network_repair" \
 	--target-node node-a --interface eth0 --action bridge-fdb-replace --evidence-dir /evidence --confirm NETWORK-REPAIR
+BREAKGLASS_NODE_NAME=node-a BREAKGLASS_OPERATION_ID=op-a BREAKGLASS_RECORDING_ID=record-a \
+	BREAKGLASS_APPROVAL_ID=approval-a BREAKGLASS_APPROVED_ACTION=bridge-fdb-replace \
+	assert_rejected_with_message 'bridge FDB repair reports its missing bridge argument' 'bridge is required' "$network_repair" \
+	--target-node node-a --interface eth0 --action bridge-fdb-replace --entry-mac 02:00:00:00:00:02 --vlan 100 \
+	--evidence-dir /evidence --confirm NETWORK-REPAIR
 assert_rejected 'preflight with unsafe interface' "$preflight" \
 	--target-node node-a --interface 'eth0;reboot' --evidence-dir /evidence --confirm NODE-RECOVERY-PREFLIGHT
 assert_rejected 'hostname is not a node identity fallback' "$preflight" \

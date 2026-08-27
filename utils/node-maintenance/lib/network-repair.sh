@@ -71,7 +71,7 @@ case "$action" in
 		;;
 	bridge-fdb-replace)
 		[ -z "$neighbor_address" ] || die "bridge-fdb-replace does not accept a neighbor address"
-		validate_interface "$bridge_name"
+		validate_value "bridge" "$bridge_name"
 		[ "$bridge_name" != "$interface" ] || die "bridge and port interface must be different"
 		validate_mac_address "FDB MAC" "$entry_mac"
 		validate_vlan "$vlan"
