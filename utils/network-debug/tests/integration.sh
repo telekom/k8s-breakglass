@@ -6,8 +6,12 @@ set -Eeuo pipefail
 
 IMAGE=${NETWORK_DEBUG_IMAGE:-network-debug:integration}
 EXEC_TIMEOUT=${NETWORK_DEBUG_EXEC_TIMEOUT_SECONDS:-20}
+DOCKER_TIMEOUT=${NETWORK_DEBUG_DOCKER_TIMEOUT_SECONDS:-30}
 PWRU_TIMEOUT=${NETWORK_DEBUG_PWRU_TIMEOUT_SECONDS:-20}
-PWRU_STOP_TIMEOUT=${NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS:-5}
+PWRU_REQUIRED=${NETWORK_DEBUG_REQUIRE_PWRU:-true}
+# BPF detach is asynchronous on some kernels; keep graceful shutdown bounded
+# while allowing the daemon a short, evidence-backed detach window.
+PWRU_STOP_TIMEOUT=${NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS:-15}
 KUBESTR_TIMEOUT=${NETWORK_DEBUG_KUBESTR_TIMEOUT_SECONDS:-60}
 KUBESTR_FIXTURE_IMAGE=${NETWORK_DEBUG_KUBESTR_FIXTURE_IMAGE:-network-debug-kubestr-fio:integration}
 RUN_ID="network-debug-proof-${RANDOM}-${RANDOM}"
@@ -32,6 +36,13 @@ NETWORK_CREATED=false
 CONTAINER_CREATED=false
 PWRU_CONTAINER_CREATED=false
 KUBESTR_KUBECONFIG_FILE=${WORK_DIR}/kubestr-kubeconfig
+DOCKER_OWNER_LABEL=com.telekom.network-debug.run
+# shellcheck disable=SC2034 # consumed by the sourced pwru lifecycle helper
+PWRU_OWNER_LABEL=$DOCKER_OWNER_LABEL
+# shellcheck disable=SC2034 # consumed by the sourced pwru lifecycle helper
+PWRU_OWNER_VALUE=$RUN_ID
+# shellcheck disable=SC2034 # consumed by the sourced pwru lifecycle helper
+PWRU_USE_DOCKER_TIMEOUT=true
 
 # shellcheck disable=SC1091
 . "$(dirname -- "$0")/kind-ownership.sh"
@@ -43,12 +54,16 @@ requirement() {
 	exit 2
 }
 
-for timeout_value in "$EXEC_TIMEOUT" "$PWRU_TIMEOUT" "$PWRU_STOP_TIMEOUT" "$KUBESTR_TIMEOUT"; do
+for timeout_value in "$EXEC_TIMEOUT" "$DOCKER_TIMEOUT" "$PWRU_TIMEOUT" "$PWRU_STOP_TIMEOUT" "$KUBESTR_TIMEOUT"; do
 	case "$timeout_value" in
 		''|*[!0-9]*) requirement "timeout settings must be positive integers" ;;
 	esac
 	[ "$timeout_value" -gt 0 ] || requirement "timeout settings must be positive integers"
 done
+case "$PWRU_REQUIRED" in
+	true|false) ;;
+	*) requirement "NETWORK_DEBUG_REQUIRE_PWRU must be true or false" ;;
+esac
 
 cleanup() {
 	status=$?
@@ -95,28 +110,36 @@ cleanup() {
 				if ! pwru_force_remove "$docker_container"; then
 					cleanup_failed=true
 				fi
-			elif docker inspect "$docker_container" >/dev/null 2>&1; then
-				if ! docker rm -f "$docker_container" >/dev/null 2>&1; then
+			elif docker_resource_present container "$docker_container"; then
+				if ! docker_call rm -f "$docker_container" >/dev/null 2>&1; then
 					cleanup_failed=true
 				fi
-				if docker inspect "$docker_container" >/dev/null 2>&1; then
+				if docker_resource_present container "$docker_container"; then
 					cleanup_failed=true
+				else
+					resource_status=$?
+					[ "$resource_status" -eq 1 ] || cleanup_failed=true
 				fi
-			elif ! docker info >/dev/null 2>&1; then
-				cleanup_failed=true
+			else
+				resource_status=$?
+				[ "$resource_status" -eq 1 ] || cleanup_failed=true
 			fi
 		fi
 	done
 	if [ "$NETWORK_CREATED" = true ]; then
-		if docker network inspect "$NETWORK" >/dev/null 2>&1; then
-			if ! docker network rm "$NETWORK" >/dev/null 2>&1; then
+		if docker_resource_present network "$NETWORK"; then
+			if ! docker_call network rm "$NETWORK" >/dev/null 2>&1; then
 				cleanup_failed=true
 			fi
-			if docker network inspect "$NETWORK" >/dev/null 2>&1; then
+			if docker_resource_present network "$NETWORK"; then
 				cleanup_failed=true
+			else
+				resource_status=$?
+				[ "$resource_status" -eq 1 ] || cleanup_failed=true
 			fi
-		elif ! docker info >/dev/null 2>&1; then
-			cleanup_failed=true
+		else
+			resource_status=$?
+			[ "$resource_status" -eq 1 ] || cleanup_failed=true
 		fi
 	fi
 	if ! rm -rf "$WORK_DIR"; then
@@ -133,13 +156,46 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
+docker_call() {
+	timeout --foreground "${DOCKER_TIMEOUT}s" docker "$@"
+}
+
+docker_owned_resource() {
+	local kind=$1 name=$2 owner
+	case "$kind" in
+		container) owner=$(docker_call inspect --format "{{index .Config.Labels \"${DOCKER_OWNER_LABEL}\"}}" "$name") || return 2 ;;
+		network) owner=$(docker_call network inspect --format "{{index .Labels \"${DOCKER_OWNER_LABEL}\"}}" "$name") || return 2 ;;
+		*) return 1 ;;
+	esac
+	[ "$owner" = "$RUN_ID" ] || return 3
+}
+
+docker_resource_present() {
+	local kind=$1 name=$2 state
+	if docker_owned_resource "$kind" "$name" >/dev/null 2>&1; then
+		return 0
+	fi
+	state=$?
+	[ "$state" -eq 3 ] && return 3
+	# An inspect failure may mean that the resource is gone, but only a
+	# reachable daemon can establish that. Ownership mismatches fail closed.
+	docker_call info >/dev/null 2>&1 || return 2
+	if docker_owned_resource "$kind" "$name" >/dev/null 2>&1; then
+		return 0
+	fi
+	state=$?
+	[ "$state" -eq 3 ] && return 3
+	[ "$state" -eq 2 ] && { docker_call info >/dev/null 2>&1 || return 2; }
+	return 1
+}
+
 command -v docker >/dev/null 2>&1 || requirement "docker is required to run disposable integration containers"
 command -v "$KIND_BIN" >/dev/null 2>&1 || requirement "kind is required to run the disposable Kubernetes integration cluster"
 command -v kubectl >/dev/null 2>&1 || requirement "kubectl is required to run the disposable Kubernetes integration cluster"
 command -v jq >/dev/null 2>&1 || requirement "jq is required to validate the structured kubestr fio result"
 command -v timeout >/dev/null 2>&1 || requirement "GNU timeout is required for bounded integration commands"
-docker image inspect "$IMAGE" >/dev/null 2>&1 || requirement "image $IMAGE is unavailable; build it before running integration proofs"
-docker image inspect "$KUBESTR_FIXTURE_IMAGE" >/dev/null 2>&1 || requirement "fixture image $KUBESTR_FIXTURE_IMAGE is unavailable; build it before running integration proofs"
+docker_call image inspect "$IMAGE" >/dev/null 2>&1 || requirement "image $IMAGE is unavailable; build it before running integration proofs"
+docker_call image inspect "$KUBESTR_FIXTURE_IMAGE" >/dev/null 2>&1 || requirement "fixture image $KUBESTR_FIXTURE_IMAGE is unavailable; build it before running integration proofs"
 
 # Never mutate a caller-selected Kubernetes context. The proof owns the kind
 # cluster and its kubeconfig from creation through cleanup, so invoking this
@@ -158,9 +214,24 @@ export KUBECONFIG="$KUBECONFIG_FILE"
 kubectl wait --for=condition=Ready nodes --all --timeout=180s >/dev/null || requirement "disposable kind nodes did not become ready"
 "$KIND_BIN" load docker-image "$KUBESTR_FIXTURE_IMAGE" --name "$KIND_CLUSTER_NAME" || requirement "could not load the disposable fio fixture into kind"
 
-docker network create "$NETWORK" >/dev/null || requirement "Docker could not create an ephemeral network"
+# Refuse collisions before claiming ownership. A daemon-reachable absent
+# result is the only safe state in which to proceed.
+if docker_resource_present network "$NETWORK"; then
+	requirement "refusing to reuse an existing network named $NETWORK"
+else
+	resource_status=$?
+	[ "$resource_status" -eq 1 ] || requirement "could not inspect the Docker network before creating it"
+fi
 NETWORK_CREATED=true
-docker run --detach --name "$CONTAINER" --network "$NETWORK" \
+docker_call network create --label "$DOCKER_OWNER_LABEL=$RUN_ID" "$NETWORK" >/dev/null || requirement "Docker could not create an ephemeral network"
+if docker_resource_present container "$CONTAINER"; then
+	requirement "refusing to reuse an existing fixture container named $CONTAINER"
+else
+	resource_status=$?
+	[ "$resource_status" -eq 1 ] || requirement "could not inspect the fixture container before creating it"
+fi
+CONTAINER_CREATED=true
+docker_call run --detach --name "$CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" --network "$NETWORK" \
 	--cap-add NET_RAW --cap-add NET_ADMIN \
 	"$IMAGE" sh -c '
 		mkdir -p /work/www
@@ -176,7 +247,6 @@ docker run --detach --name "$CONTAINER" --network "$NETWORK" \
 			printf "HTTP/1.1 200 OK\\r\\nContent-Length: 22\\r\\nConnection: close\\r\\n\\r\\nnetwork-debug-fixture\\n" | nc -l -p 18080 -s 0.0.0.0
 		done
 	' >/dev/null || requirement "could not start the disposable network fixture"
-CONTAINER_CREATED=true
 
 exec_in() {
 	timeout --foreground "${EXEC_TIMEOUT}s" docker exec "$CONTAINER" "$@"
@@ -265,7 +335,7 @@ capture_pid=$!
 sleep 1
 exec_in curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18080/ >/dev/null || requirement "capture traffic generator failed"
 if ! wait "$capture_pid"; then
-	docker exec "$CONTAINER" sh -c 'cat /work/tcpdump.log' >&2 || true
+	docker_call exec "$CONTAINER" sh -c 'cat /work/tcpdump.log' >&2 || true
 	requirement "tcpdump did not capture generated HTTP packets within 15 seconds"
 fi
 capture_size=$(exec_in stat -c '%s' /work/capture.pcap)
@@ -291,7 +361,7 @@ for kernel_path in /sys/kernel/btf/vmlinux /sys/kernel/debug /sys/kernel/tracing
 	PWRU_RUN_ARGS+=(--mount "type=bind,src=$kernel_path,dst=$kernel_path,readonly")
 done
 if [ "$PWRU_READY" = true ]; then
-	btf_check=$(docker run --rm "${PWRU_RUN_ARGS[@]}" --network "container:$CONTAINER" "$IMAGE" sh -c \
+	btf_check=$(docker_call run --rm "${PWRU_RUN_ARGS[@]}" --network "container:$CONTAINER" "$IMAGE" sh -c \
 		'test -r /sys/kernel/btf/vmlinux && test -d /sys/kernel/debug && test -d /sys/kernel/tracing && test -d /sys/kernel/security && echo ready' 2>&1) || \
 		PWRU_READY=false
 	if [ "$PWRU_READY" = true ] && [ "$btf_check" != ready ]; then
@@ -302,14 +372,15 @@ fi
 if [ "$PWRU_READY" = true ]; then
 	# A generated name is expected to be absent. Refuse a collision before
 	# claiming ownership so cleanup can never remove another run's container.
-	if docker inspect "$PWRU_CONTAINER" >/dev/null 2>&1; then
+	if docker_call inspect "$PWRU_CONTAINER" >/dev/null 2>&1; then
 		requirement "refusing to reuse an existing pwru proof container named $PWRU_CONTAINER"
 	fi
+	docker_call info >/dev/null 2>&1 || requirement "could not inspect pwru container because the Docker daemon is unavailable"
 	# Mark ownership before creation. docker can create a container and then
 	# return an error (or be interrupted), and EXIT cleanup must still force
 	# remove that exact run-scoped name and verify it is gone.
 	PWRU_CONTAINER_CREATED=true
-	docker run --detach --name "$PWRU_CONTAINER" "${PWRU_RUN_ARGS[@]}" --network "container:$CONTAINER" \
+	docker_call run --detach --name "$PWRU_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" "${PWRU_RUN_ARGS[@]}" --network "container:$CONTAINER" \
 		"$IMAGE" pwru --output-tuple --output-file /work/pwru.log --timestamp none \
 				host 127.0.0.1 \
 		>"$WORK_DIR/pwru-start.log" 2>&1 || requirement "could not start pwru proof container"
@@ -323,18 +394,18 @@ if [ "$PWRU_READY" = true ]; then
 	# pwru's event loop and proves that the graceful signal was honoured.
 	pwru_wait_for_event "$PWRU_CONTAINER" "$WORK_DIR/pwru.log" "$PWRU_TIMEOUT" \
 		'127\.0\.0\.1.*->.*127\.0\.0\.1|127\.0\.0\.1.*18080' || {
-		pwru_state=$(docker inspect --format '{{.State.Status}}' "$PWRU_CONTAINER" || true)
+		pwru_state=$(docker_call inspect --format '{{.State.Status}}' "$PWRU_CONTAINER" || true)
 		if [ "$pwru_state" = exited ]; then
 			requirement "pwru exited before controlled shutdown"
 		fi
 		requirement "pwru produced no packet tuple for generated traffic within ${PWRU_TIMEOUT}s"
 	}
 	pwru_stop_gracefully "$PWRU_CONTAINER" "$PWRU_STOP_TIMEOUT" || {
-		pwru_exit=$(docker inspect --format '{{.State.ExitCode}}' "$PWRU_CONTAINER" || true)
-		docker logs "$PWRU_CONTAINER" >&2 || true
+		pwru_exit=$(docker_call inspect --format '{{.State.ExitCode}}' "$PWRU_CONTAINER" || true)
+		docker_call logs "$PWRU_CONTAINER" >&2 || true
 		requirement "pwru did not cleanly exit after SIGINT (exit ${pwru_exit:-unknown}); the compatible runner needs BTF, BPF, and PERFMON support"
 	}
-	docker cp "$PWRU_CONTAINER:/work/pwru.log" "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru did not produce an event log"
+	docker_call cp "$PWRU_CONTAINER:/work/pwru.log" "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru did not produce an event log"
 	[ -s "$WORK_DIR/pwru.log" ] || requirement "pwru event log is empty after generated traffic"
 	grep -F -- '->' "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru produced no packet tuple after generated traffic"
 	grep -E -- '127\.0\.0\.1.*->.*127\.0\.0\.1|127\.0\.0\.1.*18080' "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru did not observe the generated loopback HTTP traffic"
@@ -405,6 +476,8 @@ if kubectl get persistentvolume "$KUBESTR_PV_NAME" >/dev/null 2>&1; then
 fi
 kubectl delete storageclass "$KUBESTR_STORAGE_CLASS" --ignore-not-found >/dev/null || requirement "disposable storage class cleanup failed"
 
-[ "$PWRU_READY" = true ] || requirement "pwru was not exercised; run this integration target on the required Linux BPF runner"
+if [ "$PWRU_REQUIRED" = true ] && [ "$PWRU_READY" != true ]; then
+	requirement "pwru was not exercised; run this integration target on the required Linux BPF runner"
+fi
 
 printf 'network-debug integration proofs passed\n'

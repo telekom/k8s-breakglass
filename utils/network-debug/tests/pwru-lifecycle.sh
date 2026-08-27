@@ -8,11 +8,16 @@
 
 pwru_wait_for_event() {
 	local container=$1 output_file=$2 timeout_seconds=$3 event_pattern=$4
-	local state
-	for _ in $(seq 1 "$((timeout_seconds * 2))"); do
-		state=$(docker inspect --format '{{.State.Status}}' "$container") || return 2
+	local state iterations
+	case "$timeout_seconds" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	iterations=$((10#$timeout_seconds * 2))
+	[ "$iterations" -gt 0 ] || return 1
+	for _ in $(seq 1 "$iterations"); do
+		state=$(pwru_docker inspect --format '{{.State.Status}}' "$container") || return 2
 		[ "$state" = exited ] && return 3
-		if docker cp "$container:/work/pwru.log" "$output_file" >/dev/null 2>&1 && \
+		if pwru_docker cp "$container:/work/pwru.log" "$output_file" >/dev/null 2>&1 && \
 			grep -E -- "$event_pattern" "$output_file" >/dev/null 2>&1; then
 			return 0
 		fi
@@ -23,15 +28,38 @@ pwru_wait_for_event() {
 
 pwru_stop_gracefully() {
 	local container=$1 timeout_seconds=$2
-	local state exit_code
-	docker kill --signal INT "$container" >/dev/null || return 1
-	for _ in $(seq 1 "$((timeout_seconds * 2))"); do
-		state=$(docker inspect --format '{{.State.Status}}' "$container") || return 1
-		[ "$state" = exited ] && break
-		sleep 0.5
-	done
+	local state exit_code iterations
+	case "$timeout_seconds" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	iterations=$((10#$timeout_seconds * 2))
+	[ "$iterations" -gt 0 ] || return 1
+	state=$(pwru_docker inspect --format '{{.State.Status}}' "$container") || return 1
+	[ "$state" = running ] || return 2
+	pwru_validate_owner "$container" || return 1
+	pwru_docker kill --signal INT "$container" >/dev/null || return 1
+
+	# Waiting on the daemon's lifecycle event avoids losing the race between
+	# the last inspect poll and a delayed BPF detach. GNU timeout keeps the
+	# wait bounded even if pwru never exits; the final inspect below is the
+	# source of truth because docker wait's own status is the container's
+	# status on some Docker versions.
+	if command -v timeout >/dev/null 2>&1 && [ "${PWRU_DISABLE_TIMEOUT:-false}" != true ]; then
+		if ! timeout --foreground "${timeout_seconds}s" docker wait "$container" >/dev/null 2>&1; then
+			:
+		fi
+	else
+		# Keep the helper usable in minimal test environments without silently
+		# turning this into an unbounded wait.
+		for _ in $(seq 1 "$iterations"); do
+			state=$(pwru_docker inspect --format '{{.State.Status}}' "$container") || return 1
+			[ "$state" = exited ] && break
+			sleep 0.5
+		done
+	fi
+	state=$(pwru_docker inspect --format '{{.State.Status}}' "$container") || return 1
 	[ "$state" = exited ] || return 2
-	exit_code=$(docker inspect --format '{{.State.ExitCode}}' "$container") || return 1
+	exit_code=$(pwru_docker inspect --format '{{.State.ExitCode}}' "$container") || return 1
 	case "$exit_code" in
 		0|130) return 0 ;;
 		*) return 3 ;;
@@ -40,22 +68,57 @@ pwru_stop_gracefully() {
 
 pwru_force_remove() {
 	local container=$1
-	if docker inspect "$container" >/dev/null 2>&1; then
-		if ! docker rm -f "$container" >/dev/null 2>&1; then
-			# A daemon can report an in-use process even after rm -f. Escalate
-			# once, then retry; never claim cleanup without the exact-name check.
-			docker kill --signal KILL "$container" >/dev/null 2>&1 || true
-			docker rm -f "$container" >/dev/null 2>&1 || true
-		fi
-		# The second attempt also handles a slow daemon whose first rm returned
-		# before the container disappeared.
-		if docker inspect "$container" >/dev/null 2>&1; then
-			docker rm -f "$container" >/dev/null 2>&1 || true
-		fi
-	fi
-	if docker inspect "$container" >/dev/null 2>&1; then
-		return 1
-	fi
+	local timeout_seconds=${2:-15}
+	local iterations
 	# Absence is only a proof when the daemon was reachable for the inspect.
-	docker info >/dev/null 2>&1 || return 1
+	case "$timeout_seconds" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	iterations=$((10#$timeout_seconds * 2))
+	[ "$iterations" -gt 0 ] || return 1
+	pwru_docker info >/dev/null 2>&1 || return 1
+
+	# Removal can remain asynchronous while pwru detaches BPF programs. Retry
+	# only the exact run-owned name for a bounded window and verify absence after
+	# every attempt. A KILL is used only after a failed forced removal; this
+	# never broadens cleanup to containers from another invocation.
+	for _ in $(seq 1 "$iterations"); do
+		if ! pwru_docker inspect "$container" >/dev/null 2>&1; then
+			# An inspect failure is only treated as absence after proving the
+			# daemon is reachable. Daemon errors therefore fail closed.
+			pwru_docker info >/dev/null 2>&1 || return 1
+			return 0
+		fi
+		pwru_validate_owner "$container" || return 1
+		if ! pwru_docker rm -f "$container" >/dev/null 2>&1; then
+			pwru_docker kill --signal KILL "$container" >/dev/null 2>&1 || true
+			pwru_docker rm -f "$container" >/dev/null 2>&1 || true
+		fi
+		if ! pwru_docker inspect "$container" >/dev/null 2>&1; then
+			pwru_docker info >/dev/null 2>&1 || return 1
+			return 0
+		fi
+		sleep 0.5
+	done
+	! pwru_docker inspect "$container" >/dev/null 2>&1 && pwru_docker info >/dev/null 2>&1
+}
+
+pwru_docker() {
+	local timeout_seconds=${PWRU_DOCKER_TIMEOUT_SECONDS:-30}
+	case "$timeout_seconds" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	[ "$((10#$timeout_seconds))" -gt 0 ] || return 1
+	if command -v timeout >/dev/null 2>&1 && [ "${PWRU_USE_DOCKER_TIMEOUT:-false}" = true ] && [ "${PWRU_DISABLE_TIMEOUT:-false}" != true ]; then
+		timeout --foreground "${timeout_seconds}s" docker "$@"
+	else
+		docker "$@"
+	fi
+}
+
+pwru_validate_owner() {
+	local container=$1 owner
+	[ -n "${PWRU_OWNER_LABEL:-}" ] || return 0
+	owner=$(pwru_docker inspect --format "{{index .Config.Labels \"${PWRU_OWNER_LABEL}\"}}" "$container") || return 1
+	[ "$owner" = "${PWRU_OWNER_VALUE:-}" ]
 }
