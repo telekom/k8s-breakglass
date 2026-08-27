@@ -436,7 +436,9 @@ publish_outputs() {
 		tar -cf - -T archive-list | gzip -n >"$archive_tmp"
 	)
 	archive_size=$(safe_stat_size "$archive_tmp")
-	[ "$archive_size" -ge 1 ] && [ "$archive_size" -le "$max_archive_bytes" ] || fail "archive exceeds the bounded output limit"
+	if [ "$archive_size" -lt 1 ] || [ "$archive_size" -gt "$max_archive_bytes" ]; then
+		fail "archive exceeds the bounded output limit"
+	fi
 	cp -P "$stage/manifest.json" "$manifest_tmp"
 	chmod "$handoff_mode" "$manifest_tmp"
 	printf 'ready\n' >"$ready_tmp"

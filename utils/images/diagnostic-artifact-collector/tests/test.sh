@@ -100,6 +100,15 @@ assert_handoff_metadata() {
 	}
 }
 
+copy_output_file() {
+	copy_output_dir=$1
+	copy_name=$2
+	copy_destination=$3
+	docker run --rm --read-only --cap-drop=ALL --network none \
+		--user 65532:65532 --volume "$copy_output_dir:/output" --entrypoint /bin/cat \
+		"$image" "/output/$copy_name" >"$copy_destination"
+}
+
 mkdir "$test_dir/smoke-output"
 default_uid=$(docker run --rm --read-only --cap-drop=ALL --network none \
 	--entrypoint /bin/id "$image" -u)
@@ -123,16 +132,18 @@ run_image "$test_dir/smoke-output" -- collect --recipe system-summary.v1 --outpu
 [ -f "$test_dir/smoke-output/artifact.tar.gz" ]
 [ -f "$test_dir/smoke-output/artifact.manifest.json" ]
 [ -f "$test_dir/smoke-output/artifact.ready" ]
-mode=$(stat -f '%Lp' "$test_dir/smoke-output/artifact.tar.gz" 2>/dev/null ||
-	stat -c '%a' "$test_dir/smoke-output/artifact.tar.gz")
+mode=$(stat -c '%a' "$test_dir/smoke-output/artifact.tar.gz" 2>/dev/null ||
+	stat -f '%Lp' "$test_dir/smoke-output/artifact.tar.gz")
 [ "$mode" = 600 ]
 mkdir "$test_dir/smoke-extracted"
-tar -xzf "$test_dir/smoke-output/artifact.tar.gz" -C "$test_dir/smoke-extracted"
+copy_output_file "$test_dir/smoke-output" artifact.tar.gz "$test_dir/smoke-output/artifact.readable.tar.gz"
+tar -xzf "$test_dir/smoke-output/artifact.readable.tar.gz" -C "$test_dir/smoke-extracted"
 python3 -c 'import json, sys; value=json.load(open(sys.argv[1], encoding="utf-8")); assert value["recipe"] == "system-summary.v1" and value["inputs"]["maxArchiveBytes"] == 16777216' \
 	"$test_dir/smoke-extracted/manifest.json"
 python3 -c 'import json, sys; assert json.load(open(sys.argv[1], encoding="utf-8"))["collector_status"] == "complete"' \
 	"$test_dir/smoke-extracted/files/system-summary.json"
-cmp "$test_dir/smoke-output/artifact.manifest.json" "$test_dir/smoke-extracted/manifest.json"
+copy_output_file "$test_dir/smoke-output" artifact.manifest.json "$test_dir/smoke-output/artifact.readable.manifest.json"
+cmp "$test_dir/smoke-output/artifact.readable.manifest.json" "$test_dir/smoke-extracted/manifest.json"
 
 mkdir "$test_dir/default-output"
 run_image_default "$test_dir/default-output" -- collect --recipe system-summary.v1 --output /output/artifact.tar.gz
@@ -142,7 +153,8 @@ mkdir "$test_dir/extended-output"
 run_image "$test_dir/extended-output" --env DIAGNOSTIC_DETAIL_LEVEL=extended -- \
 	collect --recipe system-summary.v1 --output /output/artifact.tar.gz
 mkdir "$test_dir/extended-extracted"
-tar -xzf "$test_dir/extended-output/artifact.tar.gz" -C "$test_dir/extended-extracted"
+copy_output_file "$test_dir/extended-output" artifact.tar.gz "$test_dir/extended-output/artifact.readable.tar.gz"
+tar -xzf "$test_dir/extended-output/artifact.readable.tar.gz" -C "$test_dir/extended-extracted"
 python3 -c 'import json, sys; value=json.load(open(sys.argv[1], encoding="utf-8")); assert value["detail_level"] == "extended" and isinstance(value["cpu_count"], int) and value["cpu_count"] > 0 and isinstance(value["memory_kib"], int) and value["memory_kib"] > 0' \
 	"$test_dir/extended-extracted/files/system-summary.json"
 
@@ -157,7 +169,8 @@ touch -t 200001010000 "$test_dir/coredumps/old.dump"
 run_image "$test_dir/crash-output" --env DIAGNOSTIC_NODE=node-a --env DIAGNOSTIC_MAX_AGE_MINUTES=10080 \
 	--volume "$test_dir/coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
 mkdir "$test_dir/crash-extracted"
-tar -xzf "$test_dir/crash-output/artifact.tar.gz" -C "$test_dir/crash-extracted"
+copy_output_file "$test_dir/crash-output" artifact.tar.gz "$test_dir/crash-output/artifact.readable.tar.gz"
+tar -xzf "$test_dir/crash-output/artifact.readable.tar.gz" -C "$test_dir/crash-extracted"
 python3 -c 'import json, sys; value=json.load(open(sys.argv[1], encoding="utf-8")); assert value["node"] == "node-a" and value["inputs"]["maxAgeMinutes"] == 10080' \
 	"$test_dir/crash-extracted/manifest.json"
 cmp "$test_dir/coredumps/nested/panic.dump" "$test_dir/crash-extracted/files/coredumps/nested/panic.dump"
