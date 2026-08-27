@@ -32,8 +32,9 @@ that the marker, manifest sidecar, and archive are regular files with one of the
 approved hand-off identities (UID/GID 65532 mode 0600, or root:65532 mode
 0640), opens them with no-follow semantics, enforces the manifest's immutable
 per-recipe ceiling, and verifies archive bytes and identity before and after
-transfer. It then performs one bounded HTTPS PUT to the
-exact controller-assigned URL. Redirects, URLs containing queries/fragments,
+transfer. It then performs bounded HTTPS PUT attempts to the
+exact controller-assigned URL, with a bounded retry budget for transient
+transport or server failures. Redirects, URLs containing queries/fragments,
 non-TLS URLs (unless an explicit development-only HTTP opt-in is set), empty
 tokens, arbitrary headers, and methods are rejected. The URL and token are
 never logged. Only the image-pinned CA bundle is trusted; ambient

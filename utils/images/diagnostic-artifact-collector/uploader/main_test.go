@@ -293,6 +293,17 @@ func TestUploadRejectsEmptyTokenAndURLQuery(t *testing.T) {
 	}
 }
 
+func TestUploadURLRejectsWhitespace(t *testing.T) {
+	for _, value := range []string{" https://upload.example.invalid/object", "https://upload.example.invalid/exact object", "https://upload.example.invalid/object\u00a0"} {
+		t.Run(fmt.Sprintf("url-%q", value), func(t *testing.T) {
+			t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_URL", value)
+			if _, err := uploadURL(); err == nil {
+				t.Fatal("uploadURL() accepted whitespace")
+			}
+		})
+	}
+}
+
 func TestUploadTokenRejectsEmbeddedWhitespace(t *testing.T) {
 	for _, token := range []string{"one two", "one\ttwo", "one\u00a0two"} {
 		t.Run(fmt.Sprintf("token-%q", token), func(t *testing.T) {
@@ -546,6 +557,35 @@ func TestUploadRetriesOnlyTemporaryHTTPResponses(t *testing.T) {
 				t.Fatalf("upload() made %d requests, want %d", calls, test.wantCalls)
 			}
 		})
+	}
+}
+
+func TestUploadTimeoutBoundsRetryBudget(t *testing.T) {
+	path, ready := uploadFixture(t, []byte("archive-bytes"))
+	oldPath, oldReady, oldFactory := artifactPath, readyPath, newUploadHTTPClient
+	defer func() { artifactPath, readyPath, newUploadHTTPClient = oldPath, oldReady, oldFactory }()
+	artifactPath, readyPath = path, ready
+	t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_URL", "https://upload.example.invalid/object")
+	t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_TOKEN", "one-time-token")
+	t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_TIMEOUT", "100ms")
+	calls := 0
+	newUploadHTTPClient = func() *http.Client {
+		return &http.Client{Timeout: time.Hour, Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			calls++
+			_, _ = io.Copy(io.Discard, request.Body)
+			return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
+		})}
+	}
+	started := time.Now()
+	err := upload(context.Background())
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("upload() error = %v, want deadline exceeded", err)
+	}
+	if calls != 1 {
+		t.Fatalf("upload() made %d requests after total timeout, want 1", calls)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("upload() exceeded total timeout budget: %s", elapsed)
 	}
 }
 

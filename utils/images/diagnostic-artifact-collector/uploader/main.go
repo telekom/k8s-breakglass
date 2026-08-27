@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 // SPDX-License-Identifier: Apache-2.0
 
-// Command artifact-upload performs the one network operation allowed by the
-// collector image: a bounded PUT to the exact controller-issued URL.
+// Command artifact-upload performs the only network requests allowed by the
+// collector image: bounded PUT attempts to the exact controller-issued URL.
 package main
 
 import (
@@ -161,8 +161,10 @@ func upload(ctx context.Context) error {
 	if client.Timeout == 0 || client.Timeout > timeout {
 		client.Timeout = timeout
 	}
+	uploadCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		err = putOnce(ctx, client, endpoint, token, file, archive.Size())
+		err = putOnce(uploadCtx, client, endpoint, token, file, archive.Size())
 		if err == nil {
 			return nil
 		}
@@ -170,8 +172,8 @@ func upload(ctx context.Context) error {
 			return err
 		}
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-uploadCtx.Done():
+			return uploadCtx.Err()
 		case <-time.After(retryDelay):
 		}
 	}
@@ -376,9 +378,12 @@ func noProxy(*http.Request) (*url.URL, error) {
 }
 
 func uploadURL() (*url.URL, error) {
-	raw := strings.TrimSpace(os.Getenv("BREAKGLASS_ARTIFACT_UPLOAD_URL"))
+	raw := os.Getenv("BREAKGLASS_ARTIFACT_UPLOAD_URL")
 	if raw == "" {
 		return nil, errors.New("upload URL is missing")
+	}
+	if strings.IndexFunc(raw, unicode.IsSpace) >= 0 || strings.ContainsRune(raw, '\x00') {
+		return nil, errors.New("upload URL is invalid")
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.User != nil || parsed.Host == "" || parsed.Path == "" ||
