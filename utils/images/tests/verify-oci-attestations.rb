@@ -39,8 +39,27 @@ end
 
 index = JSON.parse(read_entry(archive, "index.json"))
 fail_archive("index is not an OCI image index") unless index["schemaVersion"] == 2 && index["mediaType"] == "application/vnd.oci.image.index.v1+json"
-descriptors = index["manifests"]
-fail_archive("index has no manifest descriptors") unless descriptors.is_a?(Array) && !descriptors.empty?
+
+def flatten_index(archive, descriptor, flattened, visited)
+  media_type = descriptor["mediaType"].to_s
+  unless media_type == "application/vnd.oci.image.index.v1+json"
+    flattened << descriptor
+    return
+  end
+
+  digest = descriptor_digest(descriptor, "nested image index")
+  return if visited.include?(digest)
+  visited << digest
+  nested = JSON.parse(read_blob(archive, descriptor, "nested image index"))
+  fail_archive("nested image index has no manifest descriptors") unless nested["manifests"].is_a?(Array) && !nested["manifests"].empty?
+  nested["manifests"].each { |child| flatten_index(archive, child, flattened, visited) }
+end
+
+root_descriptors = index["manifests"]
+fail_archive("index has no manifest descriptors") unless root_descriptors.is_a?(Array) && !root_descriptors.empty?
+descriptors = []
+visited_indexes = []
+root_descriptors.each { |descriptor| flatten_index(archive, descriptor, descriptors, visited_indexes) }
 
 images = descriptors.select do |descriptor|
   platform = descriptor["platform"] || {}
