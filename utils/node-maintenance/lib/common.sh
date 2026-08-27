@@ -116,10 +116,11 @@ capture() {
 	assert_safe_bundle "$bundle"
 	command -v timeout >/dev/null 2>&1 || die "timeout utility is required for bounded evidence capture"
 	temporary_file=$(mktemp "$bundle/.capture.XXXXXX") || die "cannot create bounded capture temporary file"
-	set +e
-	timeout "$capture_timeout_seconds" "$@" >"$temporary_file" 2>&1
-	status=$?
-	set -e
+	if timeout "$capture_timeout_seconds" "$@" >"$temporary_file" 2>&1; then
+		status=0
+	else
+		status=$?
+	fi
 	bytes=$(wc -c <"$temporary_file" | tr -d ' ')
 	if [ "$bytes" -gt "$capture_max_bytes" ]; then
 		head -c "$capture_max_bytes" "$temporary_file" >"$output_file"

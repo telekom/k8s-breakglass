@@ -55,5 +55,6 @@ LABEL org.opencontainers.image.title="Kubernetes node maintenance" \
 # Controller-owned immutable templates must use a no-capabilities preflight
 # context and a separate NET_ADMIN-only repair context; privileged is not part
 # of this image contract. The dispatcher rejects every other helper name.
+# hadolint ignore=DL3002
 USER 0
 ENTRYPOINT ["/usr/local/bin/node-maintenance"]
