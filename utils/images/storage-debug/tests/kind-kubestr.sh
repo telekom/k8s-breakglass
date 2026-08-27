@@ -12,6 +12,9 @@ NAMESPACE=${RUN_ID}-session
 SENTINEL_NAMESPACE=${RUN_ID}-sentinel
 STORAGE_CLASS=${RUN_ID}-sc
 PV_NAME=${RUN_ID}-pv
+ATTACHED_PV_NAME=${RUN_ID}-attached-pv
+ATTACHED_PVC_NAME=${RUN_ID}-attached-pvc
+ATTACHED_POD_NAME=${RUN_ID}-attached-volume
 RUNNER_SA=${RUN_ID}-runner
 ROLE=${RUN_ID}-role
 CLUSTER_ROLE=${RUN_ID}-cluster-role
@@ -193,6 +196,20 @@ spec:
     type: Directory
 ---
 apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: ${ATTACHED_PV_NAME}
+spec:
+  capacity:
+    storage: 4Gi
+  accessModes: ["ReadWriteOnce"]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ${STORAGE_CLASS}
+  hostPath:
+    path: /var/local/${RUN_ID}-attached
+    type: Directory
+---
+apiVersion: v1
 kind: ConfigMap
 metadata:
   name: session-sentinel
@@ -228,6 +245,83 @@ if ! kubectl wait --namespace "$NAMESPACE" --for=condition=Ready pod/session-sen
     kubectl describe pod session-sentinel --namespace "$NAMESPACE" >&2 || true
     fail "session sentinel Pod did not become ready"
 fi
+
+kubectl apply -f - >/dev/null <<YAML
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ${ATTACHED_PVC_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 4Gi
+  storageClassName: ${STORAGE_CLASS}
+  volumeName: ${ATTACHED_PV_NAME}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${ATTACHED_POD_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  containers:
+    - name: diagnostics
+      image: ${loaded_ref}
+      imagePullPolicy: IfNotPresent
+      args: ["mounted-volume", "--path", "/scratch", "--size-mb", "1", "--runtime-seconds", "1", "--ioping-count", "1"]
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        seccompProfile:
+          type: RuntimeDefault
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        - name: attached-volume
+          mountPath: /scratch
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    - name: attached-volume
+      persistentVolumeClaim:
+        claimName: ${ATTACHED_PVC_NAME}
+    - name: tmp
+      emptyDir:
+        sizeLimit: 64Mi
+YAML
+
+kubectl wait --namespace "$NAMESPACE" --for=jsonpath='{.status.phase}'=Bound pvc/"$ATTACHED_PVC_NAME" --timeout=120s >/dev/null
+attached_phase=
+for _ in $(seq 1 120); do
+    attached_phase=$(kubectl get pod "$ATTACHED_POD_NAME" --namespace "$NAMESPACE" -o jsonpath='{.status.phase}')
+    case "$attached_phase" in
+        Succeeded) break ;;
+        Failed)
+            kubectl logs "$ATTACHED_POD_NAME" --namespace "$NAMESPACE" >&2 || true
+            fail "mounted-volume operation against an existing Pod PVC failed"
+            ;;
+    esac
+    sleep 1
+done
+[ "$attached_phase" = Succeeded ] || fail "mounted-volume Pod PVC proof exceeded its 120-second bound"
+attached_report=$(kubectl logs "$ATTACHED_POD_NAME" --namespace "$NAMESPACE")
+printf '%s\n' "$attached_report" | grep -Fx 'fio_status=pass' >/dev/null || fail "attached PVC fio did not pass"
+printf '%s\n' "$attached_report" | grep -Fx 'ioping_status=pass' >/dev/null || fail "attached PVC ioping did not pass"
+printf '%s\n' "$attached_report" | grep -Fx 'overall_status=pass' >/dev/null || fail "attached PVC report did not pass"
+
+kubectl delete pod "$ATTACHED_POD_NAME" --namespace "$NAMESPACE" --wait --timeout=120s >/dev/null
+kubectl delete pvc "$ATTACHED_PVC_NAME" --namespace "$NAMESPACE" --wait --timeout=120s >/dev/null
+kubectl get pod "$ATTACHED_POD_NAME" --namespace "$NAMESPACE" >/dev/null 2>&1 && fail "attached PVC proof Pod survived cleanup"
+kubectl get pvc "$ATTACHED_PVC_NAME" --namespace "$NAMESPACE" >/dev/null 2>&1 && fail "attached PVC survived cleanup"
+kubectl delete pv "$ATTACHED_PV_NAME" --wait --timeout=120s >/dev/null
+kubectl get pv "$ATTACHED_PV_NAME" >/dev/null 2>&1 && fail "attached PVC proof PV survived cleanup"
 
 kubectl apply -f - >/dev/null <<YAML
 apiVersion: batch/v1

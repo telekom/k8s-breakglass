@@ -21,18 +21,21 @@ operations:
     interactive: false
     tools: [kubestr]
     inputs: [storage-class, volume-snapshot-class]
+    providerAcceptance: required
     clusterScopedMutation: false
   - id: snapshot-source-clone
     apiAccess: escalation-service-account
     interactive: false
     tools: [kubestr]
     inputs: [storage-class, volume-snapshot-class]
+    providerAcceptance: required
     clusterScopedMutation: temporary-volume-snapshot-class
   - id: block-volume
     apiAccess: controller-owned-service-account
     interactive: false
     tools: [kubestr]
     inputs: [storage-class]
+    providerAcceptance: required
 fixed:
   childImage: immutable-provider-owned-digest
   namespace: downward-api

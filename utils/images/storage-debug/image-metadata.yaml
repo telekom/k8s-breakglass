@@ -58,6 +58,7 @@ contract:
     - namespace
     - node-selector
     - fio-file
+    - test-name
     - capability
     - service-account
     - rbac

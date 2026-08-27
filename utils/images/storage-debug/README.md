@@ -12,9 +12,9 @@ It combines two deliberately different execution boundaries:
 | --- | --- | --- | --- |
 | `mounted-volume` | Bounded `fio` and `ioping` against an already attached filesystem | Direct, unprivileged Pod; no Kubernetes API access | Existing mount, 1–1024 MiB, 1–60 seconds, 1–20 probes |
 | `performance` | Provision a disposable PVC and run kubestr's `default-fio` profile | Non-interactive Job with a controller-owned ServiceAccount | StorageClass and an allowlisted 4/8/16/32 GiB PVC size |
-| `snapshot-restore` | Exercise CSI snapshot creation and restore where a provider supplies a snapshot-capable class | Non-interactive Job with controller-owned namespaced RBAC plus read-only class discovery | StorageClass and VolumeSnapshotClass; not covered by the default Kind proof |
-| `snapshot-source-clone` | Exercise kubestr's duplicate-snapshot-from-source check where explicitly approved | Stronger escalation profile; additionally creates and deletes a temporary VolumeSnapshotClass | StorageClass and VolumeSnapshotClass; not covered by the default Kind proof |
-| `block-volume` | Exercise raw block PVC attachment where a provider supplies a raw-block-capable class | Non-interactive Job with a controller-owned ServiceAccount | StorageClass; not covered by the default Kind proof |
+| `snapshot-restore` | Exercise CSI snapshot creation and restore where a provider supplies a snapshot-capable class | Non-interactive Job with controller-owned namespaced RBAC plus read-only class discovery | StorageClass and VolumeSnapshotClass; provider acceptance required; not covered by the default Kind proof |
+| `snapshot-source-clone` | Exercise kubestr's duplicate-snapshot-from-source check where explicitly approved | Stronger escalation profile; additionally creates and deletes a temporary VolumeSnapshotClass | StorageClass and VolumeSnapshotClass; provider acceptance required; not covered by the default Kind proof |
+| `block-volume` | Exercise raw block PVC attachment where a provider supplies a raw-block-capable class | Non-interactive Job with a controller-owned ServiceAccount | StorageClass; provider acceptance required; not covered by the default Kind proof |
 
 The cluster operations use kubestr v0.4.49 built from verified commit
 `01940ed37be9a0c7a70d80cd26c648eaa11e5174`. They intentionally expose only
@@ -69,12 +69,13 @@ operation context and performs its built-in cleanup.
 The default Kind integration proves only `performance`/`default-fio` with a
 disposable no-provisioner volume. Kind does not provide a CSI snapshot driver
 or a raw-block StorageClass, so a green default proof does not prove
-`snapshot-restore`, `snapshot-source-clone`, or `block-volume`. A provider must
-run those operations on a disposable cluster with the relevant CSI classes and
-must record successful API results, child Pod security, cleanup, and unrelated
-sentinel preservation. The downstream validator's storage matrix may cover
-StorageClass lifecycle and per-node smoke, but it does not replace kubestr's
-fio IOPS/latency, CSI snapshot/restore, or raw-block/PVC evidence.
+`snapshot-restore`, `snapshot-source-clone`, or `block-volume`. Those
+operations are supported by this image but require provider acceptance on a
+disposable cluster with the relevant CSI classes. The provider must record
+successful API results, child Pod security, cleanup, and unrelated sentinel
+preservation. The downstream validator's storage matrix may cover StorageClass
+lifecycle and per-node smoke, but it does not replace kubestr's fio
+IOPS/latency, CSI snapshot/restore, or raw-block/PVC evidence.
 
 ## Runbook layout
 

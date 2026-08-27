@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   templates through Kubernetes image volumes. The controller continues to use
   the built-in runbooks when an optional bundle is absent and leaves capability,
   signature, and provenance enforcement to the platform admission pipeline.
+- **Storage diagnostics utility image**: Added the bounded `storage-debug`
+  image with mounted-volume fio/ioping checks and controller-owned kubestr
+  storage workflows.
 
 ## [0.1.0-rc.8] - 2026-08-22
 
