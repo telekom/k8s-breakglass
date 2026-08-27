@@ -12,11 +12,14 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -229,6 +232,30 @@ func TestUploadRejectsNonPrivateOrSymlinkedReadyMarker(t *testing.T) {
 	}
 }
 
+func TestOpenPrivateNoFollowFailureIsPathSafeAndNeutral(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "private-target")
+	if err := os.WriteFile(target, []byte("private"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := os.Lstat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(directory, "untrusted-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	_, err = openPrivateNoFollow(link, expected)
+	if err == nil {
+		t.Fatal("openPrivateNoFollow() unexpectedly followed a link")
+	}
+	message := err.Error()
+	if strings.Contains(message, "archive") || strings.Contains(message, link) || strings.Contains(message, directory) {
+		t.Fatalf("private open failure leaked or mislabeled a path: %q", message)
+	}
+}
+
 func TestUploadRejectsForgedReadyMarker(t *testing.T) {
 	path, ready := uploadFixture(t, []byte("archive-bytes"))
 	oldPath, oldReady := artifactPath, readyPath
@@ -377,13 +404,13 @@ func TestUploadEnforcesImmutableRecipeArchiveCeilings(t *testing.T) {
 	t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_TOKEN", "one-time-token")
 	manifest := filepath.Join(filepath.Dir(path), "artifact.manifest.json")
 
-	if err := os.WriteFile(manifest, []byte(`{"recipe":"system-summary.v1","inputs":{"maxArchiveBytes":16777217}}`), 0600); err != nil {
+	if err := os.WriteFile(manifest, systemSummaryManifest(16777217), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := upload(context.Background()); !strings.Contains(err.Error(), "immutable recipe ceiling") {
 		t.Fatalf("summary manifest ceiling error = %v", err)
 	}
-	if err := os.WriteFile(manifest, []byte(`{"recipe":"unknown.v1","inputs":{"maxArchiveBytes":1}}`), 0600); err != nil {
+	if err := os.WriteFile(manifest, []byte(strings.Replace(string(crashdumpManifest(maxArchiveBytes)), "crashdump-collection.v1", "unknown.v1", 1)), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := upload(context.Background()); !strings.Contains(err.Error(), "not allowlisted") {
@@ -399,11 +426,110 @@ func TestUploadRejectsManifestWithUnknownFields(t *testing.T) {
 	t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_URL", "https://upload.example.invalid/object")
 	t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_TOKEN", "one-time-token")
 	manifest := filepath.Join(filepath.Dir(path), "artifact.manifest.json")
-	if err := os.WriteFile(manifest, []byte(`{"recipe":"system-summary.v1","inputs":{"maxArchiveBytes":16777216},"forged":"field"}`), 0600); err != nil {
+	valid := strings.TrimSuffix(string(systemSummaryManifest(16777216)), "}\n")
+	if err := os.WriteFile(manifest, []byte(valid+`,"forged":"field"}`+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := upload(context.Background()); !strings.Contains(err.Error(), "manifest is invalid") {
 		t.Fatalf("unknown-field manifest error = %v", err)
+	}
+}
+
+func TestRecipeArchiveLimitRejectsMissingWrongAndCrossRecipeIdentity(t *testing.T) {
+	manifest := filepath.Join(t.TempDir(), "artifact.manifest.json")
+	validSummary := string(systemSummaryManifest(16777216))
+	validCrashdump := string(crashdumpManifest(maxArchiveBytes))
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{name: "missing schema version", body: strings.Replace(validSummary, `"schema_version":"diagnostic-artifact/v1",`, "", 1)},
+		{name: "wrong schema version", body: strings.Replace(validSummary, "diagnostic-artifact/v1", "diagnostic-artifact/v2", 1)},
+		{name: "missing recipe version", body: strings.Replace(validSummary, `"recipe_version":1,`, "", 1)},
+		{name: "wrong recipe version", body: strings.Replace(validSummary, `"recipe_version":1`, `"recipe_version":2`, 1)},
+		{name: "wrong archive format", body: strings.Replace(validSummary, `"archive_format":"tar.gz"`, `"archive_format":"zip"`, 1)},
+		{name: "summary with crashdump identity", body: strings.Replace(validSummary, `"node":null,"archive_format"`, `"node":"node-a","archive_format"`, 1)},
+		{name: "crashdump with summary identity", body: strings.Replace(validCrashdump, `"node":"node-a","archive_format"`, `"node":null,"archive_format"`, 1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := os.WriteFile(manifest, []byte(test.body), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := recipeArchiveLimit(manifest); err == nil {
+				t.Fatal("recipeArchiveLimit() unexpectedly accepted manifest")
+			}
+		})
+	}
+}
+
+func TestRetryableUsesTypedFailures(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "temporary response", err: &uploadResponseError{statusCode: http.StatusServiceUnavailable, temporary: true}, want: true},
+		{name: "permanent authorization response", err: &uploadResponseError{statusCode: http.StatusUnauthorized}, want: false},
+		{name: "redirect contract", err: errRedirect, want: false},
+		{name: "caller cancellation", err: context.Canceled, want: false},
+		{name: "caller deadline", err: context.DeadlineExceeded, want: false},
+		{name: "timeout network error", err: &url.Error{Op: "Put", URL: "https://upload.example.invalid/object", Err: &net.DNSError{IsTimeout: true}}, want: true},
+		{name: "TLS trust failure", err: &url.Error{Op: "Put", URL: "https://upload.example.invalid/object", Err: x509.UnknownAuthorityError{}}, want: false},
+		{name: "lookalike text is not typed", err: errors.New("temporary upload response: 503; connection reset; i/o timeout"), want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := retryable(test.err); got != test.want {
+				t.Fatalf("retryable(%v) = %t, want %t", test.err, got, test.want)
+			}
+		})
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		<-request.Context().Done()
+	}))
+	defer server.Close()
+	client := &http.Client{Timeout: 20 * time.Millisecond}
+	_, err := client.Get(server.URL)
+	if err == nil {
+		t.Fatal("http.Client timeout unexpectedly succeeded")
+	}
+	if !retryable(err) {
+		t.Fatalf("retryable(http.Client timeout %T: %v) = false, want true", err, err)
+	}
+}
+
+func TestUploadRetriesOnlyTemporaryHTTPResponses(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		status    int
+		wantCalls int
+	}{
+		{name: "temporary service unavailable", status: http.StatusServiceUnavailable, wantCalls: maxAttempts},
+		{name: "permanent unauthorized", status: http.StatusUnauthorized, wantCalls: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path, ready := uploadFixture(t, []byte("archive-bytes"))
+			oldPath, oldReady, oldFactory := artifactPath, readyPath, newUploadHTTPClient
+			defer func() { artifactPath, readyPath, newUploadHTTPClient = oldPath, oldReady, oldFactory }()
+			artifactPath, readyPath = path, ready
+			t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_URL", "https://upload.example.invalid/object")
+			t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_TOKEN", "one-time-token")
+			calls := 0
+			newUploadHTTPClient = func() *http.Client {
+				return &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					calls++
+					_, _ = io.Copy(io.Discard, request.Body)
+					return &http.Response{StatusCode: test.status, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
+				})}
+			}
+			if err := upload(context.Background()); err == nil {
+				t.Fatal("upload() unexpectedly succeeded")
+			}
+			if calls != test.wantCalls {
+				t.Fatalf("upload() made %d requests, want %d", calls, test.wantCalls)
+			}
+		})
 	}
 }
 
@@ -458,10 +584,18 @@ func uploadFixture(t *testing.T, content []byte) (string, string) {
 		t.Fatal(err)
 	}
 	manifest := filepath.Join(dir, "artifact.manifest.json")
-	if err := os.WriteFile(manifest, []byte(`{"recipe":"crashdump-collection.v1","inputs":{"maxArchiveBytes":536870912}}`), 0600); err != nil {
+	if err := os.WriteFile(manifest, crashdumpManifest(maxArchiveBytes), 0600); err != nil {
 		t.Fatal(err)
 	}
 	return archive, ready
+}
+
+func systemSummaryManifest(maxBytes int64) []byte {
+	return []byte(fmt.Sprintf(`{"schema_version":"diagnostic-artifact/v1","recipe":"system-summary.v1","recipe_version":1,"node":null,"archive_format":"tar.gz","inputs":{"maxArchiveBytes":%d,"detailLevel":"basic"},"payload_sha256":"0000000000000000000000000000000000000000000000000000000000000000","file_count":1,"bytes":1,"exit_code":0,"exit_semantics":"0=complete; non-zero=not published"}`+"\n", maxBytes))
+}
+
+func crashdumpManifest(maxBytes int64) []byte {
+	return []byte(fmt.Sprintf(`{"schema_version":"diagnostic-artifact/v1","recipe":"crashdump-collection.v1","recipe_version":1,"node":"node-a","archive_format":"tar.gz","inputs":{"maxAgeMinutes":1440,"node":"node-a","maxArchiveBytes":%d},"payload_sha256":"0000000000000000000000000000000000000000000000000000000000000000","file_count":0,"bytes":0,"exit_code":0,"exit_semantics":"0=complete; non-zero=not published"}`+"\n", maxBytes))
 }
 
 func writeCertificateBundle(t *testing.T, path string, certificateDER []byte) {

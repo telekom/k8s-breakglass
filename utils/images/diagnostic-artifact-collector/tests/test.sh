@@ -113,6 +113,65 @@ copy_output_file() {
 		"$image" "/output/$copy_name" >"$copy_destination"
 }
 
+assert_unique_members_and_payload_sha() {
+	archive=$1
+	manifest=$2
+	duplicates=$(tar -tzf "$archive" | LC_ALL=C sort | uniq -d)
+	[ -z "$duplicates" ] || {
+		echo "archive contains duplicate members: $duplicates" >&2
+		exit 1
+	}
+	# payload_sha256 deliberately covers the raw, uncompressed tar bytes used
+	# for payload publication, not a re-emitted semantic representation. The
+	# final archive differs only by the raw manifest record; preserve all GNU
+	# longname/PAX blocks and tar padding while excising that one record.
+	python3 - "$archive" "$manifest" <<'PY'
+import gzip
+import hashlib
+import json
+import sys
+
+archive, manifest = sys.argv[1:]
+raw = gzip.open(archive, "rb").read()
+
+def field_size(value):
+    value = value.rstrip(b"\0 ")
+    if not value:
+        return 0
+    if value[0] & 0x80:
+        size = value[0] & 0x7f
+        for byte in value[1:]:
+            size = (size << 8) | byte
+        return size
+    return int(value, 8)
+
+offset = 0
+manifest_record = None
+while offset + 512 <= len(raw):
+    header = raw[offset:offset + 512]
+    if header == b"\0" * 512:
+        break
+    size = field_size(header[124:136])
+    end = offset + 512 + ((size + 511) // 512) * 512
+    name = header[:100].split(b"\0", 1)[0]
+    if name == b"manifest.json":
+        if manifest_record is not None:
+            raise SystemExit("archive contains more than one raw manifest record")
+        manifest_record = (offset, end)
+    offset = end
+
+if raw[offset:] != b"\0" * 1024:
+    raise SystemExit("archive has unexpected tar terminator or padding")
+if manifest_record is None:
+    raise SystemExit("archive does not contain a raw manifest record")
+expected = json.load(open(manifest, encoding="utf-8"))["payload_sha256"]
+start, end = manifest_record
+actual = hashlib.sha256(raw[:start] + raw[end:]).hexdigest()
+if actual != expected:
+    raise SystemExit("raw payload SHA-256 does not match the manifest")
+PY
+}
+
 mkdir "$test_dir/smoke-output"
 default_uid=$(docker run --rm --read-only --cap-drop=ALL --network none \
 	--entrypoint /bin/id "$image" -u)
@@ -148,6 +207,7 @@ python3 -c 'import json, sys; assert json.load(open(sys.argv[1], encoding="utf-8
 	"$test_dir/smoke-extracted/files/system-summary.json"
 copy_output_file "$test_dir/smoke-output" artifact.manifest.json "$test_dir/smoke-output/artifact.readable.manifest.json"
 cmp "$test_dir/smoke-output/artifact.readable.manifest.json" "$test_dir/smoke-extracted/manifest.json"
+assert_unique_members_and_payload_sha "$test_dir/smoke-output/artifact.readable.tar.gz" "$test_dir/smoke-output/artifact.readable.manifest.json"
 
 run_image_default "$test_dir/default-output-created-by-helper" -- collect --recipe system-summary.v1 --output /output/artifact.tar.gz
 [ -f "$test_dir/default-output-created-by-helper/artifact.tar.gz" ]
@@ -173,6 +233,7 @@ run_image "$test_dir/crash-output" --env DIAGNOSTIC_NODE=node-a --env DIAGNOSTIC
 	--volume "$test_dir/coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
 mkdir "$test_dir/crash-extracted"
 copy_output_file "$test_dir/crash-output" artifact.tar.gz "$test_dir/crash-output/artifact.readable.tar.gz"
+copy_output_file "$test_dir/crash-output" artifact.manifest.json "$test_dir/crash-output/artifact.readable.manifest.json"
 tar -xzf "$test_dir/crash-output/artifact.readable.tar.gz" -C "$test_dir/crash-extracted"
 python3 -c 'import json, sys; value=json.load(open(sys.argv[1], encoding="utf-8")); assert value["node"] == "node-a" and value["inputs"]["maxAgeMinutes"] == 10080' \
 	"$test_dir/crash-extracted/manifest.json"
@@ -181,6 +242,24 @@ cmp "$test_dir/coredumps/report.txt" "$test_dir/crash-extracted/files/coredumps/
 python3 -c 'import sys; text=open(sys.argv[1], encoding="utf-8").read(); assert all(secret not in text for secret in ("super secret value", "UPPERCASE credential", "mixed credential")) and text.count("[REDACTED]") >= 3' \
 	"$test_dir/crash-extracted/stdout.log"
 [ ! -e "$test_dir/crash-extracted/files/coredumps/old.dump" ]
+assert_unique_members_and_payload_sha "$test_dir/crash-output/artifact.readable.tar.gz" "$test_dir/crash-output/artifact.readable.manifest.json"
+
+mkdir "$test_dir/long-success-coredumps" "$test_dir/long-success-output"
+long_component=$(printf '%80s' '' | tr ' ' x)
+long_parent="$test_dir/long-success-coredumps"
+i=1
+while [ "$i" -le 3 ]; do
+	long_parent="$long_parent/$long_component"
+	mkdir "$long_parent"
+	i=$((i + 1))
+done
+long_name=$(printf '%60s' '' | tr ' ' y)
+printf '%s\n' 'long archive member fixture' >"$long_parent/$long_name.dump"
+run_image "$test_dir/long-success-output" --env DIAGNOSTIC_NODE=node-a \
+	--volume "$test_dir/long-success-coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
+copy_output_file "$test_dir/long-success-output" artifact.tar.gz "$test_dir/long-success-output/artifact.readable.tar.gz"
+copy_output_file "$test_dir/long-success-output" artifact.manifest.json "$test_dir/long-success-output/artifact.readable.manifest.json"
+assert_unique_members_and_payload_sha "$test_dir/long-success-output/artifact.readable.tar.gz" "$test_dir/long-success-output/artifact.readable.manifest.json"
 
 mkdir "$test_dir/mount-boundary-coredumps" "$test_dir/mount-boundary-coredumps/nested" \
 	"$test_dir/mount-boundary-external" "$test_dir/mount-boundary-output"
@@ -404,7 +483,7 @@ docker run --rm --read-only --cap-drop=ALL --network none \
 	--user 65532:65532 --volume "$upload_volume:/output" --entrypoint /bin/sh "$image" -ceu '
 		rm -f /output/artifact.tar.gz /output/artifact.manifest.json /output/artifact.ready
 		truncate -s 16777217 /output/artifact.tar.gz
-		printf "%s\n" '\''{"recipe":"system-summary.v1","inputs":{"maxArchiveBytes":16777216}}'\'' > /output/artifact.manifest.json
+		printf "%s\n" '\''{"schema_version":"diagnostic-artifact/v1","recipe":"system-summary.v1","recipe_version":1,"node":null,"archive_format":"tar.gz","inputs":{"maxArchiveBytes":16777216,"detailLevel":"basic"},"payload_sha256":"0000000000000000000000000000000000000000000000000000000000000000","file_count":1,"bytes":1,"exit_code":0,"exit_semantics":"0=complete; non-zero=not published"}'\'' > /output/artifact.manifest.json
 		printf "ready\n" > /output/artifact.ready
 		chmod 0600 /output/artifact.tar.gz /output/artifact.manifest.json /output/artifact.ready
 	'

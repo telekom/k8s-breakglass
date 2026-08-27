@@ -378,7 +378,11 @@ write_manifest() {
 		cd "$stage"
 		find stdout.log stderr.log files -print | LC_ALL=C sort
 	) >"$payload_list"
-	payload_sha256=$(tar -C "$stage" -cf - -T "$payload_list" | sha256sum | awk '{print $1}')
+	# The sorted list already contains every directory and descendant exactly
+	# once. Disable tar's implicit recursion so its byte stream (and the final
+	# archive) cannot acquire duplicate members through both the directory and
+	# its explicitly listed children.
+	payload_sha256=$(tar --no-recursion -C "$stage" -cf - -T "$payload_list" | sha256sum | awk '{print $1}')
 	[ -n "$payload_sha256" ] || fail "cannot calculate payload checksum"
 	{
 		printf '{\n'
@@ -433,7 +437,7 @@ publish_outputs() {
 		find . -type f -exec touch -d @0 {} \;
 		find . -type d -exec touch -d @0 {} \;
 		find stdout.log stderr.log files manifest.json -print | LC_ALL=C sort >archive-list
-		tar -cf - -T archive-list | gzip -n >"$archive_tmp"
+		tar --no-recursion -cf - -T archive-list | gzip -n >"$archive_tmp"
 	)
 	archive_size=$(safe_stat_size "$archive_tmp")
 	if [ "$archive_size" -lt 1 ] || [ "$archive_size" -gt "$max_archive_bytes" ]; then

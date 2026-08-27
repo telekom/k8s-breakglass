@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -44,6 +45,37 @@ var (
 	readyPath           = "/output/artifact.ready"
 	newUploadHTTPClient = defaultUploadHTTPClient
 )
+
+// uploadResponseError keeps the status classification structured. The retry
+// loop must never infer safety from a human-readable error string: permanent
+// authorization, TLS, and contract failures are intentionally not retryable.
+type uploadResponseError struct {
+	statusCode int
+	temporary  bool
+}
+
+func (err *uploadResponseError) Error() string {
+	return fmt.Sprintf("upload response: %d", err.statusCode)
+}
+
+type artifactManifest struct {
+	SchemaVersion string  `json:"schema_version"`
+	Recipe        string  `json:"recipe"`
+	RecipeVersion int     `json:"recipe_version"`
+	Node          *string `json:"node"`
+	ArchiveFormat string  `json:"archive_format"`
+	Inputs        struct {
+		MaxArchiveBytes int64   `json:"maxArchiveBytes"`
+		MaxAgeMinutes   *int64  `json:"maxAgeMinutes"`
+		Node            *string `json:"node"`
+		DetailLevel     *string `json:"detailLevel"`
+	} `json:"inputs"`
+	PayloadSHA256 string `json:"payload_sha256"`
+	FileCount     int64  `json:"file_count"`
+	Bytes         int64  `json:"bytes"`
+	ExitCode      int    `json:"exit_code"`
+	ExitSemantics string `json:"exit_semantics"`
+}
 
 func main() {
 	if len(os.Args) != 3 || os.Args[1] != "--archive" || os.Args[2] != archivePath {
@@ -157,24 +189,7 @@ func recipeArchiveLimit(path string) (int64, error) {
 		return 0, fmt.Errorf("open artifact manifest without following links: %w", err)
 	}
 	defer func() { _ = file.Close() }()
-	var contract struct {
-		SchemaVersion string  `json:"schema_version"`
-		Recipe        string  `json:"recipe"`
-		RecipeVersion int     `json:"recipe_version"`
-		Node          *string `json:"node"`
-		ArchiveFormat string  `json:"archive_format"`
-		Inputs        struct {
-			MaxArchiveBytes int64   `json:"maxArchiveBytes"`
-			MaxAgeMinutes   *int64  `json:"maxAgeMinutes"`
-			Node            *string `json:"node"`
-			DetailLevel     *string `json:"detailLevel"`
-		} `json:"inputs"`
-		PayloadSHA256 string `json:"payload_sha256"`
-		FileCount     int64  `json:"file_count"`
-		Bytes         int64  `json:"bytes"`
-		ExitCode      int    `json:"exit_code"`
-		ExitSemantics string `json:"exit_semantics"`
-	}
+	var contract artifactManifest
 	decoder := json.NewDecoder(io.LimitReader(file, maxManifestBytes+1))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&contract); err != nil {
@@ -184,12 +199,34 @@ func recipeArchiveLimit(path string) (int64, error) {
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return 0, errors.New("artifact manifest has trailing content")
 	}
+	return validateManifestContract(contract)
+}
+
+func validateManifestContract(contract artifactManifest) (int64, error) {
+	if contract.SchemaVersion != "diagnostic-artifact/v1" || contract.RecipeVersion != 1 ||
+		contract.ArchiveFormat != "tar.gz" || contract.ExitCode != 0 ||
+		contract.ExitSemantics != "0=complete; non-zero=not published" ||
+		len(contract.PayloadSHA256) != sha256.Size*2 || contract.FileCount < 0 || contract.Bytes < 0 {
+		return 0, errors.New("artifact manifest identity is invalid")
+	}
+
 	var immutableLimit int64
 	switch contract.Recipe {
 	case "system-summary.v1":
 		immutableLimit = 16777216
+		if contract.Node != nil || contract.Inputs.Node != nil || contract.Inputs.MaxAgeMinutes != nil ||
+			contract.Inputs.DetailLevel == nil ||
+			(*contract.Inputs.DetailLevel != "basic" && *contract.Inputs.DetailLevel != "extended") {
+			return 0, errors.New("artifact manifest does not match the system summary recipe")
+		}
 	case "crashdump-collection.v1":
 		immutableLimit = maxArchiveBytes
+		if contract.Node == nil || *contract.Node == "" || contract.Inputs.Node == nil ||
+			*contract.Inputs.Node != *contract.Node || contract.Inputs.MaxAgeMinutes == nil ||
+			*contract.Inputs.MaxAgeMinutes < 1 || *contract.Inputs.MaxAgeMinutes > 10080 ||
+			contract.Inputs.DetailLevel != nil {
+			return 0, errors.New("artifact manifest does not match the crashdump recipe")
+		}
 	default:
 		return 0, errors.New("artifact manifest recipe is not allowlisted")
 	}
@@ -269,12 +306,12 @@ func openPrivateNoFollow(path string, expected os.FileInfo) (*os.File, error) {
 		return nil, err
 	}
 	if fd < 0 {
-		return nil, errors.New("open archive returned an invalid descriptor")
+		return nil, errors.New("open private file returned an invalid descriptor")
 	}
 	file := os.NewFile(uintptr(fd), path)
 	if file == nil {
 		_ = syscall.Close(fd)
-		return nil, errors.New("open archive returned no file")
+		return nil, errors.New("open private file returned no file")
 	}
 	info, statErr := file.Stat()
 	if statErr != nil {
@@ -396,10 +433,10 @@ func putOnce(ctx context.Context, client *http.Client, endpoint *url.URL, token 
 	}
 	if response.StatusCode == http.StatusRequestTimeout || response.StatusCode == http.StatusTooManyRequests ||
 		response.StatusCode >= 500 {
-		return fmt.Errorf("temporary upload response: %d", response.StatusCode)
+		return &uploadResponseError{statusCode: response.StatusCode, temporary: true}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("upload response: %d", response.StatusCode)
+		return &uploadResponseError{statusCode: response.StatusCode}
 	}
 	after, statErr := file.Stat()
 	if statErr != nil || !isPrivateRegular(after) || after.Size() != size || reader.n != size ||
@@ -433,9 +470,26 @@ func (r *countingReader) Read(p []byte) (int, error) {
 }
 
 func retryable(err error) bool {
-	return strings.Contains(err.Error(), "temporary upload response") ||
-		strings.Contains(err.Error(), "i/o timeout") ||
-		strings.Contains(err.Error(), "connection reset")
+	var responseError *uploadResponseError
+	if errors.As(err, &responseError) {
+		return responseError.temporary
+	}
+	// The bare context sentinels are caller-owned cancellation/deadline
+	// decisions. An http.Client timeout, by contrast, is a typed net.Error
+	// (normally wrapped in *url.Error) and remains eligible for a bounded retry.
+	if err == context.Canceled || err == context.DeadlineExceeded {
+		return false
+	}
+	var networkError net.Error
+	if errors.As(err, &networkError) && networkError.Timeout() {
+		return true
+	}
+	// A caller-owned context cancellation is a terminal contract decision, not
+	// an opportunity to keep a bearer-token upload alive.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	return false
 }
 
 func safeError(err error) string {
