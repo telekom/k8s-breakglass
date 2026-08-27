@@ -230,6 +230,10 @@ kubectl -n "${namespace}" get job capture -o json | jq -e '
 
 if ! kubectl -n "${namespace}" wait job/capture --for=condition=Complete --timeout=90s; then
 	kubectl -n "${namespace}" logs job/capture --all-containers=true >&2 || true
+	# Preserve the kernel-provided identity evidence needed to diagnose a
+	# recognized-layout regression. This is read-only fixture output; the
+	# production helper still fails closed and never accepts a caller path.
+	kubectl -n "${namespace}" exec target -c server -- cat /proc/1/cgroup >&2 || true
 	requirement 'host PID/setns/cgroup/capability selected-pod proof did not complete'
 fi
 capture_log=$(kubectl -n "${namespace}" logs job/capture -c capture)

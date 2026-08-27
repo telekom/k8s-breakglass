@@ -523,7 +523,13 @@ if [ "$PWRU_READY" = true ]; then
 	# bounded Docker wait, then validate its public summary and evidence file.
 	trace_wait_status=0
 	trace_exit=$(timeout --foreground "${PWRU_TIMEOUT}s" docker wait "$PWRU_CONTAINER" 2>/dev/null) || trace_wait_status=$?
-	[ "$trace_wait_status" -eq 0 ] || requirement "public net-debug trace exceeded its bounded wait"
+	if [ "$trace_wait_status" -ne 0 ]; then
+		# Keep the bounded failure actionable without changing the public
+		# contract: pwru diagnostics are emitted only for this owned container.
+		docker_call logs "$PWRU_CONTAINER" >&2 || true
+		docker_call top "$PWRU_CONTAINER" >&2 || true
+		requirement "public net-debug trace exceeded its bounded wait"
+	fi
 	case "$trace_exit" in 0|130|141|143) ;; *) requirement "public net-debug trace exited unsuccessfully: $trace_exit" ;; esac
 	trace_state=$(docker_call inspect --format '{{.State.Status}}' "$PWRU_CONTAINER" 2>/dev/null) || requirement "could not inspect completed trace container"
 	[ "$trace_state" = exited ] || requirement "public net-debug trace container did not exit"
