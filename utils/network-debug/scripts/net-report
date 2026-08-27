@@ -35,10 +35,11 @@ tool_version() {
 	if command -v "$name" >/dev/null 2>&1; then
 		case "$name" in
 			kubestr)
-				value=$(kubestr version 2>/dev/null) || {
-					printf '%s\tunavailable\n' "$name"
-					return
-				}
+				# kubestr v0.4.49 has no version subcommand or flag. Its
+				# immutable build version is recorded in the image metadata, while
+				# the real fio operation below proves the binary actually works.
+				value=$(awk -F= '$1 == "KUBESTR_VERSION" { print $2; exit }' \
+					"${NETWORK_DEBUG_METADATA_FILE:-/usr/share/network-debug/versions.env}" 2>/dev/null || true)
 				;;
 			pwru)
 				value=$(pwru --version 2>/dev/null) || {

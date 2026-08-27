@@ -20,8 +20,8 @@ esac
 EOF
 cat >"$fixture/kubestr" <<'EOF'
 #!/bin/sh
-[ "${1:-}" = version ] || exit 2
-printf '%s\n' 'Version: v0.4.49'
+printf '%s\n' 'kubestr must not be invoked for unsupported version discovery' >&2
+exit 99
 EOF
 cat >"$fixture/pwru" <<'EOF'
 #!/bin/sh
@@ -29,6 +29,7 @@ cat >"$fixture/pwru" <<'EOF'
 printf '%s\n' 'pwru version v1.0.12'
 EOF
 chmod +x "$fixture/ip" "$fixture/kubestr" "$fixture/pwru"
+printf '%s\n' 'KUBESTR_VERSION=v0.4.49' >"$fixture/versions.env"
 
 if sh "$root/scripts/net-report" --not-an-option >/dev/null 2>&1; then
 	printf '%s\n' 'net-report accepted an unknown option' >&2
@@ -59,8 +60,8 @@ fi
 
 # Exercise the report against deterministic command fixtures. These assertions
 # validate the public runtime output, not implementation files.
-first=$(PATH="$fixture:/usr/bin:/bin" NETWORK_DEBUG_VERSION=test sh "$root/scripts/net-report")
-second=$(PATH="$fixture:/usr/bin:/bin" NETWORK_DEBUG_VERSION=test sh "$root/scripts/net-report")
+first=$(PATH="$fixture:/usr/bin:/bin" NETWORK_DEBUG_VERSION=test NETWORK_DEBUG_METADATA_FILE="$fixture/versions.env" sh "$root/scripts/net-report")
+second=$(PATH="$fixture:/usr/bin:/bin" NETWORK_DEBUG_VERSION=test NETWORK_DEBUG_METADATA_FILE="$fixture/versions.env" sh "$root/scripts/net-report")
 test "$first" = "$second"
 printf '%s\n' "$first" | grep -F '1: lo    inet 127.0.0.1/8 scope host lo' >/dev/null
 printf '%s\n' "$first" | grep -F 'default via 192.0.2.1 dev eth0' >/dev/null
