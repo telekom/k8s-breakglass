@@ -37,8 +37,8 @@ docker build --tag "$image" "$root"
 run_image() {
 	output=$1
 	shift
-	chmod 0777 "$output"
 	mkdir -p "$output"
+	chmod 0777 "$output"
 	docker_opts=
 	while [ "$1" != -- ]; do
 		docker_opts="$docker_opts $1"
@@ -55,8 +55,8 @@ run_image() {
 run_image_default() {
 	output=$1
 	shift
-	chmod 0777 "$output"
 	mkdir -p "$output"
+	chmod 0777 "$output"
 	docker_opts=
 	while [ "$1" != -- ]; do
 		docker_opts="$docker_opts $1"
@@ -145,9 +145,8 @@ python3 -c 'import json, sys; assert json.load(open(sys.argv[1], encoding="utf-8
 copy_output_file "$test_dir/smoke-output" artifact.manifest.json "$test_dir/smoke-output/artifact.readable.manifest.json"
 cmp "$test_dir/smoke-output/artifact.readable.manifest.json" "$test_dir/smoke-extracted/manifest.json"
 
-mkdir "$test_dir/default-output"
-run_image_default "$test_dir/default-output" -- collect --recipe system-summary.v1 --output /output/artifact.tar.gz
-[ -f "$test_dir/default-output/artifact.tar.gz" ]
+run_image_default "$test_dir/default-output-created-by-helper" -- collect --recipe system-summary.v1 --output /output/artifact.tar.gz
+[ -f "$test_dir/default-output-created-by-helper/artifact.tar.gz" ]
 
 mkdir "$test_dir/extended-output"
 run_image "$test_dir/extended-output" --env DIAGNOSTIC_DETAIL_LEVEL=extended -- \
