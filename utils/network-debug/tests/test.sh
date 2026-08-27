@@ -47,6 +47,16 @@ test "$version" = 'net-report 0.1.0'
 intent=$(NETWORK_DEBUG_INTENT=network-diagnostics sh "$root/scripts/net-report" | sed -n '2p')
 test "$intent" = 'intent network-diagnostics'
 
+hostile_version=$(printf 'trusted\nSECRET_VERSION')
+hostile_intent=$(printf 'network-diagnostics\nSECRET_INTENT')
+hostile_report=$(NETWORK_DEBUG_VERSION="$hostile_version" NETWORK_DEBUG_INTENT="$hostile_intent" sh "$root/scripts/net-report")
+printf '%s\n' "$hostile_report" | grep -F 'network-debug report unknown' >/dev/null
+printf '%s\n' "$hostile_report" | grep -F 'intent unknown' >/dev/null
+if printf '%s\n' "$hostile_report" | grep -F 'SECRET_' >/dev/null; then
+	printf '%s\n' 'net-report emitted hostile metadata' >&2
+	exit 1
+fi
+
 # Exercise the report against deterministic command fixtures. These assertions
 # validate the public runtime output, not implementation files.
 first=$(PATH="$fixture:/usr/bin:/bin" NETWORK_DEBUG_VERSION=test sh "$root/scripts/net-report")

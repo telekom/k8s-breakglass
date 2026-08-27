@@ -25,6 +25,10 @@ case "${GOSEC_FIXTURE_MODE}" in
   skipped-ssa) printf '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"gosec"}},"results":[]}]}' >"$out"; printf '%s\n' 'package has type errors, skipping SSA' >&2; exit 0 ;;
   permission-error) printf '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"gosec"}},"results":[]}]}' >"$out"; printf '%s\n' 'operation not permitted while loading package' >&2; exit 0 ;;
   unknown-error) printf '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"gosec"}},"results":[]}]}' >"$out"; printf '%s\n' 'failed to load package fixture' >&2; exit 0 ;;
+  analyzer-running) printf '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"gosec"}},"results":[]}]}' >"$out"; printf '%s\n' 'Error running analyzer G999: analyzer failed' >&2; exit 0 ;;
+  analyzer-waiting) printf '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"gosec"}},"results":[]}]}' >"$out"; printf '%s\n' 'Error waiting for analyzers: analyzer failed' >&2; exit 0 ;;
+  rule-error) printf '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"gosec"}},"results":[]}]}' >"$out"; printf '%s\n' 'Rule error: G999 => rule failed (fixture.go:1)' >&2; exit 0 ;;
+  skipped-path) printf '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"gosec"}},"results":[]}]}' >"$out"; printf '%s\n' "Skipping: /workspace/fixture. Path doesn't exist." >&2; exit 0 ;;
   malformed) printf '%s\n' 'not SARIF' >"$out"; exit 0 ;;
 esac
 EOF
@@ -52,5 +56,9 @@ run_case analyzer-error 1
 run_case skipped-ssa 1
 run_case permission-error 1
 run_case unknown-error 1
+run_case analyzer-running 1
+run_case analyzer-waiting 1
+run_case rule-error 1
+run_case skipped-path 1
 run_case malformed 1
 printf '%s\n' 'gosec SARIF wrapper behavior passed'

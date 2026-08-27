@@ -14,8 +14,14 @@ NETWORK=${RUN_ID}-network
 CONTAINER=${RUN_ID}-tools
 PWRU_CONTAINER=${RUN_ID}-pwru
 KUBESTR_NAMESPACE=${RUN_ID}-storage
+KIND_CLUSTER_NAME=${NETWORK_DEBUG_KIND_CLUSTER_NAME:-$RUN_ID}
+KIND_NODE_IMAGE=${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/network-debug-proof.XXXXXX")
+KUBECONFIG_FILE=${WORK_DIR}/kubeconfig
+KUBESTR_PV_NAME=${RUN_ID}-pv
+KIND_CLUSTER_CREATED=false
 KUBESTR_NAMESPACE_CREATED=false
+KUBESTR_KUBECONFIG_FILE=${WORK_DIR}/kubestr-kubeconfig
 
 requirement() {
 	printf 'REQUIREMENT: %s\n' "$*" >&2
@@ -31,8 +37,13 @@ done
 
 cleanup() {
 	set +e
-	if [ "$KUBESTR_NAMESPACE_CREATED" = true ] && command -v kubectl >/dev/null 2>&1; then
-		kubectl delete namespace "$KUBESTR_NAMESPACE" --ignore-not-found --wait=true --timeout=60s >/dev/null 2>&1
+	if [ "$KIND_CLUSTER_CREATED" = true ]; then
+		if [ "$KUBESTR_NAMESPACE_CREATED" = true ] && command -v kubectl >/dev/null 2>&1; then
+			kubectl --kubeconfig "$KUBECONFIG_FILE" delete namespace "$KUBESTR_NAMESPACE" --ignore-not-found --wait=true --timeout=60s >/dev/null 2>&1
+		fi
+		kubectl --kubeconfig "$KUBECONFIG_FILE" delete persistentvolume "$KUBESTR_PV_NAME" --ignore-not-found >/dev/null 2>&1
+		kubectl --kubeconfig "$KUBECONFIG_FILE" delete storageclass standard --ignore-not-found >/dev/null 2>&1
+		kind delete cluster --name "$KIND_CLUSTER_NAME" >/dev/null 2>&1
 	fi
 	docker rm -f "$PWRU_CONTAINER" "$CONTAINER" >/dev/null 2>&1
 	docker network rm "$NETWORK" >/dev/null 2>&1
@@ -42,8 +53,22 @@ trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
 command -v docker >/dev/null 2>&1 || requirement "docker is required to run disposable integration containers"
+command -v kind >/dev/null 2>&1 || requirement "kind is required to run the disposable Kubernetes integration cluster"
+command -v kubectl >/dev/null 2>&1 || requirement "kubectl is required to run the disposable Kubernetes integration cluster"
+command -v jq >/dev/null 2>&1 || requirement "jq is required to validate the structured kubestr fio result"
 command -v timeout >/dev/null 2>&1 || requirement "GNU timeout is required for bounded integration commands"
 docker image inspect "$IMAGE" >/dev/null 2>&1 || requirement "image $IMAGE is unavailable; build it before running integration proofs"
+docker image inspect "$KUBESTR_FIXTURE_IMAGE" >/dev/null 2>&1 || requirement "fixture image $KUBESTR_FIXTURE_IMAGE is unavailable; build it before running integration proofs"
+
+# Never mutate a caller-selected Kubernetes context. The proof owns the kind
+# cluster and its kubeconfig from creation through cleanup, so invoking this
+# script locally cannot accidentally create a namespace or PVC in production.
+KIND_CLUSTER_CREATED=true
+kind create cluster --name "$KIND_CLUSTER_NAME" --image "$KIND_NODE_IMAGE" \
+	--kubeconfig "$KUBECONFIG_FILE" --wait 120s || requirement "could not create the disposable kind cluster"
+export KUBECONFIG="$KUBECONFIG_FILE"
+kubectl wait --for=condition=Ready nodes --all --timeout=180s >/dev/null || requirement "disposable kind nodes did not become ready"
+kind load docker-image "$KUBESTR_FIXTURE_IMAGE" --name "$KIND_CLUSTER_NAME" || requirement "could not load the disposable fio fixture into kind"
 
 docker network create "$NETWORK" >/dev/null || requirement "Docker could not create an ephemeral network"
 docker run --detach --name "$CONTAINER" --network "$NETWORK" \
@@ -204,18 +229,36 @@ docker cp "$PWRU_CONTAINER:/work/pwru.log" "$WORK_DIR/pwru.log" >/dev/null || re
 grep -F -- '->' "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru produced no packet tuple after generated traffic"
 grep -E -- '127\.0\.0\.1.*->.*127\.0\.0\.1|127\.0\.0\.1.*18080' "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru did not observe the generated loopback HTTP traffic"
 
-if [ -z "${KUBECONFIG:-}" ] || [ ! -f "$KUBECONFIG" ]; then
-	requirement "KUBECONFIG must point to a disposable kind cluster for the kubestr storage proof"
-fi
-command -v kubectl >/dev/null 2>&1 || requirement "kubectl is required for the disposable kubestr proof"
-command -v jq >/dev/null 2>&1 || requirement "jq is required to validate the structured kubestr fio result"
-kubectl get storageclass standard >/dev/null 2>&1 || requirement "a default 'standard' StorageClass is required for kubestr fio"
+# Use a static, disposable PV so this proof does not depend on a cluster-wide
+# storage provisioner. Both objects live only in the kind cluster owned above.
+kubectl apply -f - >/dev/null <<YAML || requirement "could not create disposable standard storage"
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: standard
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: Immediate
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: ${KUBESTR_PV_NAME}
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: standard
+  hostPath:
+    path: /var/local/${RUN_ID}
+    type: DirectoryOrCreate
+YAML
 kubectl create namespace "$KUBESTR_NAMESPACE" >/dev/null || requirement "could not create disposable kubestr namespace"
 KUBESTR_NAMESPACE_CREATED=true
-kubectl config view --raw --minify > "$WORK_DIR/kubeconfig"
+kubectl config view --raw --minify > "$KUBESTR_KUBECONFIG_FILE"
 timeout --foreground "${KUBESTR_TIMEOUT}s" docker run --rm --network host \
 	--env KUBECONFIG=/work/kubeconfig \
-	--volume "$WORK_DIR/kubeconfig:/work/kubeconfig:ro" \
+	--volume "$KUBESTR_KUBECONFIG_FILE:/work/kubeconfig:ro" \
 	--volume "$WORK_DIR:/work/results" \
 	"$IMAGE" kubestr fio \
 		--storageclass standard --size 1Mi --testname default-fio \
@@ -230,5 +273,10 @@ if kubectl get namespace "$KUBESTR_NAMESPACE" >/dev/null 2>&1; then
 	requirement "kubestr namespace still exists after cleanup"
 fi
 KUBESTR_NAMESPACE_CREATED=false
+kubectl delete persistentvolume "$KUBESTR_PV_NAME" --ignore-not-found >/dev/null || requirement "disposable storage PV cleanup failed"
+if kubectl get persistentvolume "$KUBESTR_PV_NAME" >/dev/null 2>&1; then
+	requirement "disposable storage PV still exists after cleanup"
+fi
+kubectl delete storageclass standard --ignore-not-found >/dev/null || requirement "disposable storage class cleanup failed"
 
 printf 'network-debug integration proofs passed\n'

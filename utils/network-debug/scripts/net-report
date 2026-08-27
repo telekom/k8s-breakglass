@@ -4,7 +4,19 @@
 
 set -eu
 
-version=${NETWORK_DEBUG_VERSION:-unknown}
+sanitize_metadata() {
+	value=$1
+	case "$value" in
+		''|*[!A-Za-z0-9._-]*) printf '%s' unknown ;;
+		*) printf '%s' "$value" ;;
+	esac
+}
+
+# These values may be overridden by a container caller. Keep control
+# characters and delimiters out of the line-oriented report rather than
+# allowing metadata to inject fields or carry caller-supplied secret text.
+version=$(sanitize_metadata "${NETWORK_DEBUG_VERSION:-unknown}")
+intent=$(sanitize_metadata "${NETWORK_DEBUG_INTENT:-network-diagnostics}")
 
 help() {
 	cat <<'EOF'
@@ -60,7 +72,7 @@ case "${1:-}" in
 esac
 
 printf 'network-debug report %s\n' "$version"
-printf 'intent %s\n' "${NETWORK_DEBUG_INTENT:-network-diagnostics}"
+printf 'intent %s\n' "$intent"
 printf '\n[interfaces]\n'
 if command -v ip >/dev/null 2>&1; then ip -o address show 2>/dev/null | LC_ALL=C sort -k2,2 -k3,3 -k4,4 || true; else printf 'unavailable\n'; fi
 printf '\n[routes]\n'

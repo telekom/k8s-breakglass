@@ -68,7 +68,7 @@ make -C utils/network-debug test
 make -C utils/network-debug build
 make -C utils/network-debug build-multiarch
 # Linux only: disposable Docker + kind integration proofs
-KUBECONFIG="$HOME/.kube/config" make -C utils/network-debug integration
+make -C utils/network-debug integration
 ```
 
 The integration target is intentionally fail-closed. It generates loopback
@@ -83,7 +83,10 @@ fails; it does not silently skip a proof. See
 [`tests/tool-contract.yaml`](./tests/tool-contract.yaml) for the machine-readable
 operation and prerequisite contract.
 
-The dedicated CI job runs this target on a Linux runner with Docker and kind.
+The integration target creates and owns a uniquely named disposable kind
+cluster, including its kubeconfig, storage class, PV, namespace, and PVC. It
+never reads or mutates the caller's kubeconfig. The dedicated CI job runs this
+target on a Linux runner with Docker and kind.
 The `pwru` portion requires readable `/sys/kernel/btf/vmlinux`, debugfs,
 tracefs, securityfs, and BPF/PERFMON support. Local macOS/Windows Docker Desktop or a
 non-kind Kubernetes context is not a substitute for that job.

@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -5212,12 +5213,16 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 			{APIVersion: "batch/v1", Kind: "Job", Name: "job-resource", Namespace: "default", Source: "workload"},
 		}
 
-		targetClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+		job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job-resource", Namespace: "default"}}
+		targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(job).Build()
 		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
 		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, false, false)
 		require.NoError(t, err)
 		require.Empty(t, session.Status.DeployedResources)
+		err = targetClient.Get(context.Background(), client.ObjectKey{Name: job.Name, Namespace: job.Namespace}, &batchv1.Job{})
+		require.Error(t, err)
+		assert.True(t, apierrors.IsNotFound(err), "cleanup must delete the Job, not merely ignore a missing Job")
 	})
 
 	t.Run("preserves unknown resource kind for retry", func(t *testing.T) {

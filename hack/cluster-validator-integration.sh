@@ -67,29 +67,66 @@ trap cleanup EXIT
 
 preserve_diagnostics() {
   mkdir -p "${ARTIFACT_DIR}"
-  # Only reports and redacted diagnostic text leave the temporary directory.
-  # Kubeconfigs contain bearer tokens and are deliberately never copied.
-  local source base
-  for source in "${WORK_DIR}"/*.log "${WORK_DIR}"/*.stderr "${WORK_DIR}"/*.txt "${WORK_DIR}"/*.json; do
+  # Only the fixed, credential-free diagnostics produced by this script leave
+  # the temporary directory. Never glob arbitrary future logs: a new command's
+  # output must be explicitly reviewed before it can become an artifact.
+  local source base copy_failed=false
+  local allowed_sources=(
+    "${WORK_DIR}/configmap-denied.log"
+    "${WORK_DIR}/secret-denied.log"
+    "${WORK_DIR}/one-time-1.log"
+    "${WORK_DIR}/one-time-2.log"
+    "${WORK_DIR}/post-upgrade.log"
+    "${WORK_DIR}/not-ready.log"
+    "${WORK_DIR}/extension.log"
+    "${WORK_DIR}/extension.stderr"
+    "${WORK_DIR}/events.txt"
+    "${WORK_DIR}/one-time-1-status.txt"
+    "${WORK_DIR}/one-time-1-describe.txt"
+    "${WORK_DIR}/one-time-2-status.txt"
+    "${WORK_DIR}/one-time-2-describe.txt"
+    "${WORK_DIR}/post-upgrade-status.txt"
+    "${WORK_DIR}/post-upgrade-describe.txt"
+  )
+  for source in "${allowed_sources[@]}"; do
     [[ -f "${source}" ]] || continue
+    [[ ! -L "${source}" ]] || { copy_failed=true; continue; }
     base="$(basename "${source}")"
-    case "${base}" in
-      *.kubeconfig|*kubeconfig*) continue ;;
-    esac
-    cp -- "${source}" "${ARTIFACT_DIR}/${base}" >/dev/null 2>&1 || true
-  done
-  # Prove the allowlist did not leak credentials even if a future diagnostic
-  # accidentally contains one. Remove that diagnostic before upload.
-  while IFS= read -r -d '' source; do
-    if grep -Eiq 'BEGIN [A-Z0-9 ]*PRIVATE KEY|client-(certificate|key)-data:|token:[[:space:]]' "${source}" ||
-      { [[ -n "${SERVICE_ACCOUNT_TOKEN}" ]] && grep -Fq "${SERVICE_ACCOUNT_TOKEN}" "${source}"; } ||
-      grep -Fq "${SECRET_MARKER}" "${source}"; then
-      rm -f -- "${source}"
+    # -P prevents a source symlink introduced between the check and copy from
+    # being dereferenced. The destination is verified as a regular file below.
+    if ! cp -P -- "${source}" "${ARTIFACT_DIR}/${base}" >/dev/null 2>&1 ||
+      [[ ! -f "${ARTIFACT_DIR}/${base}" ]] || [[ -L "${ARTIFACT_DIR}/${base}" ]]; then
+      rm -f -- "${ARTIFACT_DIR}/${base}"
+      copy_failed=true
     fi
+  done
+  # Prove the allowlist did not leak credentials. A suspicious artifact is not
+  # uploaded, and the complete artifact set is discarded so a partial upload
+  # cannot be mistaken for a safe diagnostic bundle.
+  local unsafe=false
+  local sensitive_pattern='BEGIN [A-Z0-9 ]*PRIVATE KEY|client-(certificate|key)-data:|(^|[[:space:]])(token|password|passwd|secret)[[:space:]]*[:=]|authorization:[[:space:]]*bearer[[:space:]]'
+  local grep_status
+  while IFS= read -r -d '' source; do
+    grep -Eiq "${sensitive_pattern}" "${source}"
+    grep_status=$?
+    if [[ "${grep_status}" -eq 0 || "${grep_status}" -gt 1 ]]; then
+      unsafe=true
+    fi
+    if [[ -n "${SERVICE_ACCOUNT_TOKEN}" ]]; then
+      grep -Fq "${SERVICE_ACCOUNT_TOKEN}" "${source}"
+      grep_status=$?
+      if [[ "${grep_status}" -eq 0 || "${grep_status}" -gt 1 ]]; then unsafe=true; fi
+    fi
+    grep -Fq "${SECRET_MARKER}" "${source}"
+    grep_status=$?
+    if [[ "${grep_status}" -eq 0 || "${grep_status}" -gt 1 ]]; then unsafe=true; fi
   done < <(find "${ARTIFACT_DIR}" -type f -print0)
-  if find "${ARTIFACT_DIR}" -type f \( -name '*kubeconfig*' -o -name '*.key' -o -name '*.crt' \) -print -quit | grep -q .; then
-    printf 'unsafe credential artifact detected; refusing diagnostic upload\n' >&2
-    find "${ARTIFACT_DIR}" -type f \( -name '*kubeconfig*' -o -name '*.key' -o -name '*.crt' \) -delete
+  if find "${ARTIFACT_DIR}" -mindepth 1 ! -type f -print -quit | grep -q .; then
+    unsafe=true
+  fi
+  if [[ "${unsafe}" == true || "${copy_failed}" == true ]]; then
+    printf 'unsafe or incomplete diagnostic artifact set; refusing diagnostic upload\n' >&2
+    find "${ARTIFACT_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
   fi
 }
 
