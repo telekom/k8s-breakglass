@@ -31,6 +31,8 @@ cleanup() {
     status=$?
     set +e
     if [ "$CLUSTER_CREATED" = true ]; then
+        docker exec "${CLUSTER}-control-plane" sh -c \
+            "rm -rf -- /var/local/${RUN_ID} /var/local/${RUN_ID}-attached" >/dev/null 2>&1 || status=1
         kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || status=1
         if kind get clusters 2>/dev/null | grep -Fx -- "$CLUSTER" >/dev/null; then
             printf 'storage kubestr Kind proof: owned cluster survived cleanup: %s\n' "$CLUSTER" >&2
@@ -188,7 +190,8 @@ for denied in \
     fi
 done
 
-docker exec "${CLUSTER}-control-plane" sh -c "mkdir -p /var/local/${RUN_ID} && chmod 0777 /var/local/${RUN_ID}"
+docker exec "${CLUSTER}-control-plane" sh -c \
+    "mkdir -p /var/local/${RUN_ID} /var/local/${RUN_ID}-attached && chown 65532:65532 /var/local/${RUN_ID} /var/local/${RUN_ID}-attached && chmod 0755 /var/local/${RUN_ID} /var/local/${RUN_ID}-attached"
 kubectl apply -f - >/dev/null <<YAML
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
@@ -338,6 +341,12 @@ kubectl get pod "$ATTACHED_POD_NAME" --namespace "$NAMESPACE" >/dev/null 2>&1 &&
 kubectl get pvc "$ATTACHED_PVC_NAME" --namespace "$NAMESPACE" >/dev/null 2>&1 && fail "attached PVC survived cleanup"
 kubectl delete pv "$ATTACHED_PV_NAME" --wait --timeout=120s >/dev/null
 kubectl get pv "$ATTACHED_PV_NAME" >/dev/null 2>&1 && fail "attached PVC proof PV survived cleanup"
+docker exec "${CLUSTER}-control-plane" sh -c \
+    "rm -rf -- /var/local/${RUN_ID} /var/local/${RUN_ID}-attached"
+if ! docker exec "${CLUSTER}-control-plane" sh -c \
+    "test ! -e /var/local/${RUN_ID} && test ! -e /var/local/${RUN_ID}-attached"; then
+    fail "attached PVC proof hostPath data survived cleanup"
+fi
 
 kubectl apply -f - >/dev/null <<YAML
 apiVersion: batch/v1
