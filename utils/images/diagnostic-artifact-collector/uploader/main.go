@@ -474,18 +474,19 @@ func retryable(err error) bool {
 	if errors.As(err, &responseError) {
 		return responseError.temporary
 	}
-	// The bare context sentinels are caller-owned cancellation/deadline
-	// decisions. An http.Client timeout, by contrast, is a typed net.Error
-	// (normally wrapped in *url.Error) and remains eligible for a bounded retry.
-	if err == context.Canceled || err == context.DeadlineExceeded {
-		return false
-	}
 	var networkError net.Error
 	if errors.As(err, &networkError) && networkError.Timeout() {
+		// context.DeadlineExceeded implements net.Error itself, but is a
+		// caller-owned deadline and must not be retried. The http.Client timeout
+		// is wrapped in *url.Error and remains eligible for a bounded retry.
+		var httpError *url.Error
+		if errors.Is(err, context.DeadlineExceeded) && !errors.As(err, &httpError) {
+			return false
+		}
 		return true
 	}
-	// A caller-owned context cancellation is a terminal contract decision, not
-	// an opportunity to keep a bearer-token upload alive.
+	// Caller-owned cancellation/deadline decisions are terminal, including
+	// wrapped forms which are not transport timeouts.
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}

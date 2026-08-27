@@ -490,7 +490,10 @@ func TestRetryableUsesTypedFailures(t *testing.T) {
 	}))
 	defer server.Close()
 	client := &http.Client{Timeout: 20 * time.Millisecond}
-	_, err := client.Get(server.URL)
+	response, err := client.Get(server.URL)
+	if response != nil {
+		defer response.Body.Close()
+	}
 	if err == nil {
 		t.Fatal("http.Client timeout unexpectedly succeeded")
 	}
