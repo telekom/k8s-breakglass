@@ -299,9 +299,9 @@ trace_command() {
 	# the limit is reached it closes the FIFO; the wrapper then sends SIGINT and
 	# gives pwru a bounded settle window for BPF detachment.
 	if [ -n "$filter" ]; then
-		pwru --output-tuple --timestamp none -- "$filter" >"$fifo" 2>&1 &
+		pwru --backend kprobe --output-tuple --timestamp none -- "$filter" >"$fifo" 2>&1 &
 	else
-		pwru --output-tuple --timestamp none >"$fifo" 2>&1 &
+		pwru --backend kprobe --output-tuple --timestamp none >"$fifo" 2>&1 &
 	fi
 	ACTIVE_PID=$!
 	awk -v limit="$events" 'NR <= limit { if (length($0) > 4096) print substr($0, 1, 4096); else print } NR == limit { exit }' "$fifo" >"$TEMP_EVIDENCE" &

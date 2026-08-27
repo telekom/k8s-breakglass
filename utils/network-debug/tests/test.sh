@@ -241,6 +241,10 @@ mkdir -p "$trace_fixture/debug" "$trace_fixture/trace" "$trace_fixture/security"
 cat >"$trace_fixture/bin/pwru" <<'EOF'
 #!/bin/sh
 set -eu
+case "$*" in
+	*'--backend kprobe'*) ;;
+	*) exit 2 ;;
+esac
 printf '%s\n' trace-event
 EOF
 chmod +x "$trace_fixture/bin/pwru"
