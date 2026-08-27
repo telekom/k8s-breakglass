@@ -206,7 +206,7 @@ EOF
 
 kubectl -n "${namespace}" get job capture -o json | jq -e '
 	.spec.template.spec.hostPID == true and
-	.spec.template.spec.hostNetwork == false and
+	(.spec.template.spec.hostNetwork // false) == false and
 	.spec.template.spec.automountServiceAccountToken == false and
 	(.spec.template.spec.volumes | length == 1 and .[0].name == "evidence" and .[0].emptyDir != null and all(.[]; (.hostPath // null) == null)) and
 	(.spec.template.spec.containers | length == 2) and
