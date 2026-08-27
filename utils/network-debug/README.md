@@ -51,7 +51,8 @@ metadata (count, size, and SHA-256), never packet payloads. For example:
 limits duration to 60 seconds and evidence to 10,000 lines, sends SIGINT, and
 waits through a separate bounded BPF-detach settle window. It refuses to run
 unless BTF, debugfs, tracefs, securityfs/LSM, and the required BPF/PERFMON,
-NET_ADMIN, and SYS_RESOURCE capabilities are available. It never
+NET_ADMIN, SYS_RESOURCE, and SYS_PTRACE capabilities are available. SYS_PTRACE
+is limited to the kernel-enforced host-PID namespace identity check. It never
 uses privileged, SYS_ADMIN, or capability fallbacks.
 The trace workload must use `hostNetwork: true` and `hostPID: true`; the
 wrapper verifies that its network namespace is the host init namespace through

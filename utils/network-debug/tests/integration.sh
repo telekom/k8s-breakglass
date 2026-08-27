@@ -463,6 +463,7 @@ PWRU_RUN_ARGS=(
 	--cap-add PERFMON
 	--cap-add NET_ADMIN
 	--cap-add SYS_RESOURCE
+	--cap-add SYS_PTRACE
 	--security-opt seccomp=unconfined
 	--security-opt apparmor=unconfined
 	--security-opt no-new-privileges=true

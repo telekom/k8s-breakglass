@@ -208,7 +208,7 @@ capability_present() {
 	status_file=${NETWORK_DEBUG_CAPABILITY_FILE:-/proc/self/status}
 	cap=$1
 	case "$cap" in
-		NET_RAW) bit=13 ;; NET_ADMIN) bit=12 ;; SYS_RESOURCE) bit=24 ;; PERFMON) bit=38 ;; BPF) bit=39 ;;
+		NET_RAW) bit=13 ;; NET_ADMIN) bit=12 ;; SYS_PTRACE) bit=19 ;; SYS_RESOURCE) bit=24 ;; PERFMON) bit=38 ;; BPF) bit=39 ;;
 		*) return 1 ;;
 	esac
 	hex=$(awk '/^CapEff:/ {print $2}' "$status_file" 2>/dev/null || true)
@@ -246,7 +246,11 @@ trace_prerequisites() {
 	for mountpoint in "$debugfs" "$tracefs" "$securityfs"; do
 		grep -F " $mountpoint" "$mounts" >/dev/null 2>&1 || usage_error "$mountpoint is not mounted"
 	done
-	for capability in NET_ADMIN BPF PERFMON SYS_RESOURCE; do
+	# Reading /proc/1/ns/net is the kernel-enforced host-PID identity check.
+	# Yama and other ptrace policies require CAP_SYS_PTRACE for that read even
+	# when the process is root; request only this capability rather than a broad
+	# SYS_ADMIN or privileged fallback.
+	for capability in NET_ADMIN BPF PERFMON SYS_RESOURCE SYS_PTRACE; do
 		capability_present "$capability" || usage_error "required capability $capability is unavailable"
 	done
 	# /proc/1 is the host init only when the trace pod uses hostPID. Requiring

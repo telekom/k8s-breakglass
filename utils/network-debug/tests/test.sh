@@ -229,7 +229,8 @@ if NETWORK_DEBUG_WORK_DIR=/tmp sh "$root/scripts/net-debug" trace >/dev/null 2>&
 fi
 
 # Trace accepts exactly the approved host-trace capability set (without
-# NET_RAW), and fails closed when any required capability is absent.
+# NET_RAW), including SYS_PTRACE for the kernel-enforced /proc/1 namespace
+# identity check, and fails closed when any required capability is absent.
 trace_fixture=$(mktemp -d)
 mkdir -p "$trace_fixture/debug" "$trace_fixture/trace" "$trace_fixture/security" "$trace_fixture/bin" "$trace_fixture/work"
 : >"$trace_fixture/security/lsm"
@@ -258,14 +259,14 @@ esac
 EOF
 chmod +x "$trace_fixture/bin/readlink"
 if [ "$(uname -s)" = Linux ]; then
-for required_cap_hex in c001001000 c001000000 c000001000 8001001000 4001001000; do
+for required_cap_hex in c001081000 c001001000 c001000000 c000001000 8001001000 4001001000; do
     printf 'CapEff: %s\n' "$required_cap_hex" >"$trace_fixture/status"
     if NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" \
         NETWORK_DEBUG_BTF_PATH="$trace_fixture/status" NETWORK_DEBUG_DEBUGFS_PATH="$trace_fixture/debug" \
         NETWORK_DEBUG_TRACEFS_PATH="$trace_fixture/trace" NETWORK_DEBUG_SECURITYFS_PATH="$trace_fixture/security" \
         NETWORK_DEBUG_MOUNTINFO_PATH="$trace_fixture/mountinfo" NETWORK_DEBUG_CAPABILITY_FILE="$trace_fixture/status" \
         PATH="$trace_fixture/bin:/usr/bin:/bin" sh "$root/scripts/net-debug" trace --duration 1 --events 1 >/dev/null 2>&1; then
-        if [ "$required_cap_hex" != c001001000 ]; then
+        if [ "$required_cap_hex" != c001081000 ]; then
             printf '%s\n' "trace accepted missing capability in $required_cap_hex" >&2
             exit 1
         fi
@@ -286,7 +287,7 @@ while :; do
 done
 EOF
 chmod +x "$trace_fixture/bin/pwru"
-printf 'CapEff: c001001000\n' >"$trace_fixture/status"
+printf 'CapEff: c001081000\n' >"$trace_fixture/status"
 if NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" \
 	NETWORK_DEBUG_BTF_PATH="$trace_fixture/status" NETWORK_DEBUG_DEBUGFS_PATH="$trace_fixture/debug" \
 	NETWORK_DEBUG_TRACEFS_PATH="$trace_fixture/trace" NETWORK_DEBUG_SECURITYFS_PATH="$trace_fixture/security" \

@@ -482,6 +482,30 @@ func validSystemdLayout(components []string, podIndex int, marker string, parent
 	if podIndex+2 != len(components) {
 		return false
 	}
+	// Some systemd-managed containerd hosts place the Kubernetes hierarchy
+	// below system.slice. This is still a host cgroup layout, not a private
+	// namespace traversal; retain the same exact pod/QoS checks after the
+	// additional root component.
+	if components[0] == "system.slice" {
+		if parentCount != 0 {
+			return false
+		}
+		if podIndex == 1 {
+			return components[1] == "kubepods-"+marker+".slice"
+		}
+		qosIndex := 1
+		if components[1] == "kubepods.slice" {
+			qosIndex = 2
+		}
+		if podIndex != qosIndex+1 {
+			return false
+		}
+		qos := components[qosIndex]
+		if qos != "kubepods-burstable.slice" && qos != "kubepods-besteffort.slice" {
+			return false
+		}
+		return components[podIndex] == strings.TrimSuffix(qos, ".slice")+"-"+marker+".slice"
+	}
 	if components[0] != "kubepods.slice" {
 		if parentCount < 2 || parentCount > 3 {
 			return false

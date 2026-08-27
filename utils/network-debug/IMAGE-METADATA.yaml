@@ -72,7 +72,7 @@ image:
   operationCapabilities:
     podNamespaceCapture: [NET_RAW]
     selectedPodCapture: [NET_RAW, SYS_ADMIN, SYS_PTRACE]
-    hostNamespaceTrace: [BPF, PERFMON, NET_ADMIN, SYS_RESOURCE]
+    hostNamespaceTrace: [BPF, PERFMON, NET_ADMIN, SYS_RESOURCE, SYS_PTRACE]
   droppedCapabilities:
     hostNamespaceTrace: [NET_RAW]
 provenance:

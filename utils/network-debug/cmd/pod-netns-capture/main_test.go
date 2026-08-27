@@ -88,6 +88,8 @@ func TestMatchTargetCgroupSupportedLayouts(t *testing.T) {
 		{name: "private cgroup namespace other qos", path: "0::/../../../burstable/pod" + testUID + "/" + containerID, family: "cgroupfs-cri"},
 		{name: "containerd systemd underscore", path: "0::/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod" + underscored + ".slice/cri-containerd-" + containerID + ".scope", family: "cri-containerd"},
 		{name: "containerd systemd inline", path: "0::/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod" + underscored + ".slice:cri-containerd:" + containerID + ".scope", family: "cri-containerd"},
+		{name: "containerd systemd inline under system slice", path: "0::/system.slice/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod" + underscored + ".slice:cri-containerd:" + containerID + ".scope", family: "cri-containerd"},
+		{name: "containerd systemd inline system slice qos", path: "0::/system.slice/kubepods-burstable.slice/kubepods-burstable-pod" + underscored + ".slice:cri-containerd:" + containerID + ".scope", family: "cri-containerd"},
 		{name: "crio systemd escaped", path: "0::/kubepods.slice/kubepods-pod" + escaped + ".slice/crio-" + containerID + ".scope", family: "crio"},
 		{name: "docker systemd", path: "0::/kubepods.slice/kubepods-besteffort.slice/kubepods-besteffort-pod" + underscored + ".slice/docker-" + containerID + ".scope", family: "docker"},
 		{name: "private systemd same qos", path: "0::/../../kubepods-burstable-pod" + underscored + ".slice/cri-containerd-" + containerID + ".scope", family: "cri-containerd"},

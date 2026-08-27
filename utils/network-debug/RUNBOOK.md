@@ -27,7 +27,8 @@ and writes only a new file below `/work`.
 For a kernel trace, use `net-debug trace --duration 30 --events 1000
 --filter 'skb mark 0' --output trace.log` from a host network namespace with
 the required BTF, debugfs, tracefs, securityfs/LSM, BPF/PERFMON,
-NET_ADMIN, and SYS_RESOURCE prerequisites. The helper fails closed
+NET_ADMIN, SYS_RESOURCE, and SYS_PTRACE prerequisites. SYS_PTRACE is used
+only to read `/proc/1/ns/net` for the host-PID identity check. The helper fails closed
 when any prerequisite is absent; its host-trace context drops `NET_RAW` and
 does not add privileged or SYS_ADMIN fallbacks. Save pcaps and reports only to an approved mount, redact
 addresses and payloads, and remove the session when the investigation is
