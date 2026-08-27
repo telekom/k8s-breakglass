@@ -19,6 +19,8 @@ capture_timeout_seconds=10
 capture_max_bytes=32768
 evidence_max_bytes=393216
 operation_lock_name=.node-maintenance-operation.lock
+operation_lock_owner_name=owner
+operation_lock_ttl_seconds=300
 
 die() {
 	printf 'node-maintenance: %s\n' "$*" >&2
@@ -112,8 +114,9 @@ validate_neighbor_address() {
 
 validate_vlan() {
 	value=$1
+	[ "${#value}" -le 4 ] || die "VLAN must be an integer from 1 through 4094"
 	case "$value" in
-		''|*[!0-9]*) die "VLAN must be an integer from 1 through 4094" ;;
+		''|*[!0-9]*|0*) die "VLAN must be an integer from 1 through 4094" ;;
 	esac
 	if [ "$value" -lt 1 ] || [ "$value" -gt 4094 ]; then
 		die "VLAN must be an integer from 1 through 4094"
@@ -151,6 +154,22 @@ validate_approved_action() {
 	[ "$approved_action" = "$expected_action" ] || die "controller-approved action '$approved_action' does not match requested action '$expected_action'"
 }
 
+validate_approved_network_request() {
+	requested_target=$1
+	requested_interface=$2
+	requested_action=$3
+	requested_neighbor=$4
+	requested_bridge=$5
+	requested_mac=$6
+	requested_vlan=$7
+	requested_confirmation=$8
+	approved_request=${BREAKGLASS_APPROVED_NETWORK_REQUEST:-}
+	[ -n "$approved_request" ] || die "BREAKGLASS_APPROVED_NETWORK_REQUEST is required"
+	[ "${#approved_request}" -le "$value_max_bytes" ] || die "BREAKGLASS_APPROVED_NETWORK_REQUEST exceeds the fixed ${value_max_bytes}-byte limit"
+	expected_request="target_node=$requested_target&interface=$requested_interface&action=$requested_action&neighbor_address=$requested_neighbor&bridge=$requested_bridge&entry_mac=$requested_mac&vlan=$requested_vlan&confirmation=$requested_confirmation"
+	[ "$approved_request" = "$expected_request" ] || die "controller-approved network request does not exactly match the requested tuple"
+}
+
 prepare_evidence_dir() {
 	directory=$1
 	case "$directory" in
@@ -181,13 +200,40 @@ acquire_operation_lock() {
 	assert_safe_evidence_dir "$directory"
 	lock_candidate="$directory/$operation_lock_name"
 	if ! mkdir "$lock_candidate" 2>/dev/null; then
-		die "another node-maintenance operation is active for this evidence lease"
+		reclaim_own_stale_operation_lock "$lock_candidate" || die "another node-maintenance operation is active for this evidence lease"
+		mkdir "$lock_candidate" 2>/dev/null || die "another node-maintenance operation is active for this evidence lease"
 	fi
 	operation_lock=$lock_candidate
 	[ ! -L "$operation_lock" ] || die "operation lock may not be a symlink"
 	resolved_lock=$(readlink -f "$operation_lock" 2>/dev/null || true)
 	[ "$resolved_lock" = "$operation_lock" ] || die "operation lock did not resolve safely"
 	chmod 0700 "$operation_lock" || die "cannot protect operation lock"
+	operation_lock_owner="$operation_lock/$operation_lock_owner_name"
+	(umask 077; printf 'operation_id=%s\nrecording_id=%s\ncreated_epoch=%s\n' "$operation_id" "$recording_id" "$(date -u +%s)" >"$operation_lock_owner") || die "cannot record operation lock owner"
+}
+
+reclaim_own_stale_operation_lock() {
+	lock_candidate=$1
+	case "$lock_candidate" in "$EVIDENCE_DIR/$operation_lock_name") ;; *) return 1 ;; esac
+	[ -d "$lock_candidate" ] && [ ! -L "$lock_candidate" ] || return 1
+	owner_file="$lock_candidate/$operation_lock_owner_name"
+	[ -f "$owner_file" ] && [ ! -L "$owner_file" ] || return 1
+	[ "$(readlink -f "$owner_file" 2>/dev/null || true)" = "$owner_file" ] || return 1
+	{
+		IFS= read -r lock_operation
+		IFS= read -r lock_recording
+		IFS= read -r lock_created
+	} <"$owner_file" || return 1
+	[ "$lock_operation" = "operation_id=$operation_id" ] || return 1
+	[ "$lock_recording" = "recording_id=$recording_id" ] || return 1
+	lock_epoch=${lock_created#created_epoch=}
+	case "$lock_epoch" in ''|*[!0-9]*) return 1 ;; esac
+	[ "${#lock_epoch}" -le 10 ] || return 1
+	now_epoch=$(date -u +%s) || return 1
+	[ "$now_epoch" -ge "$lock_epoch" ] || return 1
+	[ $((now_epoch - lock_epoch)) -ge "$operation_lock_ttl_seconds" ] || return 1
+	rm -f "$owner_file" || return 1
+	rmdir "$lock_candidate" 2>/dev/null
 }
 
 release_operation_lock() {
@@ -195,9 +241,33 @@ release_operation_lock() {
 		[ -n "${EVIDENCE_DIR:-}" ] && [ -d "$EVIDENCE_DIR" ] && [ ! -L "$EVIDENCE_DIR" ] || return 1
 		case "$operation_lock" in "$EVIDENCE_DIR/$operation_lock_name") ;; *) return 1 ;; esac
 		[ ! -L "$operation_lock" ] || return 1
+		[ "${operation_lock_owner:-}" = "$operation_lock/$operation_lock_owner_name" ] || return 1
+		[ -f "$operation_lock_owner" ] && [ ! -L "$operation_lock_owner" ] || return 1
+		grep -Fqx "operation_id=$operation_id" "$operation_lock_owner" || return 1
+		grep -Fqx "recording_id=$recording_id" "$operation_lock_owner" || return 1
+		rm -f "$operation_lock_owner" || return 1
 		rmdir "$operation_lock" 2>/dev/null || return 1
 		operation_lock=
 	fi
+}
+
+interface_ifindex() {
+	interface_name=$1
+	timeout "$capture_timeout_seconds" ip -o link show dev "$interface_name" 2>/dev/null | awk -F: 'NR == 1 { gsub(/^[[:space:]]+/, "", $1); if ($1 ~ /^[1-9][0-9]*$/) print $1; exit }'
+}
+
+pin_interface_ifindex() {
+	pinned_interface=$1
+	pinned_ifindex=$(interface_ifindex "$pinned_interface") || die "cannot determine ifindex for interface '$pinned_interface'"
+	case "$pinned_ifindex" in ''|*[!0-9]*) die "cannot determine ifindex for interface '$pinned_interface'" ;; esac
+	printf '%s\n' "$pinned_ifindex"
+}
+
+assert_interface_ifindex() {
+	pinned_interface=$1
+	expected_ifindex=$2
+	actual_ifindex=$(interface_ifindex "$pinned_interface") || return 1
+	[ "$actual_ifindex" = "$expected_ifindex" ]
 }
 
 assert_safe_evidence_dir() {

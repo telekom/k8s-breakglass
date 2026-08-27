@@ -32,8 +32,13 @@ The requested node must exactly equal `BREAKGLASS_NODE_NAME`, which must come
 from Downward API `spec.nodeName`; hostname discovery is not trusted.
 
 Every mutating repair and kexec validation additionally requires
-`BREAKGLASS_APPROVAL_ID` and an exact `BREAKGLASS_APPROVED_ACTION` match. The
-command confirmation string is an operator error guard, not authorization.
+`BREAKGLASS_APPROVAL_ID` and an exact `BREAKGLASS_APPROVED_ACTION` match.
+Network repair also requires the controller-owned
+`BREAKGLASS_APPROVED_NETWORK_REQUEST` canonical tuple covering target node,
+interface, action, every action-specific target, and confirmation. The image
+compares it byte-for-byte before evidence or mutation; it is not a substitute
+for controller/admission protection of the environment. The command
+confirmation string is an operator error guard, not authorization.
 Preflight, each network action, kexec validation, and any future provider
 executor need independent approval decisions; approval for one must never be
 reused as approval for another.
@@ -44,7 +49,10 @@ kexec validation records fixed-file digests and an explicit
 `execution_performed=false`. Validated request values and captures have fixed
 limits: values are at most 256 bytes, captures have fixed 10-second, 32 KiB per-file,
 and 384 KiB per-bundle bounds. An atomic evidence-volume lease permits one
-operation at a time and is released on exit. The controller must also enforce
+operation at a time and is released on exit. A crash retry for the same
+immutable operation and recording ID can reclaim its own expired, 300-second
+lease; a different operation cannot reclaim it and must be reconciled by the
+controller. The controller must also enforce
 one active workload per node because separate volumes cannot coordinate.
 Containers, evidence volumes, and controller leases must have bounded
 lifetimes and deterministic cleanup.

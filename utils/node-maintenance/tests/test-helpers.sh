@@ -32,7 +32,7 @@ assert_rejected_with_message() {
 	if "$@" >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"; then
 		fail "$name was accepted"
 	fi
-	grep -F "$expected" "$tmp_dir/stderr" >/dev/null || fail "$name did not report '$expected'"
+	grep -F -- "$expected" "$tmp_dir/stderr" >/dev/null || fail "$name did not report '$expected'"
 	pass "$name"
 }
 
@@ -72,6 +72,18 @@ assert_neighbor_literal_accepted ::1 -6
 for invalid_neighbor in example.com 192.0.2.256 192.0.2.01 192.0.2 2001:db8:::1 2001:db8::1::2 2001:db8:1; do
 	assert_neighbor_literal_rejected_before_network "$invalid_neighbor"
 done
+
+huge_vlan=$(awk 'BEGIN { for (i = 0; i < 1000; i++) printf "9" }')
+BREAKGLASS_NODE_NAME=node-a
+export BREAKGLASS_NODE_NAME
+assert_rejected 'huge decimal VLAN is rejected before numeric conversion' "$network_repair" \
+	--target-node node-a --interface eth0 --action bridge-fdb-replace --bridge br0 --entry-mac 02:00:00:00:00:02 --vlan "$huge_vlan" \
+	--evidence-dir /evidence --confirm NETWORK-REPAIR
+unset BREAKGLASS_NODE_NAME
+assert_rejected_with_message 'duplicate network option is rejected even with an empty second value' '--interface may be supplied only once' "$network_repair" \
+	--target-node node-a --interface eth0 --interface '' --action link-cycle --evidence-dir /evidence --confirm NETWORK-REPAIR
+assert_rejected 'irrelevant empty entry flag is rejected' "$network_repair" \
+	--target-node node-a --interface eth0 --action link-cycle --entry-mac '' --evidence-dir /evidence --confirm NETWORK-REPAIR
 
 assert_rejected 'network repair without target' "$network_repair" \
 	--interface eth0 --action flush-neighbors --evidence-dir /evidence --confirm NETWORK-REPAIR

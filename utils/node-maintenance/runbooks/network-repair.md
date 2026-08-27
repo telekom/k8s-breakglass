@@ -51,10 +51,15 @@ network-repair \
 
 The immutable controller template must inject `BREAKGLASS_NODE_NAME` from
 Downward API `spec.nodeName`, unique operation/recording/approval identifiers,
-and `BREAKGLASS_APPROVED_ACTION` equal to the requested action. It must pin the
-image by digest and enforce one active operation per node. The helper also
-takes an atomic evidence-volume lease, but that cannot coordinate distinct
-volumes.
+`BREAKGLASS_APPROVED_ACTION`, and
+`BREAKGLASS_APPROVED_NETWORK_REQUEST`. The latter is an exact canonical tuple
+of target node, interface, action, neighbor, bridge, MAC, VLAN, and
+confirmation; the helper compares it before any evidence or mutation. It must
+pin the image by digest and enforce one active operation per node. The helper
+also takes an atomic evidence-volume lease, but that cannot coordinate distinct
+volumes. A killed workload can be retried only with the same immutable
+operation and recording IDs after its lease TTL; a different operation needs
+controller reconciliation.
 
 Run with `hostNetwork: true`, a read-only root, RuntimeDefault seccomp,
 `allowPrivilegeEscalation: false`, all capabilities dropped except

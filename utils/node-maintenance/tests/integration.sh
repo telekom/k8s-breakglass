@@ -205,12 +205,35 @@ destroy_fixture() {
 	volume_name=
 }
 
+approved_network_request() {
+	[ "$1" = network-repair ] || { printf '%s' not-a-network-repair; return; }
+	shift
+	target='' interface='' action='' neighbor='' bridge='' mac='' vlan='' confirmation=''
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+			--target-node) target=$2; shift 2 ;;
+			--interface) interface=$2; shift 2 ;;
+			--action) action=$2; shift 2 ;;
+			--neighbor-address) neighbor=$2; shift 2 ;;
+			--bridge) bridge=$2; shift 2 ;;
+			--entry-mac) mac=$2; shift 2 ;;
+			--vlan) vlan=$2; shift 2 ;;
+			--confirm) confirmation=$2; shift 2 ;;
+			--evidence-dir) shift 2 ;;
+			*) shift ;;
+		esac
+	done
+	printf 'target_node=%s&interface=%s&action=%s&neighbor_address=%s&bridge=%s&entry_mac=%s&vlan=%s&confirmation=%s' \
+		"$target" "$interface" "$action" "$neighbor" "$bridge" "$mac" "$vlan" "$confirmation"
+}
+
 run_command() {
 	label=$1
 	expected_exit=$2
 	capability=$3
 	approved_action=$4
 	shift 4
+	approved_request=$(approved_network_request "$@")
 	new_fixture "$label"
 	output_file="$fixture_dir/output"
 	set +e
@@ -221,6 +244,7 @@ run_command() {
 			--env BREAKGLASS_RECORDING_ID="recording-$label" \
 			--env BREAKGLASS_APPROVAL_ID="approval-$label" \
 			--env BREAKGLASS_APPROVED_ACTION="$approved_action" \
+			--env BREAKGLASS_APPROVED_NETWORK_REQUEST="$approved_request" \
 			--network none --read-only --cap-drop ALL \
 			--security-opt no-new-privileges --security-opt seccomp=builtin \
 			--mount "source=$volume_name,destination=/evidence" \
@@ -233,6 +257,7 @@ run_command() {
 			--env BREAKGLASS_RECORDING_ID="recording-$label" \
 			--env BREAKGLASS_APPROVAL_ID="approval-$label" \
 			--env BREAKGLASS_APPROVED_ACTION="$approved_action" \
+			--env BREAKGLASS_APPROVED_NETWORK_REQUEST="$approved_request" \
 			--network none --read-only --cap-drop ALL --cap-add NET_ADMIN \
 			--security-opt no-new-privileges --security-opt seccomp=builtin \
 			--mount "source=$volume_name,destination=/evidence" \
@@ -393,6 +418,7 @@ run_network_fixture() {
 	expected_exit=$2
 	approved_action=$3
 	shift 3
+	approved_request=$(approved_network_request "$@")
 	new_fixture "$label"
 	output_file="$fixture_dir/output"
 	set +e
@@ -402,6 +428,7 @@ run_network_fixture() {
 		--env BREAKGLASS_RECORDING_ID="recording-$label" \
 		--env BREAKGLASS_APPROVAL_ID="approval-$label" \
 		--env BREAKGLASS_APPROVED_ACTION="$approved_action" \
+		--env BREAKGLASS_APPROVED_NETWORK_REQUEST="$approved_request" \
 		--network none --read-only --cap-drop ALL --cap-add NET_ADMIN \
 		--security-opt no-new-privileges --security-opt seccomp=builtin \
 		--mount "source=$volume_name,destination=/evidence" \
@@ -514,6 +541,66 @@ run_command guard-operation-lock 2 none read-only node-recovery --target-node no
 grep -q 'another node-maintenance operation is active' "$fixture_dir/output" || fail 'concurrent-operation lease produced no denial'
 destroy_fixture
 pass 'a concurrent operation sharing the controller evidence lease is denied'
+
+# A killed holder must not permanently deny a retry for the identical immutable
+# operation/recording tuple.  The owner timestamp is made stale only after the
+# real SIGKILL, modelling elapsed controller recovery time without sleeping for
+# the production lease TTL in CI.
+new_fixture guard-stale-operation-lock
+holder_name="${container_name}-holder"
+# The isolated container, not this harness, expands its controller environment.
+# shellcheck disable=SC2016
+"$docker_bin" run -d --name "$holder_name" --user 0 \
+	--env BREAKGLASS_OPERATION_ID=operation-guard-stale-operation-lock \
+	--env BREAKGLASS_RECORDING_ID=recording-guard-stale-operation-lock \
+	--network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" \
+	-c '. /usr/local/libexec/node-maintenance/common.sh; EVIDENCE_DIR=/evidence; operation_id=$BREAKGLASS_OPERATION_ID; recording_id=$BREAKGLASS_RECORDING_ID; acquire_operation_lock /evidence; while :; do sleep 60; done' \
+	>/dev/null || fail 'could not start stale-lock holder'
+"$docker_bin" kill --signal KILL "$holder_name" >/dev/null || fail 'could not SIGKILL stale-lock holder'
+"$docker_bin" wait "$holder_name" >/dev/null 2>&1 || true
+"$docker_bin" rm "$holder_name" >/dev/null || fail 'could not remove killed stale-lock holder'
+"$docker_bin" run --rm --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" \
+	-c 'printf "operation_id=operation-guard-stale-operation-lock\\nrecording_id=recording-guard-stale-operation-lock\\ncreated_epoch=1\\n" >/evidence/.node-maintenance-operation.lock/owner' \
+	|| fail 'could not age stale-lock owner fixture'
+set +e
+"$docker_bin" run --name "$container_name" --user 0 \
+	--env BREAKGLASS_NODE_NAME=node-a \
+	--env BREAKGLASS_OPERATION_ID=operation-guard-stale-operation-lock \
+	--env BREAKGLASS_RECORDING_ID=recording-guard-stale-operation-lock \
+	--network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" "$image" node-recovery \
+	--target-node node-a --interface lo --evidence-dir /evidence --confirm NODE-RECOVERY-PREFLIGHT \
+	>"$fixture_dir/output" 2>&1
+stale_recovery_exit=$?
+set -e
+[ "$stale_recovery_exit" -eq 0 ] || { cat "$fixture_dir/output"; fail 'same-operation stale lease was not recovered after SIGKILL'; }
+assert_container_security "$container_name" none
+destroy_fixture
+pass 'SIGKILL stale lease is reclaimed only by the same immutable operation and recording tuple'
+
+new_fixture guard-ifindex-replacement
+# The isolated container executes the literal namespace fixture.
+# shellcheck disable=SC2016
+ifindex_output=$("$docker_bin" run --rm --user 0 --network none --read-only --cap-drop ALL --cap-add NET_ADMIN \
+	--security-opt no-new-privileges --security-opt seccomp=builtin --entrypoint /bin/sh "$image" -c '
+		set -eu
+		. /usr/local/libexec/node-maintenance/common.sh
+		ip link add race0 type dummy
+		old=$(pin_interface_ifindex race0)
+		ip link del race0
+		ip link add race0 type dummy
+		if assert_interface_ifindex race0 "$old"; then exit 70; fi
+		printf "ifindex-replacement-rejected\\n"
+	') || fail 'ifindex replacement fixture did not execute'
+printf '%s\n' "$ifindex_output" | grep -Fx 'ifindex-replacement-rejected' >/dev/null \
+	|| fail 'ifindex replacement was not rejected before a mutation could be issued'
+destroy_fixture
+pass 'delete/recreate interface TOCTOU is rejected by ifindex pinning'
 
 recovery_dir="$tmp_dir/recovery"
 mkdir -p "$recovery_dir"

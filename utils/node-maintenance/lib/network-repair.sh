@@ -38,17 +38,26 @@ entry_mac=
 vlan=
 evidence_dir=
 confirmation=
+target_node_seen=false
+interface_seen=false
+action_seen=false
+neighbor_address_seen=false
+bridge_name_seen=false
+entry_mac_seen=false
+vlan_seen=false
+evidence_dir_seen=false
+confirmation_seen=false
 while [ "$#" -gt 0 ]; do
 	case "$1" in
-		--target-node) [ "$#" -ge 2 ] || die "--target-node needs a value"; target_node=$2; shift 2 ;;
-		--interface) [ "$#" -ge 2 ] || die "--interface needs a value"; interface=$2; shift 2 ;;
-		--action) [ "$#" -ge 2 ] || die "--action needs a value"; action=$2; shift 2 ;;
-		--neighbor-address) [ "$#" -ge 2 ] || die "--neighbor-address needs a value"; neighbor_address=$2; shift 2 ;;
-		--bridge) [ "$#" -ge 2 ] || die "--bridge needs a value"; bridge_name=$2; shift 2 ;;
-		--entry-mac) [ "$#" -ge 2 ] || die "--entry-mac needs a value"; entry_mac=$2; shift 2 ;;
-		--vlan) [ "$#" -ge 2 ] || die "--vlan needs a value"; vlan=$2; shift 2 ;;
-		--evidence-dir) [ "$#" -ge 2 ] || die "--evidence-dir needs a value"; evidence_dir=$2; shift 2 ;;
-		--confirm) [ "$#" -ge 2 ] || die "--confirm needs a value"; confirmation=$2; shift 2 ;;
+		--target-node) [ "$target_node_seen" = false ] || die "--target-node may be supplied only once"; [ "$#" -ge 2 ] || die "--target-node needs a value"; target_node_seen=true; target_node=$2; shift 2 ;;
+		--interface) [ "$interface_seen" = false ] || die "--interface may be supplied only once"; [ "$#" -ge 2 ] || die "--interface needs a value"; interface_seen=true; interface=$2; shift 2 ;;
+		--action) [ "$action_seen" = false ] || die "--action may be supplied only once"; [ "$#" -ge 2 ] || die "--action needs a value"; action_seen=true; action=$2; shift 2 ;;
+		--neighbor-address) [ "$neighbor_address_seen" = false ] || die "--neighbor-address may be supplied only once"; [ "$#" -ge 2 ] || die "--neighbor-address needs a value"; neighbor_address_seen=true; neighbor_address=$2; shift 2 ;;
+		--bridge) [ "$bridge_name_seen" = false ] || die "--bridge may be supplied only once"; [ "$#" -ge 2 ] || die "--bridge needs a value"; bridge_name_seen=true; bridge_name=$2; shift 2 ;;
+		--entry-mac) [ "$entry_mac_seen" = false ] || die "--entry-mac may be supplied only once"; [ "$#" -ge 2 ] || die "--entry-mac needs a value"; entry_mac_seen=true; entry_mac=$2; shift 2 ;;
+		--vlan) [ "$vlan_seen" = false ] || die "--vlan may be supplied only once"; [ "$#" -ge 2 ] || die "--vlan needs a value"; vlan_seen=true; vlan=$2; shift 2 ;;
+		--evidence-dir) [ "$evidence_dir_seen" = false ] || die "--evidence-dir may be supplied only once"; [ "$#" -ge 2 ] || die "--evidence-dir needs a value"; evidence_dir_seen=true; evidence_dir=$2; shift 2 ;;
+		--confirm) [ "$confirmation_seen" = false ] || die "--confirm may be supplied only once"; [ "$#" -ge 2 ] || die "--confirm needs a value"; confirmation_seen=true; confirmation=$2; shift 2 ;;
 		-h|--help) usage; exit 0 ;;
 		*) die "unsupported option '$1'" ;;
 	esac
@@ -58,19 +67,22 @@ validate_target "$target_node"
 validate_interface "$interface"
 validate_value "action" "$action"
 validate_confirmation NETWORK-REPAIR "$confirmation"
-validate_recording_context
 
 case "$action" in
 	link-cycle|restart-autonegotiation)
-		[ -z "$neighbor_address$bridge_name$entry_mac$vlan" ] || die "action '$action' does not accept entry-target options"
+		[ "$neighbor_address_seen$bridge_name_seen$entry_mac_seen$vlan_seen" = falsefalsefalsefalse ] || die "action '$action' does not accept entry-target options"
 		;;
 	neighbor-replace)
-		[ -z "$bridge_name$vlan" ] || die "neighbor-replace does not accept bridge or VLAN targets"
+		[ "$neighbor_address_seen$entry_mac_seen" = truetrue ] || die "neighbor-replace requires --neighbor-address and --entry-mac"
+		[ "$bridge_name_seen$vlan_seen" = falsefalse ] || die "neighbor-replace does not accept bridge or VLAN targets"
 		validate_neighbor_address "$neighbor_address"
 		validate_mac_address "neighbor MAC" "$entry_mac"
 		;;
 	bridge-fdb-replace)
-		[ -z "$neighbor_address" ] || die "bridge-fdb-replace does not accept a neighbor address"
+		[ "$bridge_name_seen" = true ] || die "bridge is required"
+		[ "$entry_mac_seen" = true ] || die "entry MAC is required"
+		[ "$vlan_seen" = true ] || die "VLAN is required"
+		[ "$neighbor_address_seen" = false ] || die "bridge-fdb-replace does not accept a neighbor address"
 		validate_value "bridge" "$bridge_name"
 		[ "$bridge_name" != "$interface" ] || die "bridge and port interface must be different"
 		validate_mac_address "FDB MAC" "$entry_mac"
@@ -79,7 +91,9 @@ case "$action" in
 	*) die "action '$action' is not allowlisted" ;;
 esac
 
+validate_recording_context
 validate_approved_action "$action"
+validate_approved_network_request "$target_node" "$interface" "$action" "$neighbor_address" "$bridge_name" "$entry_mac" "$vlan" "$confirmation"
 prepare_evidence_dir "$evidence_dir"
 trap 'release_operation_lock || true' EXIT
 acquire_operation_lock "$evidence_dir"
@@ -98,6 +112,7 @@ if ! capture "$bundle/before-link.txt" ip -details link show dev "$interface"; t
 	record_event operation-completed preflight-failed
 	die "interface '$interface' was not found; no repair was attempted (evidence: $bundle)"
 fi
+interface_ifindex=$(pin_interface_ifindex "$interface")
 capture "$bundle/before-addresses.txt" ip -brief address show dev "$interface" || true
 capture "$bundle/before-routes.txt" ip route show dev "$interface" || true
 capture "$bundle/before-neighbors.txt" ip neigh show dev "$interface" || true
@@ -115,6 +130,7 @@ case "$action" in
 			record_event operation-completed preflight-failed
 			die "bridge '$bridge_name' was not found; no repair was attempted (evidence: $bundle)"
 		fi
+		bridge_ifindex=$(pin_interface_ifindex "$bridge_name")
 		if [ ! -d "/sys/class/net/$bridge_name/bridge" ]; then
 			record_event operation-completed preflight-failed
 			die "'$bridge_name' is not a bridge; no repair was attempted (evidence: $bundle)"
@@ -151,6 +167,15 @@ printf 'Target: %s\nInterface: %s\nAction: %s\nEvidence: %s\n' \
 	"$target_node" "$interface" "$action" "$bundle"
 printf 'Confirmation and controller action binding accepted. Applying one allowlisted action...\n'
 
+if ! assert_interface_ifindex "$interface" "$interface_ifindex"; then
+	record_event operation-completed preflight-failed
+	die "interface '$interface' changed before mutation; no repair was attempted (evidence: $bundle)"
+fi
+if [ "$action" = bridge-fdb-replace ] && ! assert_interface_ifindex "$bridge_name" "$bridge_ifindex"; then
+	record_event operation-completed preflight-failed
+	die "bridge '$bridge_name' changed before mutation; no repair was attempted (evidence: $bundle)"
+fi
+
 set +e
 case "$action" in
 	link-cycle)
@@ -175,6 +200,15 @@ case "$action" in
 		;;
 esac
 set -e
+
+if ! assert_interface_ifindex "$interface" "$interface_ifindex"; then
+	record_event operation-completed failed
+	die "interface '$interface' changed during mutation; inspect evidence at $bundle"
+fi
+if [ "$action" = bridge-fdb-replace ] && ! assert_interface_ifindex "$bridge_name" "$bridge_ifindex"; then
+	record_event operation-completed failed
+	die "bridge '$bridge_name' changed during mutation; inspect evidence at $bundle"
+fi
 
 capture "$bundle/after-link.txt" ip -details link show dev "$interface" || true
 capture "$bundle/after-addresses.txt" ip -brief address show dev "$interface" || true

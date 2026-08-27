@@ -64,6 +64,7 @@ config/                        Kustomize overlays
 9. **E2E sessions**: Use API helpers (`e2e/helpers/api.go`), not direct K8s client creation.
 10. **Fuzz tests**: Exist at `api/v1alpha1/fuzz_test.go`, `pkg/breakglass/fuzz_test.go`, and `pkg/breakglass/debug/fuzz_test.go`.
 11. **Strict Readiness Enforcement**: Unready clusters (`Ready=False`) MUST be hidden from Escalation API by default (`activeOnly=true`) and MUST be blocked from session requests at the controller level.
+12. **Utility-image mutation boundary**: Bind every supplied repair flag to an immutable controller-owned approval tuple, reject duplicates and irrelevant flags, pin kernel object identity (for example ifindex) across preflight and mutation, and make volume leases crash-recoverable only for the same immutable operation.
 
 ## Build Tags
 

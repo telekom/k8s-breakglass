@@ -1,5 +1,5 @@
 {
-  "contractVersion": "node-maintenance.integration/v2",
+  "contractVersion": "node-maintenance.integration/v3",
   "imageContext": "utils/node-maintenance",
   "network": {
     "mode": "none",
@@ -26,6 +26,8 @@
     "recordingEnvironment": "BREAKGLASS_RECORDING_ID",
     "approvalEnvironment": "BREAKGLASS_APPROVAL_ID",
     "approvedActionEnvironment": "BREAKGLASS_APPROVED_ACTION",
+    "approvedNetworkRequestEnvironment": "BREAKGLASS_APPROVED_NETWORK_REQUEST",
+    "approvedNetworkRequestFields": ["target_node", "interface", "action", "neighbor_address", "bridge", "entry_mac", "vlan", "confirmation"],
     "exactActionMatch": true,
     "independentApprovalRequired": true
   },
@@ -35,6 +37,7 @@
     "captureMaxBytes": 32768,
     "evidenceMaxBytes": 393216,
     "sharedEvidenceLeaseConcurrency": 1,
+    "sameOperationStaleLeaseRecoverySeconds": 300,
     "controllerNodeConcurrencyRequired": 1
   },
   "disposableResources": {
