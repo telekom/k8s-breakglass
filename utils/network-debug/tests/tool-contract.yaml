@@ -43,7 +43,7 @@ bounded:
   traceDurationSeconds: 60
   traceEvents: 10000
   filterCharacters: 256
-  packetTraceTimeoutSeconds: 35
+  packetTraceTimeoutSeconds: 60
   selectedPodCaptureDurationSeconds: 300
   selectedPodCapturePackets: 10000
   selectedPodCaptureSnaplenBytes: 256

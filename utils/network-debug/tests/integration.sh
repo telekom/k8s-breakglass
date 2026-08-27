@@ -14,11 +14,15 @@ TRACE_EVENTS=10000
 # while allowing the daemon a short, evidence-backed detach window.
 PWRU_STOP_TIMEOUT=${NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS:-15}
 PWRU_STOP_SETTLE=${NETWORK_DEBUG_PWRU_STOP_SETTLE_SECONDS:-5}
+# Loading and attaching pwru's kprobes can take substantially longer than
+# the trace itself on a busy CI kernel. Keep that startup allowance separate
+# from the bounded shutdown windows so the outer wait remains auditable.
+PWRU_STARTUP_MARGIN=${NETWORK_DEBUG_PWRU_STARTUP_MARGIN_SECONDS:-30}
 # The outer Docker wait must cover the trace duration and both bounded pwru
-# shutdown windows, plus a small scheduling margin. A fixed 20-second wait
-# expired while net-debug was still within its documented 15+5 second stop
+# startup and shutdown windows. A fixed 20-second wait expired while
+# net-debug was still attaching or within its documented 15+5 second stop
 # contract, falsely reporting a trace failure.
-PWRU_TIMEOUT=${NETWORK_DEBUG_PWRU_TIMEOUT_SECONDS:-$((TRACE_DURATION + PWRU_STOP_TIMEOUT + PWRU_STOP_SETTLE + 5))}
+PWRU_TIMEOUT=${NETWORK_DEBUG_PWRU_TIMEOUT_SECONDS:-$((TRACE_DURATION + PWRU_STARTUP_MARGIN + PWRU_STOP_TIMEOUT + PWRU_STOP_SETTLE))}
 RUN_ID="network-debug-proof-${RANDOM}-${RANDOM}"
 NETWORK=${RUN_ID}-network
 CONTAINER=${RUN_ID}-tools
@@ -57,7 +61,7 @@ requirement() {
 	exit 2
 }
 
-for timeout_value in "$EXEC_TIMEOUT" "$DOCKER_TIMEOUT" "$PWRU_TIMEOUT" "$PWRU_STOP_TIMEOUT" "$PWRU_STOP_SETTLE"; do
+for timeout_value in "$EXEC_TIMEOUT" "$DOCKER_TIMEOUT" "$PWRU_TIMEOUT" "$PWRU_STARTUP_MARGIN" "$PWRU_STOP_TIMEOUT" "$PWRU_STOP_SETTLE"; do
 	case "$timeout_value" in
 		''|*[!0-9]*) requirement "timeout settings must be positive integers" ;;
 	esac

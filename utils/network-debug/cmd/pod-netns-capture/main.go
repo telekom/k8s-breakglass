@@ -490,14 +490,24 @@ func validSystemdLayout(components []string, podIndex int, marker string, parent
 		if parentCount != 0 {
 			return false
 		}
-		if podIndex == 1 {
-			return components[1] == "kubepods-"+marker+".slice" ||
-				components[1] == "kubepods-burstable-"+marker+".slice" ||
-				components[1] == "kubepods-besteffort-"+marker+".slice"
+		// Kind and some systemd-managed containerd hosts put the Kubernetes
+		// hierarchy below the runtime service (for example,
+		// system.slice/containerd.service/kubepods-burstable-pod...scope).
+		// Accept only the two node services that can own this hierarchy; an
+		// arbitrary component here would turn the identity check into a prefix
+		// match across an unrelated cgroup tree.
+		rootIndex := 1
+		if len(components) > rootIndex && (components[rootIndex] == "containerd.service" || components[rootIndex] == "kubelet.service") {
+			rootIndex++
 		}
-		qosIndex := 1
-		if components[1] == "kubepods.slice" {
-			qosIndex = 2
+		if podIndex == rootIndex {
+			return components[rootIndex] == "kubepods-"+marker+".slice" ||
+				components[rootIndex] == "kubepods-burstable-"+marker+".slice" ||
+				components[rootIndex] == "kubepods-besteffort-"+marker+".slice"
+		}
+		qosIndex := rootIndex
+		if components[rootIndex] == "kubepods.slice" {
+			qosIndex++
 		}
 		if podIndex != qosIndex+1 {
 			return false
