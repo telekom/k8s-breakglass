@@ -33,7 +33,7 @@ checks:
   - id: kernel-packet-tracing
     operation: bounded-image-owned-host-netns-trace
     tools: [net-debug, pwru]
-    requirements: [host-network-namespace, linux-kernel, kernel-btf, debugfs, tracefs, securityfs, CAP_BPF, CAP_PERFMON, CAP_NET_ADMIN, CAP_SYS_RESOURCE, writable-work-mount]
+    requirements: [host-network-namespace, hostPID, linux-kernel, kernel-btf, debugfs, tracefs, securityfs, CAP_BPF, CAP_PERFMON, CAP_NET_ADMIN, CAP_SYS_RESOURCE, writable-work-mount]
     bounds: {durationSeconds: [1, 60], events: [1, 10000], filterCharacters: 256}
 bounded:
   commandTimeoutSeconds: 20

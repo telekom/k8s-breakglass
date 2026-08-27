@@ -4,6 +4,14 @@
 
 set -Eeuo pipefail
 
+# The lifecycle fixture models Docker signal/wait behavior and is intentionally
+# Linux-only. macOS Docker Desktop has different timeout and signal semantics;
+# the required Linux CI job still runs the complete fixture below.
+if [[ "$(uname -s)" != Linux ]]; then
+	printf '%s\n' 'skipping Linux-only pwru lifecycle fixture on non-Linux host' >&2
+	exit 0
+fi
+
 root=$(cd -- "$(dirname -- "$0")" && pwd)
 fixture=$(mktemp -d)
 trap 'rm -rf "$fixture"' EXIT HUP INT TERM

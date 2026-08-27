@@ -53,6 +53,9 @@ waits through a separate bounded BPF-detach settle window. It refuses to run
 unless BTF, debugfs, tracefs, securityfs/LSM, and the required BPF/PERFMON,
 NET_ADMIN, and SYS_RESOURCE capabilities are available. It never
 uses privileged, SYS_ADMIN, or capability fallbacks.
+The trace workload must use `hostNetwork: true` and `hostPID: true`; the
+wrapper verifies that its network namespace is the host init namespace through
+`/proc/1/ns/net` before starting `pwru`.
 
 The image runs as root because packet capture and eBPF tracing require kernel
 access. Grant only the network namespace and Linux capabilities needed for the

@@ -60,12 +60,15 @@ deployment-specific API access is external to this image contract.
 The image runs as UID 0 to support packet capture and eBPF tools. A workload
 or DebugSession using it must isolate the network namespace and grant only the
 capabilities required for the selected operation (`NET_RAW`/`NET_ADMIN`, and
-for `pwru`, the platform's approved BPF/perfmon permissions). Do not combine
-this image with host networking or broad write-capable service-account RBAC
-unless the incident approval explicitly requires it. The shell is an operator
-tool, not a bounded repair API: commands such as `ip route`, `ip link`, and
-`ethtool` can mutate a shared namespace. Use the dedicated node-maintenance
-repair workflow for allowlisted repairs.
+for `pwru`, the platform's approved BPF/perfmon permissions). Only the
+explicitly approved host trace operation may use `hostNetwork: true`; it must
+also use `hostPID: true`, which the wrapper verifies through the host init
+network namespace. Do not combine ordinary interactive use with host
+networking or broad write-capable service-account RBAC unless the incident
+approval explicitly requires it. The shell is an operator tool, not a bounded
+repair API: commands such as `ip route`, `ip link`, and `ethtool` can mutate a
+shared namespace. Use the dedicated node-maintenance repair workflow for
+allowlisted repairs.
 
 The selected-pod helper is a separate privilege profile: `hostPID: true`,
 `hostNetwork: false`, and only `SYS_ADMIN`, `SYS_PTRACE`, and `NET_RAW` after

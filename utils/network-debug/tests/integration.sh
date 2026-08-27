@@ -232,6 +232,7 @@ else
 fi
 CONTAINER_CREATED=true
 docker_call run --detach --name "$CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" --network "$NETWORK" \
+	--publish 18080:18080 \
 	--cap-drop ALL --security-opt no-new-privileges=true \
 	--cap-add NET_RAW \
 	"$IMAGE" sh -c '
@@ -470,7 +471,7 @@ for kernel_path in /sys/kernel/btf/vmlinux /sys/kernel/debug /sys/kernel/tracing
 	PWRU_RUN_ARGS+=(--mount "type=bind,src=$kernel_path,dst=$kernel_path,readonly")
 done
 if [ "$PWRU_READY" = true ]; then
-	btf_check=$(docker_call run --rm "${PWRU_RUN_ARGS[@]}" --network "container:$CONTAINER" "$IMAGE" sh -c \
+	btf_check=$(docker_call run --rm "${PWRU_RUN_ARGS[@]}" --network host "$IMAGE" sh -c \
 		'test -r /sys/kernel/btf/vmlinux && test -d /sys/kernel/debug && test -d /sys/kernel/tracing && test -d /sys/kernel/security && echo ready' 2>&1) || \
 		PWRU_READY=false
 	if [ "$PWRU_READY" = true ] && [ "$btf_check" != ready ]; then
@@ -489,13 +490,13 @@ if [ "$PWRU_READY" = true ]; then
 	# return an error (or be interrupted), and EXIT cleanup must still force
 	# remove that exact run-scoped name and verify it is gone.
 	PWRU_CONTAINER_CREATED=true
-	docker_call run --detach --name "$PWRU_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" "${PWRU_RUN_ARGS[@]}" --network "container:$CONTAINER" \
+	docker_call run --detach --name "$PWRU_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" "${PWRU_RUN_ARGS[@]}" --network host \
 		"$IMAGE" pwru --output-tuple --output-file /work/pwru.log --timestamp none \
 				host 127.0.0.1 \
 		>"$WORK_DIR/pwru-start.log" 2>&1 || requirement "could not start pwru proof container"
 	sleep 2
-	exec_in curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18080/ >/dev/null || requirement "pwru HTTP traffic generator failed"
-	exec_in ping -n -c 1 -W 1 127.0.0.1 >/dev/null || requirement "pwru traffic generator failed"
+	docker_call run --rm --network host "$IMAGE" curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18080/ >/dev/null || requirement "pwru HTTP traffic generator failed"
+	docker_call run --rm --network host "$IMAGE" ping -n -c 1 -W 1 127.0.0.1 >/dev/null || requirement "pwru traffic generator failed"
 	# --output-limit-lines only exits after enough events have been observed;
 	# sparse traffic can therefore leave pwru running indefinitely. Poll the
 	# output file for a real tuple from the generated traffic, then explicitly

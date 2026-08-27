@@ -31,7 +31,9 @@ NET_ADMIN, and SYS_RESOURCE prerequisites. The helper fails closed
 when any prerequisite is absent; its host-trace context drops `NET_RAW` and
 does not add privileged or SYS_ADMIN fallbacks. Save pcaps and reports only to an approved mount, redact
 addresses and payloads, and remove the session when the investigation is
-complete.
+complete. The trace workload must set both `hostNetwork: true` and
+`hostPID: true`; the helper independently compares `/proc/self/ns/net` with
+`/proc/1/ns/net` before starting `pwru`.
 
 Path, capability, and namespace override environment variables exist only for
 hermetic image tests. They are controller-owned implementation details and

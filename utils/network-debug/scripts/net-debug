@@ -238,7 +238,14 @@ trace_prerequisites() {
 	for capability in NET_ADMIN BPF PERFMON SYS_RESOURCE; do
 		capability_present "$capability" || usage_error "required capability $capability is unavailable"
 	done
-	[ "${NETWORK_DEBUG_HOST_NETNS:-true}" = true ] || usage_error 'trace requires the host network namespace'
+	# /proc/1 is the host init only when the trace pod uses hostPID. Requiring
+	# the namespace identity to match is an actual kernel check; a caller cannot
+	# satisfy it by setting an environment variable. Trace runbooks therefore
+	# require hostPID=true together with hostNetwork=true.
+	self_netns=$(readlink /proc/self/ns/net 2>/dev/null || true)
+	host_netns=$(readlink /proc/1/ns/net 2>/dev/null || true)
+	[ -n "$self_netns" ] && [ "$self_netns" = "$host_netns" ] || \
+		usage_error 'trace requires the host network namespace (hostPID=true and hostNetwork=true)'
 }
 
 trace_command() {
