@@ -17,6 +17,7 @@ IMAGE="${VALIDATOR_INTEGRATION_IMAGE:-cluster-validator-integration:${GITHUB_SHA
 KIND_NODE_IMAGE="${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cluster-validator-integration.XXXXXX")"
 ARTIFACT_DIR="${VALIDATOR_INTEGRATION_ARTIFACT_DIR:-${RUNNER_TEMP:-/tmp}/cluster-validator-integration-artifacts}"
+ARTIFACT_STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cluster-validator-integration-artifacts.XXXXXX")"
 KUBECONFIG_FILE="${WORK_DIR}/kind.kubeconfig"
 HELPER_KUBECONFIG="${WORK_DIR}/extension.kubeconfig"
 SERVICE_ACCOUNT="system:serviceaccount:${NAMESPACE}:cluster-validator"
@@ -27,6 +28,13 @@ SECRET_MARKER="validator-secret-marker-${RANDOM}-${RANDOM}"
 SERVICE_ACCOUNT_TOKEN=""
 CLUSTER_CREATED=false
 IMAGE_BUILT=false
+IMAGE_BUILT_ID=""
+CLUSTER_NODE_IDS=""
+WORK_DIR_ID=""
+ARTIFACT_STAGE_ID=""
+ARTIFACT_OUTPUT_ID=""
+ARTIFACT_OUTPUT_CREATED=false
+ARTIFACT_OUTPUT_KEEP=false
 
 # These are the public values emitted by the built image. The JSON contract is
 # documentation for those values, not an oracle consulted by this test.
@@ -44,33 +52,126 @@ log() {
 
 cleanup() {
   local exit_code=$?
+  local current_image_id
   set +e
   if [[ "${exit_code}" != 0 ]]; then
     preserve_diagnostics
-    printf 'Diagnostics preserved at %s\n' "${ARTIFACT_DIR}" >&2
+    if [[ "${ARTIFACT_OUTPUT_KEEP}" == true ]]; then
+      printf 'Diagnostics preserved at %s\n' "${ARTIFACT_DIR}" >&2
+    else
+      printf 'Diagnostics were not published because the requested artifact path was unsafe or already existed.\n' >&2
+    fi
   fi
   if [[ "${CLUSTER_CREATED}" == true && -f "${KUBECONFIG_FILE}" ]]; then
-    KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete namespace "${NAMESPACE}" --ignore-not-found --wait --timeout=60s >/dev/null 2>&1
-    KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete clusterrolebinding "${CLUSTER_ROLE_BINDING}" --ignore-not-found --wait >/dev/null 2>&1
-    KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete clusterrole "${CLUSTER_ROLE}" --ignore-not-found --wait >/dev/null 2>&1
+    if cluster_is_owned; then
+      KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete namespace "${NAMESPACE}" --ignore-not-found --wait --timeout=60s >/dev/null 2>&1
+      KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete clusterrolebinding "${CLUSTER_ROLE_BINDING}" --ignore-not-found --wait >/dev/null 2>&1
+      KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete clusterrole "${CLUSTER_ROLE}" --ignore-not-found --wait >/dev/null 2>&1
+    fi
   fi
   if [[ "${CLUSTER_CREATED}" == true ]]; then
-    kind delete cluster --name "${CLUSTER_NAME}" >/dev/null 2>&1
+    if cluster_is_owned; then
+      kind delete cluster --name "${CLUSTER_NAME}" >/dev/null 2>&1
+      if kind get clusters 2>/dev/null | grep -Fqx -- "${CLUSTER_NAME}"; then
+        printf 'cluster-validator-integration: owned kind cluster was not removed: %s\n' "${CLUSTER_NAME}" >&2
+        exit_code=1
+      fi
+    else
+      printf 'cluster-validator-integration: refusing to delete kind cluster with changed ownership: %s\n' "${CLUSTER_NAME}" >&2
+      exit_code=1
+    fi
   fi
-  if [[ "${IMAGE_BUILT}" == true ]]; then
-    docker image rm "${IMAGE}" >/dev/null 2>&1
+  if [[ "${IMAGE_BUILT}" == true && -n "${IMAGE_BUILT_ID}" ]]; then
+    current_image_id="$(docker image inspect --format '{{.Id}}' "${IMAGE}" 2>/dev/null || true)"
+    if [[ "${current_image_id}" == "${IMAGE_BUILT_ID}" ]]; then
+      docker image rm "${IMAGE}" >/dev/null 2>&1
+      if docker image inspect "${IMAGE}" >/dev/null 2>&1; then
+        printf 'cluster-validator-integration: owned image tag was not removed: %s\n' "${IMAGE}" >&2
+        exit_code=1
+      fi
+    else
+      printf 'cluster-validator-integration: refusing to remove image tag changed after build: %s\n' "${IMAGE}" >&2
+      exit_code=1
+    fi
   fi
-  rm -rf "${WORK_DIR}"
+  if [[ "${ARTIFACT_OUTPUT_CREATED}" == true && "${ARTIFACT_OUTPUT_KEEP}" != true ]]; then
+    if owned_directory "${ARTIFACT_DIR}" "${ARTIFACT_OUTPUT_ID}"; then
+      rm -rf -- "${ARTIFACT_DIR}"
+    else
+      printf 'cluster-validator-integration: refusing to remove changed artifact directory: %s\n' "${ARTIFACT_DIR}" >&2
+      exit_code=1
+    fi
+  fi
+  if owned_directory "${ARTIFACT_STAGE_DIR}" "${ARTIFACT_STAGE_ID}"; then
+    rm -rf -- "${ARTIFACT_STAGE_DIR}"
+  fi
+  if owned_directory "${WORK_DIR}" "${WORK_DIR_ID}"; then
+    rm -rf -- "${WORK_DIR}"
+  else
+    printf 'cluster-validator-integration: refusing to remove changed work directory: %s\n' "${WORK_DIR}" >&2
+    exit_code=1
+  fi
   exit "${exit_code}"
 }
 trap cleanup EXIT
 
+directory_identity() {
+  local path="$1"
+  local identity
+  if identity="$(stat -c '%d:%i' "${path}" 2>/dev/null)"; then
+    printf '%s' "${identity}"
+    return 0
+  fi
+  stat -f '%d:%i' "${path}"
+}
+
+owned_directory() {
+  local path="$1" expected_identity="$2"
+  [[ -n "${expected_identity}" && -d "${path}" && ! -L "${path}" && -O "${path}" ]] || return 1
+  [[ "$(directory_identity "${path}")" == "${expected_identity}" ]]
+}
+
+cluster_node_ids() {
+  local node id
+  while IFS= read -r node; do
+    [[ -n "${node}" ]] || continue
+    id="$(docker inspect --format '{{.Id}}' "${node}" 2>/dev/null)" || return 1
+    printf '%s\n' "${id}"
+  done < <(kind get nodes --name "${CLUSTER_NAME}" 2>/dev/null)
+}
+
+cluster_is_owned() {
+  local current_cluster_ids
+  [[ -n "${CLUSTER_NODE_IDS}" ]] || return 1
+  current_cluster_ids="$(cluster_node_ids | LC_ALL=C sort)" || return 1
+  [[ "${current_cluster_ids}" == "${CLUSTER_NODE_IDS}" ]]
+}
+
 preserve_diagnostics() {
-  mkdir -p "${ARTIFACT_DIR}"
+  local source base
+  local copy_failed=false
+  local unsafe=false
+  local grep_status
+
+  # Diagnostics are first assembled in a private mktemp directory. A caller
+  # supplied output path is never read, recursively cleaned, or treated as a
+  # trusted staging area. The final directory is created only when absent and
+  # receives only the verified allowlist below.
+  if [[ -e "${ARTIFACT_DIR}" || -L "${ARTIFACT_DIR}" ]]; then
+    printf 'refusing diagnostic publication into an existing or symlinked path: %s\n' "${ARTIFACT_DIR}" >&2
+    return 0
+  fi
+  if ! mkdir -- "${ARTIFACT_DIR}" 2>/dev/null || [[ ! -d "${ARTIFACT_DIR}" || -L "${ARTIFACT_DIR}" ]]; then
+    printf 'refusing diagnostic publication into unsafe path: %s\n' "${ARTIFACT_DIR}" >&2
+    return 0
+  fi
+  chmod 700 "${ARTIFACT_DIR}" || return 0
+  ARTIFACT_OUTPUT_CREATED=true
+  ARTIFACT_OUTPUT_ID="$(directory_identity "${ARTIFACT_DIR}")"
+
   # Only the fixed, credential-free diagnostics produced by this script leave
   # the temporary directory. Never glob arbitrary future logs: a new command's
   # output must be explicitly reviewed before it can become an artifact.
-  local source base copy_failed=false
   local allowed_sources=(
     "${WORK_DIR}/configmap-denied.log"
     "${WORK_DIR}/secret-denied.log"
@@ -92,20 +193,18 @@ preserve_diagnostics() {
     [[ -f "${source}" ]] || continue
     [[ ! -L "${source}" ]] || { copy_failed=true; continue; }
     base="$(basename "${source}")"
-    # -P prevents a source symlink introduced between the check and copy from
-    # being dereferenced. The destination is verified as a regular file below.
-    if ! cp -P -- "${source}" "${ARTIFACT_DIR}/${base}" >/dev/null 2>&1 ||
-      [[ ! -f "${ARTIFACT_DIR}/${base}" ]] || [[ -L "${ARTIFACT_DIR}/${base}" ]]; then
-      rm -f -- "${ARTIFACT_DIR}/${base}"
+    # Hard-linking from the private stage cannot follow a destination symlink
+    # and cannot overwrite a pre-existing destination file. This also avoids a
+    # copy-then-replace race on diagnostics that may contain sensitive output.
+    if ! cp -P -- "${source}" "${ARTIFACT_STAGE_DIR}/${base}" >/dev/null 2>&1 ||
+      [[ ! -f "${ARTIFACT_STAGE_DIR}/${base}" ]] || [[ -L "${ARTIFACT_STAGE_DIR}/${base}" ]]; then
       copy_failed=true
     fi
   done
   # Prove the allowlist did not leak credentials. A suspicious artifact is not
   # uploaded, and the complete artifact set is discarded so a partial upload
   # cannot be mistaken for a safe diagnostic bundle.
-  local unsafe=false
   local sensitive_pattern='BEGIN [A-Z0-9 ]*PRIVATE KEY|client-(certificate|key)-data:|(^|[[:space:]])(token|password|passwd|secret)[[:space:]]*[:=]|authorization:[[:space:]]*bearer[[:space:]]'
-  local grep_status
   while IFS= read -r -d '' source; do
     grep -Eiq "${sensitive_pattern}" "${source}"
     grep_status=$?
@@ -120,14 +219,46 @@ preserve_diagnostics() {
     grep -Fq "${SECRET_MARKER}" "${source}"
     grep_status=$?
     if [[ "${grep_status}" -eq 0 || "${grep_status}" -gt 1 ]]; then unsafe=true; fi
-  done < <(find "${ARTIFACT_DIR}" -type f -print0)
-  if find "${ARTIFACT_DIR}" -mindepth 1 ! -type f -print -quit | grep -q .; then
+  done < <(find "${ARTIFACT_STAGE_DIR}" -mindepth 1 -maxdepth 1 -type f -print0)
+  if find "${ARTIFACT_STAGE_DIR}" -mindepth 1 -maxdepth 1 ! -type f -print -quit | grep -q .; then
     unsafe=true
+  fi
+  if ! find "${ARTIFACT_STAGE_DIR}" -mindepth 1 -maxdepth 1 -type f -print -quit | grep -q .; then
+    printf 'no allowlisted diagnostics were produced; refusing empty artifact publication\n' >&2
+    if owned_directory "${ARTIFACT_DIR}" "${ARTIFACT_OUTPUT_ID}"; then
+      rm -rf -- "${ARTIFACT_DIR}"
+      ARTIFACT_OUTPUT_CREATED=false
+    fi
+    return 0
   fi
   if [[ "${unsafe}" == true || "${copy_failed}" == true ]]; then
     printf 'unsafe or incomplete diagnostic artifact set; refusing diagnostic upload\n' >&2
-    find "${ARTIFACT_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+    if owned_directory "${ARTIFACT_DIR}" "${ARTIFACT_OUTPUT_ID}"; then
+      rm -rf -- "${ARTIFACT_DIR}"
+      ARTIFACT_OUTPUT_CREATED=false
+    else
+      printf 'refusing to remove changed artifact directory: %s\n' "${ARTIFACT_DIR}" >&2
+    fi
+    return 0
   fi
+
+  while IFS= read -r -d '' source; do
+    base="$(basename "${source}")"
+    if ! owned_directory "${ARTIFACT_DIR}" "${ARTIFACT_OUTPUT_ID}" ||
+      [[ -e "${ARTIFACT_DIR}/${base}" || -L "${ARTIFACT_DIR}/${base}" ]] ||
+      ! ln -- "${source}" "${ARTIFACT_DIR}/${base}" 2>/dev/null; then
+      printf 'unsafe or incomplete diagnostic artifact set; refusing diagnostic upload\n' >&2
+      if owned_directory "${ARTIFACT_DIR}" "${ARTIFACT_OUTPUT_ID}"; then
+        rm -rf -- "${ARTIFACT_DIR}"
+        ARTIFACT_OUTPUT_CREATED=false
+      else
+        printf 'refusing to remove changed artifact directory: %s\n' "${ARTIFACT_DIR}" >&2
+      fi
+      return 0
+    fi
+  done < <(find "${ARTIFACT_STAGE_DIR}" -mindepth 1 -maxdepth 1 -type f -print0)
+  ARTIFACT_OUTPUT_KEEP=true
+  log "credential-free diagnostics preserved at ${ARTIFACT_DIR}"
 }
 
 require_tools() {
@@ -139,16 +270,26 @@ require_tools() {
 }
 
 build_image() {
+  if docker image inspect "${IMAGE}" >/dev/null 2>&1; then
+    die "refusing to overwrite pre-existing image tag: ${IMAGE}"
+  fi
   log "Building ${IMAGE} for linux/amd64"
   docker build --pull --platform linux/amd64 --file "${ROOT_DIR}/utils/cluster-validator/Dockerfile" --tag "${IMAGE}" "${ROOT_DIR}"
+  IMAGE_BUILT_ID="$(docker image inspect --format '{{.Id}}' "${IMAGE}")"
+  [[ -n "${IMAGE_BUILT_ID}" ]] || die "built image has no inspectable identity"
   IMAGE_BUILT=true
 }
 
 create_cluster() {
+  if kind get clusters 2>/dev/null | grep -Fqx -- "${CLUSTER_NAME}"; then
+    die "refusing to use pre-existing kind cluster: ${CLUSTER_NAME}"
+  fi
   log "Creating disposable kind cluster ${CLUSTER_NAME}"
   kind create cluster --name "${CLUSTER_NAME}" --image "${KIND_NODE_IMAGE}" \
     --kubeconfig "${KUBECONFIG_FILE}" --wait 180s
   CLUSTER_CREATED=true
+  CLUSTER_NODE_IDS="$(cluster_node_ids | LC_ALL=C sort)"
+  [[ -n "${CLUSTER_NODE_IDS}" ]] || die "created kind cluster has no identifiable node containers"
   export KUBECONFIG="${KUBECONFIG_FILE}"
   kubectl wait --for=condition=Ready nodes --all --timeout=180s >/dev/null
   kubectl wait --for=condition=Ready pods --all --all-namespaces --timeout=180s >/dev/null
@@ -469,6 +610,8 @@ assert_zero_residuals() {
 }
 
 main() {
+  WORK_DIR_ID="$(directory_identity "${WORK_DIR}")"
+  ARTIFACT_STAGE_ID="$(directory_identity "${ARTIFACT_STAGE_DIR}")"
   require_tools
   build_image
   create_cluster
