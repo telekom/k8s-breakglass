@@ -36,7 +36,13 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
 {{- define "debug-session-catalogue.podSecurity" -}}
 {{- $profile := .profile -}}
 {{- $elevated := default false $profile.elevated -}}
-{{- $node := and $elevated (eq (default "restricted" $profile.preset) "elevated-node") -}}
+{{- $preset := default "restricted" $profile.preset -}}
+{{- $hostNetwork := default false $profile.hostNetwork -}}
+{{- $hostNetworkIntents := list "network-diagnostics" "network-repair" "node-recovery" -}}
+{{- if and $hostNetwork (not (has $profile.intent $hostNetworkIntents)) }}{{ fail (printf "profiles[%s] hostNetwork is reserved for network-diagnostics, network-repair, and node-recovery intents" $profile.name) }}{{ end }}
+{{- if and $hostNetwork (not $elevated) }}{{ fail (printf "profiles[%s] hostNetwork requires explicit elevated: true" $profile.name) }}{{ end }}
+{{- if and $hostNetwork (ne $preset "elevated-node") }}{{ fail (printf "profiles[%s] hostNetwork requires preset elevated-node" $profile.name) }}{{ end }}
+{{- if and $profile.hostPID (not $hostNetwork) }}{{ fail (printf "profiles[%s] hostPID requires explicit hostNetwork: true" $profile.name) }}{{ end }}
 securityContext:
   runAsNonRoot: {{ not $elevated }}
   {{- if $elevated }}
@@ -55,23 +61,43 @@ securityContext:
 {{- define "debug-session-catalogue.containerSecurity" -}}
 {{- $profile := .profile -}}
 {{- $elevated := default false $profile.elevated -}}
+{{- $preset := default "restricted" $profile.preset -}}
 {{- $caps := default (list) $profile.capabilities -}}
 {{- $allowedCaps := list "AUDIT_CONTROL" "BPF" "NET_ADMIN" "NET_RAW" "PERFMON" "SYS_ADMIN" "SYS_PTRACE" -}}
 {{- range $cap := $caps }}{{- if not (has $cap $allowedCaps) }}{{ fail (printf "profiles[%s] capability %s is not permitted by the catalogue security contract" $profile.name $cap) }}{{ end }}{{- end }}
 {{- if and (not $elevated) $caps }}{{ fail (printf "profiles[%s] restricted profiles may not add capabilities" $profile.name) }}{{ end }}
 {{- if and (not $elevated) $profile.allowPrivilegeEscalation }}{{ fail (printf "profiles[%s] restricted profiles may not allow privilege escalation" $profile.name) }}{{ end }}
-{{- if and $profile.privileged (ne (default "restricted" $profile.preset) "elevated-node") }}{{ fail (printf "profiles[%s] privileged pods require preset elevated-node" $profile.name) }}{{ end }}
-{{- if and $profile.hostPID (ne (default "restricted" $profile.preset) "elevated-node") }}{{ fail (printf "profiles[%s] hostPID requires preset elevated-node" $profile.name) }}{{ end }}
+{{- if and $profile.privileged (ne $preset "elevated-node") }}{{ fail (printf "profiles[%s] privileged pods require preset elevated-node" $profile.name) }}{{ end }}
+{{- if and $profile.hostPID (ne $preset "elevated-node") }}{{ fail (printf "profiles[%s] hostPID requires preset elevated-node" $profile.name) }}{{ end }}
 securityContext:
   allowPrivilegeEscalation: {{ if $elevated }}{{ default false $profile.allowPrivilegeEscalation }}{{ else }}false{{ end }}
   privileged: {{ if $elevated }}{{ default false $profile.privileged }}{{ else }}false{{ end }}
-  readOnlyRootFilesystem: {{ not $elevated }}
+  readOnlyRootFilesystem: true
   capabilities:
     drop: [ALL]
     {{- if and $elevated $caps }}
     add:
 {{ toYaml $caps | nindent 6 }}
     {{- end }}
+{{- end -}}
+{{- define "debug-session-catalogue.validatorIdentity" -}}
+{{- if eq (default "" .profile.intent) "cluster-validation" -}}
+{{- with .profile.pod -}}
+{{- range (default (list) .env) -}}
+{{- if or (eq .name "VALIDATOR_POD_NAME") (eq .name "VALIDATOR_POD_NAMESPACE") -}}
+{{- fail (printf "profiles[%s] validator identity environment variables are reserved" $.profile.name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+- name: VALIDATOR_POD_NAME
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.name
+- name: VALIDATOR_POD_NAMESPACE
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.namespace
+{{- end -}}
 {{- end -}}
 {{- define "debug-session-catalogue.validatePodOverrides" -}}
 {{- $profile := .profile -}}

@@ -130,6 +130,8 @@ when "all"
     elevated = value_at(pod_by_profile.fetch(profile), "metadata", "labels", "breakglass.t-caas.telekom.com/elevated") == "true"
     expect(value_at(pod_spec, "securityContext", "seccompProfile", "type") == "RuntimeDefault", "#{profile} must use RuntimeDefault seccomp")
     expect(value_at(pod_spec, "hostIPC").is_a?(FalseClass), "#{profile} must disable host IPC")
+    container = value_at(pod_spec, "containers").first
+    expect(value_at(container, "securityContext", "readOnlyRootFilesystem").is_a?(TrueClass), "#{profile} must use a read-only root filesystem")
     expect(value_at(session_spec, "allowed", "groups") == ["catalogue-requesters"], "#{profile} requester groups are not wired")
     expect(value_at(session_spec, "approvers", "groups") == ["catalogue-approvers"], "#{profile} approver groups are not wired")
     expect(value_at(session_spec, "failMode") == "closed", "#{profile} lifecycle is not fail closed")
@@ -144,13 +146,24 @@ when "all"
       expect(value_at(pod_spec, "securityContext", "runAsUser") == 0, "#{profile} must run as UID 0")
       expect(value_at(pod_spec, "hostNetwork").is_a?(TrueClass), "#{profile} must use the elevated node network")
     end
+    if profile == "dump-access"
+      expect(value_at(pod_spec, "hostNetwork").is_a?(FalseClass), "dump-access must not use host networking")
+    end
   end
   cluster = pod_by_profile.fetch("cluster-validation")
   cluster_spec = value_at(cluster, "spec", "template", "spec")
+  cluster_env = value_at(cluster_spec, "containers").first.fetch("env")
+  expect(cluster_env.include?({"name" => "VALIDATOR_POD_NAME", "valueFrom" => {"fieldRef" => {"fieldPath" => "metadata.name"}}}), "cluster validation must receive its exact pod name via the Downward API")
+  expect(cluster_env.include?({"name" => "VALIDATOR_POD_NAMESPACE", "valueFrom" => {"fieldRef" => {"fieldPath" => "metadata.namespace"}}}), "cluster validation must receive its exact pod namespace via the Downward API")
   expect(value_at(cluster_spec, "automountServiceAccountToken").is_a?(TrueClass), "cluster validation must opt into its API identity")
   expect(value_at(cluster_spec, "serviceAccountName") == "cluster-validator", "cluster validation must use its dedicated service account")
   storage_mounts = value_at(pod_by_profile.fetch("storage-diagnostics"), "spec", "template", "spec", "containers").first.fetch("volumeMounts")
   expect(storage_mounts.map { |mount| mount["mountPath"] }.sort == %w[/reports /scratch /tmp], "storage diagnostics mounts are incomplete")
+  network = pod_by_profile.fetch("network-diagnostics")
+  network_spec = value_at(network, "spec", "template", "spec")
+  network_mounts = value_at(network_spec, "containers").first.fetch("volumeMounts")
+  expect(network_mounts.any? { |mount| mount["name"] == "work" && mount["mountPath"] == "/work" }, "network diagnostics writable work path must be volume-backed")
+  expect(value_at(network_spec, "volumes").any? { |volume| volume["name"] == "work" && volume.key?("emptyDir") }, "network diagnostics work path must use an emptyDir volume")
   dump_mounts = value_at(pod_by_profile.fetch("dump-access"), "spec", "template", "spec", "containers").first.fetch("volumeMounts")
   dump_input = dump_mounts.find { |mount| mount["mountPath"] == "/input" }
   expect(dump_input && dump_input["readOnly"].is_a?(TrueClass), "dump input must be read-only")
@@ -170,6 +183,7 @@ when "elevated"
   pod_spec = value_at(pods.first, "spec", "template", "spec")
   expect(value_at(pod_spec, "securityContext", "runAsNonRoot").is_a?(FalseClass), "elevated profile must opt out of non-root")
   expect(value_at(pod_spec, "securityContext", "runAsUser") == 0, "elevated profile must run as UID 0")
+  expect(value_at(pod_spec, "containers").first.dig("securityContext", "readOnlyRootFilesystem").is_a?(TrueClass), "elevated profile must keep a read-only root filesystem")
   expect(value_at(pod_spec, "hostNetwork").is_a?(TrueClass), "elevated node profile must use host networking")
   volumes = value_at(pod_spec, "volumes")
   expect(volumes.any? { |volume| volume.key?("hostPath") && value_at(volume, "hostPath", "path") == "/var/lib/example" }, "elevated profile must render its requested host path")

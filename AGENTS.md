@@ -120,8 +120,10 @@ manifest with keyless Cosign.
 ## Standalone cluster-validator image (TCAAS-1619)
 
 The provider-neutral validator is intentionally isolated in `pkg/clustervalidator`
-and `cmd/cluster-validator`; its image is built only by `Dockerfile.validator`.
-Keep this boundary intact: built-in checks may use only public, read-only
+and `cmd/cluster-validator`; its canonical image definition is
+`utils/cluster-validator/Dockerfile`. The root `Dockerfile.validator` path is a
+compatibility symlink to that canonical definition. Keep this boundary intact:
+built-in checks may use only public, read-only
 Kubernetes APIs and must not assume internal T-CaaS namespaces, operators,
 CRDs, or services. New checks require stable names, unit tests with fake
 clients, and an update to `docs/cluster-validator.md` and the post-upgrade

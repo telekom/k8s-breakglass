@@ -56,7 +56,8 @@ for inspection and is not restarted by the controller's Deployment/DaemonSet
 normalization. Interactive `dump-access` remains a long-running Deployment.
 
 The node-oriented profiles are elevated. Enable them only with an explicit
-two-part opt-in, for example:
+two-part opt-in, including host networking only for profiles that need it,
+for example:
 
 ```yaml
 profiles:
@@ -64,6 +65,7 @@ profiles:
     intent: dump-access
     enabled: true
     elevated: true
+    hostNetwork: false
 ```
 
 The chart fails closed when an elevated profile is enabled without
@@ -109,9 +111,12 @@ profiles:
 ```
 
 The administrator must constrain that host path and its retention separately;
-the image still rejects symlinks and traversal. Restricted profiles accept only
-`emptyDir`, `configMap`, and `downwardAPI` volumes; Secret, projected-token,
-PVC, CSI, and hostPath sources require explicit elevated node opt-in.
+the image still rejects symlinks and traversal. All catalogue containers retain
+a read-only root filesystem. Writable paths must be explicit bounded volumes
+(for example `/output`, `/evidence`, or `/work`); the chart has no writable-root
+opt-out. Restricted profiles accept only `emptyDir`, `configMap`, and
+`downwardAPI` volumes; Secret, projected-token, PVC, CSI, and hostPath sources
+require explicit elevated node opt-in.
 
 `cluster-validation` does not receive a service-account token by default. To
 run API checks, explicitly set both `serviceAccountName` and

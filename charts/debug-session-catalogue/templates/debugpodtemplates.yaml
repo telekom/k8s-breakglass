@@ -36,10 +36,16 @@ spec:
 {{ toYaml $profile.command | nindent 12 }}
           args:
 {{ toYaml $profile.args | nindent 12 }}
+          {{- $validatorIdentity := eq (default "" $profile.intent) "cluster-validation" }}
+          {{- if or $validatorIdentity (and $profile.pod $profile.pod.env) }}
+          env:
+          {{- if $validatorIdentity }}
+{{ include "debug-session-catalogue.validatorIdentity" (dict "profile" $profile) | nindent 12 }}
+          {{- end }}
           {{- with $profile.pod }}
           {{- with .env }}
-          env:
 {{ toYaml . | nindent 12 }}
+          {{- end }}
           {{- end }}
           {{- end }}
           {{- include "debug-session-catalogue.containerSecurity" (dict "profile" $profile) | nindent 10 }}
@@ -58,7 +64,7 @@ spec:
       {{- end }}
       {{- include "debug-session-catalogue.serviceAccount" (dict "profile" $profile) | nindent 6 }}
       enableServiceLinks: false
-      hostNetwork: {{ if and $profile.elevated (eq (default "restricted" $profile.preset) "elevated-node") }}true{{ else }}false{{ end }}
+      hostNetwork: {{ default false $profile.hostNetwork }}
       hostPID: {{ if and $profile.elevated (default false $profile.hostPID) }}true{{ else }}false{{ end }}
       hostIPC: false
       {{- with $profile.pod }}
