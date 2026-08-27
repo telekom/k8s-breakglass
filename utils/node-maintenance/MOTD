@@ -7,7 +7,8 @@ Supported operations are fixed: node-recovery (read-only) and
 network-repair (three allowlisted actions). Every invocation must name a node,
 interface, evidence directory, and confirmation token. There is no supported
 unrestricted shell or general-purpose network toolbox in this image.
-Read /usr/share/node-maintenance/README.md and the runbooks in
-/usr/share/node-maintenance/runbooks/ before use.
+Read the generic runbooks in
+/usr/share/breakglass/runbooks/upstream/node-maintenance/ before use.
 An optional deployment-specific, read-only index may be mounted at
-/runbooks/internal/INDEX.md. It is not sourced or executed by this image.
+/usr/share/breakglass/runbooks/internal/INDEX.md. It is not sourced or executed
+by this image.

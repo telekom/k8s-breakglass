@@ -22,20 +22,20 @@ COPY lib/common.sh /usr/local/libexec/node-maintenance/common.sh
 COPY lib/network-repair.sh /usr/local/libexec/node-maintenance/network-repair
 COPY lib/node-recovery-preflight.sh /usr/local/libexec/node-maintenance/node-recovery
 COPY MOTD /etc/motd
-COPY README.md /usr/share/node-maintenance/README.md
-COPY runbooks/network-repair.md /usr/share/node-maintenance/runbooks/network-repair.md
-COPY runbooks/node-recovery-preflight.md /usr/share/node-maintenance/runbooks/node-recovery-preflight.md
+COPY README.md /usr/share/breakglass/runbooks/upstream/node-maintenance/README.md
+COPY runbooks/network-repair.md /usr/share/breakglass/runbooks/upstream/node-maintenance/network-repair.md
+COPY runbooks/node-recovery-preflight.md /usr/share/breakglass/runbooks/upstream/node-maintenance/node-recovery-preflight.md
 
 RUN chmod 0555 /usr/local/bin/node-maintenance \
         /usr/local/libexec/node-maintenance/network-repair \
         /usr/local/libexec/node-maintenance/node-recovery \
     && chmod 0444 /usr/local/libexec/node-maintenance/common.sh /etc/motd \
-        /usr/share/node-maintenance/README.md \
-        /usr/share/node-maintenance/runbooks/network-repair.md \
-        /usr/share/node-maintenance/runbooks/node-recovery-preflight.md \
-    && mkdir -p /evidence /runbooks/internal \
+        /usr/share/breakglass/runbooks/upstream/node-maintenance/README.md \
+        /usr/share/breakglass/runbooks/upstream/node-maintenance/network-repair.md \
+        /usr/share/breakglass/runbooks/upstream/node-maintenance/node-recovery-preflight.md \
+    && mkdir -p /evidence /usr/share/breakglass/runbooks/internal \
     && chmod 0700 /evidence \
-    && chmod 0755 /runbooks /runbooks/internal
+    && chmod 0755 /usr/share/breakglass/runbooks/internal
 
 LABEL org.opencontainers.image.title="Kubernetes node maintenance" \
       org.opencontainers.image.description="Allowlisted, evidence-producing node network repair and recovery preflight helpers" \

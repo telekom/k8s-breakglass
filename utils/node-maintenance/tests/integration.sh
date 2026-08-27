@@ -88,6 +88,28 @@ else
 	"$docker_bin" image inspect "$image" >/dev/null 2>&1 || fail "requested image '$image' is unavailable"
 fi
 
+runbook_bundle="$tmp_dir/runbook-bundle"
+mkdir -p "$runbook_bundle"
+printf '%s\n' 'schemaVersion: breakglass.telekom.com/v1alpha1' >"$runbook_bundle/bundle.yaml"
+printf '%s\n' '# Deployment runbook fixture' >"$runbook_bundle/INDEX.md"
+docs_output=$(
+	"$docker_bin" run --rm --network none --read-only --cap-drop ALL \
+		--security-opt no-new-privileges --security-opt seccomp=builtin \
+		--mount "type=bind,source=$runbook_bundle,destination=/usr/share/breakglass/runbooks/internal,readonly" \
+		--entrypoint /bin/sh "$image" -c '
+			test -r /usr/share/breakglass/runbooks/upstream/node-maintenance/README.md
+			test -r /usr/share/breakglass/runbooks/upstream/node-maintenance/network-repair.md
+			test -r /usr/share/breakglass/runbooks/internal/bundle.yaml
+			cat /usr/share/breakglass/runbooks/internal/bundle.yaml
+			if printf modified >>/usr/share/breakglass/runbooks/internal/bundle.yaml 2>/dev/null; then
+				exit 70
+			fi
+		' 2>/dev/null
+) || fail 'built-in and mounted runbooks were not readable with a read-only downstream bundle'
+printf '%s\n' "$docs_output" | grep -q '^schemaVersion: breakglass.telekom.com/v1alpha1$' \
+	|| fail 'mounted runbook bundle metadata was not discovered through the shared contract'
+pass 'generic and optional downstream runbooks are readable while the bundle remains read-only'
+
 new_fixture() {
 	label=$1
 	container_name="${prefix}-${label}"
