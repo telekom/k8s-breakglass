@@ -1,0 +1,48 @@
+{
+  "contractVersion": "node-maintenance.integration/v1",
+  "imageContext": "utils/node-maintenance",
+  "network": {
+    "mode": "none",
+    "hostNetwork": false,
+    "hostNetworkMutation": false
+  },
+  "security": {
+    "readOnlyRootFilesystem": true,
+    "allowPrivilegeEscalation": false,
+    "seccompProfile": "runtime-default",
+    "seccompOption": "builtin",
+    "capabilitiesDrop": ["ALL"],
+    "capabilitiesAdd": ["NET_ADMIN"]
+  },
+  "disposableResources": {
+    "evidenceVolume": true,
+    "container": true,
+    "cleanupRequired": true
+  },
+  "commands": {
+    "node-recovery": {
+      "target": "node-a",
+      "interface": "lo",
+      "confirmation": "NODE-RECOVERY-PREFLIGHT",
+      "expectedExit": 0,
+      "requiredEvidence": ["interface.txt", "addresses.txt", "routes.txt", "neighbors.txt", "ethtool.txt", "resolver.txt", "kernel.txt", "metadata"]
+    },
+    "network-repair": {
+      "target": "node-a",
+      "interface": "lo",
+      "confirmation": "NETWORK-REPAIR",
+      "actions": {
+        "link-cycle": {"expectedExit": 0},
+        "flush-neighbors": {"expectedExit": 0},
+        "restart-autonegotiation": {"expectedExit": "nonzero"}
+      },
+      "requiredEvidence": ["before-link.txt", "before-addresses.txt", "before-routes.txt", "before-neighbors.txt", "after-link.txt", "after-addresses.txt", "after-routes.txt", "after-neighbors.txt", "metadata"]
+    }
+  },
+  "guards": [
+    "missing-confirmation",
+    "target-mismatch",
+    "unsafe-evidence-path",
+    "unknown-dispatch-command"
+  ]
+}

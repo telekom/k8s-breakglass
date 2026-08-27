@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: CC0-1.0
+
+name: Node maintenance image
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - "utils/node-maintenance/**"
+      - "docs/node-maintenance.md"
+      - ".github/workflows/node-maintenance.yml"
+  push:
+    branches: [main]
+    paths:
+      - "utils/node-maintenance/**"
+      - "docs/node-maintenance.md"
+      - ".github/workflows/node-maintenance.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    name: Static image checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Exercise image helper contracts
+        run: make -C utils/node-maintenance test
+      - name: ShellCheck image helpers
+        run: shellcheck utils/node-maintenance/bin/* utils/node-maintenance/lib/*.sh utils/node-maintenance/tests/*.sh
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: utils/node-maintenance/Dockerfile
+
+  behavior:
+    name: Real image behavior
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Exercise recovery, repair, boundary, evidence, and cleanup contracts
+        run: make -C utils/node-maintenance integration

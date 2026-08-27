@@ -1,0 +1,9 @@
+SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+SPDX-License-Identifier: Apache-2.0
+
+Kubernetes node-maintenance image
+
+Supported operations are fixed: node-recovery (read-only) and
+network-repair (three allowlisted actions). Every invocation must name a node,
+interface, evidence directory, and confirmation token. There is no supported
+unrestricted shell or general-purpose network toolbox in this image.
