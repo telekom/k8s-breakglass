@@ -13,8 +13,53 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 test_dir="$(mktemp -d)"
 trap 'rm -rf "${test_dir}"' EXIT
 
-mkdir -p "${test_dir}/bin" "${test_dir}/charts"
-printf 'locally packaged chart\n' >"${test_dir}/charts/debug-session-catalogue-0.2.0.tgz"
+archive_digest() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+mkdir -p "${test_dir}/bin" "${test_dir}/charts" \
+  "${test_dir}/local/debug-session-catalogue/templates" \
+  "${test_dir}/timestamp/debug-session-catalogue/templates" \
+  "${test_dir}/changed/debug-session-catalogue/templates"
+printf 'name: debug-session-catalogue\nversion: 0.2.0\n' \
+  >"${test_dir}/local/debug-session-catalogue/Chart.yaml"
+printf '{{ .Values.message }}\n' \
+  >"${test_dir}/local/debug-session-catalogue/templates/config.yaml"
+cp -R "${test_dir}/local/debug-session-catalogue/." "${test_dir}/timestamp/debug-session-catalogue/"
+cp -R "${test_dir}/local/debug-session-catalogue/." "${test_dir}/changed/debug-session-catalogue/"
+printf '{{ .Values.changed }}\n' \
+  >"${test_dir}/changed/debug-session-catalogue/templates/config.yaml"
+touch -t 202001010000 \
+  "${test_dir}/local/debug-session-catalogue/Chart.yaml" \
+  "${test_dir}/local/debug-session-catalogue/templates/config.yaml"
+touch -t 202401010000 \
+  "${test_dir}/timestamp/debug-session-catalogue/Chart.yaml" \
+  "${test_dir}/timestamp/debug-session-catalogue/templates/config.yaml"
+tar -czf "${test_dir}/charts/debug-session-catalogue-0.2.0.tgz" \
+  -C "${test_dir}/local" debug-session-catalogue
+tar -czf "${test_dir}/timestamp.tgz" \
+  -C "${test_dir}/timestamp" debug-session-catalogue
+tar -czf "${test_dir}/changed.tgz" \
+  -C "${test_dir}/changed" debug-session-catalogue
+[ "$(archive_digest "${test_dir}/charts/debug-session-catalogue-0.2.0.tgz")" != \
+  "$(archive_digest "${test_dir}/timestamp.tgz")" ] || {
+  echo "timestamp fixture did not change the package bytes" >&2
+  exit 1
+}
+[ "$(ruby "${script_dir}/canonical-helm-chart-digest.rb" "${test_dir}/charts/debug-session-catalogue-0.2.0.tgz")" = \
+  "$(ruby "${script_dir}/canonical-helm-chart-digest.rb" "${test_dir}/timestamp.tgz")" ] || {
+  echo "timestamp fixture changed canonical chart content" >&2
+  exit 1
+}
+[ "$(ruby "${script_dir}/canonical-helm-chart-digest.rb" "${test_dir}/charts/debug-session-catalogue-0.2.0.tgz")" != \
+  "$(ruby "${script_dir}/canonical-helm-chart-digest.rb" "${test_dir}/changed.tgz")" ] || {
+  echo "changed-content fixture did not change canonical chart content" >&2
+  exit 1
+}
 
 cat >"${test_dir}/bin/helm" <<'EOF'
 #!/usr/bin/env bash
@@ -28,8 +73,7 @@ if [ "$1 $2" = "show chart" ]; then
     exit 0
   fi
   case "${FAKE_REMOTE_MODE:-missing}" in
-    matching) printf 'name: debug-session-catalogue\nversion: 0.2.0\nappVersion: "%s"\n' "${FAKE_LOCAL_APP_VERSION:-v1.2.3}" ;;
-    different) printf 'name: debug-session-catalogue\nversion: 0.2.0\nappVersion: "%s"\n' "${FAKE_LOCAL_APP_VERSION:-v1.2.3}" ;;
+    matching|timestamp-different|different) printf 'name: debug-session-catalogue\nversion: 0.2.0\nappVersion: "%s"\n' "${FAKE_LOCAL_APP_VERSION:-v1.2.3}" ;;
     mismatch) printf 'name: debug-session-catalogue\nversion: 0.2.0\nappVersion: "v9.9.9"\n' ;;
     incomplete) printf 'name: debug-session-catalogue\nversion: 0.2.0\n' ;;
     missing) echo 'Error: manifest unknown' >&2; exit 1 ;;
@@ -42,11 +86,11 @@ if [ "$1" = pull ]; then
   [ "${FAKE_REMOTE_MODE:-missing}" != pull-failure ] || exit 1
   destination="${6:?}"
   mkdir -p "${destination}"
-  if [ "${FAKE_REMOTE_MODE:-missing}" = different ]; then
-    printf 'different remote chart\n' >"${destination}/debug-session-catalogue-0.2.0.tgz"
-  else
-    cp "${FAKE_LOCAL_PACKAGE:?}" "${destination}/debug-session-catalogue-0.2.0.tgz"
-  fi
+  case "${FAKE_REMOTE_MODE:-missing}" in
+    timestamp-different) cp "${FAKE_TIMESTAMP_PACKAGE:?}" "${destination}/debug-session-catalogue-0.2.0.tgz" ;;
+    different) cp "${FAKE_CHANGED_PACKAGE:?}" "${destination}/debug-session-catalogue-0.2.0.tgz" ;;
+    *) cp "${FAKE_LOCAL_PACKAGE:?}" "${destination}/debug-session-catalogue-0.2.0.tgz" ;;
+  esac
   exit 0
 fi
 if [ "$1" = push ]; then
@@ -59,7 +103,9 @@ EOF
 chmod +x "${test_dir}/bin/helm"
 
 run_publish() {
-  PATH="${test_dir}/bin:${PATH}" FAKE_HELM_LOG="${test_dir}/helm.log" FAKE_HELM_CALL_LOG="${test_dir}/helm-calls.log" FAKE_LOCAL_PACKAGE="${test_dir}/charts/debug-session-catalogue-0.2.0.tgz" \
+  PATH="${test_dir}/bin:${PATH}" FAKE_HELM_LOG="${test_dir}/helm.log" FAKE_HELM_CALL_LOG="${test_dir}/helm-calls.log" \
+    FAKE_LOCAL_PACKAGE="${test_dir}/charts/debug-session-catalogue-0.2.0.tgz" \
+    FAKE_TIMESTAMP_PACKAGE="${test_dir}/timestamp.tgz" FAKE_CHANGED_PACKAGE="${test_dir}/changed.tgz" \
     "${script_dir}/publish-helm-charts.sh" "${test_dir}/charts" \
     oci://ghcr.io/example/charts v1.2.3
 }
@@ -84,6 +130,14 @@ grep -q '^pull ' "${test_dir}/helm-calls.log" || {
   exit 1
 }
 
+: >"${test_dir}/helm.log"
+: >"${test_dir}/helm-calls.log"
+FAKE_REMOTE_MODE=timestamp-different run_publish >/dev/null
+[ ! -s "${test_dir}/helm.log" ] || {
+  echo "same chart repackaged with different timestamps was pushed again" >&2
+  exit 1
+}
+
 for mode in mismatch incomplete network different pull-failure; do
   : >"${test_dir}/helm.log"
   if FAKE_REMOTE_MODE="${mode}" run_publish >/dev/null 2>&1; then
@@ -95,6 +149,8 @@ for mode in mismatch incomplete network different pull-failure; do
     exit 1
   }
 done
+
+bash "${script_dir}/test-slsa-provenance.sh"
 
 if FAKE_REMOTE_MODE=missing FAKE_LOCAL_APP_VERSION=v2.0.0 run_publish >/dev/null 2>&1; then
   echo "release/appVersion mismatch did not fail closed" >&2
