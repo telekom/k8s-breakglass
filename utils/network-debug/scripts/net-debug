@@ -83,6 +83,9 @@ cleanup_child() {
 	if [ -n "${TEMP_EVIDENCE:-}" ]; then
 		rm -f "$TEMP_EVIDENCE" "$TEMP_EVIDENCE.err"
 	fi
+	if [ -n "${READY_FILE:-}" ]; then
+		rm -f "$READY_FILE"
+	fi
 	cleanup_stage
 }
 
@@ -321,6 +324,15 @@ trace_command() {
 	command -v pwru >/dev/null 2>&1 || usage_error 'pwru is unavailable'
 	stop_timeout=${NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS:-15}
 	bounded_integer "$stop_timeout" 1 60 stop-timeout
+	ready_required=${NETWORK_DEBUG_PWRU_REQUIRE_READY:-false}
+	case "$ready_required" in
+		true|false) ;;
+		*) usage_error 'NETWORK_DEBUG_PWRU_REQUIRE_READY must be true or false' ;;
+	esac
+	startup_timeout=${NETWORK_DEBUG_PWRU_STARTUP_TIMEOUT_SECONDS:-30}
+	if [ "$ready_required" = true ]; then
+		bounded_integer "$startup_timeout" 1 120 startup-timeout
+	fi
 	command -v setsid >/dev/null 2>&1 || usage_error 'setsid is unavailable'
 	# Use the same private O_EXCL staging directory as capture. Evidence is
 	# written directly to an owned regular file; a FIFO can deadlock when either
@@ -339,6 +351,14 @@ trace_command() {
 	TRACE_STATUS_FILE=$TRACE_PID_FILE.status
 	TRACE_TIMED_OUT_FILE=$TRACE_PID_FILE.timed-out
 	TEMP_DIAGNOSTICS=$STAGING_DIR/diagnostics
+	# pwru v1.0.12 creates this marker only after kprobes are attached and it is
+	# ready to receive events. It is removed by the EXIT trap and is never a
+	# user-selected output path. The integration proof opts into waiting for it
+	# before starting its generated traffic, while hermetic fixtures retain the
+	# historical no-handshake path. Keep the marker inside the private staging
+	# directory so a workload sharing /work cannot forge readiness by creating a
+	# predictable top-level file.
+	READY_FILE=$STAGING_DIR/ready
 	# Interface metadata is optional for this tuple-only contract. Disabling it
 	# avoids pwru's best-effort walk of every host PID/netns, which requires
 	# broader namespace privileges and can consume the complete trace duration
@@ -346,12 +366,12 @@ trace_command() {
 	if [ -n "$filter" ]; then
 		# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
 		setsid sh -c 'pid_file=$1; status_file=$2; max_blocks=$3; printf "%s\\n" "$$" >"$pid_file"; ulimit -f "$max_blocks"; shift 3; "$@"; status=$?; printf "%s\\n" "$status" >"$status_file"; exit "$status"' sh "$TRACE_PID_FILE" "$TRACE_STATUS_FILE" "$max_trace_blocks" pwru \
-			--backend kprobe --output-meta=false --output-tuple --timestamp none --output-limit-lines "$events" -- "$filter" \
+			--backend kprobe --output-meta=false --output-tuple --timestamp none --output-limit-lines "$events" --ready-file "$READY_FILE" -- "$filter" \
 			>"$TEMP_EVIDENCE" 2>"$TEMP_DIAGNOSTICS" &
 	else
 		# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
 		setsid sh -c 'pid_file=$1; status_file=$2; max_blocks=$3; printf "%s\\n" "$$" >"$pid_file"; ulimit -f "$max_blocks"; shift 3; "$@"; status=$?; printf "%s\\n" "$status" >"$status_file"; exit "$status"' sh "$TRACE_PID_FILE" "$TRACE_STATUS_FILE" "$max_trace_blocks" pwru \
-			--backend kprobe --output-meta=false --output-tuple --timestamp none --output-limit-lines "$events" \
+			--backend kprobe --output-meta=false --output-tuple --timestamp none --output-limit-lines "$events" --ready-file "$READY_FILE" \
 			>"$TEMP_EVIDENCE" 2>"$TEMP_DIAGNOSTICS" &
 	fi
 	LAUNCH_PID=$!
@@ -382,9 +402,30 @@ trace_command() {
 		return 1
 	}
 	ACTIVE_PID=$TRACE_PID
+	if [ "$ready_required" = true ]; then
+		ready_iterations=$((startup_timeout * 10))
+		while [ "$ready_iterations" -gt 0 ] && [ ! -e "$READY_FILE" ] && process_group_alive "$ACTIVE_PID"; do
+			sleep 0.1
+			ready_iterations=$((ready_iterations - 1))
+		done
+		if [ ! -e "$READY_FILE" ]; then
+			kill_process_group KILL "$ACTIVE_PID"
+			for _ in 1 2 3 4 5 6 7 8 9 10; do
+				process_group_alive "$ACTIVE_PID" || break
+				sleep 0.1
+			done
+			printf 'net-debug: pwru did not become ready within %s seconds\n' "$startup_timeout" >&2
+			if [ -s "$TEMP_DIAGNOSTICS" ]; then
+				sed '/->/d' "$TEMP_DIAGNOSTICS" | sed -n '1,40p' >&2
+			fi
+			return 1
+		fi
+	fi
 	# Own the complete process group. BusyBox timeout only signals its
 	# immediate child and can leave a tracing descendant alive; group-directed
-	# INT then KILL makes the bound apply to pwru and any children.
+	# INT then KILL makes the bound apply to pwru and any children. The duration
+	# starts after the optional native readiness handshake, so callers can
+	# attribute generated traffic to the actual listening interval.
 	(
 		sleep "$duration"
 		if process_group_alive "$ACTIVE_PID"; then

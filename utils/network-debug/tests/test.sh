@@ -312,6 +312,32 @@ fi
 cat >"$trace_fixture/bin/pwru" <<'EOF'
 #!/bin/sh
 set -eu
+ready_file=''
+while [ "$#" -gt 0 ]; do
+	if [ "$1" = --ready-file ]; then
+		ready_file=$2
+		shift 2
+		continue
+	fi
+	shift
+done
+[ -n "$ready_file" ]
+: >"$ready_file"
+printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80'
+EOF
+chmod +x "$trace_fixture/bin/pwru"
+test_context='trace-native-readiness-handshake'
+rm -f "$trace_fixture/work/trace.log"
+NETWORK_DEBUG_PWRU_REQUIRE_READY=true NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" \
+	NETWORK_DEBUG_BTF_PATH="$trace_fixture/status" NETWORK_DEBUG_DEBUGFS_PATH="$trace_fixture/debug" \
+	NETWORK_DEBUG_TRACEFS_PATH="$trace_fixture/trace" NETWORK_DEBUG_SECURITYFS_PATH="$trace_fixture/security" \
+	NETWORK_DEBUG_MOUNTINFO_PATH="$trace_fixture/mountinfo" NETWORK_DEBUG_CAPABILITY_FILE="$trace_fixture/status" \
+	PATH="$trace_fixture/bin:/usr/bin:/bin" sh "$root/scripts/net-debug" trace --duration 1 --events 1 >/dev/null
+test -f "$trace_fixture/work/trace.log"
+test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
+cat >"$trace_fixture/bin/pwru" <<'EOF'
+#!/bin/sh
+set -eu
 printf '%s\n' "$$" >"$PWRU_PID_FILE"
 sleep 300 &
 printf '%s\n' "$!" >"$PWRU_CHILD_PID_FILE"

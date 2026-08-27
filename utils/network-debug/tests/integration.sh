@@ -27,6 +27,7 @@ NETWORK=${RUN_ID}-network
 CONTAINER=${RUN_ID}-tools
 PWRU_CONTAINER=${RUN_ID}-pwru
 TRACE_TRAFFIC_CONTAINER=${RUN_ID}-trace-traffic
+TRACE_FIXTURE_CONTAINER=${RUN_ID}-trace-fixture
 NETWORK_NAMESPACE=${RUN_ID}-network
 NETWORK_HOST_POD_NAME=${RUN_ID}-host-network
 # Never accept a caller-selected cluster name: the random run ID is the only
@@ -44,6 +45,7 @@ NETWORK_CREATED=false
 CONTAINER_CREATED=false
 PWRU_CONTAINER_CREATED=false
 TRACE_TRAFFIC_CONTAINER_CREATED=false
+TRACE_FIXTURE_CONTAINER_CREATED=false
 DOCKER_OWNER_LABEL=com.telekom.network-debug.run
 # shellcheck disable=SC2034 # consumed by the sourced pwru lifecycle helper
 PWRU_OWNER_LABEL=$DOCKER_OWNER_LABEL
@@ -89,11 +91,13 @@ cleanup() {
 	if ! kind_cleanup_owned_cluster; then
 			cleanup_failed=true
 	fi
-	for docker_container in "$PWRU_CONTAINER" "$TRACE_TRAFFIC_CONTAINER" "$CONTAINER"; do
+	for docker_container in "$PWRU_CONTAINER" "$TRACE_TRAFFIC_CONTAINER" "$TRACE_FIXTURE_CONTAINER" "$CONTAINER"; do
 		container_owned=false
 		if [ "$docker_container" = "$PWRU_CONTAINER" ] && [ "$PWRU_CONTAINER_CREATED" = true ]; then
 			container_owned=true
 		elif [ "$docker_container" = "$TRACE_TRAFFIC_CONTAINER" ] && [ "$TRACE_TRAFFIC_CONTAINER_CREATED" = true ]; then
+			container_owned=true
+		elif [ "$docker_container" = "$TRACE_FIXTURE_CONTAINER" ] && [ "$TRACE_FIXTURE_CONTAINER_CREATED" = true ]; then
 			container_owned=true
 		elif [ "$docker_container" = "$CONTAINER" ] && [ "$CONTAINER_CREATED" = true ]; then
 			container_owned=true
@@ -239,7 +243,6 @@ else
 fi
 CONTAINER_CREATED=true
 docker_call run --detach --name "$CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" --network "$NETWORK" \
-	--publish 18080:18080 \
 	--cap-drop ALL --security-opt no-new-privileges=true \
 	--cap-add NET_RAW \
 	"$IMAGE" sh -c '
@@ -522,24 +525,34 @@ if [ "$PWRU_READY" = true ]; then
 	fi
 fi
 if [ "$PWRU_READY" = true ]; then
-	# Keep matching traffic flowing before and during attachment. A single
-	# request after a slow kprobe startup is not a behavioral pwru proof: it can
-	# finish before the hooks begin listening. This client has no capabilities,
-	# is owner-labelled, and is removed by the same failure cleanup as the trace.
-	if docker_call inspect "$TRACE_TRAFFIC_CONTAINER" >/dev/null 2>&1; then
-		requirement "refusing to reuse an existing trace traffic container named $TRACE_TRAFFIC_CONTAINER"
+	# Keep this proof endpoint in the same host network namespace as pwru. The
+	# general connectivity fixture above intentionally uses a published bridge
+	# port, whose post-NAT tuple is not a deterministic loopback proof. This
+	# dedicated server is owner-labelled, capability-bounded, and removed by
+	# the same failure cleanup as the trace.
+	if docker_call inspect "$TRACE_FIXTURE_CONTAINER" >/dev/null 2>&1; then
+		requirement "refusing to reuse an existing trace fixture named $TRACE_FIXTURE_CONTAINER"
 	fi
-	TRACE_TRAFFIC_CONTAINER_CREATED=true
-	docker_call run --detach --name "$TRACE_TRAFFIC_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" \
+	if docker_call run --rm --network host --cap-drop ALL --security-opt no-new-privileges=true \
+		"$IMAGE" nc -z -w 1 127.0.0.1 18080 >/dev/null 2>&1; then
+		requirement "refusing to reuse an occupied host trace fixture port"
+	fi
+	TRACE_FIXTURE_CONTAINER_CREATED=true
+	docker_call run --detach --name "$TRACE_FIXTURE_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" \
 		--network host --cap-drop ALL --security-opt no-new-privileges=true "$IMAGE" sh -ec '
 			while :; do
-				curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18080/ >/dev/null || true
-				sleep 0.1
+				printf "HTTP/1.1 200 OK\\r\\nContent-Length: 19\\r\\nConnection: close\\r\\n\\r\\nhost-trace-fixture\\n" | nc -l -p 18080 -s 127.0.0.1
 			done
-		' >/dev/null 2>&1 || requirement "could not start owned trace traffic generator"
+		' >/dev/null 2>&1 || requirement "could not start owned host trace fixture"
+	for _ in $(seq 1 40); do
+		if docker_call run --rm --network host --cap-drop ALL --security-opt no-new-privileges=true \
+			"$IMAGE" nc -z -w 1 127.0.0.1 18080 >/dev/null 2>&1; then
+			break
+		fi
+		sleep 0.25
+	done
 	docker_call run --rm --network host --cap-drop ALL --security-opt no-new-privileges=true \
-		"$IMAGE" curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18080/ >/dev/null || \
-		requirement "trace HTTP traffic generator could not reach the fixture"
+		"$IMAGE" nc -z -w 1 127.0.0.1 18080 >/dev/null 2>&1 || requirement "host trace fixture did not become ready"
 	# A generated name is expected to be absent. Refuse a collision before
 	# claiming ownership so cleanup can never remove another run's container.
 	if docker_call inspect "$PWRU_CONTAINER" >/dev/null 2>&1; then
@@ -556,10 +569,47 @@ if [ "$PWRU_READY" = true ]; then
 	trace_start_status=0
 	docker_call run --detach --name "$PWRU_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" \
 		-e NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS="$PWRU_STOP_TIMEOUT" \
+		-e NETWORK_DEBUG_PWRU_REQUIRE_READY=true \
+		-e NETWORK_DEBUG_PWRU_STARTUP_TIMEOUT_SECONDS="$PWRU_STARTUP_MARGIN" \
 		"${PWRU_RUN_ARGS[@]}" --network host "$IMAGE" trace \
 			--duration "$TRACE_DURATION" --events "$TRACE_EVENTS" --filter 'tcp port 18080' --output trace.log \
 		>"$WORK_DIR/trace-start.log" 2>&1 || trace_start_status=$?
 	[ "$trace_start_status" -eq 0 ] || requirement "could not start public net-debug trace operation"
+	# The public wrapper defers its duration watchdog until pwru has attached
+	# kprobes and created its native readiness marker. Start the owner-labelled
+	# client only after that handshake, so every observed tuple is attributable
+	# to traffic generated during the bounded listening interval.
+	trace_ready=false
+	for _ in $(seq 1 $((PWRU_STARTUP_MARGIN * 4))); do
+		trace_ready_marker=$(docker_call exec "$PWRU_CONTAINER" sh -c \
+			'find /work -mindepth 2 -maxdepth 2 -type f -name ready -path "/work/.net-debug.*/ready" -print -quit' 2>/dev/null || true)
+		if [ -n "$trace_ready_marker" ]; then
+			trace_ready=true
+			break
+		fi
+		trace_state=$(docker_call inspect --format '{{.State.Status}}' "$PWRU_CONTAINER" 2>/dev/null || true)
+		[ "$trace_state" = exited ] && break
+		sleep 0.25
+	done
+	if [ "$trace_ready" != true ]; then
+		docker_call logs "$PWRU_CONTAINER" >&2 || true
+		requirement "public net-debug trace did not reach pwru readiness"
+	fi
+	if docker_call inspect "$TRACE_TRAFFIC_CONTAINER" >/dev/null 2>&1; then
+		requirement "refusing to reuse an existing trace traffic container named $TRACE_TRAFFIC_CONTAINER"
+	fi
+	TRACE_TRAFFIC_CONTAINER_CREATED=true
+	docker_call run --detach --name "$TRACE_TRAFFIC_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" \
+		--network host --cap-drop ALL --security-opt no-new-privileges=true "$IMAGE" sh -ec '
+			curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18080/ >/dev/null
+			while :; do
+				curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18080/ >/dev/null || true
+				sleep 0.1
+			done
+		' >/dev/null 2>&1 || requirement "could not start owned trace traffic generator"
+	sleep 0.25
+	trace_traffic_state=$(docker_call inspect --format '{{.State.Status}}' "$TRACE_TRAFFIC_CONTAINER" 2>/dev/null || true)
+	[ "$trace_traffic_state" = running ] || requirement "trace HTTP traffic generator did not remain running"
 	# The wrapper's duration is itself bounded. Wait only through a separate
 	# bounded Docker wait, then validate its public summary and evidence file.
 	trace_wait_status=0
@@ -604,7 +654,17 @@ if [ "$PWRU_READY" = true ]; then
 	trace_bytes=$(wc -c <"$WORK_DIR/trace.log" | tr -d ' ')
 	[ "$trace_bytes" -le $((TRACE_EVENTS * 4097)) ] || requirement "public trace evidence exceeds its size bound"
 	grep -F -- '->' "$WORK_DIR/trace.log" >/dev/null || requirement "public trace evidence has no packet tuple"
-	grep -E -- '127\.0\.0\.1.*->.*127\.0\.0\.1|127\.0\.0\.1.*18080' "$WORK_DIR/trace.log" >/dev/null || requirement "public trace missed generated loopback HTTP traffic"
+	if ! grep -E -- '127\.0\.0\.1.*->.*127\.0\.0\.1|127\.0\.0\.1.*18080' "$WORK_DIR/trace.log" >/dev/null; then
+		# Do not print packet tuples in CI logs. These booleans preserve enough
+		# evidence to distinguish an endpoint mismatch from an empty/non-tuple
+		# trace without turning the failure path into a packet-content channel.
+		tuple_lines=$(grep -Fc -- '->' "$WORK_DIR/trace.log" || true)
+		loopback_lines=$(grep -Ec -- '127\.0\.0\.1' "$WORK_DIR/trace.log" || true)
+		endpoint_lines=$(grep -Ec -- '(^|[^0-9])18080([^0-9]|$)' "$WORK_DIR/trace.log" || true)
+		printf 'public trace tuple diagnostics: tuples=%s loopback_lines=%s endpoint_port_lines=%s bytes=%s\n' \
+			"$tuple_lines" "$loopback_lines" "$endpoint_lines" "$trace_bytes" >&2
+		requirement "public trace missed generated loopback HTTP traffic"
+	fi
 	pwru_force_remove "$PWRU_CONTAINER" 15 || requirement "public trace container cleanup failed"
 	PWRU_CONTAINER_CREATED=false
 	if docker_resource_present container "$PWRU_CONTAINER"; then
