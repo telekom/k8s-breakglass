@@ -424,13 +424,13 @@ jobs:
             target: storage-test
             dockerfile: utils/images/storage-debug/Dockerfile
             shell_paths: utils/images/storage-debug/bin/* utils/images/storage-debug/tests/*.sh
-            metadata: ""
+            metadata: utils/images/storage-debug/image-metadata.yaml
           - name: dump-access
             make_dir: utils/images
             target: dump-test
             dockerfile: utils/images/dump-reader/Dockerfile
             shell_paths: utils/images/dump-reader/bin/* utils/images/dump-reader/tests/*.sh
-            metadata: ""
+            metadata: utils/images/dump-reader/image-metadata.yaml
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run helper tests
@@ -446,7 +446,7 @@ jobs:
         env:
           IMAGE_METADATA: ${{ matrix.metadata }}
         run: |
-          ruby -e 'require "yaml"; YAML.safe_load(File.read(ENV.fetch("IMAGE_METADATA")), aliases: true)'
+          ruby hack/validate-image-metadata.rb "$IMAGE_METADATA"
   build-image:
     name: Build Image
     runs-on: ubuntu-latest

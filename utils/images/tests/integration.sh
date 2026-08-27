@@ -12,6 +12,8 @@ storage_read_only=$test_root/storage-read-only
 dump_input=$test_root/dump-input
 dump_output=$test_root/dump-output
 outside=$test_root/outside
+storage_metadata=$images_root/storage-debug/image-metadata.yaml
+dump_metadata=$images_root/dump-reader/image-metadata.yaml
 remove_storage_image=0
 remove_dump_image=0
 test_version=utility-integration-version
@@ -22,6 +24,43 @@ fail() {
     echo "utility image integration: $1" >&2
     exit 1
 }
+
+metadata_value() {
+    ruby - "$1" "$2" <<'RUBY'
+require "yaml"
+document = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+value = document.fetch("runtime").fetch(ARGV.fetch(1))
+abort "metadata value is not scalar" if value.is_a?(Hash) || value.is_a?(Array)
+puts value
+RUBY
+}
+
+metadata_base_value() {
+    ruby - "$1" "$2" <<'RUBY'
+require "yaml"
+document = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+puts document.fetch("base").fetch(ARGV.fetch(1))
+RUBY
+}
+
+storage_expected_user=$(metadata_value "$storage_metadata" user)
+storage_expected_base_name=$(metadata_base_value "$storage_metadata" image)
+storage_expected_base_digest=$(metadata_base_value "$storage_metadata" digest)
+storage_expected_entrypoint=$(ruby - "$storage_metadata" <<'RUBY'
+require "yaml"
+document = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+puts document.fetch("contract").fetch("executable")
+RUBY
+)
+dump_expected_user=$(metadata_value "$dump_metadata" user)
+dump_expected_base_name=$(metadata_base_value "$dump_metadata" image)
+dump_expected_base_digest=$(metadata_base_value "$dump_metadata" digest)
+dump_expected_entrypoint=$(ruby - "$dump_metadata" <<'RUBY'
+require "yaml"
+document = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+puts document.fetch("contract").fetch("executable")
+RUBY
+)
 
 if [ -n "${STORAGE_IMAGE:-}" ]; then
     storage_image=$STORAGE_IMAGE
@@ -106,15 +145,15 @@ for image in "$storage_image" "$dump_image"; do
     assert_image_label "$image" org.opencontainers.image.revision "$test_revision"
     assert_image_label "$image" org.opencontainers.image.created "$test_created"
 done
-assert_image_label "$storage_image" org.opencontainers.image.base.name alpine:3.24
-assert_image_label "$storage_image" org.opencontainers.image.base.digest sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
-assert_image_label "$dump_image" org.opencontainers.image.base.name busybox:1.37
-assert_image_label "$dump_image" org.opencontainers.image.base.digest sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
+assert_image_label "$storage_image" org.opencontainers.image.base.name "$storage_expected_base_name"
+assert_image_label "$storage_image" org.opencontainers.image.base.digest "$storage_expected_base_digest"
+assert_image_label "$dump_image" org.opencontainers.image.base.name "$dump_expected_base_name"
+assert_image_label "$dump_image" org.opencontainers.image.base.digest "$dump_expected_base_digest"
 
 storage_user=$(docker image inspect "$storage_image" --format '{{.Config.User}}')
 dump_user=$(docker image inspect "$dump_image" --format '{{.Config.User}}')
-[ "$storage_user" = "65532:65532" ] || fail "storage image user is $storage_user"
-[ "$dump_user" = "65532:65532" ] || fail "dump image user is $dump_user"
+[ "$storage_user" = "$storage_expected_user" ] || fail "storage image user is $storage_user, metadata requires $storage_expected_user"
+[ "$dump_user" = "$dump_expected_user" ] || fail "dump image user is $dump_user, metadata requires $dump_expected_user"
 
 check_image_runtime() {
     image=$1
@@ -165,6 +204,18 @@ read_dump_output() {
         --mount "type=bind,src=$dump_output,dst=/output,readonly" \
         --user 65532:65532 --entrypoint /bin/sh "$dump_image" -c "$1"
 }
+
+check_image_contract() {
+    image=$1
+    expected_entrypoint=$2
+    actual_entrypoint=$(docker image inspect "$image" --format '{{index .Config.Entrypoint 0}}')
+    [ "$actual_entrypoint" = "$expected_entrypoint" ] || fail "${image} entrypoint is ${actual_entrypoint}, metadata requires ${expected_entrypoint}"
+}
+
+check_image_contract "$storage_image" "$storage_expected_entrypoint"
+check_image_contract "$dump_image" "$dump_expected_entrypoint"
+run_storage --help >/dev/null
+run_dump help >/dev/null
 
 assert_no_residuals() {
     directory=$1

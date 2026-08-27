@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-.PHONY: test storage-test dump-test shellcheck integration multiarch
+.PHONY: test storage-test dump-test oci-attestation-test shellcheck integration multiarch
 
 test: storage-test dump-test
 
@@ -10,6 +10,9 @@ storage-test:
 
 dump-test:
 	./dump-reader/tests/test.sh
+
+oci-attestation-test:
+	./tests/verify-oci-attestations-test.sh
 
 shellcheck:
 	shellcheck storage-debug/bin/storage-report storage-debug/tests/test.sh \
@@ -27,5 +30,7 @@ multiarch:
 		archive=$$(mktemp "$${TMPDIR:-/tmp}/$${image}.XXXXXX.oci.tar"); \
 		archives="$$archives $$archive"; \
 		docker buildx build --platform linux/amd64,linux/arm64 \
+			--provenance=true --sbom=true \
 			--output "type=oci,dest=$$archive" "$$image"; \
+		ruby tests/verify-oci-attestations.rb "$$archive"; \
 	done
