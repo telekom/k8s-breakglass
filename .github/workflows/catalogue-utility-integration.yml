@@ -64,16 +64,8 @@ jobs:
         run: |
           docker build --file utils/network-debug/Dockerfile --tag "${NETWORK_DEBUG_IMAGE}" utils/network-debug
           docker build --file utils/network-debug/tests/fixtures/kubestr-fio/Dockerfile --tag "${NETWORK_DEBUG_KUBESTR_FIXTURE_IMAGE}" utils/network-debug/tests/fixtures/kubestr-fio
-      - name: Create disposable storage fixture
-        env:
-          NETWORK_DEBUG_KUBESTR_FIXTURE_IMAGE: network-debug-kubestr-fio:integration
-        run: |
-          kind create cluster --name network-debug-proof --image "${KIND_NODE_IMAGE}" --wait 120s
-          kind load docker-image --name network-debug-proof "${NETWORK_DEBUG_KUBESTR_FIXTURE_IMAGE}"
-          kind get kubeconfig --name network-debug-proof > "${RUNNER_TEMP}/network-debug.kubeconfig"
       - name: Execute every network tool contract
         env:
-          KUBECONFIG: ${{ runner.temp }}/network-debug.kubeconfig
           NETWORK_DEBUG_IMAGE: network-debug:integration
           NETWORK_DEBUG_KUBESTR_FIXTURE_IMAGE: network-debug-kubestr-fio:integration
         run: make -C utils/network-debug integration
@@ -81,9 +73,10 @@ jobs:
         if: always()
         run: |
           set +e
-          kind delete cluster --name network-debug-proof
-          if kind get clusters | grep -Fxq network-debug-proof; then
-            echo "network-debug-proof survived cleanup" >&2
+          # The integration script owns and deletes its uniquely named kind
+          # cluster. This step catches an orphaned proof cluster on the runner.
+          if kind get clusters | grep -E '^network-debug-proof-' >/dev/null; then
+            echo "network-debug proof cluster survived cleanup" >&2
             exit 1
           fi
 
