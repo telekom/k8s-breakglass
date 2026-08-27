@@ -37,7 +37,7 @@ const sanitizedError = "diagnostic-artifact-safe-copy: copy failed\n"
 type copyHook func()
 
 type fileMetadata struct {
-	dev     uint64
+	dev     string
 	ino     uint64
 	nlink   uint64
 	size    int64

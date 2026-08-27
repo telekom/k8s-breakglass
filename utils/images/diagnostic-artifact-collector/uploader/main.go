@@ -245,12 +245,19 @@ func isPrivateRegular(info os.FileInfo) bool {
 	if !ok {
 		return false
 	}
-	uid, gid := uint64(stat.Uid), uint64(stat.Gid)
+	// syscall.Stat_t stores UID/GID as uint32 while os.Geteuid/Getegid return
+	// int. Convert both to int64, which represents every value of either type,
+	// after rejecting impossible negative effective identities.
+	euid, egid := os.Geteuid(), os.Getegid()
+	if euid < 0 || egid < 0 {
+		return false
+	}
+	uid, gid := int64(stat.Uid), int64(stat.Gid)
 	// The uploader's runtime identity is the trust boundary. In production it
 	// is UID/GID 65532; using the effective identity here also keeps the same
 	// contract testable by an unprivileged local test process.
-	return (info.Mode().Perm() == 0600 && uid == uint64(os.Geteuid())) ||
-		(info.Mode().Perm() == 0640 && uid == 0 && gid == uint64(os.Getegid()))
+	return (info.Mode().Perm() == 0600 && uid == int64(euid)) ||
+		(info.Mode().Perm() == 0640 && uid == 0 && gid == int64(egid))
 }
 
 // openPrivateNoFollow opens the exact inode observed by the initial Lstat.
@@ -260,6 +267,9 @@ func openPrivateNoFollow(path string, expected os.FileInfo) (*os.File, error) {
 	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, err
+	}
+	if fd < 0 {
+		return nil, errors.New("open archive returned an invalid descriptor")
 	}
 	file := os.NewFile(uintptr(fd), path)
 	if file == nil {

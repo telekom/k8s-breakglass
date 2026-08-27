@@ -5,6 +5,7 @@ package main
 
 import (
 	"os"
+	"strconv"
 	"syscall"
 )
 
@@ -17,7 +18,7 @@ func metadata(info os.FileInfo) (fileMetadata, bool) {
 		return fileMetadata{}, false
 	}
 	return fileMetadata{
-		dev:     stat.Dev,
+		dev:     strconv.FormatUint(stat.Dev, 10),
 		ino:     stat.Ino,
 		nlink:   stat.Nlink,
 		size:    info.Size(),
