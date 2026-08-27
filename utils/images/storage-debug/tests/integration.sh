@@ -11,6 +11,8 @@ remove_image=false
 work=$(mktemp -d "${TMPDIR:-/tmp}/storage-debug-integration.XXXXXX")
 storage="$work/storage"
 reports="$work/reports"
+docker_timeout_seconds=${STORAGE_DOCKER_TIMEOUT_SECONDS:-90}
+run_id="storage-debug-integration-${RANDOM}-${RANDOM}"
 
 fail() {
     printf 'storage-debug integration: %s\n' "$1" >&2
@@ -20,16 +22,66 @@ fail() {
 cleanup() {
     status=$?
     set +e
+    owned_containers=$(docker ps -aq --filter "label=io.telekom.storage-debug.test-run=$run_id")
+    for cid in $owned_containers; do
+        if ! container_belongs_to_run "$cid"; then
+            printf 'storage-debug integration: refusing to remove container without our ownership label: %s\n' "$cid" >&2
+            status=1
+            continue
+        fi
+        docker rm -f "$cid" >/dev/null 2>&1 || status=1
+    done
+    for cidfile in "$work"/*.cid; do
+        [ -s "$cidfile" ] || continue
+        cid=$(cat "$cidfile")
+        if container_belongs_to_run "$cid"; then
+            docker rm -f "$cid" >/dev/null 2>&1 || true
+        else
+            printf 'storage-debug integration: refusing to remove foreign container from cidfile: %s\n' "$cid" >&2
+            status=1
+        fi
+    done
     [ "$remove_image" = true ] && docker image rm "$image" >/dev/null 2>&1
     rm -rf "$work"
     exit "$status"
 }
+
+container_belongs_to_run() {
+    cid=$1
+    [ "$(docker inspect --format '{{index .Config.Labels "io.telekom.storage-debug.test-run"}}' "$cid" 2>/dev/null || true)" = "$run_id" ]
+}
+
 trap cleanup EXIT HUP INT TERM
 
 for command_name in docker kind kubectl jq timeout; do
     command -v "$command_name" >/dev/null 2>&1 || fail "$command_name is required; integration never silently skips"
 done
 docker info >/dev/null 2>&1 || fail 'Docker daemon is unavailable'
+
+case "$docker_timeout_seconds" in
+    ''|*[!0-9]*) fail 'STORAGE_DOCKER_TIMEOUT_SECONDS must be a positive integer' ;;
+esac
+[ "$docker_timeout_seconds" -ge 1 ] || fail 'STORAGE_DOCKER_TIMEOUT_SECONDS must be at least one second'
+
+run_docker() {
+    local cidfile status cid
+    cidfile="$work/container-${RANDOM}-${RANDOM}.cid"
+    set +e
+    timeout --foreground --kill-after=5 "$docker_timeout_seconds" \
+        docker run --label "io.telekom.storage-debug.test-run=$run_id" --cidfile "$cidfile" "$@"
+    status=$?
+    set -e
+    if [ -s "$cidfile" ]; then
+        cid=$(cat "$cidfile")
+        case "$cid" in
+            *[!0-9a-f]*|'') fail "Docker wrote an invalid container ID" ;;
+        esac
+        container_belongs_to_run "$cid" || fail "Docker cidfile did not identify an owned container"
+        docker rm -f "$cid" >/dev/null 2>&1 || true
+    fi
+    rm -f "$cidfile"
+    return "$status"
+}
 
 mkdir -p "$storage" "$reports"
 chmod 0777 "$storage" "$reports"
@@ -49,12 +101,28 @@ fi
 [ "$(docker image inspect "$image" --format '{{index .Config.Entrypoint 0}}')" = '/usr/local/bin/storage-diagnostics' ] || \
     fail 'image entrypoint is not storage-diagnostics'
 
-docker run --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
+saved_docker_timeout_seconds=$docker_timeout_seconds
+docker_timeout_seconds=1
+if run_docker --rm --network none --read-only --cap-drop=ALL \
+    --security-opt=no-new-privileges --entrypoint /bin/sh "$image" -c 'sleep 30'; then
+    fail 'outer Docker timeout did not stop a hung diagnostic process'
+else
+    timeout_status=$?
+fi
+docker_timeout_seconds=$saved_docker_timeout_seconds
+case "$timeout_status" in
+    124|137) ;;
+    *) fail "outer Docker timeout returned unexpected status $timeout_status" ;;
+esac
+[ -z "$(docker ps -aq --filter "label=io.telekom.storage-debug.test-run=$run_id")" ] || \
+    fail 'timed-out diagnostic container survived cleanup'
+
+run_docker --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
     --security-opt=no-new-privileges --tmpfs /tmp:rw,nosuid,nodev,size=64m \
     "$image" help >/dev/null
 
 run_storage() {
-    docker run --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
+    run_docker --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
         --security-opt=no-new-privileges --tmpfs /tmp:rw,nosuid,nodev,size=64m \
         --mount "type=bind,src=$storage,dst=/scratch" \
         --mount "type=bind,src=$reports,dst=/reports" \
@@ -62,7 +130,7 @@ run_storage() {
 }
 
 run_readonly_storage() {
-    docker run --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
+    run_docker --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
         --security-opt=no-new-privileges --tmpfs /tmp:rw,nosuid,nodev,size=64m \
         --mount "type=bind,src=$storage,dst=/scratch,readonly" \
         --mount "type=bind,src=$reports,dst=/reports" \
@@ -70,7 +138,7 @@ run_readonly_storage() {
 }
 
 read_report() {
-    docker run --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
+    run_docker --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
         --security-opt=no-new-privileges --tmpfs /tmp:rw,nosuid,nodev,size=64m \
         --mount "type=bind,src=$reports,dst=/reports,readonly" \
         --entrypoint /bin/sh "$image" -c "$1"
@@ -102,20 +170,20 @@ done
 
 printf '%s\n' 'checking operation plan and input boundaries'
 immutable_image="registry.example/storage-debug@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-plan=$(docker run --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
+plan=$(run_docker --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
     --security-opt=no-new-privileges --tmpfs /tmp:rw,nosuid,nodev,size=64m \
     -e POD_NAMESPACE=storage-session \
     -e STORAGE_DEBUG_WORKLOAD_IMAGE="$immutable_image" \
     "$image" plan performance --storage-class fast-csi --pvc-size 8Gi)
 printf '%s\n' "$plan" | grep -Fx 'intent=storage-diagnostics' >/dev/null
 printf '%s\n' "$plan" | grep -F -- '--testname default-fio' >/dev/null
-if docker run --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
+if run_docker --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
     --security-opt=no-new-privileges --tmpfs /tmp:rw,nosuid,nodev,size=64m \
     -e POD_NAMESPACE=storage.session -e STORAGE_DEBUG_WORKLOAD_IMAGE="$immutable_image" \
     "$image" plan performance --storage-class fast-csi >/dev/null 2>&1; then
     fail 'dotted namespace was accepted'
 fi
-if docker run --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
+if run_docker --rm --platform "$platform" --read-only --network none --cap-drop=ALL \
     --security-opt=no-new-privileges --tmpfs /tmp:rw,nosuid,nodev,size=64m \
     -e POD_NAMESPACE=storage-session -e STORAGE_DEBUG_WORKLOAD_IMAGE="$immutable_image" \
     "$image" plan performance --storage-class fast-csi --image attacker:latest >/dev/null 2>&1; then
