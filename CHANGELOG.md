@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pod-template cleanup now migrates pre-UID auxiliary resources only when their
   legacy session name and source-session markers both identify the terminating
   session; partial or mismatched markers remain protected.
+- Network-debug integration now requires the pwru proof in CI, allows a bounded
+  BPF-detach window after SIGINT, and deletes only resources carrying this run's
+  exact ownership label after daemon-reachable checks.
 - Cluster-validator reports now reject traversal and symlink escapes, use
   owner-only report permissions, and preserve post-upgrade diagnostics in a
   credential-free CI artifact on failure.

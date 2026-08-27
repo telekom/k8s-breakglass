@@ -68,6 +68,7 @@ jobs:
         env:
           NETWORK_DEBUG_IMAGE: network-debug:integration
           NETWORK_DEBUG_KUBESTR_FIXTURE_IMAGE: network-debug-kubestr-fio:integration
+          NETWORK_DEBUG_REQUIRE_PWRU: "true"
         run: make -C utils/network-debug integration
       - name: Remove and verify disposable cluster
         if: always()
