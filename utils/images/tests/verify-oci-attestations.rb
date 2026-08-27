@@ -70,19 +70,22 @@ platforms = images.map { |descriptor| "#{descriptor.dig('platform', 'os')}/#{des
 fail_archive("archive is missing linux/amd64 or linux/arm64 image manifests") unless platforms.sort == %w[linux/amd64 linux/arm64]
 
 image_digests = images.map { |descriptor| descriptor_digest(descriptor, "image manifest") }
+image_attestations = {}
+images.each do |descriptor|
+  digest = descriptor_digest(descriptor, "image manifest")
+  image_attestations[digest] = { "platform" => "#{descriptor.dig('platform', 'os')}/#{descriptor.dig('platform', 'architecture')}", "sbom" => false, "provenance" => false }
+end
 attestations = descriptors.select do |descriptor|
   descriptor.dig("annotations", "vnd.docker.reference.type") == "attestation-manifest"
 end
 fail_archive("BuildKit emitted no attestation manifests") if attestations.empty?
 
-found_sbom = false
-found_provenance = false
 attestations.each do |descriptor|
   reference_digest = descriptor.dig("annotations", "vnd.docker.reference.digest").to_s
   fail_archive("attestation has no image subject reference") unless image_digests.include?(reference_digest)
   manifest = JSON.parse(read_blob(archive, descriptor, "attestation manifest"))
   subject_digest = manifest.dig("subject", "digest")
-  fail_archive("attestation subject does not match its reference") if subject_digest && subject_digest != reference_digest
+  fail_archive("attestation subject is missing or does not match its reference") unless subject_digest == reference_digest
   layers = manifest["layers"]
   fail_archive("attestation manifest has no layers") unless layers.is_a?(Array) && !layers.empty?
 
@@ -94,13 +97,15 @@ attestations.each do |descriptor|
     predicate_type = statement["predicateType"].to_s
     predicate = statement["predicate"]
     if predicate_type.include?("spdx") || (predicate.is_a?(Hash) && predicate["spdxVersion"])
-      found_sbom = true
+      image_attestations.fetch(reference_digest)["sbom"] = true
     elsif predicate_type.include?("slsa")
-      found_provenance = true
+      image_attestations.fetch(reference_digest)["provenance"] = true
     end
   end
 end
 
-fail_archive("SPDX SBOM attestation is missing") unless found_sbom
-fail_archive("SLSA provenance attestation is missing") unless found_provenance
+image_attestations.each_value do |attestation|
+  fail_archive("SPDX SBOM attestation is missing for #{attestation['platform']}") unless attestation["sbom"]
+  fail_archive("SLSA provenance attestation is missing for #{attestation['platform']}") unless attestation["provenance"]
+end
 puts "validated OCI archive #{archive} (#{platforms.sort.join(', ')}, SBOM, provenance)"
