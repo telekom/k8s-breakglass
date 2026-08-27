@@ -3,7 +3,7 @@
 
 ---
 
-image: storage-debug
+image: ghcr.io/telekom/k8s-breakglass/utils/storage-debug
 context: utils/images/storage-debug
 platforms:
   - linux/amd64

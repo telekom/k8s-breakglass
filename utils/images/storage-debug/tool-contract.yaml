@@ -4,7 +4,7 @@
 ---
 schemaVersion: 1
 intent: storage-diagnostics
-image: storage-debug
+image: ghcr.io/telekom/k8s-breakglass/utils/storage-debug
 operations:
   - id: mounted-volume
     apiAccess: false

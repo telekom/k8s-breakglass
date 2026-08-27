@@ -3,7 +3,7 @@
 
 SHELL := /bin/sh
 
-IMAGE ?= ghcr.io/telekom/k8s-breakglass/storage-debug:dev
+IMAGE ?= ghcr.io/telekom/k8s-breakglass/utils/storage-debug:dev
 PLATFORM ?= linux/amd64
 
 .PHONY: test build integration shellcheck

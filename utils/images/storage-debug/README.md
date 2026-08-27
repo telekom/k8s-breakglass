@@ -58,7 +58,7 @@ inject these values, not expose them as free-form session input:
 
 ```text
 POD_NAMESPACE=<dedicated session namespace>
-STORAGE_DEBUG_WORKLOAD_IMAGE=registry.example/storage-debug@sha256:<64 hex>
+STORAGE_DEBUG_WORKLOAD_IMAGE=ghcr.io/telekom/k8s-breakglass/utils/storage-debug@sha256:<64 hex>
 ```
 
 The same immutable image is used for kubestr's child Pods. Do not use
