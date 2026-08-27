@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
@@ -181,7 +182,7 @@ func writeReport(report clustervalidator.Report, path string) error {
 }
 
 func writeReportAtRoot(report clustervalidator.Report, path, root string) error {
-	path, err := safeReportPath(path, root)
+	rootPath, relativePath, err := safeReportPath(path, root)
 	if err != nil {
 		return err
 	}
@@ -189,19 +190,27 @@ func writeReportAtRoot(report clustervalidator.Report, path, root string) error 
 	if err != nil {
 		return err
 	}
-	directory := filepath.Dir(path)
-	temporary, err := os.CreateTemp(directory, ".cluster-validator-report-*")
+	rootHandle, err := os.OpenRoot(rootPath)
 	if err != nil {
-		return fmt.Errorf("create temporary report: %w", err)
+		return fmt.Errorf("open report root: %w", err)
 	}
-	temporaryName := temporary.Name()
+	defer func() { _ = rootHandle.Close() }()
+	directory := filepath.Dir(relativePath)
+	if directory != "." {
+		if err := rootHandle.MkdirAll(directory, 0o700); err != nil {
+			return fmt.Errorf("create report directory: %w", err)
+		}
+	}
+	if info, statErr := rootHandle.Lstat(relativePath); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("report path must not be a symlink")
+	}
+	temporaryName, temporary, err := createTemporaryReport(rootHandle, directory)
+	if err != nil {
+		return err
+	}
 	defer func() {
-		_ = os.Remove(temporaryName) // best effort cleanup after a failed write
+		_ = rootHandle.Remove(temporaryName) // best effort cleanup after a failed write
 	}()
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("protect temporary report: %w", err)
-	}
 	if _, err := temporary.Write(data); err != nil {
 		_ = temporary.Close()
 		return fmt.Errorf("write report: %w", err)
@@ -209,57 +218,57 @@ func writeReportAtRoot(report clustervalidator.Report, path, root string) error 
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close temporary report: %w", err)
 	}
-	// safeReportPath rejects symlink destinations and confines directory to the
-	// report volume. Rename does not follow a destination symlink, so replacing
-	// an existing regular report is atomic and cannot write outside that volume.
-	if err := os.Rename(temporaryName, path); err != nil { // #nosec G703 -- path is confined by safeReportPath
-		return fmt.Errorf("install report %q: %w", path, err)
+	// os.Root performs every path traversal relative to one open directory
+	// descriptor and refuses symlink escapes, including concurrent replacements.
+	if err := rootHandle.Rename(temporaryName, relativePath); err != nil {
+		return fmt.Errorf("install report %q: %w", relativePath, err)
 	}
 	return nil
 }
 
-// safeReportPath resolves report output below root and rejects traversal or
-// symlink escapes. The report path is supplied by a CLI flag/environment value,
-// so it must not be allowed to select arbitrary files in the container.
-func safeReportPath(path, root string) (string, error) {
+func createTemporaryReport(root *os.Root, directory string) (string, *os.File, error) {
+	for range 10 {
+		var suffix [16]byte
+		if _, err := rand.Read(suffix[:]); err != nil {
+			return "", nil, fmt.Errorf("generate temporary report name: %w", err)
+		}
+		name := filepath.Join(directory, fmt.Sprintf(".cluster-validator-report-%x", suffix))
+		file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			return name, file, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return "", nil, fmt.Errorf("create temporary report: %w", err)
+		}
+	}
+	return "", nil, fmt.Errorf("create temporary report: exhausted unique names")
+}
+
+// safeReportPath converts report output to a path local to root. os.Root then
+// provides descriptor-relative traversal and rejects symlink escapes without a
+// time-of-check/time-of-use gap.
+func safeReportPath(path, root string) (string, string, error) {
 	root, err := filepath.Abs(filepath.Clean(root))
 	if err != nil {
-		return "", fmt.Errorf("resolve report root: %w", err)
+		return "", "", fmt.Errorf("resolve report root: %w", err)
 	}
 	if info, statErr := os.Lstat(root); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("report root must not be a symlink")
+		return "", "", fmt.Errorf("report root must not be a symlink")
 	}
 	if err := os.MkdirAll(root, 0o700); err != nil {
-		return "", fmt.Errorf("create report directory: %w", err)
+		return "", "", fmt.Errorf("create report directory: %w", err)
 	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(root, path)
+	relativePath := filepath.Clean(path)
+	if filepath.IsAbs(relativePath) {
+		relativePath, err = filepath.Rel(root, relativePath)
+		if err != nil {
+			return "", "", fmt.Errorf("resolve report path: %w", err)
+		}
 	}
-	path = filepath.Clean(path)
-	rel, err := filepath.Rel(root, path)
-	if err != nil || !filepath.IsLocal(rel) {
-		return "", fmt.Errorf("report path must remain below %s", root)
+	if !filepath.IsLocal(relativePath) || relativePath == "." {
+		return "", "", fmt.Errorf("report path must remain below %s", root)
 	}
-	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return "", fmt.Errorf("create report directory: %w", err)
-	}
-	resolvedRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", fmt.Errorf("resolve report root: %w", err)
-	}
-	resolvedDirectory, err := filepath.EvalSymlinks(directory)
-	if err != nil {
-		return "", fmt.Errorf("resolve report directory: %w", err)
-	}
-	resolvedRel, err := filepath.Rel(resolvedRoot, resolvedDirectory)
-	if err != nil || !filepath.IsLocal(resolvedRel) {
-		return "", fmt.Errorf("report directory must remain below %s", root)
-	}
-	if info, statErr := os.Lstat(path); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("report path must not be a symlink")
-	}
-	return path, nil
+	return root, relativePath, nil
 }
 
 func writeResult(report clustervalidator.Report, path string, stdout, stderr io.Writer, exitCode int) int {
