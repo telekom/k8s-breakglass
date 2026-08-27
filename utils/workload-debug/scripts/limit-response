@@ -43,7 +43,15 @@ body_file=$temporary_dir/body
 header_pipe=$temporary_dir/header.pipe
 mkfifo "$header_pipe"
 header_guard_pid=
+header_dummy_open=0
 cleanup() {
+    # Keep the FIFO reader from waiting forever when curl rejects a URL before
+    # opening --dump-header. Closing this read/write descriptor supplies EOF to
+    # the guard after the curl/body pipeline has finished.
+    if [ "$header_dummy_open" -eq 1 ]; then
+        exec 3>&- || true
+        header_dummy_open=0
+    fi
     if [ -n "$header_guard_pid" ]; then
         kill "$header_guard_pid" 2>/dev/null || true
         wait "$header_guard_pid" 2>/dev/null || true
@@ -52,12 +60,21 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
+# Opening a FIFO read/write avoids the early-curl failure deadlock: curl may
+# reject malformed input before opening the dump-header path, while this
+# descriptor keeps the guard's read side open until the pipeline is complete.
+exec 3<>"$header_pipe"
+header_dummy_open=1
+
 guard_headers() {
     local input=$1
     local output=$2
     local limit=$3
     local read_status=0
 
+    # The background guard inherits the parent's read/write FIFO descriptor;
+    # close its copy or it would keep the FIFO writer side alive forever.
+    exec 3>&-
     set +e
     head -c "$((limit + 1))" <"$input" >"$output"
     read_status=$?
@@ -76,6 +93,10 @@ pipeline_status=("${PIPESTATUS[@]}")
 curl_status=${pipeline_status[0]}
 head_status=${pipeline_status[1]}
 set -e
+# Let the guard observe EOF now that curl has finished. Keeping the descriptor
+# open until EXIT would make every otherwise successful request wait forever.
+exec 3>&-
+header_dummy_open=0
 header_status=0
 wait "$header_guard_pid" || header_status=$?
 header_guard_pid=

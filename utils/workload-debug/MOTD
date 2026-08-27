@@ -8,8 +8,10 @@ This image is a restricted, non-root troubleshooting toolbox.
   workload-debug report [--dns NAME] [--tls HOST[:PORT]] [--http URL] [--kube PATH]
 
 Docs in this image:
-  /usr/local/share/workload-debug/README.md
-  /usr/local/share/workload-debug/RUNBOOK.md
+  /usr/share/breakglass/runbooks/upstream/workload-debug/README.md
+  /usr/share/breakglass/runbooks/upstream/workload-debug/RUNBOOK.md
+Optional mounted runbook index (if provided):
+  /usr/share/breakglass/runbooks/internal/INDEX.md (documentation only; never sourced)
 
 The filesystem is intended to be mounted read-only. Do not paste secrets into
 terminal output. Kubernetes API access uses only the explicitly supplied

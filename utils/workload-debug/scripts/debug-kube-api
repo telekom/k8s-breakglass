@@ -9,14 +9,18 @@ Usage: debug-kube-api [--server URL] [--ca FILE] [--token FILE] [PATH]
 
 PATH defaults to /version. The Kubernetes service environment is used only
 when --server is omitted; no pod, namespace, session, or controller metadata
-is required. The service-account token is never printed.
+is required. The projected service-account token is used only for that
+in-cluster endpoint. Use --token explicitly before sending a credential to an
+overridden server. The service-account token is never printed.
 EOF
 }
 
 service_port=${KUBERNETES_SERVICE_PORT_HTTPS:-${KUBERNETES_SERVICE_PORT:-443}}
 server=${KUBERNETES_SERVICE_HOST:+https://${KUBERNETES_SERVICE_HOST}:${service_port}}
+server_override=0
 ca_file=${KUBE_CA_FILE:-/var/run/secrets/kubernetes.io/serviceaccount/ca.crt}
 token_file=${KUBE_TOKEN_FILE:-/var/run/secrets/kubernetes.io/serviceaccount/token}
+token_explicit=0
 timeout_seconds=${WORKLOAD_DEBUG_TIMEOUT:-10}
 path=/version
 
@@ -32,9 +36,9 @@ while [ "$#" -gt 0 ]; do
         --server|--ca|--token)
             [ "$#" -ge 2 ] || { usage >&2; exit 2; }
             case "$1" in
-                --server) server=$2 ;;
+                --server) server=$2; server_override=1 ;;
                 --ca) ca_file=$2 ;;
-                --token) token_file=$2 ;;
+                --token) token_file=$2; token_explicit=1 ;;
             esac
             shift 2 ;;
         --help|-h) usage; exit 0 ;;
@@ -87,7 +91,10 @@ cleanup_auth() {
 }
 trap cleanup_auth EXIT HUP INT TERM
 
-if [ -r "$token_file" ]; then
+# A projected service-account token is scoped to the in-cluster API endpoint.
+# Never send it to an explicitly overridden server. Callers that intentionally
+# need credentials for another endpoint must opt in with --token.
+if [ -r "$token_file" ] && { [ "$server_override" -eq 0 ] || [ "$token_explicit" -eq 1 ]; }; then
     token=$(tr -d '\r\n' < "$token_file")
     [ -n "$token" ] && {
         for temporary_base in "${TMPDIR:-}" /dev/shm /tmp; do

@@ -63,6 +63,8 @@ securityContext:
   readOnlyRootFilesystem: true
   capabilities:
     drop: [ALL]
+  seccompProfile:
+    type: RuntimeDefault
 ```
 
 The Kubernetes helper uses the standard service-account CA and token files
@@ -82,6 +84,12 @@ OPTIONS are accepted, redirects are not followed, and responses are limited to
 1 MiB by default. `WORKLOAD_DEBUG_TIMEOUT` accepts 1–300 seconds and
 `WORKLOAD_DEBUG_MAX_BYTES` accepts 1–10 MiB when a different bounded limit is
 needed.
+DNS and TLS diagnostics use the same timeout and cap combined command output
+at 64 KiB by default. Set `WORKLOAD_DEBUG_MAX_OUTPUT_BYTES` to a value from 1
+byte through 1 MiB for a different bounded limit. If the deployment mounts
+the optional internal runbook volume, its index is available at
+`/usr/share/breakglass/runbooks/internal/INDEX.md`; it is documentation only
+and is never sourced.
 
 The checked-in `tool-contract.json` records the stable `workload-diagnostics`
 intent and each helper's allowed operation. `debug-report --json` emits a

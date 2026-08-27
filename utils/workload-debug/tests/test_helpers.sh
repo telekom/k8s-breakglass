@@ -8,8 +8,13 @@ fixture=$(mktemp -d)
 trap 'rm -rf "$fixture"' EXIT HUP INT TERM
 cat >"$fixture/nslookup" <<'EOF'
 #!/bin/sh
-if [ "$#" -ne 1 ] || [ "$1" != localhost ]; then
+if [ "$#" -ne 1 ] || { [ "$1" != localhost ] && [ "$1" != large ]; }; then
   exit 2
+fi
+if [ "$1" = large ]; then
+  i=0
+  while [ "$i" -lt 1024 ]; do printf x; i=$((i + 1)); done
+  exit 0
 fi
 printf '%s\n' 'Name: localhost' 'Address: 127.0.0.1'
 EOF
@@ -77,6 +82,31 @@ if WORKLOAD_DEBUG_MAX_BYTES=0 debug-http https://invalid.example >/dev/null 2>&1
     printf '%s\n' 'debug-http accepted an unbounded response size' >&2
     exit 1
 fi
+
+# Curl can reject a malformed URL before opening the header FIFO. The bounded
+# response helper must return promptly rather than leaving its reader blocked.
+malformed_status=0
+timeout 5 debug-http 'http://[::1' >"$fixture/malformed-output" 2>"$fixture/malformed-error" || malformed_status=$?
+[ "$malformed_status" -ne 124 ] || {
+  printf '%s\n' 'debug-http hung after curl rejected a malformed URL' >&2
+  exit 1
+}
+
+# DNS/TLS diagnostic output is finite even when a peer emits an unusually
+# large response. The command returns failure after emitting the configured
+# bound, rather than buffering unbounded output.
+dns_large_status=0
+if WORKLOAD_DEBUG_MAX_OUTPUT_BYTES=64 debug-dns large >"$fixture/dns-large-output" 2>"$fixture/dns-large-error"; then
+  printf '%s\n' 'debug-dns accepted output over its configured bound' >&2
+  exit 1
+else
+  dns_large_status=$?
+fi
+[ "$dns_large_status" -ne 0 ] || exit 1
+[ "$(wc -c <"$fixture/dns-large-output")" -eq 64 ] || {
+  printf '%s\n' 'debug-dns did not emit exactly its configured output bound' >&2
+  exit 1
+}
 
 # Exercise the actual streaming limiter with an unknown-length response. The
 # fake curl emits 1 KiB without Content-Length, so --max-filesize alone would

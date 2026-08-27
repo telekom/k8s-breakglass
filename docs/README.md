@@ -26,6 +26,7 @@ Complete documentation for the breakglass privilege escalation system.
 - **[Metrics](./metrics.md)** - Prometheus metrics and monitoring
 - **[Rate Limiting](./rate-limiting.md)** - Multi-tier rate limiting architecture, tiers, and troubleshooting
 - **[Logging and Debugging](./logging-and-debugging.md)** - Frontend and backend logging infrastructure, debugging tips
+- **[Workload-debug runbook](./runbooks/workload-debug.md)** - Restricted workload diagnostics image and bounded helper usage
 - **[CI Logs and Artifacts](./ci-logs.md)** - Retrieve CI logs and artifacts with gh CLI
 
 ## Identity & Authentication

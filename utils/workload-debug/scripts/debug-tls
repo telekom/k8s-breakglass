@@ -5,6 +5,7 @@ set -eu
 
 usage() { printf '%s\n' 'Usage: debug-tls [--ca FILE] [--timeout SECONDS] HOST[:PORT]'; }
 timeout_seconds=${WORKLOAD_DEBUG_TIMEOUT:-10}
+max_output=${WORKLOAD_DEBUG_MAX_OUTPUT_BYTES:-65536}
 ca_file=
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -26,6 +27,13 @@ case "$timeout_seconds" in
 esac
 if [ "$timeout_seconds" -lt 1 ] || [ "$timeout_seconds" -gt 300 ]; then
     printf '%s\n' 'debug-tls: timeout must be between 1 and 300' >&2
+    exit 2
+fi
+case "$max_output" in
+    ''|*[!0-9]*) printf '%s\n' 'debug-tls: max output must be a positive integer' >&2; exit 2 ;;
+esac
+if [ "$max_output" -lt 1 ] || [ "$max_output" -gt 1048576 ]; then
+    printf '%s\n' 'debug-tls: max output must be between 1 and 1048576 bytes' >&2
     exit 2
 fi
 endpoint=$1
@@ -57,4 +65,9 @@ if [ -n "$ca_file" ]; then
     [ -r "$ca_file" ] || { printf 'debug-tls: CA file is not readable: %s\n' "$ca_file" >&2; exit 2; }
     set -- "$@" -CAfile "$ca_file" -verify 1 -verify_return_error
 fi
-printf '\n' | timeout "$timeout_seconds" "$@" 2>&1
+limit_output=/usr/local/bin/limit-output
+if [ ! -x "$limit_output" ]; then
+    script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+    limit_output=$script_dir/limit-output
+fi
+printf '\n' | "$limit_output" "$max_output" "$timeout_seconds" "$@"

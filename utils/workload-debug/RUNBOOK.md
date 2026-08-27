@@ -24,3 +24,10 @@ from a file and passes only a temporary header-file path to curl, so the token
 does not appear in process arguments. Never put tokens, cookies, or private
 keys in arguments or captured output. End the session and retain only approved
 output.
+
+DNS and TLS output is bounded to 64 KiB by default and uses the same
+1–300-second `WORKLOAD_DEBUG_TIMEOUT` bound. Set
+`WORKLOAD_DEBUG_MAX_OUTPUT_BYTES` to a value from 1 byte through 1 MiB when a
+different limit is required. An optional deployment-provided runbook index may
+be mounted at `/usr/share/breakglass/runbooks/internal/INDEX.md`; consult it as
+documentation only.

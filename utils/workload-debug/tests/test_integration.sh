@@ -125,6 +125,7 @@ kubectl -n "$namespace" create serviceaccount workload-debug
 kubectl -n "$namespace" create role workload-debug --verb=get --resource=configmaps
 kubectl -n "$namespace" create rolebinding workload-debug --role=workload-debug --serviceaccount="$namespace:workload-debug"
 kubectl -n "$namespace" create configmap fixture-config --from-literal=value=fixture-config-value
+kubectl -n "$namespace" create configmap internal-runbook --from-literal=INDEX.md='internal runbook fixture'
 
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=workload-debug-fixture" \
   -keyout "$fixture_dir/ca.key" -out "$fixture_dir/ca.crt" >/dev/null 2>&1
@@ -149,9 +150,17 @@ spec:
   - name: workload-debug
     image: $image
     command: ["/bin/sh", "-c", "exec sleep 600"]
-    securityContext: {runAsUser: 65532, runAsGroup: 65532, runAsNonRoot: true, readOnlyRootFilesystem: true, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
-    volumeMounts: [{name: ca, mountPath: /fixture-ca, readOnly: true}]
-  volumes: [{name: ca, configMap: {name: fixture-ca}}]
+    securityContext: {runAsUser: 65532, runAsGroup: 65532, runAsNonRoot: true, readOnlyRootFilesystem: true, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}
+    volumeMounts:
+    - {name: ca, mountPath: /fixture-ca, readOnly: true}
+    - {name: ephemeral, mountPath: /workload-debug-tmp}
+    - {name: internal-runbooks, mountPath: /usr/share/breakglass/runbooks/internal, readOnly: true}
+  volumes:
+  - {name: ca, configMap: {name: fixture-ca}}
+  - name: ephemeral
+    emptyDir: {medium: Memory, sizeLimit: 1Mi}
+  - name: internal-runbooks
+    configMap: {name: internal-runbook, defaultMode: 0444}
 EOF
 # Create the runner first so the HTTP fixture is pinned to this invocation's
 # exact projected token, rather than independently projecting another token.
@@ -256,7 +265,10 @@ security=$(kubectl -n "$namespace" get pod "$runner" -o json | jq -c '.spec.cont
 [[ "$(jq -r '.readOnlyRootFilesystem' <<<"$security")" == true ]] || fail "runner is writable"
 [[ "$(jq -r '.allowPrivilegeEscalation' <<<"$security")" == false ]] || fail "privilege escalation is enabled"
 [[ "$(jq -c '.capabilities' <<<"$security")" == '{"drop":["ALL"]}' ]] || fail "runner capabilities are not dropped"
+[[ "$(jq -r '.seccompProfile.type' <<<"$security")" == RuntimeDefault ]] || fail "runner does not use RuntimeDefault seccomp"
 if run_target "touch /runtime-write" >/dev/null 2>&1; then fail "read-only runner allowed a filesystem write"; fi
+internal_notice=$(run_target "WORKLOAD_DEBUG_MOTD=0 /usr/local/bin/workload-debug-entrypoint /bin/true")
+assert_contains "$internal_notice" '/usr/share/breakglass/runbooks/internal/INDEX.md'
 
 http_security=$(kubectl -n "$namespace" get pod http-fixture -o json)
 [[ "$(jq -r '.spec.automountServiceAccountToken' <<<"$http_security")" == false ]] || fail "HTTP fixture has a service-account token"
@@ -324,6 +336,15 @@ if run_target "debug-kube-api '/api/v1/namespaces/$namespace/secrets/$auth_secre
   fail "runner service account can read the HTTP fixture Secret"
 fi
 
+# An explicitly overridden server must not receive the projected in-cluster
+# token. The authenticated fixture returns 401 when no Authorization header is
+# sent, which proves the request reached it without implicit credentials.
+kube_no_auth_output=
+if kube_no_auth_output=$(run_target "debug-kube-api --server '$http_url' /auth"); then
+  fail "debug-kube-api sent an implicit token to an overridden server"
+fi
+assert_contains "$kube_no_auth_output" "authorization-required"
+
 # The fixture validates the exact projected service-account token, rather than
 # merely checking that some Authorization header exists. The successful body
 # proves that debug-kube-api supplied the real bearer credential.
@@ -367,7 +388,8 @@ failed_report=$(run_target "debug-report --json --http '$http_url/missing'")
 [[ "$(jq -r '.status' <<<"$failed_report")" == not-ready ]] || fail "failed report is not not-ready"
 [[ "$(jq -r '.checks_failed' <<<"$failed_report")" == 1 ]] || fail "failed report count is wrong"
 
-secret_probe=$(kubectl -n "$namespace" exec "$runner" -- /bin/sh -c "WORKLOAD_DEBUG_TIMEOUT=5 debug-kube-api --server '$http_url' --token /var/run/secrets/kubernetes.io/serviceaccount/token /auth-chunked >/dev/null 2>/tmp/auth-stderr & p=\$!; observed=0; for _ in 1 2 3 4 5 6 7 8 9 10; do if kill -0 \$p 2>/dev/null; then observed=1; tr '\\000' ' ' < /proc/\$p/cmdline; fi; sleep .2; done; wait \$p || true; cat /tmp/auth-stderr; rm -f /tmp/auth-stderr; [ \$observed -eq 1 ] || { echo 'could not observe helper process' >&2; exit 1; }")
+secret_probe=$(kubectl -n "$namespace" exec "$runner" -- /bin/sh -c "TMPDIR=/workload-debug-tmp WORKLOAD_DEBUG_TIMEOUT=5 debug-kube-api --server '$http_url' --token /var/run/secrets/kubernetes.io/serviceaccount/token /auth-chunked >/dev/null 2>/workload-debug-tmp/auth-stderr & p=\$!; observed=0; for _ in 1 2 3 4 5 6 7 8 9 10; do if kill -0 \$p 2>/dev/null; then observed=1; tr '\\000' ' ' < /proc/\$p/cmdline; fi; sleep .2; done; wait \$p || { echo 'authenticated helper failed' >&2; exit 1; }; grep -F 'response' /workload-debug-tmp/auth-stderr >/dev/null && { echo 'authenticated helper emitted an unexpected error' >&2; exit 1; } || true; rm -f /workload-debug-tmp/auth-stderr; [ \$observed -eq 1 ] || { echo 'could not observe helper process' >&2; exit 1; }; echo helper-executed")
+assert_contains "$secret_probe" 'helper-executed'
 assert_not_contains "$secret_probe" "$token"
 logs=$(kubectl -n "$namespace" logs "$runner")
 assert_not_contains "$logs" "$token"

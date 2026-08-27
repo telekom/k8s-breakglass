@@ -21,13 +21,19 @@ Included helpers:
 
 `workload-debug <command>` is a convenient dispatcher. The shell remains the
 default command for interactive sessions. In a built image, read
-`/usr/local/share/workload-debug/RUNBOOK.md` for operator guidance; the source
-tree copy is [`RUNBOOK.md`](RUNBOOK.md).
+`/usr/share/breakglass/runbooks/upstream/workload-debug/RUNBOOK.md` for operator guidance; the source
+tree copy is [`RUNBOOK.md`](RUNBOOK.md). Deployments may additionally mount
+the optional internal runbook index at
+`/usr/share/breakglass/runbooks/internal/INDEX.md`; it is
+documentation only and is never sourced or executed by the image.
 
 HTTP and Kubernetes API helpers only allow GET, HEAD, and OPTIONS requests,
 do not follow redirects, and cap each response at 1 MiB by default. Set
 `WORKLOAD_DEBUG_TIMEOUT` (1–300 seconds) or `WORKLOAD_DEBUG_MAX_BYTES` (1–10
 MiB) when a different bounded limit is required.
+DNS and TLS diagnostics cap combined command output at 64 KiB by default; set
+`WORKLOAD_DEBUG_MAX_OUTPUT_BYTES` (1 byte–1 MiB) to choose another bounded
+limit. Their operation timeout uses `WORKLOAD_DEBUG_TIMEOUT` (1–300 seconds).
 
 The image is pinned to a multi-architecture Alpine base digest, runs as
 non-root UID/GID `65532`, and drops all capabilities. Bounded HTTP responses

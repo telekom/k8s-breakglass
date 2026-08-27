@@ -28,9 +28,11 @@ create)
         esac
     done
     [ -n "$name" ] && [ -n "$kubeconfig" ]
-    if [ "${KIND_CREATE_MODE:-success}" = partial ]; then
+    if [ "${KIND_CREATE_MODE:-success}" = partial ] || [ "${KIND_CREATE_MODE:-success}" = partial-no-kubeconfig ]; then
         printf '%s\n' "$name" >"$state"
-        : >"$kubeconfig"
+        if [ "${KIND_CREATE_MODE:-success}" != partial-no-kubeconfig ]; then
+            : >"$kubeconfig"
+        fi
         exit 42
     fi
     printf '%s\n' "$name" >"$state"
@@ -98,6 +100,31 @@ kind_lifecycle_cleanup partial-owned "$fixture/partial.kubeconfig"
 }
 grep -Fx 'partial-owned' "$KIND_DELETE_LOG" >/dev/null || {
     printf '%s\n' 'owned partial cluster was not deleted' >&2
+    exit 1
+}
+
+# A failed create can register the cluster before writing its kubeconfig. It
+# is still owned by this invocation and must be deleted without that file.
+: >"$KIND_STATE"
+export KIND_CREATE_MODE=partial-no-kubeconfig
+KIND_LIFECYCLE_OWNED=0
+partial_without_config_status=0
+kind_lifecycle_create partial-no-config kind-node:dev "$fixture/no-config.kubeconfig" || partial_without_config_status=$?
+[ "$partial_without_config_status" -eq 42 ] || {
+    printf 'partial no-config create returned status %s, expected 42\n' "$partial_without_config_status" >&2
+    exit 1
+}
+[ "$KIND_LIFECYCLE_OWNED" -eq 1 ] || {
+    printf '%s\n' 'partial cluster without kubeconfig was not marked as owned' >&2
+    exit 1
+}
+kind_lifecycle_cleanup partial-no-config "$fixture/no-config.kubeconfig"
+[ ! -s "$KIND_STATE" ] || {
+    printf '%s\n' 'partial cluster without kubeconfig remained after cleanup' >&2
+    exit 1
+}
+grep -Fx 'partial-no-config' "$KIND_DELETE_LOG" >/dev/null || {
+    printf '%s\n' 'owned partial cluster without kubeconfig was not deleted' >&2
     exit 1
 }
 

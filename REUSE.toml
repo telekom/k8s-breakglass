@@ -37,6 +37,12 @@ SPDX-License-Identifier = "Apache-2.0"
 
 [[annotations]]
 precedence = "aggregate"
+path = ["utils/workload-debug/tool-contract.json"]
+SPDX-FileCopyrightText = "2026 Deutsche Telekom AG"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+precedence = "aggregate"
 path = ["utils/workload-debug/**.md", "utils/workload-debug/MOTD"]
 SPDX-FileCopyrightText = "2026 Deutsche Telekom AG"
 SPDX-License-Identifier = "CC-BY-4.0"

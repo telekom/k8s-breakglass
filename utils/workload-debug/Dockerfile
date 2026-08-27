@@ -22,25 +22,25 @@ RUN apk add --no-cache \
       tini=0.19.0-r3 \
     && addgroup -S -g 65532 debug \
     && adduser -S -D -H -u 65532 -G debug debug \
-    && mkdir -p /home/debug /usr/local/share/workload-debug \
+    && mkdir -p /home/debug /usr/share/breakglass/runbooks/upstream/workload-debug \
     && chown 65532:65532 /home/debug \
     && update-ca-certificates
 
 COPY scripts/ /usr/local/bin/
-COPY MOTD /usr/local/share/workload-debug/MOTD
-COPY README.md RUNBOOK.md /usr/local/share/workload-debug/
+COPY MOTD /usr/share/breakglass/runbooks/upstream/workload-debug/MOTD
+COPY README.md RUNBOOK.md /usr/share/breakglass/runbooks/upstream/workload-debug/
 COPY MOTD /etc/motd
 COPY LICENSE /licenses/PROJECT_LICENSE
 COPY LICENSES/ /licenses/
 
-RUN chmod 0555 /usr/local/bin/debug-* /usr/local/bin/limit-response /usr/local/bin/workload-debug \
+RUN chmod 0555 /usr/local/bin/debug-* /usr/local/bin/limit-response /usr/local/bin/limit-output /usr/local/bin/workload-debug \
       /usr/local/bin/workload-debug-entrypoint \
-    && chmod 0444 /usr/local/share/workload-debug/MOTD \
-      /usr/local/share/workload-debug/README.md \
-      /usr/local/share/workload-debug/RUNBOOK.md /etc/motd \
+    && chmod 0444 /usr/share/breakglass/runbooks/upstream/workload-debug/MOTD \
+      /usr/share/breakglass/runbooks/upstream/workload-debug/README.md \
+      /usr/share/breakglass/runbooks/upstream/workload-debug/RUNBOOK.md /etc/motd \
     && printf '%s\n' \
       "export PATH=\"/usr/local/bin:\$PATH\"" \
-      'if [ -t 1 ] && [ -r /usr/local/share/workload-debug/MOTD ]; then cat /usr/local/share/workload-debug/MOTD; fi' \
+      'if [ -t 1 ] && [ -r /usr/share/breakglass/runbooks/upstream/workload-debug/MOTD ]; then cat /usr/share/breakglass/runbooks/upstream/workload-debug/MOTD; fi' \
       > /etc/profile.d/workload-debug.sh \
     && chmod 0444 /etc/profile.d/workload-debug.sh
 

@@ -46,7 +46,7 @@ kind_lifecycle_create() {
     # cluster behind after a timeout or partial bootstrap, it belongs to this
     # invocation and must be cleaned up by the EXIT trap. A collision detected
     # during preflight never reaches this branch and remains caller-owned.
-    if kind_lifecycle_cluster_exists "$cluster_name" && [ "$kubeconfig_preexisting" -eq 0 ] && [ -e "$kubeconfig" ]; then
+    if kind_lifecycle_cluster_exists "$cluster_name" && [ "$kubeconfig_preexisting" -eq 0 ]; then
         KIND_LIFECYCLE_OWNED=1
     fi
     return "$create_status"
@@ -62,7 +62,11 @@ kind_lifecycle_cleanup() {
     if (( ! KIND_LIFECYCLE_OWNED )); then
         return 0
     fi
-    kind delete cluster --name "$cluster_name" --kubeconfig "$kubeconfig" >/dev/null 2>&1 || status=1
+    if [ -e "$kubeconfig" ]; then
+        kind delete cluster --name "$cluster_name" --kubeconfig "$kubeconfig" >/dev/null 2>&1 || status=1
+    else
+        kind delete cluster --name "$cluster_name" >/dev/null 2>&1 || status=1
+    fi
     if ! remaining=$(kind get clusters 2>/dev/null); then
         status=1
         remaining=
