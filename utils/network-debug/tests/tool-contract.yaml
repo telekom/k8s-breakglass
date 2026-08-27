@@ -29,7 +29,7 @@ checks:
   - id: kubernetes-storage
     operation: provision-and-run-disposable-fio
     tools: [kubestr]
-    requirements: [docker, kind, kubectl, default-storage-class, disposable-kubernetes-cluster]
+    requirements: [docker, kind, kubectl, disposable-storage-class, disposable-kubernetes-cluster]
 bounded:
   commandTimeoutSeconds: 20
   packetTraceTimeoutSeconds: 20

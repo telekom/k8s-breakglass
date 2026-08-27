@@ -76,10 +76,12 @@ HTTP traffic and proves curl, netcat, DNS, TLS, ping, tracepath, traceroute,
 mtr, ethtool, routing, sockets, deterministic reporting, and tcpdump capture.
 It then runs `pwru` against that traffic in an ephemeral network namespace with
 explicit BPF/PERFMON capabilities and executes `kubestr fio` with a pinned, disposable fio fixture
-image against the `standard` StorageClass in a kind cluster. It never reuses a
+image against a uniquely named disposable StorageClass in a kind cluster. It never reuses a
 production namespace or PVC. A missing Docker capability, Linux BTF/BPF
 support, kind cluster, or StorageClass prints a `REQUIREMENT:` diagnostic and
-fails; it does not silently skip a proof. See
+fails; it does not silently skip a proof. When only the kernel tracing
+prerequisites are unavailable, all userspace, packet-capture, and `kubestr`
+proofs still run before the final fail-closed `pwru` requirement. See
 [`tests/tool-contract.yaml`](./tests/tool-contract.yaml) for the machine-readable
 operation and prerequisite contract.
 

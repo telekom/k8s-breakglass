@@ -19,8 +19,12 @@ KIND_NODE_IMAGE=${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/network-debug-proof.XXXXXX")
 KUBECONFIG_FILE=${WORK_DIR}/kubeconfig
 KUBESTR_PV_NAME=${RUN_ID}-pv
+KUBESTR_STORAGE_CLASS=${RUN_ID}-storage-class
 KIND_CLUSTER_CREATED=false
 KUBESTR_NAMESPACE_CREATED=false
+NETWORK_CREATED=false
+CONTAINER_CREATED=false
+PWRU_CONTAINER_CREATED=false
 KUBESTR_KUBECONFIG_FILE=${WORK_DIR}/kubestr-kubeconfig
 
 requirement() {
@@ -36,18 +40,93 @@ for timeout_value in "$EXEC_TIMEOUT" "$PWRU_TIMEOUT" "$KUBESTR_TIMEOUT"; do
 done
 
 cleanup() {
+	status=$?
 	set +e
+	cleanup_failed=false
+	kind_cluster_present() {
+		clusters=$(kind get clusters 2>/dev/null) || return 2
+		printf '%s\n' "$clusters" | grep -Fx "$KIND_CLUSTER_NAME" >/dev/null 2>&1
+	}
 	if [ "$KIND_CLUSTER_CREATED" = true ]; then
 		if [ "$KUBESTR_NAMESPACE_CREATED" = true ] && command -v kubectl >/dev/null 2>&1; then
-			kubectl --kubeconfig "$KUBECONFIG_FILE" delete namespace "$KUBESTR_NAMESPACE" --ignore-not-found --wait=true --timeout=60s >/dev/null 2>&1
+			if ! kubectl --kubeconfig "$KUBECONFIG_FILE" delete namespace "$KUBESTR_NAMESPACE" --ignore-not-found --wait=true --timeout=60s >/dev/null 2>&1; then
+				cleanup_failed=true
+			fi
+			if kubectl --kubeconfig "$KUBECONFIG_FILE" get namespace "$KUBESTR_NAMESPACE" >/dev/null 2>&1; then
+				cleanup_failed=true
+			fi
 		fi
-		kubectl --kubeconfig "$KUBECONFIG_FILE" delete persistentvolume "$KUBESTR_PV_NAME" --ignore-not-found >/dev/null 2>&1
-		kubectl --kubeconfig "$KUBECONFIG_FILE" delete storageclass standard --ignore-not-found >/dev/null 2>&1
-		kind delete cluster --name "$KIND_CLUSTER_NAME" >/dev/null 2>&1
+		if kubectl --kubeconfig "$KUBECONFIG_FILE" get persistentvolume "$KUBESTR_PV_NAME" >/dev/null 2>&1; then
+			if ! kubectl --kubeconfig "$KUBECONFIG_FILE" delete persistentvolume "$KUBESTR_PV_NAME" --ignore-not-found >/dev/null 2>&1; then
+				cleanup_failed=true
+			fi
+			if kubectl --kubeconfig "$KUBECONFIG_FILE" get persistentvolume "$KUBESTR_PV_NAME" >/dev/null 2>&1; then
+				cleanup_failed=true
+			fi
+		fi
+		if kubectl --kubeconfig "$KUBECONFIG_FILE" get storageclass "$KUBESTR_STORAGE_CLASS" >/dev/null 2>&1; then
+			if ! kubectl --kubeconfig "$KUBECONFIG_FILE" delete storageclass "$KUBESTR_STORAGE_CLASS" --ignore-not-found >/dev/null 2>&1; then
+				cleanup_failed=true
+			fi
+			if kubectl --kubeconfig "$KUBECONFIG_FILE" get storageclass "$KUBESTR_STORAGE_CLASS" >/dev/null 2>&1; then
+				cleanup_failed=true
+			fi
+		fi
+		if kind_cluster_present; then
+			if ! kind delete cluster --name "$KIND_CLUSTER_NAME" >/dev/null 2>&1; then
+				cleanup_failed=true
+			fi
+		elif [ "$?" -eq 2 ]; then
+			cleanup_failed=true
+		fi
+		if kind_cluster_present; then
+			cleanup_failed=true
+		elif [ "$?" -eq 2 ]; then
+			cleanup_failed=true
+		fi
 	fi
-	docker rm -f "$PWRU_CONTAINER" "$CONTAINER" >/dev/null 2>&1
-	docker network rm "$NETWORK" >/dev/null 2>&1
-	rm -rf "$WORK_DIR"
+	for docker_container in "$PWRU_CONTAINER" "$CONTAINER"; do
+		container_owned=false
+		if [ "$docker_container" = "$PWRU_CONTAINER" ] && [ "$PWRU_CONTAINER_CREATED" = true ]; then
+			container_owned=true
+		elif [ "$docker_container" = "$CONTAINER" ] && [ "$CONTAINER_CREATED" = true ]; then
+			container_owned=true
+		fi
+		if [ "$container_owned" = true ]; then
+			if docker inspect "$docker_container" >/dev/null 2>&1; then
+				if ! docker rm -f "$docker_container" >/dev/null 2>&1; then
+					cleanup_failed=true
+				fi
+				if docker inspect "$docker_container" >/dev/null 2>&1; then
+					cleanup_failed=true
+				fi
+			elif ! docker info >/dev/null 2>&1; then
+				cleanup_failed=true
+			fi
+		fi
+	done
+	if [ "$NETWORK_CREATED" = true ]; then
+		if docker network inspect "$NETWORK" >/dev/null 2>&1; then
+			if ! docker network rm "$NETWORK" >/dev/null 2>&1; then
+				cleanup_failed=true
+			fi
+			if docker network inspect "$NETWORK" >/dev/null 2>&1; then
+				cleanup_failed=true
+			fi
+		elif ! docker info >/dev/null 2>&1; then
+			cleanup_failed=true
+		fi
+	fi
+	if ! rm -rf "$WORK_DIR"; then
+		cleanup_failed=true
+	fi
+	if [ -e "$WORK_DIR" ]; then
+		cleanup_failed=true
+	fi
+	if [ "$cleanup_failed" = true ]; then
+		status=1
+	fi
+	exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
@@ -63,14 +142,19 @@ docker image inspect "$KUBESTR_FIXTURE_IMAGE" >/dev/null 2>&1 || requirement "fi
 # Never mutate a caller-selected Kubernetes context. The proof owns the kind
 # cluster and its kubeconfig from creation through cleanup, so invoking this
 # script locally cannot accidentally create a namespace or PVC in production.
-KIND_CLUSTER_CREATED=true
+kind_clusters=$(kind get clusters) || requirement "could not inspect existing kind clusters before creating the disposable cluster"
+if printf '%s\n' "$kind_clusters" | grep -Fx "$KIND_CLUSTER_NAME" >/dev/null; then
+	requirement "refusing to reuse an existing kind cluster named $KIND_CLUSTER_NAME"
+fi
 kind create cluster --name "$KIND_CLUSTER_NAME" --image "$KIND_NODE_IMAGE" \
 	--kubeconfig "$KUBECONFIG_FILE" --wait 120s || requirement "could not create the disposable kind cluster"
+KIND_CLUSTER_CREATED=true
 export KUBECONFIG="$KUBECONFIG_FILE"
 kubectl wait --for=condition=Ready nodes --all --timeout=180s >/dev/null || requirement "disposable kind nodes did not become ready"
 kind load docker-image "$KUBESTR_FIXTURE_IMAGE" --name "$KIND_CLUSTER_NAME" || requirement "could not load the disposable fio fixture into kind"
 
 docker network create "$NETWORK" >/dev/null || requirement "Docker could not create an ephemeral network"
+NETWORK_CREATED=true
 docker run --detach --name "$CONTAINER" --network "$NETWORK" \
 	--cap-add NET_RAW --cap-add NET_ADMIN \
 	"$IMAGE" sh -c '
@@ -87,6 +171,7 @@ docker run --detach --name "$CONTAINER" --network "$NETWORK" \
 			printf "HTTP/1.1 200 OK\\r\\nContent-Length: 22\\r\\nConnection: close\\r\\n\\r\\nnetwork-debug-fixture\\n" | nc -l -p 18080 -s 0.0.0.0
 		done
 	' >/dev/null || requirement "could not start the disposable network fixture"
+CONTAINER_CREATED=true
 
 exec_in() {
 	timeout --foreground "${EXEC_TIMEOUT}s" docker exec "$CONTAINER" "$@"
@@ -193,41 +278,51 @@ PWRU_RUN_ARGS=(
 	--security-opt apparmor=unconfined
 	--pid host
 )
+PWRU_READY=true
 for kernel_path in /sys/kernel/btf/vmlinux /sys/kernel/debug /sys/kernel/tracing /sys/kernel/security; do
 	if [ ! -e "$kernel_path" ]; then
-		requirement "pwru requires a compatible Linux runner exposing $kernel_path; use the required BPF runner job"
+		PWRU_READY=false
+		printf 'REQUIREMENT: pwru requires a compatible Linux runner exposing %s; the dedicated BPF runner job is required\n' "$kernel_path" >&2
 	fi
 	PWRU_RUN_ARGS+=(--mount "type=bind,src=$kernel_path,dst=$kernel_path,readonly")
 done
-btf_check=$(docker run --rm "${PWRU_RUN_ARGS[@]}" --network "container:$CONTAINER" "$IMAGE" sh -c \
-	'test -r /sys/kernel/btf/vmlinux && test -d /sys/kernel/debug && test -d /sys/kernel/tracing && test -d /sys/kernel/security && echo ready' 2>&1) || \
-	requirement "pwru requires readable BTF, tracing, securityfs, and BPF/PERFMON capability; use the required compatible Linux runner job"
-test "$btf_check" = ready || requirement "pwru kernel prerequisites were not available"
-docker run --detach --name "$PWRU_CONTAINER" "${PWRU_RUN_ARGS[@]}" --network "container:$CONTAINER" \
-	"$IMAGE" pwru --output-limit-lines 20 --output-tuple --output-file /work/pwru.log --timestamp none \
-		host 127.0.0.1 \
-	>"$WORK_DIR/pwru-start.log" 2>&1 || requirement "could not start pwru proof container"
-sleep 2
-exec_in curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18080/ >/dev/null || requirement "pwru HTTP traffic generator failed"
-exec_in ping -n -c 1 -W 1 127.0.0.1 >/dev/null || requirement "pwru traffic generator failed"
-pwru_state=running
-for _ in $(seq 1 "$((PWRU_TIMEOUT * 2))"); do
-	pwru_state=$(docker inspect --format '{{.State.Status}}' "$PWRU_CONTAINER")
-	if [ "$pwru_state" = exited ]; then
-		break
+if [ "$PWRU_READY" = true ]; then
+	btf_check=$(docker run --rm "${PWRU_RUN_ARGS[@]}" --network "container:$CONTAINER" "$IMAGE" sh -c \
+		'test -r /sys/kernel/btf/vmlinux && test -d /sys/kernel/debug && test -d /sys/kernel/tracing && test -d /sys/kernel/security && echo ready' 2>&1) || \
+		PWRU_READY=false
+	if [ "$PWRU_READY" = true ] && [ "$btf_check" != ready ]; then
+		PWRU_READY=false
+		printf '%s\n' 'REQUIREMENT: pwru kernel prerequisites were not available; the dedicated BPF runner job is required' >&2
 	fi
-	sleep 0.5
-done
-[ "$pwru_state" = exited ] || requirement "pwru exceeded its ${PWRU_TIMEOUT}s bounded event window"
-pwru_exit=$(docker inspect --format '{{.State.ExitCode}}' "$PWRU_CONTAINER")
-[ "$pwru_exit" = 0 ] || {
-	docker logs "$PWRU_CONTAINER" >&2 || true
-	requirement "pwru could not attach/observe events; the compatible runner needs BTF, BPF, and PERFMON support"
-}
-docker cp "$PWRU_CONTAINER:/work/pwru.log" "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru did not produce an event log"
-[ -s "$WORK_DIR/pwru.log" ] || requirement "pwru event log is empty after generated traffic"
-grep -F -- '->' "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru produced no packet tuple after generated traffic"
-grep -E -- '127\.0\.0\.1.*->.*127\.0\.0\.1|127\.0\.0\.1.*18080' "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru did not observe the generated loopback HTTP traffic"
+fi
+if [ "$PWRU_READY" = true ]; then
+	docker run --detach --name "$PWRU_CONTAINER" "${PWRU_RUN_ARGS[@]}" --network "container:$CONTAINER" \
+		"$IMAGE" pwru --output-limit-lines 20 --output-tuple --output-file /work/pwru.log --timestamp none \
+			 host 127.0.0.1 \
+		>"$WORK_DIR/pwru-start.log" 2>&1 || requirement "could not start pwru proof container"
+	PWRU_CONTAINER_CREATED=true
+	sleep 2
+	exec_in curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18080/ >/dev/null || requirement "pwru HTTP traffic generator failed"
+	exec_in ping -n -c 1 -W 1 127.0.0.1 >/dev/null || requirement "pwru traffic generator failed"
+	pwru_state=running
+	for _ in $(seq 1 "$((PWRU_TIMEOUT * 2))"); do
+		pwru_state=$(docker inspect --format '{{.State.Status}}' "$PWRU_CONTAINER")
+		if [ "$pwru_state" = exited ]; then
+			break
+		fi
+		sleep 0.5
+	done
+	[ "$pwru_state" = exited ] || requirement "pwru exceeded its ${PWRU_TIMEOUT}s bounded event window"
+	pwru_exit=$(docker inspect --format '{{.State.ExitCode}}' "$PWRU_CONTAINER")
+	[ "$pwru_exit" = 0 ] || {
+		docker logs "$PWRU_CONTAINER" >&2 || true
+		requirement "pwru could not attach/observe events; the compatible runner needs BTF, BPF, and PERFMON support"
+	}
+	docker cp "$PWRU_CONTAINER:/work/pwru.log" "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru did not produce an event log"
+	[ -s "$WORK_DIR/pwru.log" ] || requirement "pwru event log is empty after generated traffic"
+	grep -F -- '->' "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru produced no packet tuple after generated traffic"
+	grep -E -- '127\.0\.0\.1.*->.*127\.0\.0\.1|127\.0\.0\.1.*18080' "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru did not observe the generated loopback HTTP traffic"
+fi
 
 # Use a static, disposable PV so this proof does not depend on a cluster-wide
 # storage provisioner. Both objects live only in the kind cluster owned above.
@@ -235,7 +330,7 @@ kubectl apply -f - >/dev/null <<YAML || requirement "could not create disposable
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: standard
+  name: ${KUBESTR_STORAGE_CLASS}
 provisioner: kubernetes.io/no-provisioner
 volumeBindingMode: Immediate
 ---
@@ -248,7 +343,7 @@ spec:
     storage: 1Gi
   accessModes: [ReadWriteOnce]
   persistentVolumeReclaimPolicy: Delete
-  storageClassName: standard
+  storageClassName: ${KUBESTR_STORAGE_CLASS}
   hostPath:
     path: /var/local/${RUN_ID}
     type: DirectoryOrCreate
@@ -261,13 +356,28 @@ timeout --foreground "${KUBESTR_TIMEOUT}s" docker run --rm --network host \
 	--volume "$KUBESTR_KUBECONFIG_FILE:/work/kubeconfig:ro" \
 	--volume "$WORK_DIR:/work/results" \
 	"$IMAGE" kubestr fio \
-		--storageclass standard --size 1Mi --testname default-fio \
+		--storageclass "$KUBESTR_STORAGE_CLASS" --size 1Mi --testname default-fio \
 		--namespace "$KUBESTR_NAMESPACE" --image "$KUBESTR_FIXTURE_IMAGE" \
 		--output json \
 		--outfile /work/results/kubestr.out \
 	|| requirement "kubestr fio failed; kind needs a functional disposable StorageClass and the loaded fio fixture image"
 [ -s "$WORK_DIR/kubestr.out" ] || requirement "kubestr completed without a result file"
-jq -e 'type == "array" and length > 0 and any(.[]; type == "object" and (.result != null or .fioConfig != null or .storageClass != null))' "$WORK_DIR/kubestr.out" >/dev/null || requirement "kubestr result did not contain a structured fio result"
+if ! jq -e '
+  type == "array" and length > 0 and
+  any(.[];
+    type == "object" and
+    (.Raw.result["fio version"] | type == "string" and startswith("fio-")) and
+    (.Raw.result.jobs | type == "array" and length == 4) and
+    all(.Raw.result.jobs[];
+      (.jobname | type == "string" and length > 0) and
+      (((.read.iops // .write.iops) | type == "number" and . > 0))
+    )
+  )
+' "$WORK_DIR/kubestr.out" >/dev/null; then
+	printf '%s\n' 'kubestr output:' >&2
+	cat "$WORK_DIR/kubestr.out" >&2
+	requirement "kubestr result did not contain a structured fio result"
+fi
 kubectl delete namespace "$KUBESTR_NAMESPACE" --wait=true --timeout=60s >/dev/null || requirement "kubestr namespace cleanup failed"
 if kubectl get namespace "$KUBESTR_NAMESPACE" >/dev/null 2>&1; then
 	requirement "kubestr namespace still exists after cleanup"
@@ -277,6 +387,8 @@ kubectl delete persistentvolume "$KUBESTR_PV_NAME" --ignore-not-found >/dev/null
 if kubectl get persistentvolume "$KUBESTR_PV_NAME" >/dev/null 2>&1; then
 	requirement "disposable storage PV still exists after cleanup"
 fi
-kubectl delete storageclass standard --ignore-not-found >/dev/null || requirement "disposable storage class cleanup failed"
+kubectl delete storageclass "$KUBESTR_STORAGE_CLASS" --ignore-not-found >/dev/null || requirement "disposable storage class cleanup failed"
+
+[ "$PWRU_READY" = true ] || requirement "pwru was not exercised; run this integration target on the required Linux BPF runner"
 
 printf 'network-debug integration proofs passed\n'
