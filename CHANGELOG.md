@@ -101,6 +101,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profiles. Requesters, approvers, targets, images, and the target namespace are
   configurable; elevated profiles are disabled and require explicit opt-in.
 
+### Fixed
+
+- Debug-session workload rendering now applies selector ownership labels to
+  DaemonSet pod templates, matching Deployment and Job behavior and preserving
+  Kubernetes selector validity.
+- `debug-kube-api` now writes a valid bearer Authorization header and workload-
+  debug helper tests validate authenticated calls without leaking credentials.
+- Workload-debug integration diagnostics now always use the fixture kubeconfig,
+  preventing accidental fallback to a developer's ambient cluster context.
+- Debug-session catalogue chart docs now show valid list-based profile override
+  patterns and point to complete fixture values for Helm rendering.
+- Debug-session docs now include `workloadType: Job` behavior and bounded
+  one-shot execution semantics.
+- Debug-session catalogue schema now uses the same grouped duration grammar as
+  the CRD (`^([0-9]+(ns|us|ms|s|m|h|d))+$`) for `defaultDuration` and
+  `maxDuration`.
+
 ## [0.1.0-rc.8] - 2026-08-22
 
 ### Added

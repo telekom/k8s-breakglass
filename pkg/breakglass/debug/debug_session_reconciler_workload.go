@@ -540,7 +540,7 @@ func (c *DebugSessionController) useTemplateWorkload(
 		w.Labels = labels
 		w.Annotations = annotations
 		w.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
-		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels)
+		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels, selectorLabels)
 		w.Spec.Template.Annotations = mergeStringMaps(w.Spec.Template.Annotations, annotations)
 
 		// Apply the modified PodSpec back into the workload (see Deployment comment above).

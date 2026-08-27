@@ -15,8 +15,8 @@
       }
     },
     "targetNamespace": { "type": "string", "minLength": 1, "maxLength": 63 },
-    "defaultDuration": { "type": "string", "pattern": "^[0-9]+(ns|us|ms|s|m|h|d)([0-9]+(ns|us|ms|s|m|h|d))*$" },
-    "maxDuration": { "type": "string", "pattern": "^[0-9]+(ns|us|ms|s|m|h|d)([0-9]+(ns|us|ms|s|m|h|d))*$" },
+    "defaultDuration": { "type": "string", "pattern": "^([0-9]+(ns|us|ms|s|m|h|d))+$" },
+    "maxDuration": { "type": "string", "pattern": "^([0-9]+(ns|us|ms|s|m|h|d))+$" },
     "maxConcurrentSessions": { "type": "integer", "minimum": 1 },
     "imagePullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
     "images": {
