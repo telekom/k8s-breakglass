@@ -9,7 +9,7 @@ The runtime is inherited from the immutable netshoot v0.16 multi-architecture
 manifest. Its overlapping network tools are retained as shipped by netshoot;
 this image adds only the bounded `net-debug`/`net-report` contract, selected-
 pod capture, pinned `pwru`, and the documentation mounted under
-`/usr/share/network-debug`.
+`/usr/share/breakglass/runbooks/upstream/network-debug`.
 
 Use `net-report` for a deterministic overview, then invoke only the helper
 needed for the incident. `net-debug --help` and `net-debug tools` list the
@@ -37,9 +37,9 @@ Path, capability, and namespace override environment variables exist only for
 hermetic image tests. They are controller-owned implementation details and
 must not be exposed as DebugSession request fields.
 
-Built-in runbooks remain at `/usr/share/network-debug/`. A downstream
+Built-in runbooks remain at `/usr/share/breakglass/runbooks/upstream/network-debug/`. A downstream
 deployment may read-only mount an optional digest-pinned bundle at
-`/runbooks/internal`, with `INDEX.md` as its optional entry point. The image
+`/usr/share/breakglass/runbooks/internal`, with `INDEX.md` as its optional entry point. The image
 never hardcodes, sources, or executes that bundle.
 
 ## Server-owned selected-pod capture

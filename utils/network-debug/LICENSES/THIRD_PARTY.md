@@ -11,7 +11,7 @@ repository](https://github.com/nicolaka/netshoot) and its Apache-2.0 license.
 
 This image additionally redistributes the following Apache-2.0 projects as
 statically built executables. Their source, release tag, and license are
-recorded in `/usr/share/network-debug/versions.env` and in the image SBOM:
+recorded in `/usr/share/breakglass/runbooks/upstream/network-debug/versions.env` and in the image SBOM:
 
 | Tool | Release | Source | License |
 | --- | --- | --- | --- |

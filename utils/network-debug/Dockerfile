@@ -83,16 +83,18 @@ COPY scripts/net-report /usr/local/bin/net-report
 COPY scripts/network-debug-profile.sh /etc/profile.d/network-debug.sh
 COPY MOTD /etc/motd
 COPY LICENSES /licenses
-COPY versions.env /usr/share/network-debug/versions.env
-COPY README.md RUNBOOK.md /usr/share/network-debug/
+COPY versions.env /usr/share/breakglass/runbooks/upstream/network-debug/versions.env
+COPY README.md RUNBOOK.md /usr/share/breakglass/runbooks/upstream/network-debug/
 
 RUN chmod 0755 /usr/local/bin/net-debug /usr/local/bin/net-report /usr/local/bin/pod-netns-capture /etc/profile.d/network-debug.sh \
-	&& chmod 0644 /etc/motd /usr/share/network-debug/versions.env \
-		/usr/share/network-debug/README.md /usr/share/network-debug/RUNBOOK.md \
-	&& printf '%s\n' "${VERSION}" > /usr/share/network-debug/version \
-	&& chmod 0644 /usr/share/network-debug/version \
-	&& mkdir -p /runbooks/internal \
-	&& chmod 0755 /runbooks /runbooks/internal \
+	&& chmod 0644 /etc/motd /usr/share/breakglass/runbooks/upstream/network-debug/versions.env \
+		/usr/share/breakglass/runbooks/upstream/network-debug/README.md /usr/share/breakglass/runbooks/upstream/network-debug/RUNBOOK.md \
+	&& printf '%s\n' "${VERSION}" > /usr/share/breakglass/runbooks/upstream/network-debug/version \
+	&& chmod 0644 /usr/share/breakglass/runbooks/upstream/network-debug/version \
+	&& mkdir -p /usr/share/breakglass/runbooks/internal \
+	&& chmod 0755 /usr/share /usr/share/breakglass /usr/share/breakglass/runbooks \
+		/usr/share/breakglass/runbooks/upstream /usr/share/breakglass/runbooks/upstream/network-debug \
+		/usr/share/breakglass/runbooks/internal \
 	&& test -x /usr/bin/tcpdump
 
 ENV NETWORK_DEBUG_VERSION=${VERSION}

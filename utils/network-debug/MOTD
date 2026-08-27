@@ -11,9 +11,9 @@ Tool list:   net-debug tools
 Capture:      net-debug capture --help
 Trace:        net-debug trace --help (host netns + BPF prerequisites)
 Pod capture: pod-netns-capture --help (server-owned Job only)
-Docs:        /usr/share/network-debug/README.md
-Runbook:     /usr/share/network-debug/RUNBOOK.md
-Optional:    /runbooks/internal/INDEX.md (read-only downstream bundle)
+Docs:        /usr/share/breakglass/runbooks/upstream/network-debug/README.md
+Runbook:     /usr/share/breakglass/runbooks/upstream/network-debug/RUNBOOK.md
+Optional:    /usr/share/breakglass/runbooks/internal/INDEX.md (read-only downstream bundle)
 
 This container reports only the current network namespace. Do not paste
 reports containing addresses or packet data into public issue trackers.

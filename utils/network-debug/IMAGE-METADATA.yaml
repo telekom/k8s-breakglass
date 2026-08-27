@@ -5,7 +5,7 @@
 
 schemaVersion: 1
 image:
-  name: ghcr.io/telekom/k8s-breakglass/network-debug
+  name: ghcr.io/telekom/k8s-breakglass/utils/network-debug
   version: 0.1.0
   intent: network-diagnostics
   platforms:

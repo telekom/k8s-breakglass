@@ -110,8 +110,8 @@ and excludes the decoy, and then checks exact namespace, Job, kind node,
 container, and temporary-directory cleanup. Required setns, capabilities, or
 recognized cgroup facilities are never skipped silently.
 
-Built-in documentation remains at `/usr/share/network-debug/`. A downstream
+Built-in documentation remains at `/usr/share/breakglass/runbooks/upstream/network-debug/`. A downstream
 deployment may read-only mount an optional digest-pinned runbook bundle at
-`/runbooks/internal`, with an optional `INDEX.md`. The image does not hardcode,
+`/usr/share/breakglass/runbooks/internal`, with an optional `INDEX.md`. The image does not hardcode,
 source, or execute bundle content; immutable workload wiring and admission are
 external boundaries.

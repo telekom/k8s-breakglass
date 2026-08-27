@@ -64,9 +64,10 @@ controller-owned fixed paths and capability settings.
 
 ## Optional downstream runbooks
 
-Built-in documentation is image-owned at `/usr/share/network-debug/`. A
+Built-in documentation is image-owned at `/usr/share/breakglass/runbooks/upstream/network-debug/`. A
 deployment may additionally mount a read-only, digest-pinned downstream bundle
-at `/runbooks/internal`, with an optional `/runbooks/internal/INDEX.md`. The
+at `/usr/share/breakglass/runbooks/internal`, with an optional
+`/usr/share/breakglass/runbooks/internal/INDEX.md`. The
 image does not hardcode, source, or execute bundle content; that wiring is an
 external immutable-template and admission-control responsibility.
 
@@ -77,7 +78,7 @@ short, neutral MOTD. Helpers are deterministic and do not include timestamps,
 hostnames, or command history:
 
 ```console
-$ docker run --rm -it --net=container:app ghcr.io/telekom/k8s-breakglass/network-debug:0.1.0
+$ docker run --rm -it --net=container:app ghcr.io/telekom/k8s-breakglass/utils/network-debug:0.1.0
 /work # net-debug --help
 /work # net-report
 /work # net-debug capture --interface any --duration 30 --packets 1000 \
