@@ -666,10 +666,12 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("get pod template resource %s %s/%s: %w", status.Kind, status.Namespace, status.ResourceName, err))
 			continue
 		}
-		// New resources carry an ownership marker. If that marker is present,
-		// require an exact session identity before deletion. Legacy status entries
-		// without markers retain their historical cleanup behavior.
-		if hasDebugSessionOwnershipMetadata(existing) && !resourceOwnedByDebugSession(existing, ds) {
+		// UID-bearing resources are fenced against replacement by an exact
+		// session identity. Resources written by older releases predate the UID
+		// marker, but their session name/namespace markers still provide safe
+		// ownership proof and must remain cleanable during an upgrade. A resource
+		// with no ownership metadata retains the historical status-based cleanup.
+		if !resourceMayBeDeletedByDebugSession(existing, ds) {
 			status.Error = "ownership precondition failed: resource was replaced or belongs to another session"
 			remainingStatuses = append(remainingStatuses, *status)
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("refusing to delete pod template resource %s %s/%s: ownership precondition failed", status.Kind, status.Namespace, status.ResourceName))

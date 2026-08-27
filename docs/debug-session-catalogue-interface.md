@@ -83,7 +83,10 @@ Additional resources use create-first semantics and carry the session UID
 identity. A fixed-name collision with an existing tenant object fails without
 mutation. During cleanup, a replacement with a different session identity is
 left untouched; a UID precondition protects deletion of an object still owned
-by the session.
+by the session. During upgrades, resources created before the UID marker was
+introduced remain removable only when both legacy session name and
+`namespace/name` source-session markers match the terminating session; partial
+or mismatched legacy markers are retained as a safety boundary.
 
 Node maintenance profiles expose constrained per-session variables for an exact
 target node, interface, evidence directory, confirmation token, and (for repair)

@@ -5313,6 +5313,86 @@ func TestDebugSessionController_CleanupPodTemplateResourcesPreservesReplacement(
 	assert.Equal(t, map[string]string{"tenant": "must-remain"}, unchanged.Data)
 }
 
+func TestDebugSessionController_CleanupPodTemplateResourcesMigratesLegacyOwnership(t *testing.T) {
+	scheme := testScheme()
+	session := newTestDebugSession("legacy-cleanup", "test-template", "test-cluster", "user@example.com")
+	session.UID = "current-session-uid"
+	session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+		{Kind: "ConfigMap", APIVersion: "v1", ResourceName: "legacy-config", Namespace: "default", Created: true},
+	}
+	legacy := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
+		Name:      "legacy-config",
+		Namespace: "default",
+		Labels: map[string]string{
+			"breakglass.t-caas.telekom.com/session": session.Name,
+		},
+		Annotations: map[string]string{
+			"breakglass.t-caas.telekom.com/source-session": session.Namespace + "/" + session.Name,
+		},
+	}}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(legacy).Build()
+	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+	require.NoError(t, controller.cleanupPodTemplateResources(context.Background(), session, targetClient))
+	var deleted corev1.ConfigMap
+	err := targetClient.Get(context.Background(), client.ObjectKeyFromObject(legacy), &deleted)
+	assert.True(t, apierrors.IsNotFound(err), "a pre-UID resource owned by this session must be cleaned during upgrade")
+	assert.Empty(t, session.Status.PodTemplateResourceStatuses)
+}
+
+func TestDebugSessionController_CleanupPodTemplateResourcesRejectsLegacyForgery(t *testing.T) {
+	tests := []struct {
+		name        string
+		labels      map[string]string
+		annotations map[string]string
+	}{
+		{
+			name: "wrong session label",
+			labels: map[string]string{
+				"breakglass.t-caas.telekom.com/session": "other-session",
+			},
+			annotations: map[string]string{
+				"breakglass.t-caas.telekom.com/source-session": "breakglass/legacy-cleanup",
+			},
+		},
+		{
+			name: "wrong session namespace",
+			labels: map[string]string{
+				"breakglass.t-caas.telekom.com/session": "legacy-cleanup",
+			},
+			annotations: map[string]string{
+				"breakglass.t-caas.telekom.com/source-session": "other-namespace/legacy-cleanup",
+			},
+		},
+		{
+			name: "partial legacy marker",
+			labels: map[string]string{
+				"breakglass.t-caas.telekom.com/session": "legacy-cleanup",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := testScheme()
+			session := newTestDebugSession("legacy-cleanup", "test-template", "test-cluster", "user@example.com")
+			session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+				{Kind: "ConfigMap", APIVersion: "v1", ResourceName: "legacy-config", Namespace: "default", Created: true},
+			}
+			resource := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
+				Name: "legacy-config", Namespace: "default", Labels: tt.labels, Annotations: tt.annotations,
+			}}
+			targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(resource).Build()
+			controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+			err := controller.cleanupPodTemplateResources(context.Background(), session, targetClient)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "ownership precondition failed")
+			var unchanged corev1.ConfigMap
+			require.NoError(t, targetClient.Get(context.Background(), client.ObjectKeyFromObject(resource), &unchanged))
+		})
+	}
+}
+
 func TestDebugSessionController_CleanupPodTemplateResourcesPreservesParseFailures(t *testing.T) {
 	scheme := testScheme()
 	session := newTestDebugSession("cleanup-pod-template-parse-failure", "test-template", "test-cluster", "user@example.com")
