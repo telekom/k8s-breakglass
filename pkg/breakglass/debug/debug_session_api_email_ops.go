@@ -549,7 +549,7 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	}
 
 	// Create kubectl debug handler
-	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), &clusterClientAdapter{ccProvider: c.ccProvider})
 
 	// Create the pod copy
 	pod, err := handler.CreatePodCopy(apiCtx, session, req.Namespace, req.PodName, req.DebugImage, username)
@@ -642,7 +642,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	}
 
 	// Create kubectl debug handler
-	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), &clusterClientAdapter{ccProvider: c.ccProvider})
 
 	// Create the node debug pod
 	pod, err := handler.CreateNodeDebugPod(apiCtx, session, req.NodeName, username)
