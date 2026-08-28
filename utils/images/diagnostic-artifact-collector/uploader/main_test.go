@@ -846,6 +846,7 @@ func TestUploadRetriesOnlyTemporaryHTTPResponses(t *testing.T) {
 	}{
 		{name: "temporary service unavailable", status: http.StatusServiceUnavailable, wantCalls: maxAttempts},
 		{name: "permanent unauthorized", status: http.StatusUnauthorized, wantCalls: 1},
+		{name: "expired authorization", status: http.StatusGone, wantCalls: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			path, ready := uploadFixture(t, []byte("archive-bytes"))

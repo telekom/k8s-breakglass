@@ -46,6 +46,8 @@ runtime:
     crashdump_source_link_count: 1
     crashdump_copy_verification: descriptor-relative-double-sha256-and-stable-metadata
     crashdump_max_duration_seconds: 900
+    crashdump_enumeration_max_duration_seconds: 30
+    crashdump_enumeration_spool_max_bytes_per_stream: 4259840
     crashdump_max_archive_bytes: 536870912
     system_summary_max_source_total_bytes: 14680064
     system_summary_max_source_file_bytes: 14680064

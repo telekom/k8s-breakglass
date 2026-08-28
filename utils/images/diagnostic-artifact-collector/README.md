@@ -113,9 +113,10 @@ and ready marker. The uploader accepts only those two ownership/mode pairs,
 opens the marker, manifest, and archive without following links, enforces the
 manifest's immutable per-recipe ceiling, and verifies archive content and
 identity remain unchanged across transfer.
-The traversal runs in its own process group; enumeration expiry and collector
-cleanup send TERM followed by KILL to that group, so a stuck finder descendant
-cannot outlive the failed collection. The collector exits 2 and
+The traversal runs in its own process group with fixed directory and regular-file
+filters; each private NUL path spool is file-size limited. Enumeration expiry
+and collector cleanup send TERM followed by KILL to that group, so a stuck finder
+descendant cannot outlive the failed collection. The collector exits 2 and
 emits the bounded diagnostic without publishing an archive, manifest, or ready
 marker.
 `BREAKGLASS_ARTIFACT_MAX_BYTES` can narrow the selected recipe archive ceiling
@@ -134,7 +135,9 @@ credentials, empty tokens, symlinked archives, and archives whose private
 regular-file identity or size changes during transfer. Retries are limited to
 HTTP 408/429, 5xx, request timeouts, and explicitly classified connection
 reset/refused/broken-pipe failures; TLS, DNS, authorization, and caller
-cancellation are terminal. The image carries the pinned builder's CA bundle
+cancellation are terminal. The controller rejects an upload at or after session
+expiry with its terminal authorization response (including HTTP 410); the image
+does not retry that response. The image carries the pinned builder's CA bundle
 for normal certificate verification and ignores
 ambient `SSL_CERT_FILE`, `SSL_CERT_DIR`, and proxy variables. HTTP endpoints
 are never accepted; development fixtures must use certificate-verified HTTPS

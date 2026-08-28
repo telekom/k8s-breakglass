@@ -55,7 +55,9 @@ never logged. Only the image-pinned CA bundle is trusted; ambient
 `SSL_CERT_FILE`, `SSL_CERT_DIR`, and proxy variables are ignored. The
 controller should always issue a non-empty HMAC token. A per-attempt request
 timeout is retried only while the total operation context remains live; a
-completed operation deadline is terminal.
+completed operation deadline is terminal. The controller rejects an upload at
+or after session expiry with a terminal authorization response (including HTTP
+410); the uploader does not retry it.
 Before a PUT and after each successful response, the uploader streams the
 gzip/tar archive and verifies the embedded manifest, payload paths, duplicate
 members, source counts/bytes, and raw payload checksum against the private

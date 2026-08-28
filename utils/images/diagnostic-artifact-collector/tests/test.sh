@@ -592,6 +592,27 @@ expect_failure() {
 	[ ! -e "$output/artifact.ready" ]
 }
 
+# This is stronger than expect_failure for an infrastructure-boundary fixture:
+# require the collector's documented invalid-input exit instead of accepting a
+# Docker setup failure as proof that the collector rejected the source.
+expect_exit_two_without_handoff() {
+	output=$1
+	shift
+	if run_image "$output" "$@"; then
+		echo "unsafe invocation unexpectedly succeeded: $*" >&2
+		exit 1
+	else
+		exit_code=$?
+	fi
+	[ "$exit_code" = 2 ] || {
+		echo "collector exit code for rejected source was $exit_code, want 2" >&2
+		exit 1
+	}
+	[ ! -e "$output/artifact.tar.gz" ]
+	[ ! -e "$output/artifact.manifest.json" ]
+	[ ! -e "$output/artifact.ready" ]
+}
+
 # Unlike the broad input-rejection helper above, traversal-bound tests must
 # prove their named bound rather than merely observing a non-zero result. Run
 # detached so the harness can fail on a deterministic external deadline even
@@ -722,21 +743,26 @@ mkfifo "$test_dir/special-coredumps/pipe"
 expect_failure "$test_dir/special-output" --env DIAGNOSTIC_NODE=node-a \
 	--volume "$test_dir/special-coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
 
+# Bind a real character device beneath the fixed source mount. The collector
+# itself still runs cap-drop=ALL and must reject the invalid mount before it
+# can traverse the device or produce a hand-off file; no privileged setup
+# container is needed on Docker Desktop.
+expect_exit_two_without_handoff "$test_dir/device-output" --env DIAGNOSTIC_NODE=node-a \
+	--volume /dev/null:/host-coredumps/null:ro -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
+
 mkdir "$test_dir/control-coredumps" "$test_dir/control-output"
 control_name=$(printf 'line1\nline2.dump')
 printf '%s\n' 'control-name fixture' >"$test_dir/control-coredumps/$control_name"
 expect_failure "$test_dir/control-output" --env DIAGNOSTIC_NODE=node-a \
 	--volume "$test_dir/control-coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
 
-mkdir "$test_dir/candidate-coredumps" "$test_dir/candidate-output" "$test_dir/candidate-find"
-: >"$test_dir/candidate-coredumps/one.dump"
+mkdir "$test_dir/candidate-output" "$test_dir/candidate-find"
 # shellcheck disable=SC2016
 printf '%s\n' '#!/bin/sh' \
-	'yes /host-coredumps/one.dump | head -n 4097 | tr "\\n" "\\0"' >"$test_dir/candidate-find/find"
+	'case "$*" in *"-type f"*"-print0"*) awk "BEGIN { for (i = 0; i < 4097; i++) printf \"/etc/motd%c\", 0 }" ;; esac' >"$test_dir/candidate-find/find"
 chmod 0755 "$test_dir/candidate-find/find"
 expect_bounded_collector_failure "$test_dir/candidate-output" 'coredump candidate limit exceeded' 45 --env DIAGNOSTIC_NODE=node-a \
-	--volume "$test_dir/candidate-find/find:/usr/bin/find:ro" \
-	--volume "$test_dir/candidate-coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
+	--volume "$test_dir/candidate-find/find:/usr/bin/find:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
 
 mkdir "$test_dir/long-path-coredumps" "$test_dir/long-path-output"
 long_component=$(printf '%180s' '' | tr ' ' x)
@@ -752,14 +778,13 @@ printf '%s\n' 'long path fixture' >"$long_parent/$long_name.dump"
 expect_failure "$test_dir/long-path-output" --env DIAGNOSTIC_NODE=node-a \
 	--volume "$test_dir/long-path-coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
 
-mkdir "$test_dir/entry-limit-coredumps" "$test_dir/entry-limit-output" "$test_dir/entry-find"
+mkdir "$test_dir/entry-limit-output" "$test_dir/entry-find"
 # shellcheck disable=SC2016
 printf '%s\n' '#!/bin/sh' \
-	'yes /host-coredumps | head -n 8193 | tr "\\n" "\\0"' >"$test_dir/entry-find/find"
+	'case "$*" in *"-type d"*"-print0"*) awk "BEGIN { for (i = 0; i < 8193; i++) printf \"/host-coredumps%c\", 0 }" ;; esac' >"$test_dir/entry-find/find"
 chmod 0755 "$test_dir/entry-find/find"
 expect_bounded_collector_failure "$test_dir/entry-limit-output" 'coredump entry limit exceeded' 45 --env DIAGNOSTIC_NODE=node-a \
-	--volume "$test_dir/entry-find/find:/usr/bin/find:ro" \
-	--volume "$test_dir/entry-limit-coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
+	--volume "$test_dir/entry-find/find:/usr/bin/find:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
 
 # Replace only the image-owned find binary in this disposable test container to
 # emulate a pathological filesystem walk. The fixture and its descendant both

@@ -56,6 +56,11 @@ MAX_ARCHIVE_BYTES=536870912
 MAX_SOURCE_PATH_BYTES=512
 MAX_SOURCE_CANDIDATES=4096
 MAX_SOURCE_ENTRIES=8192
+# Each NUL-delimited traversal spool is capped just above the largest accepted
+# entry set (8192 paths of 512 bytes plus delimiters). ulimit -f uses 512-byte
+# blocks on BusyBox; keep the immutable cap in those units for the isolated
+# finder process only, never the archive-producing collector shell.
+MAX_SOURCE_LIST_BLOCKS=8320
 MAX_AGE_MINUTES=1440
 DETAIL_LEVEL=basic
 artifact_id=
@@ -320,30 +325,74 @@ copy_coredumps() {
 		fail "nested mounts beneath the coredump source are not accepted"
 	fi
 
-	# The finder writes NUL-delimited paths into a bounded FIFO. Paths never pass
-	# through a line-delimited stream before their control characters and length
-	# are validated, and the pipe applies back-pressure instead of accumulating an
-	# unbounded on-disk candidate list. A distinct 30-second enumeration watchdog
-	# bounds pathological filesystem walks independently of the 15-minute recipe
-	# lease and kills the whole finder process group.
+	# The finder writes NUL-delimited paths into file-size-limited private spools.
+	# Paths never pass through a line-delimited stream before their control
+	# characters and length are validated. The isolated find process has a fixed
+	# 4 MiB-class file limit, so traversal cannot consume unbounded staging disk.
+	# A distinct 30-second enumeration watchdog bounds pathological filesystem
+	# walks independently of the 15-minute recipe lease and kills the whole finder
+	# process group.
 	candidate_list=$stage/source-candidates
 	list=$stage/source-list
 	now=$(date +%s)
 	minimum_mtime=$((now - MAX_AGE_MINUTES * 60))
 	overflow_file=$stage/source-overflow
-	source_fifo=$stage/source-paths
+	source_list=$stage/source-paths
+	directory_list=$stage/source-directories
+	unsupported_source_file=$stage/unsupported-source
 	: >"$candidate_list"
 	: >"$overflow_file"
-	mkfifo "$source_fifo" || fail "cannot create bounded source path stream"
+	: >"$unsupported_source_file"
 	command -v setsid >/dev/null 2>&1 || fail "setsid-capable runtime is required for bounded traversal cleanup"
-	setsid find -P "$COREDUMP_DIR" -xdev -print0 >"$source_fifo" &
+	# shellcheck disable=SC2016
+	setsid sh -c '
+		ulimit -f "$1"
+		unsupported_source_file=$2
+		coredump_dir=$3
+		# Reject symlinks, devices, FIFOs, sockets, and any other non-file/
+		# non-directory entry before it can become a candidate. Keep this in
+		# find rather than issuing several shell stat calls for every regular
+		# entry; check_source_file revalidates no-follow regularity at copy time.
+		find -P "$coredump_dir" -xdev ! \( -type f -o -type d \) -print -quit >"$unsupported_source_file"
+		[ ! -s "$unsupported_source_file" ] || exit 3
+		# The candidate stream contains regular files only. Directories need not
+		# reach the shell loop, which avoids a separate stat for every entry on
+		# large coredump trees. A file can still be replaced after discovery, so
+		# check_source_file repeats the no-follow regular-file validation before
+		# each copy.
+		find -P "$coredump_dir" -xdev -type d -print0 >"$4"
+		exec find -P "$coredump_dir" -xdev -type f -print0
+	' sh "$MAX_SOURCE_LIST_BLOCKS" "$unsupported_source_file" "$COREDUMP_DIR" "$directory_list" >"$source_list" &
 	finder_pid=$!
 	start_finder_watchdog
+	if wait "$finder_pid"; then
+		finder_status=0
+	else
+		finder_status=$?
+	fi
+	finder_pid=
+	if [ -n "$finder_watchdog" ]; then
+		kill "$finder_watchdog" 2>/dev/null || true
+		wait "$finder_watchdog" 2>/dev/null || true
+		finder_watchdog=
+	fi
+	if [ -s "$overflow_file" ]; then
+		cat "$overflow_file" >&2
+		return 2
+	fi
+	if [ -s "$unsupported_source_file" ]; then
+		printf '%s\n' 'unsupported filesystem entry in coredump mount' >&2
+		return 2
+	fi
+	if [ "$finder_status" -ne 0 ]; then
+		printf '%s\n' 'cannot enumerate coredump files' >&2
+		return 2
+	fi
 	entry_count=0
 	candidate_count=0
-	# BusyBox ash's -d '' is an explicit NUL delimiter. Keep this loop in the
-	# collector shell so counters are exact and do not require one child process
-	# and several filesystem reads for every entry.
+	# BusyBox ash's -d '' is an explicit NUL delimiter. Keep these loops in the
+	# collector shell so the combined entry count is exact. Fixed finder filters
+	# classify directories and regular files without a shell stat per entry.
 	# shellcheck disable=SC3045
 	while IFS= read -r -d '' source; do
 		entry_count=$((entry_count + 1))
@@ -364,16 +413,22 @@ copy_coredumps() {
 			printf '%s\n' 'source path length limit exceeded' >"$overflow_file"
 			break
 		fi
-		if [ -L "$source" ] || [ -b "$source" ] || [ -c "$source" ] ||
-			[ -p "$source" ] || [ -S "$source" ]; then
-			printf '%s\n' 'unsupported filesystem entry in coredump mount' >"$overflow_file"
+	done <"$directory_list"
+	# shellcheck disable=SC3045
+	while IFS= read -r -d '' source; do
+		entry_count=$((entry_count + 1))
+		if [ "$entry_count" -gt "$MAX_SOURCE_ENTRIES" ]; then
+			printf '%s\n' 'coredump entry limit exceeded' >"$overflow_file"
 			break
 		fi
-		if [ -d "$source" ]; then
-			continue
-		fi
-		if [ ! -f "$source" ]; then
-			printf '%s\n' 'non-regular source entry in coredump mount' >"$overflow_file"
+		case "$source" in
+		*[!\ -~]*)
+			printf '%s\n' 'source filename contains an unsafe character' >"$overflow_file"
+			break
+		esac
+		path_bytes=${#source}
+		if [ "$path_bytes" -gt "$MAX_SOURCE_PATH_BYTES" ]; then
+			printf '%s\n' 'source path length limit exceeded' >"$overflow_file"
 			break
 		fi
 		candidate_count=$((candidate_count + 1))
@@ -381,22 +436,7 @@ copy_coredumps() {
 			printf '%s\n' 'coredump candidate limit exceeded' >"$overflow_file"
 			break
 		fi
-		printf '%s\n' "$source" >>"$candidate_list" || fail "cannot record coredump candidate"
-	done <"$source_fifo"
-	if [ -s "$overflow_file" ]; then
-		stop_finder
-		finder_status=1
-	elif wait "$finder_pid"; then
-		finder_status=0
-	else
-		finder_status=$?
-	fi
-	finder_pid=
-	if [ -n "$finder_watchdog" ]; then
-		kill "$finder_watchdog" 2>/dev/null || true
-		wait "$finder_watchdog" 2>/dev/null || true
-		finder_watchdog=
-	fi
+	done <"$source_list"
 	if [ -s "$overflow_file" ]; then
 		# This function's caller captures and redacts stderr before returning the
 		# exact exit-2 diagnostic to the Job. Do not use fail here: it exits the
@@ -407,6 +447,12 @@ copy_coredumps() {
 	if [ "$finder_status" -ne 0 ]; then
 		printf '%s\n' 'cannot enumerate coredump files' >&2
 		return 2
+	fi
+	# All accepted source paths are printable ASCII and therefore cannot contain
+	# newlines. Convert the validated NUL stream in one bounded image-owned
+	# operation, rather than opening the candidate file once per source path.
+	if ! tr '\000' '\n' <"$source_list" >"$candidate_list"; then
+		fail "cannot record coredump candidates"
 	fi
 	if ! LC_ALL=C sort "$candidate_list" >"$list"; then
 		fail "cannot sort coredump candidates"
