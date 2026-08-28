@@ -14,6 +14,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -240,6 +241,15 @@ func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
 			return
 		default:
 			// continue processing
+		}
+		if !ses.DeletionTimestamp.IsZero() {
+			routine.Log.Debugw("Skipping session already marked for deletion", system.NamespacedFields(ses.Name, ses.Namespace)...)
+			continue
+		}
+		if condition := ses.GetCondition(string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete)); condition != nil &&
+			condition.Status != metav1.ConditionTrue {
+			routine.Log.Warnw("Retaining terminal session while duplicate cleanup audit is pending", system.NamespacedFields(ses.Name, ses.Namespace)...)
+			continue
 		}
 
 		routine.Log.Debugw("Checking session for expiration", system.NamespacedFields(ses.Name, ses.Namespace)...)

@@ -309,7 +309,8 @@ func TestSessionExpiryAndTokenValidityBoundaries(t *testing.T) {
 		{
 			name: "pending session does not grant access",
 			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
-				State: breakglassv1alpha1.SessionStatePending,
+				State:     breakglassv1alpha1.SessionStatePending,
+				TimeoutAt: metav1.NewTime(now.Add(time.Hour)),
 			}},
 			expired: false, tokenValid: true, accessValid: false,
 		},

@@ -134,6 +134,13 @@ type AuditEmitter interface {
 // State takes absolute priority over timestamps. Terminal states (Rejected, Withdrawn, Expired, Timeout)
 // are never pending, regardless of timestamp values.
 func IsSessionPendingApproval(session breakglassv1alpha1.BreakglassSession) bool {
+	return isSessionPendingApprovalAt(session, time.Now())
+}
+
+// isSessionPendingApprovalAt is the clock-injectable implementation used by
+// the public helper and its boundary tests. A timeout reached at exactly now
+// is no longer an open approval window.
+func isSessionPendingApprovalAt(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
 	// CRITICAL: Check STATE FIRST - terminal states are never pending
 	if session.Status.State == breakglassv1alpha1.SessionStateRejected ||
 		session.Status.State == breakglassv1alpha1.SessionStateWithdrawn ||
@@ -150,7 +157,7 @@ func IsSessionPendingApproval(session breakglassv1alpha1.BreakglassSession) bool
 
 	// Now verify timeout status (secondary check after state verification)
 	// If TimeoutAt is set and has passed, session is in timeout state (not pending)
-	if !session.Status.TimeoutAt.IsZero() && time.Now().After(session.Status.TimeoutAt.Time) {
+	if !session.Status.TimeoutAt.IsZero() && !now.Before(session.Status.TimeoutAt.Time) {
 		return false
 	}
 

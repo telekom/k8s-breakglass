@@ -398,7 +398,10 @@ func (wc *WebhookController) liveDebugSessionAccess(ctx context.Context, usernam
 	if err := wc.sesManager.Reader().Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &ds); err != nil {
 		return false, ""
 	}
-	if uid != "" && string(ds.UID) != uid {
+	// The discovery candidate's UID is part of the identity fence. An empty
+	// capture must never degrade into a name-only allow, and a replacement
+	// object with a different UID must be denied.
+	if uid == "" || string(ds.UID) != uid {
 		return false, ""
 	}
 	if ds.Status.State != breakglassv1alpha1.DebugSessionStateActive || ds.Spec.Cluster != clusterName {

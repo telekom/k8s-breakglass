@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
@@ -72,6 +71,10 @@ func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *
 	if log == nil {
 		log = zap.S()
 	}
+	auditEmitter := firstAuditEmitter(auditEmitters)
+	// Drain persisted terminal sessions before looking for new duplicates. This
+	// deliberately runs even when there are fewer than two active sessions.
+	drainPendingDuplicateCleanupAudits(ctx, log, mgr, auditEmitter)
 
 	// Collect active sessions from all "in-flight" states.
 	activeStates := []breakglassv1alpha1.BreakglassSessionState{
@@ -160,7 +163,7 @@ func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *
 				"created", dup.CreationTimestamp.Time,
 			)
 
-			if _, err := terminateDuplicateSession(ctx, log, mgr, key, dup, auditEmitters...); err != nil {
+			if _, err := terminateDuplicateSession(ctx, log, mgr, key, dup, auditEmitter); err != nil {
 				log.Warnw("Failed to update duplicate session status", "session", dup.Name, "error", err)
 			}
 		}
@@ -235,7 +238,8 @@ func terminateDuplicateSession(
 	session breakglassv1alpha1.BreakglassSession,
 	auditEmitters ...AuditEmitter,
 ) (bool, error) {
-	updated := false
+	auditEmitter := firstAuditEmitter(auditEmitters)
+	terminalized := false
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		live, err := getLiveDuplicateSession(ctx, mgr, session)
 		if err != nil {
@@ -245,6 +249,9 @@ func terminateDuplicateSession(
 			return err
 		}
 		if duplicateKeyForSession(live) != key || !isActiveDuplicateSessionState(live.Status.State) {
+			if isDuplicateCleanupTerminal(live) {
+				terminalized = true
+			}
 			log.Infow("Skipping duplicate session that changed before status patch",
 				"session", live.Name,
 				"namespace", live.Namespace,
@@ -253,24 +260,27 @@ func terminateDuplicateSession(
 		}
 
 		base := live.DeepCopy()
-		prepareDuplicateSessionTermination(&live, log)
+		prepareDuplicateSessionTermination(&live, log, auditEmitter == nil || !auditEmitter.IsEnabled())
 		live.Status.ObservedGeneration = live.Generation
-		if err := emitDuplicateCleanupAudit(ctx, &live, firstAuditEmitter(auditEmitters)); err != nil {
-			return fmt.Errorf("emit duplicate cleanup audit for %s/%s: %w", live.Namespace, live.Name, err)
-		}
 		if err := mgr.Client.Status().Patch(ctx, &live, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
 			if apierrors.IsNotFound(err) {
 				return nil
 			}
 			return err
 		}
-		updated = true
+		terminalized = true
 		return nil
 	})
 	if err != nil {
 		return false, fmt.Errorf("patch duplicate session status %s/%s: %w", session.Namespace, session.Name, err)
 	}
-	return updated, nil
+	if !terminalized {
+		return false, nil
+	}
+	if err := drainDuplicateCleanupAudit(ctx, log, mgr, session.Namespace, session.Name, auditEmitter); err != nil {
+		return false, fmt.Errorf("drain duplicate cleanup audit for %s/%s: %w", session.Namespace, session.Name, err)
+	}
+	return true, nil
 }
 
 func firstAuditEmitter(emitters []AuditEmitter) AuditEmitter {
@@ -280,28 +290,24 @@ func firstAuditEmitter(emitters []AuditEmitter) AuditEmitter {
 	return emitters[0]
 }
 
-// emitDuplicateCleanupAudit records the terminalization before the status
-// patch. Production uses AuditService.EmitSync, so a sink failure prevents the
-// terminal status from being written. Retries are deliberately at-least-once:
-// the deterministic event ID is a correlation key, not an idempotency claim,
-// because configured sinks are not required to deduplicate IDs.
-func emitDuplicateCleanupAudit(ctx context.Context, session *breakglassv1alpha1.BreakglassSession, emitter AuditEmitter) error {
-	if emitter == nil || !emitter.IsEnabled() {
-		return nil
-	}
+func isDuplicateCleanupTerminal(session breakglassv1alpha1.BreakglassSession) bool {
+	return (session.Status.State == breakglassv1alpha1.SessionStateExpired || session.Status.State == breakglassv1alpha1.SessionStateWithdrawn) &&
+		session.GetCondition(string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete)) != nil
+}
+
+// duplicateCleanupAuditEvent reconstructs the exact event from the persisted
+// terminal object. The condition's initial timestamp is the durable event
+// timestamp, so retries after a crash use identical ID, timestamp, and data.
+func duplicateCleanupAuditEvent(session *breakglassv1alpha1.BreakglassSession, condition metav1.Condition) *audit.Event {
 	eventType := audit.EventSessionExpired
 	if session.Status.State == breakglassv1alpha1.SessionStateWithdrawn {
 		eventType = audit.EventSessionWithdrawn
 	}
-	eventID := fmt.Sprintf("duplicate-cleanup/%s/%s", session.Namespace, session.Name)
-	if session.UID != "" {
-		eventID = "duplicate-cleanup/" + string(session.UID)
-	}
-	event := &audit.Event{
-		ID:        eventID,
+	return &audit.Event{
+		ID:        "duplicate-cleanup/" + string(session.UID),
 		Type:      eventType,
 		Severity:  audit.SeverityInfo,
-		Timestamp: time.Now().UTC(),
+		Timestamp: condition.LastTransitionTime.Time.UTC(),
 		Actor:     audit.Actor{User: "system"},
 		Target: audit.Target{
 			Kind:      "BreakglassSession",
@@ -316,15 +322,99 @@ func emitDuplicateCleanupAudit(ctx context.Context, session *breakglassv1alpha1.
 			"grantedGroup":  session.Spec.GrantedGroup,
 		},
 	}
+}
+
+// drainPendingDuplicateCleanupAudits delivers persisted outbox entries. It
+// runs independently of duplicate detection so a failed delivery is retried
+// on a later tick even after the duplicate set has disappeared.
+func drainPendingDuplicateCleanupAudits(ctx context.Context, log *zap.SugaredLogger, mgr *SessionManager, emitter AuditEmitter) {
+	for _, state := range []breakglassv1alpha1.BreakglassSessionState{
+		breakglassv1alpha1.SessionStateExpired,
+		breakglassv1alpha1.SessionStateWithdrawn,
+	} {
+		sessions, err := mgr.GetSessionsByState(ctx, state)
+		if err != nil {
+			log.Warnw("Failed to list terminal sessions for duplicate cleanup audit drain", "state", state, "error", err)
+			continue
+		}
+		for i := range sessions {
+			condition := sessions[i].GetCondition(string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete))
+			if condition == nil || condition.Status == metav1.ConditionTrue {
+				continue
+			}
+			if err := drainDuplicateCleanupAudit(ctx, log, mgr, sessions[i].Namespace, sessions[i].Name, emitter); err != nil {
+				log.Warnw("Failed to drain duplicate cleanup audit", "session", sessions[i].Name, "namespace", sessions[i].Namespace, "error", err)
+			}
+		}
+	}
+}
+
+func drainDuplicateCleanupAudit(ctx context.Context, log *zap.SugaredLogger, mgr *SessionManager, namespace, name string, emitter AuditEmitter) error {
+	live, err := getLiveDuplicateSession(ctx, mgr, breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name}})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	condition := live.GetCondition(string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete))
+	if condition == nil || condition.Status == metav1.ConditionTrue {
+		return nil
+	}
+	if live.UID == "" {
+		return fmt.Errorf("persisted duplicate cleanup session %s/%s has no UID", namespace, name)
+	}
+	if emitter == nil || !emitter.IsEnabled() {
+		return fmt.Errorf("duplicate cleanup audit is pending but auditing is unavailable")
+	}
+
+	// Emission happens exactly once per drain attempt, outside the optimistic
+	// acknowledgement retry closure. If acknowledgement conflicts or fails,
+	// the next drain emits the same durable event again (at-least-once).
+	event := duplicateCleanupAuditEvent(&live, *condition)
+	if err := emitDuplicateCleanupAudit(ctx, event, emitter); err != nil {
+		return fmt.Errorf("synchronous duplicate cleanup audit delivery: %w", err)
+	}
+
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current, getErr := getLiveDuplicateSession(ctx, mgr, live)
+		if getErr != nil {
+			return getErr
+		}
+		currentCondition := current.GetCondition(string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete))
+		if currentCondition == nil || currentCondition.Status == metav1.ConditionTrue {
+			return nil
+		}
+		base := current.DeepCopy()
+		current.SetCondition(metav1.Condition{
+			Type:               string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete),
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: metav1.Now(),
+			Reason:             "EmissionAccepted",
+			Message:            "Duplicate cleanup terminal audit was synchronously accepted by every configured sink.",
+		})
+		return mgr.Client.Status().Patch(ctx, &current, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+	})
+	if err != nil {
+		log.Warnw("Duplicate cleanup audit delivered but acknowledgement failed; retaining retryable outbox state", "session", name, "namespace", namespace, "error", err)
+		return fmt.Errorf("acknowledge duplicate cleanup audit: %w", err)
+	}
+	return nil
+}
+
+func emitDuplicateCleanupAudit(ctx context.Context, event *audit.Event, emitter AuditEmitter) error {
+	if emitter == nil || !emitter.IsEnabled() {
+		return nil
+	}
 	if syncEmitter, ok := emitter.(interface {
 		EmitSync(context.Context, *audit.Event) error
 	}); ok {
 		return syncEmitter.EmitSync(ctx, event)
 	}
-	return fmt.Errorf("duplicate cleanup audit emitter does not support synchronous delivery")
+	return fmt.Errorf("duplicate cleanup audit emitter does not support true synchronous delivery")
 }
 
-func prepareDuplicateSessionTermination(session *breakglassv1alpha1.BreakglassSession, log *zap.SugaredLogger) {
+func prepareDuplicateSessionTermination(session *breakglassv1alpha1.BreakglassSession, log *zap.SugaredLogger, auditDisabled bool) {
 	var (
 		targetState      breakglassv1alpha1.BreakglassSessionState
 		conditionType    breakglassv1alpha1.BreakglassSessionConditionType
@@ -378,5 +468,20 @@ func prepareDuplicateSessionTermination(session *breakglassv1alpha1.BreakglassSe
 		LastTransitionTime: now,
 		Reason:             conditionReason,
 		Message:            conditionMessage,
+	})
+	auditStatus := metav1.ConditionFalse
+	auditReason := "PendingDelivery"
+	auditMessage := "Duplicate cleanup terminal audit is pending synchronous delivery."
+	if auditDisabled {
+		auditStatus = metav1.ConditionTrue
+		auditReason = "AuditingDisabledAtCommit"
+		auditMessage = "Duplicate cleanup terminal audit was not required because auditing was disabled at commit."
+	}
+	session.SetCondition(metav1.Condition{
+		Type:               string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete),
+		Status:             auditStatus,
+		LastTransitionTime: now,
+		Reason:             auditReason,
+		Message:            auditMessage,
 	})
 }

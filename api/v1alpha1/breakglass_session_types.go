@@ -48,6 +48,9 @@ const (
 	SessionConditionTypeCanceled BreakglassSessionConditionType = "Canceled"
 	// Active indicates the session is currently active and usable for access
 	SessionConditionTypeActive BreakglassSessionConditionType = "Active"
+	// DuplicateCleanupAuditComplete records durable duplicate-cleanup audit
+	// delivery. A false value is a pending outbox entry and blocks deletion.
+	SessionConditionTypeDuplicateCleanupAuditComplete BreakglassSessionConditionType = "DuplicateCleanupAuditComplete"
 	// SessionExpired tracks when a session's validity window has ended
 	SessionConditionTypeSessionExpired     BreakglassSessionConditionType   = "SessionExpired"
 	SessionConditionReasonEditedByApprover BreakglassSessionConditionReason = "EditedByApprover"
@@ -494,7 +497,10 @@ func isValidBreakglassSessionStateTransition(from, to BreakglassSessionState) bo
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
 func (bs *BreakglassSession) ValidateDelete(ctx context.Context, obj *BreakglassSession) (admission.Warnings, error) {
-	// no-op; allow deletes
+	if condition := bs.GetCondition(string(SessionConditionTypeDuplicateCleanupAuditComplete)); condition != nil &&
+		condition.Status != metav1.ConditionTrue {
+		return nil, fmt.Errorf("duplicate cleanup audit delivery is pending; deletion is not allowed")
+	}
 	return nil, nil
 }
 

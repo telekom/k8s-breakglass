@@ -5910,7 +5910,10 @@ func TestOwnerRejectRecordsSubjectActorWhenEmailAndUsernameMissing(t *testing.T)
 			User:         "owner-subject",
 			GrantedGroup: "breakglass-admin",
 		},
-		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStatePending,
+			TimeoutAt: metav1.NewTime(time.Now().UTC().Add(time.Hour)),
+		},
 	}
 	cli := builder.WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
 	sesmanager := SessionManager{Client: cli}
@@ -11156,7 +11159,8 @@ func TestTokenValidation_ExistingSessionRequiresReadAuthorization(t *testing.T) 
 			GrantedGroup: "breakglass-admin",
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
-			State: breakglassv1alpha1.SessionStatePending,
+			State:     breakglassv1alpha1.SessionStatePending,
+			TimeoutAt: metav1.NewTime(time.Now().UTC().Add(time.Hour)),
 		},
 	}
 	escalation := &breakglassv1alpha1.BreakglassEscalation{
@@ -11226,7 +11230,8 @@ func TestTokenValidation_ExistingSessionAllowsAuthorizedReaders(t *testing.T) {
 					GrantedGroup: "breakglass-admin",
 				},
 				Status: breakglassv1alpha1.BreakglassSessionStatus{
-					State: breakglassv1alpha1.SessionStatePending,
+					State:     breakglassv1alpha1.SessionStatePending,
+					TimeoutAt: metav1.NewTime(time.Now().UTC().Add(time.Hour)),
 				},
 			}
 			escalation := &breakglassv1alpha1.BreakglassEscalation{
@@ -11354,9 +11359,11 @@ func TestTokenValidation_StateAndExpiryValidity(t *testing.T) {
 			},
 		}
 	}
+	pendingSession := newSession("pending-session", breakglassv1alpha1.SessionStatePending, metav1.Time{}).(*breakglassv1alpha1.BreakglassSession)
+	pendingSession.Status.TimeoutAt = metav1.NewTime(now.Add(time.Hour))
 	sessions := []client.Object{
 		newSession("no-state-session", "", metav1.Time{}),
-		newSession("pending-session", breakglassv1alpha1.SessionStatePending, metav1.Time{}),
+		pendingSession,
 		newSession("active-session", breakglassv1alpha1.SessionStateApproved, future),
 		newSession("missing-expiry-session", breakglassv1alpha1.SessionStateApproved, metav1.Time{}),
 		newSession("expired-by-time-session", breakglassv1alpha1.SessionStateApproved, past),

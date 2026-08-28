@@ -280,6 +280,23 @@ func TestCreateSessionAfterWithdrawal_WithdrawnDoesNotBlock(t *testing.T) {
 	t.Log("✓ New session creation would NOT be blocked by 409 conflict")
 }
 
+func TestIsSessionPendingApproval_TimeoutBoundaryIsInclusive(t *testing.T) {
+	deadline := time.Unix(1234, 5678)
+	session := breakglassv1alpha1.BreakglassSession{
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStatePending,
+			TimeoutAt: metav1.NewTime(deadline),
+		},
+	}
+
+	if isSessionPendingApprovalAt(session, deadline) {
+		t.Fatal("a pending session at its exact TimeoutAt boundary must not be considered pending")
+	}
+	if !isSessionPendingApprovalAt(session, deadline.Add(-time.Nanosecond)) {
+		t.Fatal("a pending session immediately before TimeoutAt must still be considered pending")
+	}
+}
+
 // TestWithdrawnSessionExcludedFromActiveAndPending verifies the distinction:
 // - Withdrawn sessions ARE excluded from "active" (IsSessionActive returns false)
 // - Withdrawn sessions ARE ALSO excluded from "pending" (IsSessionPendingApproval checks State first)
