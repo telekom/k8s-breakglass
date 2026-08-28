@@ -107,13 +107,19 @@ jobs:
       - name: Forward hub API
         run: |
           set -Eeuo pipefail
+          for api_port in $(shuf -i 18080-18180 -n 20); do
+            if ! (echo >/dev/tcp/127.0.0.1/${api_port}) 2>/dev/null; then
+              break
+            fi
+          done
+          test -n "${api_port:-}"
           kubectl --kubeconfig "$E2E_HUB_KUBECONFIG" \
-            -n breakglass-system port-forward svc/breakglass-breakglass 8080:8080 \
+            -n breakglass-system port-forward svc/breakglass-breakglass "${api_port}:8080" \
             > hard-expiry-api-port-forward.log 2>&1 &
           echo "HARD_EXPIRY_API_FORWARD_PID=$!" >> "$GITHUB_ENV"
           for _ in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:8080/healthz >/dev/null; then
-              echo "E2E_HUB_API_URL=http://127.0.0.1:8080" >> "$GITHUB_ENV"
+            if curl --fail --silent "http://127.0.0.1:${api_port}/healthz" >/dev/null; then
+              echo "E2E_HUB_API_URL=http://127.0.0.1:${api_port}" >> "$GITHUB_ENV"
               exit 0
             fi
             sleep 1
