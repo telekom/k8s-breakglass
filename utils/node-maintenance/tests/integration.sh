@@ -317,13 +317,29 @@ assert_container_security() {
 
 bundle_from_output() {
 	output_file=$1
-	bundle=$(sed -n 's/.*[Ee]vidence: //p' "$output_file" | tail -n 1)
+	bundle=$(sed -n 's|.*[Ee]vidence: \(/evidence/[A-Za-z0-9_./-]*\).*|\1|p' "$output_file" | tail -n 1)
 	case "$bundle" in
 		/evidence/*) ;;
 		*) fail "output did not contain a safe evidence bundle path: '$bundle'" ;;
 	esac
 	printf '%s\n' "$bundle"
 }
+
+assert_bundle_from_output_formats() {
+	expected_bundle=/evidence/network-repair-20260828T052000Z-ABC123
+	success_output="$tmp_dir/success-evidence-output"
+	failure_output="$tmp_dir/failure-evidence-output"
+	printf 'Target: node-a Interface: eth0 Action: link-cycle Evidence: %s\nRepair completed; inspect before/after evidence at %s\n' \
+		"$expected_bundle" "$expected_bundle" >"$success_output"
+	printf 'node-maintenance: failed (evidence: %s)\n' "$expected_bundle" >"$failure_output"
+	[ "$(bundle_from_output "$success_output")" = "$expected_bundle" ] \
+		|| fail 'bundle parser did not accept the success Evidence format'
+	[ "$(bundle_from_output "$failure_output")" = "$expected_bundle" ] \
+		|| fail 'bundle parser did not strip punctuation from parenthesized evidence'
+	pass 'bundle parser accepts success and parenthesized failure evidence formats'
+}
+
+assert_bundle_from_output_formats
 
 copy_bundle() {
 	output_file=$1
