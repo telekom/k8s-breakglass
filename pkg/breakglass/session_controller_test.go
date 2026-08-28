@@ -7856,7 +7856,7 @@ func TestIsSessionExpiredFunction(t *testing.T) {
 		// Approved state checks timestamp
 		{"approved state with past time", breakglassv1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))), true},
 		{"approved state with future time", breakglassv1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().UTC().Add(1 * time.Hour))), false},
-		{"approved state with zero time", breakglassv1alpha1.SessionStateApproved, nil, false},
+		{"approved state with zero time fails closed", breakglassv1alpha1.SessionStateApproved, nil, true},
 
 		// Other states are not expired
 		{"pending state", breakglassv1alpha1.SessionStatePending, nil, false},
@@ -8197,7 +8197,8 @@ func TestSessionLimits(t *testing.T) {
 					GrantedGroup: "another-group",
 				},
 				Status: breakglassv1alpha1.BreakglassSessionStatus{
-					State: breakglassv1alpha1.SessionStateApproved,
+					State:     breakglassv1alpha1.SessionStateApproved,
+					ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
 				},
 			},
 		}
@@ -8326,7 +8327,8 @@ func TestSessionLimits(t *testing.T) {
 					GrantedGroup: "another-group",
 				},
 				Status: breakglassv1alpha1.BreakglassSessionStatus{
-					State: breakglassv1alpha1.SessionStateApproved,
+					State:     breakglassv1alpha1.SessionStateApproved,
+					ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
 				},
 			},
 		}
@@ -8673,7 +8675,8 @@ func TestSessionLimits(t *testing.T) {
 					GrantedGroup: "admin-group",
 				},
 				Status: breakglassv1alpha1.BreakglassSessionStatus{
-					State: breakglassv1alpha1.SessionStateApproved,
+					State:     breakglassv1alpha1.SessionStateApproved,
+					ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
 				},
 			},
 		}
@@ -9165,7 +9168,8 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 					GrantedGroup: "other-group",
 				},
 				Status: breakglassv1alpha1.BreakglassSessionStatus{
-					State: breakglassv1alpha1.SessionStateApproved,
+					State:     breakglassv1alpha1.SessionStateApproved,
+					ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
 				},
 			},
 			{
@@ -9423,7 +9427,8 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 					GrantedGroup: "admin-group",
 				},
 				Status: breakglassv1alpha1.BreakglassSessionStatus{
-					State: breakglassv1alpha1.SessionStateApproved,
+					State:     breakglassv1alpha1.SessionStateApproved,
+					ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
 				},
 			},
 			{
@@ -11184,6 +11189,7 @@ func TestTokenValidation_ExistingSessionAllowsHistoricalApprover(t *testing.T) {
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(time.Now().UTC().Add(time.Hour)),
 			Approvers: []string{"historical-approver@example.com"},
 		},
 	}
@@ -11252,6 +11258,7 @@ func TestTokenValidation_StateAndExpiryValidity(t *testing.T) {
 		newSession("no-state-session", "", metav1.Time{}),
 		newSession("pending-session", breakglassv1alpha1.SessionStatePending, metav1.Time{}),
 		newSession("active-session", breakglassv1alpha1.SessionStateApproved, future),
+		newSession("missing-expiry-session", breakglassv1alpha1.SessionStateApproved, metav1.Time{}),
 		newSession("expired-by-time-session", breakglassv1alpha1.SessionStateApproved, past),
 	}
 	waitingSession := newSession("waiting-session", breakglassv1alpha1.SessionStateWaitingForScheduledTime, future).(*breakglassv1alpha1.BreakglassSession)
@@ -11287,6 +11294,7 @@ func TestTokenValidation_StateAndExpiryValidity(t *testing.T) {
 		{name: "no-state-session", wantValid: false},
 		{name: "pending-session", wantValid: true},
 		{name: "active-session", wantValid: true},
+		{name: "missing-expiry-session", wantValid: false},
 		{name: "expired-by-time-session", wantValid: false},
 		{name: "waiting-session", wantValid: true},
 	}

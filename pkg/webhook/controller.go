@@ -483,12 +483,78 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	s.phases.LogSummary()
 	wc.buildFinalReason(s)
 
-	// Phase 11: Record the impersonation outcome, so that impersonation allowed via
-	// RBAC or a session is audited and counted alongside the explicit denials.
-	wc.noteImpersonationOutcome(s)
-
-	// Phase 12: Emit metrics & send response
+	// Phase 11: Emit metrics & send response. The response helper performs the
+	// final live session/cluster fence before any allow-side effects.
 	wc.sendAuthorizationResponse(c, s)
+}
+
+// isSessionAccessStillActive performs the final authorization fence against a
+// live session read. Session discovery and the target-cluster SAR can take long
+// enough for a session to expire or be dropped after the cached discovery read.
+// A failed read denies access rather than trusting that stale snapshot.
+func (wc *WebhookController) isSessionAccessStillActive(ctx context.Context, sessions []breakglassv1alpha1.BreakglassSession, candidate *sessionAuthorizationCandidate) bool {
+	if wc.sesManager == nil {
+		return false
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	refs := make([]*sessionAuthorizationCandidate, 0, 1)
+	if candidate != nil {
+		refs = append(refs, candidate)
+	} else {
+		if len(sessions) == 0 {
+			return false
+		}
+		for i := range sessions {
+			session := &sessions[i]
+			refs = append(refs, &sessionAuthorizationCandidate{
+				namespace: session.Namespace, name: session.Name, uid: string(session.UID), user: session.Spec.User,
+				cluster: session.Spec.Cluster, grantedGroup: session.Spec.GrantedGroup,
+			})
+		}
+	}
+	currentSessions := make([]breakglassv1alpha1.BreakglassSession, 0, len(refs))
+	for _, ref := range refs {
+		if ref == nil || ref.name == "" {
+			return false
+		}
+		var current breakglassv1alpha1.BreakglassSession
+		if err := wc.sesManager.Reader().Get(ctx, client.ObjectKey{Namespace: ref.namespace, Name: ref.name}, &current); err != nil {
+			if wc.log != nil {
+				wc.log.Debugw("final session access fence could not read session", "session", ref.name, "error", err)
+			}
+			return false
+		}
+		if string(current.UID) != ref.uid || current.Spec.User != ref.user || current.Spec.Cluster != ref.cluster || current.Spec.GrantedGroup != ref.grantedGroup || !current.Status.RejectedAt.IsZero() {
+			return false
+		}
+		currentSessions = append(currentSessions, current)
+	}
+	now := time.Now()
+	for _, current := range currentSessions {
+		if !breakglass.IsSessionAccessActiveAt(current, now) {
+			return false
+		}
+	}
+	return true
+}
+
+func (wc *WebhookController) isClusterConfigStillActive(ctx context.Context, configured *breakglassv1alpha1.ClusterConfig) bool {
+	if wc.ccProvider == nil || configured == nil {
+		return false
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	live, err := wc.ccProvider.GetInNamespaceLive(ctx, configured.Namespace, configured.Name)
+	if err != nil {
+		if wc.log != nil {
+			wc.log.Debugw("final cluster configuration fence denied session access", "cluster", configured.Name, "error", err)
+		}
+		return false
+	}
+	return live.Namespace == configured.Namespace && live.Name == configured.Name && live.UID == configured.UID && live.DeletionTimestamp.IsZero()
 }
 
 // emitAccessDecisionAudit emits an audit event for SAR authorization decisions.
@@ -785,27 +851,29 @@ func (wc *WebhookController) getSessionsWithIDPMismatchInfo(ctx context.Context,
 	}
 	out := make([]breakglassv1alpha1.BreakglassSession, 0, len(all))
 	idpMismatches := make([]breakglassv1alpha1.BreakglassSession, 0)
-	now := time.Now()
 	for _, s := range all {
 		if breakglass.IsSessionRetained(s) {
 			continue
 		}
-		// Only include sessions that are in Approved state with a valid time window.
-		// Terminal states (IdleExpired, Expired, Rejected, Withdrawn, etc.) must be excluded
-		// even if their ExpiresAt is still in the future.
-		if s.Status.State != breakglassv1alpha1.SessionStateApproved {
+		// Only include sessions that currently grant access. This shared helper
+		// fails closed for an Approved session with a missing expiry and treats
+		// the expiry boundary as expired, keeping webhook authorization aligned
+		// with the controller, API, and cleanup paths.
+		if !breakglass.IsSessionAccessActive(s) {
 			continue
 		}
-		if s.Status.RejectedAt.IsZero() && !s.Status.ExpiresAt.IsZero() && s.Status.ExpiresAt.After(now) {
-			// If issuer is provided and session does NOT allow IDP mismatch,
-			// only include sessions that match the issuer (multi-IDP mode)
-			if issuer != "" && !s.Spec.AllowIDPMismatch && s.Spec.IdentityProviderIssuer != issuer {
-				// Track sessions filtered out due to IDP mismatch
-				idpMismatches = append(idpMismatches, s)
-				continue
-			}
-			out = append(out, s)
+		// Preserve the existing defense against contradictory approval metadata.
+		if !s.Status.RejectedAt.IsZero() {
+			continue
 		}
+		// If issuer is provided and session does NOT allow IDP mismatch,
+		// only include sessions that match the issuer (multi-IDP mode)
+		if issuer != "" && !s.Spec.AllowIDPMismatch && s.Spec.IdentityProviderIssuer != issuer {
+			// Track sessions filtered out due to IDP mismatch
+			idpMismatches = append(idpMismatches, s)
+			continue
+		}
+		out = append(out, s)
 	}
 	return out, idpMismatches, nil
 }
@@ -842,6 +910,12 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 	}
 	sarClient := clientset.AuthorizationV1().SubjectAccessReviews()
 	for _, s := range sessions {
+		// Never trust a caller-supplied session snapshot for authorization. The
+		// final response also performs a live read because this loop can cross
+		// the expiry boundary while target-cluster SARs are in flight.
+		if !breakglass.IsSessionAccessActive(s) {
+			continue
+		}
 		var allowedGroupsToCheck []string
 		// Resolve escalation via OwnerReferences first
 		if len(s.OwnerReferences) > 0 && wc.escalManager != nil {

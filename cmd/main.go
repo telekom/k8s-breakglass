@@ -445,7 +445,8 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 	if cbCfg.HalfOpenMaxRequests <= 0 {
 		cbCfg.HalfOpenMaxRequests = defaults.HalfOpenMaxRequests
 	}
-	ccProvider := cluster.NewClientProviderWithCircuitBreaker(escalationManager.Client, log, cbCfg)
+	ccProvider := cluster.NewClientProviderWithCircuitBreaker(escalationManager.Client, log, cbCfg).
+		WithLiveReader(reconcilerMgr.GetAPIReader())
 	denyEval := policy.NewEvaluator(escalationManager.Client, log)
 
 	// Create mail service with hot-reload capability

@@ -372,11 +372,11 @@ func TestIsSessionValid_EdgeCases(t *testing.T) {
 			session: breakglassv1alpha1.BreakglassSession{
 				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State:     breakglassv1alpha1.SessionStatePending,
-					ExpiresAt: metav1.Time{}, // Zero value - never expires
+					ExpiresAt: metav1.Time{}, // Pending sessions do not use ExpiresAt
 				},
 			},
 			expected: true,
-			reason:   "session with empty ExpiresAt is not expired",
+			reason:   "pending sessions do not expire based on ExpiresAt",
 		},
 		{
 			name: "session_expires_exactly_now",
@@ -387,8 +387,8 @@ func TestIsSessionValid_EdgeCases(t *testing.T) {
 					ApprovedAt: metav1.NewTime(now.Add(-1 * time.Hour)),
 				},
 			},
-			expected: false, // time.Now().After(now) can be true due to time progression
-			reason:   "approved session expiring exactly now may be expired depending on exact timing",
+			expected: false, // time.Now() advances after the fixture is created, so this is expired in practice
+			reason:   "approved session expiring exactly now is expired",
 		},
 		{
 			name: "session_scheduled_in_future",

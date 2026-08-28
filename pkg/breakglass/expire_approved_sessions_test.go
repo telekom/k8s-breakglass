@@ -260,7 +260,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 			"ExpiresAt in the future should NOT expire")
 	})
 
-	t.Run("does not expire session with zero ExpiresAt", func(t *testing.T) {
+	t.Run("expires session with zero ExpiresAt", func(t *testing.T) {
 		session := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "zero-expiry",
@@ -294,7 +294,8 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 			client.ObjectKey{Namespace: "breakglass", Name: "zero-expiry"},
 			&updated)
 		require.NoError(t, err)
-		assert.Equal(t, breakglassv1alpha1.SessionStateApproved, updated.Status.State)
+		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, updated.Status.State,
+			"an Approved session without an expiry must fail closed and be revoked")
 	})
 
 	t.Run("ignores non-approved sessions", func(t *testing.T) {
@@ -566,15 +567,15 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 // TestIsSessionExpiredEdgeCases validates the IsSessionExpired helper for
 // edge-case inputs that the main integration-style tests do not cover.
 func TestIsSessionExpiredEdgeCases(t *testing.T) {
-	t.Run("zero ExpiresAt on Approved session is not expired", func(t *testing.T) {
+	t.Run("zero ExpiresAt on Approved session is expired", func(t *testing.T) {
 		session := breakglassv1alpha1.BreakglassSession{
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State: breakglassv1alpha1.SessionStateApproved,
 				// ExpiresAt is zero-valued
 			},
 		}
-		assert.False(t, IsSessionExpired(session),
-			"Approved session with zero ExpiresAt should NOT be considered expired")
+		assert.True(t, IsSessionExpired(session),
+			"Approved session with zero ExpiresAt must be considered expired")
 	})
 
 	t.Run("nil/zero StartedAt has no effect on expiry", func(t *testing.T) {

@@ -66,6 +66,7 @@ webhooks:
     - UPDATE
     resources:
     - breakglasssessions
+    - breakglasssessions/status
   sideEffects: None
 - admissionReviewVersions:
   - v1

@@ -102,7 +102,7 @@ A session is considered valid for access ONLY if:
 1. **State is Approved** - Session must be in `Approved` state
 2. **Not in terminal state** - Must not be in Rejected, Withdrawn, Expired, IdleExpired, or ApprovalTimeout
 3. **Not scheduled for future** - If `scheduledStartTime` is in the future, session is not yet valid
-4. **Not expired** - `expiresAt` timestamp must be in the future
+4. **Not expired** - `expiresAt` must be present and in the future; a missing or zero expiry fails closed
 
 **Pseudocode:**
 
@@ -120,7 +120,7 @@ isSessionValid(session) {
             return false
         }
         // Check expiration only for Approved
-        if (session.status.expiresAt <= now) {
+        if (session.status.expiresAt is missing || session.status.expiresAt <= now) {
             return false
         }
         return true

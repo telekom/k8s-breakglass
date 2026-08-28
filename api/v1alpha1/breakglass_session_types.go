@@ -264,7 +264,7 @@ type BreakglassSession struct {
 	Status BreakglassSessionStatus `json:"status,omitempty"`
 }
 
-//+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-breakglasssession,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=breakglasssessions,verbs=create;update,versions=v1alpha1,name=breakglasssession.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
+//+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-breakglasssession,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=breakglasssessions;breakglasssessions/status,verbs=create;update,versions=v1alpha1,name=breakglasssession.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type
 func (bs *BreakglassSession) ValidateCreate(ctx context.Context, obj *BreakglassSession) (admission.Warnings, error) {
@@ -315,12 +315,39 @@ func (bs *BreakglassSession) ValidateUpdate(ctx context.Context, oldObj, newObj 
 	// Monotonic enforcement: status counters and timestamps must never go backwards.
 	// This prevents buggy controllers or concurrent writers from corrupting activity data.
 	allErrs = append(allErrs, validateMonotonicStatusFields(oldObj, newObj)...)
+	allErrs = append(allErrs, validateExpiryUpdate(oldObj, newObj)...)
 
 	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassSessionList{}, newObj.Namespace, newObj.Name, field.NewPath("metadata").Child("name"))...)
 	if len(allErrs) == 0 {
 		return nil, nil
 	}
 	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassSession"}, newObj.Name, allErrs)
+}
+
+// validateExpiryUpdate keeps an active regular session's expiry immutable. A
+// terminal transition may shorten the timestamp (for example, an explicit drop
+// or cleanup expiry), while an Approved-to-Approved update may only preserve or
+// shorten it. In particular, a status writer cannot move an already-reached
+// expiry into the future and resurrect access. This is enforced for both the
+// main resource and its status subresource by the webhook marker above.
+func validateExpiryUpdate(oldObj, newObj *BreakglassSession) field.ErrorList {
+	if oldObj.Status.State != SessionStateApproved || newObj.Status.State != SessionStateApproved {
+		return nil
+	}
+	oldExpiry := oldObj.Status.ExpiresAt
+	newExpiry := newObj.Status.ExpiresAt
+	if oldExpiry.IsZero() {
+		if !newExpiry.IsZero() {
+			return field.ErrorList{field.Invalid(field.NewPath("status").Child("expiresAt"), newExpiry,
+				"an Approved session with a missing expiry cannot be extended; transition it to a terminal state")}
+		}
+		return nil
+	}
+	if newExpiry.Time.After(oldExpiry.Time) {
+		return field.ErrorList{field.Invalid(field.NewPath("status").Child("expiresAt"), newExpiry,
+			"expiry cannot be extended while a session is Approved; extensions are not supported")}
+	}
+	return nil
 }
 
 // validateMonotonicStatusFields ensures activity-tracking status fields never

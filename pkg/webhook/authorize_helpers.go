@@ -77,12 +77,27 @@ type authorizeState struct {
 	impersonationWarnedLegacy bool
 
 	// Decision state (filled progressively)
-	allowed           bool
-	allowSource       string // "rbac" | "session" | "debug-session"
-	allowDetail       string
-	reason            string
-	escals            []breakglassv1alpha1.BreakglassEscalation
-	sessionSARSkipErr error
+	allowed            bool
+	allowSource        string // "rbac" | "session" | "debug-session"
+	allowDetail        string
+	allowedSession     *sessionAuthorizationCandidate
+	sessionDerivedRBAC bool
+	// sessionActivity fields are populated during authorization but recorded only
+	// after the final live authorization fence has passed.
+	sessionActivityName  string
+	sessionActivityGroup string
+	reason               string
+	escals               []breakglassv1alpha1.BreakglassEscalation
+	sessionSARSkipErr    error
+}
+
+type sessionAuthorizationCandidate struct {
+	namespace    string
+	name         string
+	uid          string
+	user         string
+	cluster      string
+	grantedGroup string
 }
 
 // countRequest increments the SAR request counter, at most once per request.
@@ -600,15 +615,15 @@ func (wc *WebhookController) performRBACCheck(c *gin.Context, s *authorizeState)
 	s.reqLog.Debugw("RBAC check result", "allowed", can, "groupCount", len(s.groups))
 
 	if can {
+		// The synthetic probe receives only active-session granted groups. A
+		// positive result with such groups is therefore session-derived and must
+		// pass the final live fence. Ordinary user/OIDC RBAC is evaluated by the
+		// apiserver before this webhook and does not enter this path.
+		s.sessionDerivedRBAC = len(s.sessions) > 0
 		s.reqLog.Info("User authorized through regular RBAC permissions")
 		s.allowed = true
 		s.allowSource = "rbac"
 		s.allowDetail = fmt.Sprintf("groupCount=%d", len(s.groups))
-		// Emit allowed decision metric for action
-		if s.sar.Spec.ResourceAttributes != nil {
-			metrics.WebhookSARDecisions.WithLabelValues(
-				s.clusterLabel, "allowed", "rbac").Inc()
-		}
 	}
 	return true
 }
@@ -634,14 +649,27 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 				Debug("Authorized via breakglass session group on target cluster")
 			s.allowed = true
 			s.allowSource = "session"
+			for i := range s.sessions {
+				session := &s.sessions[i]
+				if session.Name == sesName && session.Spec.GrantedGroup == grp {
+					s.allowedSession = &sessionAuthorizationCandidate{
+						namespace: session.Namespace, name: session.Name, uid: string(session.UID),
+						user: session.Spec.User, cluster: session.Spec.Cluster, grantedGroup: session.Spec.GrantedGroup,
+					}
+					break
+				}
+			}
 			s.allowDetail = fmt.Sprintf("session=%s sessionGroup=%s impersonationGroup=%s", sesName, system.RedactGroupName(grp), system.RedactGroupName(impersonated))
 			// Emit a single correlated info log showing the final accepted impersonated group for observability
 			s.reqLog.Infow("Final accepted impersonated group",
 				"username", username, "cluster", s.clusterName,
 				"sessionGroup", system.RedactGroupName(grp), "session", sesName, "impersonationGroup", system.RedactGroupName(impersonated))
 
-			// Record session activity for idle timeout detection and usage analytics (#314)
-			wc.recordSessionActivity(s.sessions, sesName, s.clusterName, grp)
+			// Defer session activity until sendAuthorizationResponse has passed the
+			// final live expiry/revocation fence. A request that crosses the expiry
+			// boundary must not create an allow-side effect.
+			s.sessionActivityName = sesName
+			s.sessionActivityGroup = grp
 		}
 	}
 	s.phases.EndPhase(PhaseSessionSARs) // End session_sars phase
@@ -849,13 +877,33 @@ func (wc *WebhookController) buildFinalReason(s *authorizeState) {
 func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *authorizeState) {
 	username := s.sar.Spec.User
 
+	sessionDerivedAllow := s.allowSource == "session" || (s.allowSource == "rbac" && s.sessionDerivedRBAC)
+	if s.allowed && sessionDerivedAllow && wc.ccProvider != nil && s.clusterCfg != nil && !wc.isClusterConfigStillActive(s.ctx, s.clusterCfg) {
+		s.allowed = false
+		s.allowSource = ""
+		s.reason = wc.finalizeReason("Breakglass cluster configuration was removed or replaced before authorization completed", false, s.clusterName)
+	}
+	if s.allowed && sessionDerivedAllow && !wc.isSessionAccessStillActive(s.ctx, s.sessions, s.allowedSession) {
+		s.allowed = false
+		s.allowSource = ""
+		s.reason = wc.finalizeReason("Breakglass session expired or was revoked before authorization completed", false, s.clusterName)
+	}
+
+	// All allow-side effects are deliberately after the final live fence. This
+	// includes audit/impersonation accounting and idle-activity recording.
+	wc.noteImpersonationOutcome(s)
+	if s.allowed && s.allowSource == "session" && s.sessionActivityName != "" {
+		wc.recordSessionActivity(s.sessions, s.sessionActivityName, s.clusterName, s.sessionActivityGroup)
+	}
+
 	if s.allowed {
 		metrics.WebhookSARAllowed.WithLabelValues(s.clusterLabel).Inc()
-		// Increment action-based decision metric only for session-authorized decisions.
-		// RBAC and debug-session paths are already recorded at decision time to avoid duplicate/misleading labels.
-		if s.sar.Spec.ResourceAttributes != nil && s.allowSource == "session" {
+		// Emit action-based allow metrics only after the final live fence. This
+		// prevents a session-derived RBAC result revoked during the request from
+		// leaving a misleading positive metric.
+		if s.sar.Spec.ResourceAttributes != nil && (s.allowSource == "session" || s.allowSource == "rbac") {
 			metrics.WebhookSARDecisions.WithLabelValues(
-				s.clusterLabel, "allowed", "session").Inc()
+				s.clusterLabel, "allowed", s.allowSource).Inc()
 		}
 	} else {
 		metrics.WebhookSARDenied.WithLabelValues(s.clusterLabel).Inc()

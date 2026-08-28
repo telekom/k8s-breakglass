@@ -215,6 +215,35 @@ func TestActivateScheduledSessions(t *testing.T) {
 		assert.True(t, hasCondition, "expected ScheduledStartTimeReached condition")
 	})
 
+	t.Run("expires scheduled session with missing expiry instead of activating", func(t *testing.T) {
+		session := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "scheduled-missing-expiry", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				User:               "test@example.com",
+				Cluster:            "test-cluster",
+				GrantedGroup:       "admin",
+				ScheduledStartTime: &metav1.Time{Time: time.Now().Add(-5 * time.Minute)},
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:      breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+				ApprovedAt: metav1.NewTime(time.Now().Add(-30 * time.Minute)),
+			},
+		}
+
+		fakeClient := newFakeActivationClient(session)
+		activator := NewScheduledSessionActivator(logger, NewSessionManagerWithClient(fakeClient)).
+			WithMailService(nil, "TestBranding", true)
+		activator.ActivateScheduledSessions()
+
+		var updated breakglassv1alpha1.BreakglassSession
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{
+			Namespace: "breakglass", Name: "scheduled-missing-expiry",
+		}, &updated))
+		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, updated.Status.State)
+		assert.Equal(t, "scheduledSessionExpiredBeforeActivation", updated.Status.ReasonEnded)
+		assert.False(t, updated.Status.ExpiresAt.IsZero())
+	})
+
 	t.Run("canceled context skips scheduled activation", func(t *testing.T) {
 		scheduledTime := time.Now().Add(-5 * time.Minute)
 		session := &breakglassv1alpha1.BreakglassSession{
