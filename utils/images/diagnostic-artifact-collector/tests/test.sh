@@ -805,6 +805,33 @@ expect_bounded_collector_failure "$test_dir/stalled-find-output" 'coredump enume
 	exit 1
 }
 
+# At the 30-second boundary this wrapper exits cleanly on TERM while its child
+# keeps the inherited spool FD open. The deadline marker must win over the
+# wrapper-descendant outcome after cleanup joins the watchdog; otherwise a
+# near-expiry race can report the wrong terminal reason.
+mkdir "$test_dir/deadline-wrapper-find" "$test_dir/deadline-wrapper-output"
+printf '%s\n' '#!/bin/sh' \
+	'case "$*" in' \
+	'  *"-type f"*"-print0"*)' \
+	'    trap "printf term > /output/deadline-wrapper-parent-term-received; exit 0" TERM' \
+	'    ( trap "" TERM; while :; do sleep 1; done ) &' \
+	'    printf "%s\\n" "$!" > /output/deadline-wrapper-descendant.pid' \
+	'    while :; do sleep 1; done' \
+	'    ;;' \
+	'esac' \
+	'exit 0' >"$test_dir/deadline-wrapper-find/find"
+chmod 0755 "$test_dir/deadline-wrapper-find/find"
+expect_bounded_collector_failure "$test_dir/deadline-wrapper-output" 'coredump enumeration deadline exceeded' 45 --env DIAGNOSTIC_NODE=node-a \
+	--volume "$test_dir/deadline-wrapper-find/find:/usr/bin/find:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
+[ -f "$test_dir/deadline-wrapper-output/deadline-wrapper-descendant.pid" ] || {
+	echo 'deadline wrapper fixture did not create its FD-holding descendant' >&2
+	exit 1
+}
+[ "$(cat "$test_dir/deadline-wrapper-output/deadline-wrapper-parent-term-received")" = term ] || {
+	echo 'deadline wrapper did not exit through its TERM barrier' >&2
+	exit 1
+}
+
 # The final finder invocation is exec'd by the setsid wrapper. This fixture
 # exits that wrapper normally after creating a TERM-resistant descendant that
 # inherits the NUL spool FD. The collector must detect the still-live process

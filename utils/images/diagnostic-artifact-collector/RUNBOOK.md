@@ -71,6 +71,9 @@ process group has disappeared before reading either private path spool. A
 wrapper-forked descendant that keeps a spool descriptor open is terminated with
 TERM then KILL and the collection fails; it cannot race source selection or
 publication after the wrapper exits.
+The watchdog records expiry separately and is joined before selecting the final
+diagnostic, so a real 30-second expiry deterministically takes precedence over
+the escaped-wrapper failure even at the boundary.
 
 ## Recipes
 

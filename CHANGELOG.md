@@ -29,7 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the 30-second process-group deadline, exact entry/candidate diagnostics, and
   copy-time no-follow validation. A wrapper-forked traversal descendant is
   terminated and verified absent before any spool is consumed. Expired
-  controller upload responses are terminal and are not retried.
+  controller upload responses are terminal and are not retried. A concurrent
+  enumeration deadline deterministically retains its timeout diagnostic.
 - **Storage image behavior CI cleanup**: The storage-debug integration cleanup
   now tolerates auto-removed Docker containers recorded in cidfiles while still
   refusing to delete foreign, still-existing containers.

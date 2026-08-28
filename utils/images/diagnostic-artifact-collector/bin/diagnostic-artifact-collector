@@ -83,6 +83,7 @@ manifest_tmp=
 ready_tmp=
 finder_pid=
 finder_pgid=
+finder_deadline_file=
 completed_finder_group_was_live=
 file_count=0
 total_bytes=0
@@ -303,7 +304,10 @@ start_finder_watchdog() {
 	(
 		sleep "$CRASH_ENUMERATION_MAX_DURATION_SECONDS"
 		if kill -0 "-$pgid" 2>/dev/null; then
-			printf '%s\n' 'coredump enumeration deadline exceeded' >"$overflow_file"
+			# Keep deadline state separate from the final diagnostic: wrapper exit
+			# and descendant cleanup can race this watchdog, but a recorded expiry
+			# always takes precedence once the watchdog has been joined.
+			printf '%s\n' deadline >"$finder_deadline_file"
 			kill -TERM "-$pgid" 2>/dev/null || true
 			sleep 1
 			kill -KILL "-$pgid" 2>/dev/null || true
@@ -375,11 +379,13 @@ copy_coredumps() {
 	now=$(date +%s)
 	minimum_mtime=$((now - MAX_AGE_MINUTES * 60))
 	overflow_file=$stage/source-overflow
+	finder_deadline_file=$stage/source-deadline
 	source_list=$stage/source-paths
 	directory_list=$stage/source-directories
 	unsupported_source_file=$stage/unsupported-source
 	: >"$candidate_list"
 	: >"$overflow_file"
+	: >"$finder_deadline_file"
 	: >"$unsupported_source_file"
 	command -v setsid >/dev/null 2>&1 || fail "setsid-capable runtime is required for bounded traversal cleanup"
 	# shellcheck disable=SC2016
@@ -410,19 +416,25 @@ copy_coredumps() {
 		finder_status=$?
 	fi
 	finder_pid=
-	finder_deadline=
-	if [ -s "$overflow_file" ]; then
-		finder_deadline=1
-	fi
 	if ! stop_completed_finder_group; then
-		printf '%s\n' 'coredump enumeration process group could not be terminated' >"$overflow_file"
-	elif [ -n "$completed_finder_group_was_live" ] && [ -z "$finder_deadline" ]; then
-		printf '%s\n' 'coredump enumeration descendant survived wrapper exit' >"$overflow_file"
+		finder_group_cleanup_failed=1
+	else
+		finder_group_cleanup_failed=
 	fi
 	if [ -n "$finder_watchdog" ]; then
 		kill "$finder_watchdog" 2>/dev/null || true
 		wait "$finder_watchdog" 2>/dev/null || true
 		finder_watchdog=
+	fi
+	# Decide only after joining the watchdog. This gives a real 30-second
+	# expiry deterministic precedence over an escaped wrapper descendant even
+	# when the wrapper exits while the watchdog is writing its outcome marker.
+	if [ -s "$finder_deadline_file" ]; then
+		printf '%s\n' 'coredump enumeration deadline exceeded' >"$overflow_file"
+	elif [ -n "$finder_group_cleanup_failed" ]; then
+		printf '%s\n' 'coredump enumeration process group could not be terminated' >"$overflow_file"
+	elif [ -n "$completed_finder_group_was_live" ]; then
+		printf '%s\n' 'coredump enumeration descendant survived wrapper exit' >"$overflow_file"
 	fi
 	if [ -s "$overflow_file" ]; then
 		cat "$overflow_file" >&2

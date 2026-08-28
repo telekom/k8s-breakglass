@@ -121,6 +121,9 @@ emits the bounded diagnostic without publishing an archive, manifest, or ready
 marker. After the direct finder wrapper exits, the collector also verifies that
 its process group is gone before consuming a spool; a surviving FD-holding
 descendant is terminated and fails the collection instead of racing publication.
+If the 30-second watchdog expires while that cleanup is in progress, its
+deadline diagnostic deterministically takes precedence over the descendant
+diagnostic.
 `BREAKGLASS_ARTIFACT_MAX_BYTES` can narrow the selected recipe archive ceiling
 for a session. The summary recipe is always capped at 16 MiB and crashdump at
 512 MiB; a deployment cap can only narrow those immutable ceilings. When
