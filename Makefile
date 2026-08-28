@@ -128,7 +128,7 @@ test-hard-expiry-unit: vet ## Run the focused unit boundary tests for regular-se
 
 .PHONY: test-hard-expiry-e2e
 test-hard-expiry-e2e: ## Run the focused multicluster hard-expiry behavior lane against an existing Kubernetes setup.
-	go test -v -count=1 -tags=multicluster ./e2e/api -run 'TestSpokeHubAuthorizationSuite/(TestExpiredSessionDenied|TestHardExpiryMultipleIndependentSessions)' -timeout 18m
+	go test -v -count=1 -tags=multicluster ./e2e/api -run 'TestSpokeHubAuthorizationSuite/(TestExpiredSessionDenied|TestHardExpiryMultipleIndependentSessions|TestRetiredEphemeralAdmissionRouteAndAPIMediatedInjection)' -timeout 25m
 
 .PHONY: validate-samples
 validate-samples: manifests ## Validate all YAML samples in config/samples against CRD schemas.

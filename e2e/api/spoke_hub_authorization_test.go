@@ -848,6 +848,180 @@ func (s *SpokeHubAuthorizationSuite) TestHardExpiryMultipleIndependentSessions()
 		"final denial must be an authorization denial: %s", finalOutput)
 }
 
+// TestRetiredEphemeralAdmissionRouteAndAPIMediatedInjection proves the
+// replacement for the retired direct admission endpoint using a real hub API,
+// target-cluster API, and an actual ephemeral-container subresource update.
+// The direct route must be unavailable, while the authenticated
+// DebugSession-mediated operation must persist both the target mutation and
+// session evidence. Once the lease reaches its persisted expiry boundary, the
+// same operation must fail closed and must not mutate the target Pod.
+//
+// This deliberately runs only in the focused hard-expiry lane. The regular
+// multicluster suite already exercises the general API and webhook flows, and
+// this test waits for a real short-lived lease boundary.
+func (s *SpokeHubAuthorizationSuite) TestRetiredEphemeralAdmissionRouteAndAPIMediatedInjection() {
+	if os.Getenv("E2E_HARD_EXPIRY") != "true" {
+		s.T().Skip("focused hard-expiry lane only")
+	}
+
+	t := s.T()
+	ctx := s.ctx
+	spokeCluster := s.mcCtx.Config.SpokeAClusterName
+	user := helpers.TestUsers.DebugSessionRequester
+	allowRenewal := false
+
+	// The old endpoint accepted AdmissionReview traffic independently of the
+	// authenticated DebugSession API. Its retirement is proved behaviorally by
+	// posting a real AdmissionReview-shaped request and requiring an HTTP 404.
+	webhookURL := strings.TrimRight(s.mcCtx.Config.HubWebhookURL, "/")
+	admissionReview := `{"apiVersion":"admission.k8s.io/v1","kind":"AdmissionReview","request":{"uid":"hard-expiry-retired-route","operation":"UPDATE","resource":{"group":"","version":"v1","resource":"pods"},"object":{},"oldObject":{}}}`
+	routeCmd := exec.CommandContext(ctx, "curl", "-k", "-sS", "-X", "POST",
+		"-H", "Content-Type: application/json", "--data", admissionReview,
+		"-o", "/dev/null", "-w", "%{http_code}", webhookURL+"/validate-ephemeral-containers")
+	routeOutput, routeErr := routeCmd.Output()
+	s.Require().NoError(routeErr, "retired ephemeral admission route probe must complete")
+	s.Require().Equal("404", strings.TrimSpace(string(routeOutput)),
+		"retired /validate-ephemeral-containers must be unavailable")
+
+	// Use an administrator kubeconfig only for the target fixture and
+	// observation. All Breakglass operations below use the authenticated API
+	// client, so target-cluster administrator RBAC cannot mask the API flow.
+	spokeConfig, err := clientcmd.BuildConfigFromFlags("", s.mcCtx.Config.SpokeAKubeconfig)
+	s.Require().NoError(err, "spoke administrator kubeconfig must be usable")
+	spokeClient, err := client.New(spokeConfig, client.Options{Scheme: scheme.Scheme})
+	s.Require().NoError(err, "spoke administrator client must be usable")
+
+	targetPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      helpers.GenerateUniqueName("hard-expiry-ephemeral-target"),
+			Namespace: "default",
+			Labels:    map[string]string{"e2e-test": "hard-expiry-ephemeral"},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:    "app",
+				Image:   "busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+				Command: []string{"sh", "-c", "while true; do sleep 1; done"},
+			}},
+		},
+	}
+	s.Require().NoError(spokeClient.Create(ctx, targetPod), "target fixture pod must be created")
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if cleanupErr := spokeClient.Delete(cleanupCtx, targetPod); cleanupErr != nil && !apierrors.IsNotFound(cleanupErr) {
+			t.Logf("ephemeral target cleanup failed: %v", cleanupErr)
+		}
+	}()
+	s.Require().NoError(helpers.WaitForPodReady(ctx, spokeClient, targetPod.Namespace, targetPod.Name, 90*time.Second), "target fixture pod must become ready")
+
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: helpers.GenerateUniqueName("hard-expiry-ephemeral-template"),
+		},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			DisplayName:     "Hard-expiry API-mediated ephemeral-container proof",
+			Mode:            breakglassv1alpha1.DebugSessionModeKubectlDebug,
+			TargetNamespace: "default",
+			KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+				EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
+					Enabled:           true,
+					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"default"}},
+					AllowedImages:     []string{"busybox:*"},
+					RequireNonRoot:    false,
+				},
+			},
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+				Clusters: []string{spokeCluster},
+				Groups:   []string{"debug-session-test-group"},
+			},
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+				MaxDuration:     "2m",
+				DefaultDuration: "2m",
+				AllowRenewal:    &allowRenewal,
+			},
+		},
+	}
+	s.Require().NoError(s.hubClient.Create(ctx, template), "ephemeral proof template must be created")
+	s.cleanup.Add(template)
+
+	userAPI := s.createAPIClientForUser(user)
+	session, err := userAPI.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
+		TemplateRef:       template.Name,
+		Cluster:           spokeCluster,
+		RequestedDuration: "2m",
+		TargetNamespace:   "default",
+		Reason:            "Focused hard-expiry proof - API-mediated ephemeral injection",
+	})
+	s.Require().NoError(err, "debug session must be created through the authenticated API")
+	s.cleanup.Add(session)
+	session = helpers.WaitForDebugSessionState(t, ctx, s.hubClient, session.Name, session.Namespace,
+		breakglassv1alpha1.DebugSessionStateActive, 90*time.Second)
+
+	image := "busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"
+	containerName := "hard-expiry-debug"
+	s.Require().NoError(userAPI.InjectEphemeralContainer(ctx, t, session.Name, helpers.EphemeralContainerRequest{
+		Namespace:     targetPod.Namespace,
+		PodName:       targetPod.Name,
+		ContainerName: containerName,
+		Image:         image,
+		Command:       []string{"sh", "-c", "sleep 60"},
+	}), "supported API-mediated ephemeral injection must succeed")
+
+	var injectedPod corev1.Pod
+	s.Require().Eventually(func() bool {
+		if getErr := spokeClient.Get(ctx, client.ObjectKeyFromObject(targetPod), &injectedPod); getErr != nil {
+			return false
+		}
+		for _, container := range injectedPod.Spec.EphemeralContainers {
+			if container.Name == containerName && container.Image == image {
+				return true
+			}
+		}
+		return false
+	}, 60*time.Second, 500*time.Millisecond, "target API must persist the requested ephemeral container")
+
+	var persisted breakglassv1alpha1.DebugSession
+	s.Require().Eventually(func() bool {
+		if getErr := s.hubClient.Get(ctx, client.ObjectKeyFromObject(session), &persisted); getErr != nil || persisted.Status.KubectlDebugStatus == nil {
+			return false
+		}
+		for _, ref := range persisted.Status.KubectlDebugStatus.EphemeralContainersInjected {
+			if ref.Namespace == targetPod.Namespace && ref.PodName == targetPod.Name && ref.ContainerName == containerName && ref.Image == image && ref.InjectedBy != "" {
+				return true
+			}
+		}
+		return false
+	}, 60*time.Second, 500*time.Millisecond, "session status must persist evidence for the target mutation")
+	s.Require().NotNil(persisted.Status.ExpiresAt, "session must persist its lease deadline")
+
+	if wait := time.Until(persisted.Status.ExpiresAt.Time) + 500*time.Millisecond; wait > 0 {
+		select {
+		case <-ctx.Done():
+			s.Require().FailNow("context cancelled while waiting for the debug-session expiry boundary")
+		case <-time.After(wait):
+		}
+	}
+
+	// The same authenticated operation must fail after the persisted boundary,
+	// regardless of whether periodic cleanup has already terminalized the CR.
+	err = userAPI.InjectEphemeralContainer(ctx, t, session.Name, helpers.EphemeralContainerRequest{
+		Namespace:     targetPod.Namespace,
+		PodName:       targetPod.Name,
+		ContainerName: "hard-expiry-after-boundary",
+		Image:         image,
+		Command:       []string{"sh", "-c", "sleep 60"},
+	})
+	s.Require().Error(err, "API-mediated ephemeral injection must fail closed after expiresAt")
+
+	var afterExpiry corev1.Pod
+	s.Require().NoError(spokeClient.Get(ctx, client.ObjectKeyFromObject(targetPod), &afterExpiry), "target pod must remain observable after denied operation")
+	for _, container := range afterExpiry.Spec.EphemeralContainers {
+		s.Require().NotEqual("hard-expiry-after-boundary", container.Name,
+			"a denied post-expiry operation must not mutate the target Pod")
+	}
+}
+
 // TestWebhookEndpointAccessibleFromSpoke verifies the hub webhook endpoint is reachable
 // from the spoke clusters (network path validation).
 func (s *SpokeHubAuthorizationSuite) TestWebhookEndpointAccessibleFromSpoke() {

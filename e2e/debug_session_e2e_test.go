@@ -1197,23 +1197,41 @@ func TestDebugSession_E2E_EphemeralContainerInjection(t *testing.T) {
 		Image:         "busybox:latest",
 		Command:       []string{"sh"},
 	})
+	require.NoError(t, err, "ephemeral container injection must use the supported API-mediated path")
+	t.Log("Ephemeral container injected successfully")
 
-	if err != nil {
-		// This may fail if the cluster doesn't support ephemeral containers
-		t.Logf("Ephemeral container injection failed (may not be supported): %v", err)
-	} else {
-		t.Log("Ephemeral container injected successfully")
-
-		// Verify the session status was updated
-		var fetched breakglassv1alpha1.DebugSession
-		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetched)
-		require.NoError(t, err)
-
-		if fetched.Status.KubectlDebugStatus != nil {
-			assert.NotEmpty(t, fetched.Status.KubectlDebugStatus.EphemeralContainersInjected)
-			t.Logf("Ephemeral containers injected: %+v", fetched.Status.KubectlDebugStatus.EphemeralContainersInjected)
+	// Verify the target API actually persisted the ephemeral container. A
+	// successful API response without a target mutation is not a useful E2E
+	// proof and must fail the lane.
+	var injectedPod corev1.Pod
+	require.Eventually(t, func() bool {
+		if getErr := cli.Get(ctx, types.NamespacedName{Name: targetPod.Name, Namespace: targetPod.Namespace}, &injectedPod); getErr != nil {
+			return false
 		}
-	}
+		for _, container := range injectedPod.Spec.EphemeralContainers {
+			if container.Name == "debugger" && container.Image == "busybox:latest" {
+				return true
+			}
+		}
+		return false
+	}, defaultTimeout, defaultInterval, "target pod must contain the injected ephemeral container")
+
+	// Verify the hub session status records the same operation, including the
+	// actor and target, so subsequent cleanup and audit processing have durable
+	// evidence of what was requested.
+	var fetched breakglassv1alpha1.DebugSession
+	require.Eventually(t, func() bool {
+		if getErr := cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetched); getErr != nil || fetched.Status.KubectlDebugStatus == nil {
+			return false
+		}
+		for _, ref := range fetched.Status.KubectlDebugStatus.EphemeralContainersInjected {
+			if ref.Namespace == targetPod.Namespace && ref.PodName == targetPod.Name && ref.ContainerName == "debugger" && ref.Image == "busybox:latest" && ref.InjectedBy != "" {
+				t.Logf("Ephemeral containers injected: %+v", fetched.Status.KubectlDebugStatus.EphemeralContainersInjected)
+				return true
+			}
+		}
+		return false
+	}, defaultTimeout, defaultInterval, "session status must record the injected ephemeral container")
 }
 
 // D-016: DebugSession kubectl-debug pod copy
