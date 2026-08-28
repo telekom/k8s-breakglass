@@ -8,6 +8,10 @@ rebasing, squashing, writing descriptions, and interacting with CI.
 - GitHub CLI (`gh`) must be authenticated
 - EMU (Enterprise Managed User) accounts cannot use GitHub MCP API for
   write operations — always use `gh` CLI instead
+- Pass `--repo BASE_OWNER/BASE_REPOSITORY` to every `gh pr` and `gh run`
+  command. The installed `gh api` command has no `--repo` flag, so every REST
+  path and GraphQL `owner`/`repo` value below names the target repository
+  explicitly instead of relying on the current directory.
 
 ## Exact-Head Gate
 
@@ -32,13 +36,13 @@ all of the following apply to that exact object ID:
 # complete gate if the final snapshot differs.
 pr_snapshot() {
   gh pr view PR_NUMBER --repo BASE_OWNER/BASE_REPOSITORY \
-    --json baseRefName,baseRefOid,headRefName,headRefOid,headRepository
+    --json baseRefName,baseRefOid,headRefName,headRefOid,headRepository,reviewDecision
 }
 before_snapshot="$(pr_snapshot)"
 printf '%s\n' "$before_snapshot"
 
 # CI output must be associated with the snapshot; see the CI rules below.
-gh pr checks PR_NUMBER --watch --required
+gh pr checks PR_NUMBER --repo BASE_OWNER/BASE_REPOSITORY --watch --required
 
 # Read head and base again after CI, reviews, and threads have been examined.
 after_snapshot="$(pr_snapshot)"
@@ -53,6 +57,11 @@ runs, formal reviews (including each review's `commit.oid`), review threads,
 and minimized comments through GitHub GraphQL. Paginate every connection until
 `hasNextPage` is false. Repeat the complete snapshot after gathering the data;
 if either head or base changed, discard the result and restart the gate.
+
+Base movement invalidates the previous gate just as head movement does. When
+either OID changes, request a fresh formal Copilot review (unless an explicit,
+verified repository automation has already produced one for the new pair),
+repeat the human/code-owner approval check, and rerun CI/thread inspection.
 
 GitHub may run `pull_request` workflows on a synthetic test-merge SHA, and
 merge-queue workflows can run on a merge-queue candidate SHA. Therefore, do
@@ -72,6 +81,8 @@ gh api graphql -f query='
     repository(owner:$owner, name:$repo) {
       pullRequest(number:$pr) {
         headRefOid
+        baseRefOid
+        reviewDecision
         reviews(first:100, after:$cursor) {
           pageInfo { hasNextPage endCursor }
           nodes {
@@ -84,7 +95,7 @@ gh api graphql -f query='
       }
     }
   }
-' -f owner=telekom -f repo=REPO_NAME -F pr=PR_NUMBER -F cursor=null
+' -f owner=BASE_OWNER -f repo=BASE_REPOSITORY -F pr=PR_NUMBER -F cursor=null
 ```
 
 Set `copilot_reviewer_login` to the known, repository-configured bot login; do
@@ -95,6 +106,12 @@ named account. The selected review must have that exact `author.login`,
 state is insufficient. Repeat with `cursor` set to `endCursor` until all review
 pages have been inspected.
 
+Copilot's `COMMENTED` review is distinct from human approval. Read
+`reviewDecision` and the actual branch ruleset/code-owner requirement for the
+captured head/base pair; require the current human and code-owner approvals
+that those rules demand. A current human approval cannot be replaced by a
+Copilot comment, and a Copilot comment cannot be replaced by a green check.
+
 ## Requesting a Formal Copilot Review
 
 Request Copilot as a PR reviewer; do **not** use an `@copilot review` comment.
@@ -102,7 +119,7 @@ That comment invokes the coding agent and is not a formal pull-request review
 request.
 
 ```bash
-gh pr edit PR_NUMBER --add-reviewer @copilot
+gh pr edit PR_NUMBER --repo BASE_OWNER/BASE_REPOSITORY --add-reviewer @copilot
 ```
 
 The equivalent is GitHub's requested-reviewers REST endpoint with the Copilot
@@ -111,9 +128,9 @@ supports that bot reviewer.
 
 Copilot does not automatically re-review every pushed commit unless the
 repository has explicitly configured automatic re-reviews. After each pushed
-head, request another formal review when necessary and verify the resulting
-review commit OID against the new PR head. Never infer a new review from an
-older review, a comment, or the absence of new threads.
+head **or base OID change**, request another formal review when necessary and
+verify the resulting review commit OID against the new PR head. Never infer a
+new review from an older review, a comment, or the absence of new threads.
 
 ## Checking PR Review Threads
 
@@ -148,7 +165,7 @@ gh api graphql -f query='
       }
     }
   }
-' -f owner=telekom -f repo=REPO_NAME -F pr=PR_NUMBER -F cursor=null
+' -f owner=BASE_OWNER -f repo=BASE_REPOSITORY -F pr=PR_NUMBER -F cursor=null
 ```
 
 Repeat the thread query with `cursor` set to `endCursor` until the thread
@@ -208,22 +225,22 @@ gh api graphql -f query='
 '
 ```
 
-## Rebasing on Main
+## Rebasing on the PR Base
 
 Prefer a short, signed stack: put follow-up fixes in signed child commits and
 rebase only when a current base is actually required. Before rewriting a
 published branch, fetch it, capture the exact remote branch OID, and make sure
 the rewrite is authorized for that branch.
 
-This repository's policy is same-repository PRs only. Refuse to push a fork
-branch; never guess that `origin`, `main`, or the checked-out branch is the PR
-source. Derive the live PR head repository/ref and base repository/ref first,
-then select exactly one verified local remote for that head repository.
+This task's user-directed policy permits direct same-repository branches only.
+Refuse to push a fork branch; never guess that `origin`, `main`, or the
+checked-out branch is the PR source. Derive the live PR head repository/ref and
+base repository/ref first, then select exactly one verified local remote for
+that head repository.
 
 ```bash
 # Start from the actual target PR URL, not a branch name or local remote.
 pr_url="https://github.example/BASE_OWNER/BASE_REPOSITORY/pull/PR_NUMBER"
-pr_url="$(gh pr view "$pr_url" --json url --jq .url)"
 base_repo="$(printf '%s\n' "$pr_url" | awk -F/ '{print $(NF-3) "/" $(NF-2)}')"
 pr="$(printf '%s\n' "$pr_url" | awk -F/ '{print $NF}')"
 case "$base_repo" in */*) ;; *) echo "invalid PR URL" >&2; exit 1;; esac
@@ -235,19 +252,23 @@ head_ref="$(jq -r .headRefName <<<"$pr_data")"
 head_oid="$(jq -r .headRefOid <<<"$pr_data")"
 head_repo="$(jq -r .headRepository.nameWithOwner <<<"$pr_data")"
 
-# The current policy does not authorize pushes to forks.
+# The current user-directed policy does not authorize pushes to forks.
 test "$head_repo" = "$base_repo" || {
   echo "refusing to rewrite or push fork PR $head_repo" >&2
   exit 1
 }
 
-# Match a configured remote to the actual PR head repository, rather than
-# assuming that a remote named origin is safe. Refuse ambiguity.
+# Match a configured remote's fetch and push URLs to the actual PR head
+# repository, rather than assuming that a remote named origin is safe. Refuse
+# ambiguity or a distinct push target.
 push_remote=""
 for candidate in $(git remote); do
-  candidate_repo="$(gh repo view "$(git remote get-url "$candidate")" \
+  candidate_fetch_repo="$(gh repo view "$(git remote get-url "$candidate")" \
     --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
-  test "$candidate_repo" = "$head_repo" || continue
+  candidate_push_repo="$(gh repo view "$(git remote get-url --push "$candidate")" \
+    --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
+  test "$candidate_fetch_repo" = "$head_repo" || continue
+  test "$candidate_push_repo" = "$head_repo" || continue
   test -z "$push_remote" || {
     echo "multiple remotes resolve to PR head repository" >&2
     exit 1
@@ -271,6 +292,10 @@ test "$remote_head" = "$head_oid" || {
   echo "PR head changed; refresh PR metadata before rebasing" >&2
   exit 1
 }
+test "$(git rev-parse HEAD)" = "$head_oid" || {
+  echo "local checkout is stale or is not the captured PR head" >&2
+  exit 1
+}
 local_branch="$(git branch --show-current)"
 test "$local_branch" = "$head_ref" || {
   echo "checked-out branch is not the PR head ref" >&2
@@ -280,16 +305,34 @@ test -z "$(git status --porcelain)" || {
   echo "refusing to rebase a dirty worktree" >&2
   exit 1
 }
-git rebase --gpg-sign "$push_remote/$base_ref"
-
-# If conflicts arise, resolve them and continue:
-git add -- path/to/resolved-conflict.go path/to/other-resolved-file.yaml
-git rebase --continue
+if ! git rebase --gpg-sign "$push_remote/$base_ref"; then
+  echo "rebase stopped; do not push" >&2
+  git status --short
+  echo "resolve only named conflict paths and continue, or run git rebase --abort" >&2
+  exit 1
+fi
 
 # --gpg-sign preserves signing for rewritten commits. Configure a suitable
 # signing key in advance; do not disable signing to bypass a local setup
 # problem. Check every rewritten commit before pushing.
-git log --show-signature --format=fuller "$push_remote/$base_ref..HEAD"
+git rebase --show-current-patch >/dev/null 2>&1 && {
+  echo "rebase state remains; do not push" >&2
+  exit 1
+}
+test -z "$(git status --porcelain)" || {
+  echo "worktree is not clean after rebase; do not push" >&2
+  exit 1
+}
+test "$(git merge-base HEAD "$push_remote/$base_ref")" = \
+  "$(git rev-parse "$push_remote/$base_ref")" || {
+  echo "rebased HEAD is not based on the captured PR base" >&2
+  exit 1
+}
+git log --show-signature --format='%H %G?' "$push_remote/$base_ref..HEAD"
+test -z "$(git log --format='%G?' "$push_remote/$base_ref..HEAD" | grep -v '^G$')" || {
+  echo "rewritten commits are not all validly signed" >&2
+  exit 1
+}
 
 # Only after the rebase is verified, update this personal branch without
 # overwriting a collaborator's intervening push. Re-read the live PR metadata
@@ -303,6 +346,23 @@ test "$current_pr_data" = "$pr_data" || {
 }
 git push --force-with-lease="refs/heads/$head_ref:$remote_head" \
   "$push_remote" "HEAD:refs/heads/$head_ref"
+```
+
+If the rebase stops, do not continue to the push block. Inspect its state,
+stage only the conflict paths that were actually resolved, and either continue
+or abandon the rebase. After a successful continuation, rerun every post-rebase
+guard above and re-read live PR metadata before considering a push.
+
+```bash
+# Resume only after resolving the named paths:
+git status --short
+git add -- path/to/resolved-conflict.go path/to/other-resolved-file.yaml
+git rebase --continue
+```
+
+```bash
+# Or, if the rebase should not proceed, discard only the rebase operation.
+git rebase --abort
 ```
 
 Do not use a broad `--force`. If the lease no longer matches, stop, fetch, and
@@ -328,28 +388,92 @@ explicit `--force-with-lease` after checking its recorded remote OID.
 
 ```bash
 # List all CI checks for a PR
-gh pr checks PR_NUMBER
+gh pr checks PR_NUMBER --repo BASE_OWNER/BASE_REPOSITORY --required
 
 # Watch CI in real-time
-gh pr checks PR_NUMBER --watch
+gh pr checks PR_NUMBER --repo BASE_OWNER/BASE_REPOSITORY --watch --required
 
 # Get detailed check run output
-gh run view RUN_ID --log-failed
+gh run view RUN_ID --repo BASE_OWNER/BASE_REPOSITORY --log-failed
 ```
 
-Before accepting the result, compare every required run/check's PR association
-to the captured `headRefOid` and `baseRefOid`. Its SHA can equal the source
-head only for head-based workflows; for pull-request test merges or merge
-queues, validate the selected synthetic candidate for that same source/base
-pair instead. Re-run the complete gate after any branch or base update,
-including an automatic rebase or a merge into the base branch.
+Get the expected check inventory and acceptable provider from the actual branch
+ruleset/required-workflow configuration for the captured base ref; do not infer
+them from whichever checks happened to appear in one run. For this task, every
+expected job must conclude `success`. `neutral` or `skipped` is acceptable only
+when the current rules explicitly name that exact job/provider as intentionally
+expected, and the gate records the rule source and reason; it is never silently
+treated as a pass.
+
+Use both check suites and check runs, and inspect the suite's associated PR
+objects. The REST commands deliberately carry the full repository path because
+`gh api` does not implement `--repo`:
+
+```bash
+# Record the PR source/base pair, test-merge candidate, merge-queue entry, and
+# GraphQL check-suite IDs. Paginate statusCheckRollup contexts when necessary.
+gh api graphql --paginate -f query='
+  query($owner:String!, $repo:String!, $pr:Int!, $endCursor:String) {
+    repository(owner:$owner, name:$repo) {
+      pullRequest(number:$pr) {
+        headRefOid
+        baseRefOid
+        potentialMergeCommit { oid }
+        mergeQueueEntry { id }
+        statusCheckRollup {
+          contexts(first:100, after:$endCursor) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              __typename
+              ... on CheckRun {
+                name
+                conclusion
+                detailsUrl
+                checkSuite { id }
+              }
+              ... on StatusContext { context state targetUrl }
+            }
+          }
+        }
+      }
+    }
+  }
+' -f owner=BASE_OWNER -f repo=BASE_REPOSITORY -F pr=PR_NUMBER -F endCursor=null
+```
+
+```bash
+base_repo=BASE_OWNER/BASE_REPOSITORY
+head_oid=CAPTURED_PR_HEAD_OID
+base_oid=CAPTURED_PR_BASE_OID
+candidate_oid=CAPTURED_TEST_MERGE_OR_MERGE_QUEUE_OID
+
+# Inspect the source head and, when GitHub selected one, its test-merge or
+# merge-queue candidate. Paginate all response pages.
+for oid in "$head_oid" "$candidate_oid"; do
+  test -n "$oid" || continue
+  gh api --paginate "repos/$base_repo/commits/$oid/check-suites?per_page=100"
+  gh api --paginate "repos/$base_repo/commits/$oid/check-runs?per_page=100"
+  gh api --paginate "repos/$base_repo/commits/$oid/pulls?per_page=100"
+done
+```
+
+For every expected check, verify the check run, its check suite, and the
+suite's associated pull request all identify the captured `head_oid`,
+`base_oid`, repository, and refs. A head-based workflow may run directly on
+`head_oid`; a `pull_request` test merge or merge queue may use `candidate_oid`
+only when the suite's PR association proves that exact source/base pair. Record
+the selected candidate from the workflow/merge-queue event metadata (for a
+regular PR, `potentialMergeCommit.oid` can supply the current test-merge
+candidate). Re-run the complete gate after any branch or base update.
 
 ## Adding PR Comments
 
 ```bash
 # General comment
-gh pr comment PR_NUMBER --body "Comment text"
+gh pr comment PR_NUMBER --repo BASE_OWNER/BASE_REPOSITORY --body "Comment text"
 
+# gh api has no --repo flag. Use only IDs returned by the earlier GraphQL query
+# explicitly scoped to BASE_OWNER/BASE_REPOSITORY.
 # Reply to a review thread (use the thread's comment ID)
 gh api graphql -f query='
   mutation {
@@ -369,25 +493,30 @@ Markdown, backticks, variables, or escaped newlines through an inline
 `--body` argument or shell command substitution.
 
 ```bash
-# Edit a real temporary Markdown file using an editor or a repository template.
+# Select a known editor executable directly; do not evaluate a shell fragment
+# from EDITOR or interpolate Markdown through a shell command.
 body_file="$(mktemp -t breakglass-pr-description.XXXXXX.md)"
-"${EDITOR:?set EDITOR to populate the PR description}" "$body_file"
+vi "$body_file"
 test -s "$body_file" || {
   echo "refusing to create or edit a PR with an empty description" >&2
   exit 1
 }
 
-gh pr create \
+# Derive the target's actual default base; do not hardcode main.
+base_repo=BASE_OWNER/BASE_REPOSITORY
+base_ref="$(gh repo view "$base_repo" --json defaultBranchRef --jq .defaultBranchRef.name)"
+
+gh pr create --repo "$base_repo" \
   --title "feat: description" \
   --body-file "$body_file" \
-  --base main
+  --base "$base_ref"
 
 # The same rule applies to edits.
-gh pr edit PR_NUMBER --body-file "$body_file"
+gh pr edit PR_NUMBER --repo "$base_repo" --body-file "$body_file"
 
 # Read the stored body back and inspect the rendered PR to confirm headings,
 # newlines, links, dependency heads, scope, limitations, and test evidence.
-gh pr view PR_NUMBER --json body --jq .body
+gh pr view PR_NUMBER --repo "$base_repo" --json body --jq .body
 gh api graphql -f query='
   query($owner:String!, $repo:String!, $pr:Int!) {
     repository(owner:$owner, name:$repo) {
@@ -396,7 +525,7 @@ gh api graphql -f query='
   }
 ' -f owner=BASE_OWNER -f repo=BASE_REPOSITORY -F pr=PR_NUMBER --jq \
   .data.repository.pullRequest.bodyHTML
-gh pr view PR_NUMBER --web
+gh pr view PR_NUMBER --repo "$base_repo" --web
 ```
 
 Compare the raw body to the source file, inspect `bodyHTML`, and verify the
