@@ -1,0 +1,263 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: CC0-1.0
+
+# A small, deliberately dependency-light verifier used by the PR-management
+# prompt.  It verifies *captured GitHub API evidence*; network collection and
+# mutations stay in the prompt so an operator can inspect the evidence before
+# changing a pull request.
+set -euo pipefail
+
+fail() {
+  printf 'pr-gate-contract: %s\n' "$*" >&2
+  exit 1
+}
+
+require_file() {
+  test -f "$1" || fail "missing file: $1"
+}
+
+require_jq() {
+  command -v jq >/dev/null 2>&1 || fail "jq is required"
+}
+
+parse_pr_url() {
+  test "$#" = 1 || fail "usage: parse-pr-url HTTPS_PR_URL"
+  command -v ruby >/dev/null 2>&1 || fail "ruby is required"
+  ruby -r uri -e '
+    raw = ARGV.fetch(0)
+    uri = URI.parse(raw)
+    abort "PR URL must use HTTPS" unless uri.is_a?(URI::HTTPS)
+    abort "PR URL must not contain credentials, a port, query, or fragment" unless
+      uri.userinfo.nil? && uri.port == 443 && uri.query.nil? && uri.fragment.nil?
+    segments = uri.path.split("/").reject(&:empty?)
+    abort "PR URL must be /OWNER/REPOSITORY/pull/NUMBER" unless
+      segments.length == 4 && segments[2] == "pull" && segments[3].match?(/\A[1-9][0-9]*\z/)
+    owner, repo = segments.first(2)
+    valid = /\A[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?\z/
+    abort "invalid repository path" unless owner.match?(valid) && repo.match?(valid)
+    abort "invalid GitHub host" unless uri.host && uri.host.match?(/\A[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\z/i)
+    puts [uri.host.downcase, "#{owner}/#{repo}", segments[3]].join("\t")
+  ' "$1" || fail "invalid pull-request URL"
+}
+
+request_date() {
+  test "$#" = 1 || fail "usage: request-date HTTP_RESPONSE_FILE"
+  require_file "$1"
+  command -v ruby >/dev/null 2>&1 || fail "ruby is required"
+  ruby -e '
+    raw = File.binread(ARGV.fetch(0)).gsub("\r\n", "\n")
+    blocks = raw.split(/\n\n/).select { |block| block.start_with?("HTTP/") }
+    abort "missing HTTP response headers" if blocks.empty?
+    final = blocks.last.lines.map(&:strip)
+    status = final.shift
+    abort "non-successful review-request response" unless status.match?(/\AHTTP\/\S+ 2\d\d\b/)
+    dates = final.grep(/\Adate:\s*/i).map { |line| line.sub(/\Adate:\s*/i, "") }
+    abort "missing or ambiguous Date header" unless dates.length == 1
+    value = dates.fetch(0)
+    abort "invalid HTTP Date" unless value.match?(/\A(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), /)
+    puts value
+  ' "$1" || fail "ambiguous GitHub review-request Date"
+}
+
+request_date_to_ns() {
+  test "$#" = 1 || fail "usage: request-date-to-ns HTTP_RESPONSE_FILE"
+  local value
+  value="$(request_date "$1")"
+  ruby -r time -e '
+    parsed = Time.httpdate(ARGV.fetch(0)).utc
+    abort "non-UTC HTTP Date" unless parsed.utc?
+    puts (parsed.to_r * 1_000_000_000).to_i
+  ' "$value" || fail "ambiguous GitHub review-request Date"
+}
+
+review_timestamp_to_ns() {
+  test "$#" = 1 || fail "usage: review-timestamp-to-ns RFC3339_UTC_TIMESTAMP"
+  command -v ruby >/dev/null 2>&1 || fail "ruby is required"
+  ruby -r time -e '
+    value = ARGV.fetch(0)
+    abort "invalid RFC3339 timestamp" unless value.match?(/\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z\z/)
+    parsed = Time.iso8601(value).utc
+    abort "non-UTC review timestamp" unless parsed.utc?
+    puts (parsed.to_r * 1_000_000_000).to_i
+  ' "$1" || fail "invalid formal-review submittedAt"
+}
+
+verify_review_freshness() {
+  test "$#" = 2 || fail "usage: verify-review-freshness HTTP_RESPONSE_FILE RFC3339_UTC_TIMESTAMP"
+  local request_ns review_ns earliest_safe_ns
+  request_ns="$(request_date_to_ns "$1")"
+  review_ns="$(review_timestamp_to_ns "$2")"
+  earliest_safe_ns=$((request_ns + 1000000000))
+  # HTTP Date has one-second precision. A review stamped in that same second
+  # may have happened before the API response was generated, even when it has
+  # fractional seconds. The next whole second is the first provable boundary.
+  test "$review_ns" -ge "$earliest_safe_ns" ||
+    fail "formal review is not provably after GitHub review-request completion"
+}
+
+inventory_policy() {
+  test "$#" = 6 || fail "usage: inventory-policy HOST REPOSITORY BASE_REF EFFECTIVE_JSON PROTECTION_JSON OUTPUT_JSON"
+  local host="$1" repository="$2" base_ref="$3" effective="$4" protection="$5" output="$6"
+  require_jq
+  require_file "$effective"
+  require_file "$protection"
+
+  jq -n -e --arg host "$host" --arg repository "$repository" --arg baseRef "$base_ref" \
+    --slurpfile effective "$effective" --slurpfile protection "$protection" '
+    def rules:
+      if ($effective | length) == 1 and ($effective[0] | type) == "array" then $effective[0]
+      elif ($effective | length) == 1 and ($effective[0] | type) == "object" and
+           ($effective[0].rules | type) == "array" then $effective[0].rules
+      else error("malformed effective rules") end;
+    def protection: $protection[0];
+    def rule_checks:
+      [rules[] | select(.type == "required_status_checks") |
+       (.parameters.required_status_checks // [])[]? |
+       {context: (.context // ""), appId: (.integration_id // .app_id)}];
+    def protection_checks:
+      [((protection.required_status_checks.checks // [])[]?) |
+       {context: (.context // ""), appId: (.app_id // .integration_id)}];
+    def legacy_contexts: (protection.required_status_checks.contexts // []);
+    def supported_type:
+      . == "required_status_checks" or . == "pull_request" or
+      . == "required_signatures" or . == "required_workflows" or
+      . == "required_deployments" or . == "required_code_scanning";
+    rules as $rules |
+    (rule_checks + protection_checks) as $checks |
+    ([ $checks[] | .context ] | unique) as $names |
+    (legacy_contexts) as $legacy |
+    ([ $rules[] | select(.type | supported_type | not) |
+       {type, source, parameters} ]) as $unsupported |
+    if ($host | test("\\A[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\\z"; "i") | not) then
+      error("invalid GitHub host")
+    elif ($repository | test("\\A[^/ ]+/[^/ ]+\\z") | not) then
+      error("invalid repository")
+    elif ($rules | type) != "array" or ($rules | length) == 0 then
+      error("no effective server rules; refusing a no-op policy")
+    elif ($unsupported | length) != 0 then
+      error("unsupported active rule(s): " + ($unsupported | tojson) +
+            "; extend the verifier for these exact type/parameters or remove the rule before using this gate")
+    elif any($checks[]; (.context | type) != "string" or .context == "" or
+                       (.appId | type) != "number" or .appId <= 0) then
+      error("required check lacks an exact GitHub App integration ID")
+    elif ($names | length) != ($checks | length) then
+      error("duplicate required check context is ambiguous")
+    elif ($legacy | length) != 0 then
+      error("legacy required status context cannot be bound to a GitHub App; migrate it to a required check run")
+    else {
+      schema: 2,
+      githubHost: $host,
+      repository: $repository,
+      baseRef: $baseRef,
+      effectiveRules: $rules,
+      branchProtection: protection,
+      requiredCheckRuns: ($checks | sort_by(.context, .appId)),
+      mergeStateRequired: true,
+      directEvidence: {
+        required_status_checks: "exact App-bound check run and exact PR-associated suite",
+        pull_request: "GitHub reviewDecision plus zero unresolved review threads",
+        required_signatures: "exact PR final GitHub merge-state predicate",
+        required_workflows: "exact PR final GitHub merge-state predicate",
+        required_deployments: "exact PR final GitHub merge-state predicate",
+        required_code_scanning: "exact PR final GitHub merge-state predicate"
+      },
+      legacyStatusPolicy: "reject-required-contexts-without-provider-binding"
+    }
+    end
+  ' >"$output" || fail "could not build exact policy inventory"
+}
+
+verify_checks() {
+  test "$#" = 7 || fail "usage: verify-checks IDENTITY_JSON INVENTORY_JSON REPOSITORY_JSON RUNS_JSON SUITES_JSON STATUSES_JSON OUTPUT_JSON"
+  local identity="$1" inventory="$2" repository="$3" runs="$4" suites="$5" statuses="$6" output="$7"
+  require_jq
+  local item
+  for item in "$identity" "$inventory" "$repository" "$runs" "$suites" "$statuses"; do
+    require_file "$item"
+  done
+
+  jq -n -e --slurpfile identity "$identity" --slurpfile inventory "$inventory" \
+    --slurpfile repository "$repository" --slurpfile runs "$runs" \
+    --slurpfile suites "$suites" --slurpfile statuses "$statuses" '
+    $identity[0].data.repository.pullRequest as $pr |
+    $inventory[0] as $policy |
+    $repository[0] as $repo |
+    def nonempty_string: type == "string" and length > 0;
+    def exact_repo($candidate):
+      $candidate.id == $repo.id and
+      $candidate.full_name == $repo.full_name and
+      $candidate.html_url == $repo.html_url and
+      $candidate.url == $repo.url;
+    def exact_association($suite):
+      [ $suite.pull_requests[]? |
+        select(.head.sha == $pr.headRefOid and .head.ref == $pr.headRefName and
+               exact_repo(.head.repo) and
+               .base.sha == $pr.baseRefOid and .base.ref == $pr.baseRefName and
+               exact_repo(.base.repo))
+      ] | length == 1;
+    def suite_for($run):
+      [ $suites[0][] |
+        select(.id == $run.check_suite.id and .head_sha == $run.head_sha and
+               exact_repo(.repository) and .app.id == $run.app.id and
+               exact_association(.))
+      ] | length == 1;
+    def exact_success($need):
+      [ $runs[0][] |
+        select((.observedOid == .head_sha) and
+               (.head_sha == $pr.headRefOid or .head_sha == ($pr.potentialMergeCommit.oid // $pr.headRefOid)) and
+               .name == $need.context and .app.id == $need.appId and
+               (.app.owner.login | nonempty_string) and (.app.slug | nonempty_string) and
+               .status == "completed" and (.conclusion | ascii_upcase) == "SUCCESS" and suite_for(.))
+      ] | length > 0;
+    def required_status_names: ($policy.requiredCheckRuns | map(.context));
+    if ($policy.schema != 2 or $policy.mergeStateRequired != true) then
+      error("unsupported or incomplete policy inventory")
+    elif (($policy.repository != $repo.full_name) or (($policy.githubHost | nonempty_string) | not)) then
+      error("inventory and captured repository disagree")
+    elif (($repo.html_url != ("https://" + $policy.githubHost + "/" + $repo.full_name)) or
+          (($repo.url | nonempty_string) | not)) then
+      error("repository was not captured from the pinned HTTPS GitHub host")
+    elif ($pr.headRepository.nameWithOwner != $repo.full_name or
+          $pr.baseRepository.nameWithOwner != $repo.full_name) then
+      error("fork or mismatched source/base repository")
+    elif ($pr.isDraft != false or $pr.mergeable != "MERGEABLE" or $pr.mergeStateStatus != "CLEAN") then
+      error("GitHub does not currently attest that this exact PR is mergeable and policy-clean")
+    elif any($policy.requiredCheckRuns[]; exact_success(.) | not) then
+      error("a required App-bound check has no successful exact source-head or synthetic-candidate run")
+    elif any($statuses[0][]; (.context as $context | required_status_names | index($context)) != null) then
+      error("legacy status collides with a required check-run context and cannot be provider-bound safely")
+    else {
+      schema: 1,
+      verified: true,
+      acceptedHeads: [$pr.headRefOid, ($pr.potentialMergeCommit.oid // $pr.headRefOid)] | unique,
+      repository: $repo.full_name,
+      githubHost: $policy.githubHost
+    }
+    end
+  ' >"$output" || fail "required check/provider/suite evidence is invalid"
+}
+
+usage() {
+  cat >&2 <<'EOF'
+usage:
+  pr-gate-contract.sh parse-pr-url HTTPS_PR_URL
+  pr-gate-contract.sh request-date HTTP_RESPONSE_FILE
+  pr-gate-contract.sh request-date-to-ns HTTP_RESPONSE_FILE
+  pr-gate-contract.sh verify-review-freshness HTTP_RESPONSE_FILE RFC3339_UTC_TIMESTAMP
+  pr-gate-contract.sh inventory-policy HOST REPOSITORY BASE_REF EFFECTIVE_JSON PROTECTION_JSON OUTPUT_JSON
+  pr-gate-contract.sh verify-checks IDENTITY_JSON INVENTORY_JSON REPOSITORY_JSON RUNS_JSON SUITES_JSON STATUSES_JSON OUTPUT_JSON
+EOF
+  exit 64
+}
+
+command="${1-}"
+case "$command" in
+  parse-pr-url) shift; parse_pr_url "$@" ;;
+  request-date) shift; request_date "$@" ;;
+  request-date-to-ns) shift; request_date_to_ns "$@" ;;
+  verify-review-freshness) shift; verify_review_freshness "$@" ;;
+  inventory-policy) shift; inventory_policy "$@" ;;
+  verify-checks) shift; verify_checks "$@" ;;
+  *) usage ;;
+esac

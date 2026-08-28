@@ -34,6 +34,10 @@ jobs:
         run: make verify-release-provenance
       - name: Verify documentation snippets
         run: make verify-docs-snippets
+      - name: Verify PR gate contract behavior
+        run: |
+          shellcheck .github/scripts/pr-gate-contract.sh .github/scripts/test-pr-gate-contract.sh
+          .github/scripts/test-pr-gate-contract.sh
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:

@@ -3,16 +3,32 @@
 Use this prompt to create, update, review, rebase, and ready a pull request.
 Treat a PR as approved only when one complete, current evidence snapshot passes.
 
-## Repository and command scope
+## Repository, host, and command scope
 
-- Use `--repo BASE_OWNER/BASE_REPOSITORY` with every `gh pr` and `gh run`
-  command. Do not rely on the checked-out repository or a remote named
-  `origin`.
+- Pin every GitHub operation to the HTTPS host embedded in the actual PR URL.
+  Do not rely on `GH_HOST`, the checked-out repository, a remote named
+  `origin`, or a Git URL rewrite. The reference helper below rejects HTTP,
+  credentials, ports, queries, fragments, malformed hosts, and malformed PR
+  paths before a network request is made.
+- Use `--repo HOST/BASE_OWNER/BASE_REPOSITORY` with every `gh pr` and `gh run`
+  command. REST and GraphQL requests must use `gh api --hostname HOST`; their
+  REST paths must include `repos/BASE_OWNER/BASE_REPOSITORY/...` and GraphQL
+  calls must include explicit `owner` and `repo` variables.
 - This task's user-directed policy permits direct same-repository branches
   only. Refuse fork pushes; do not repurpose this policy as a repository rule.
-- The installed `gh api` has no `--repo` flag. Its REST paths must include
-  `repos/$base_repo/...`; its GraphQL calls must include explicit `owner` and
-  `repo` variables.
+- Run the behavioural conformance suite before relying on a changed copy of
+  this procedure:
+
+  ```bash
+  ./.github/scripts/test-pr-gate-contract.sh
+  ```
+
+  The prompt uses [`.github/scripts/pr-gate-contract.sh`](../scripts/pr-gate-contract.sh)
+  as the executable reference for URL parsing, conservative review freshness,
+  policy inventory, and exact check-suite evidence. It tests API-shaped
+  fixtures, including a synthetic merge candidate that differs from the source
+  head and attacker-controlled suite/status cases; it does not test for text
+  in this document.
 
 ## Formal review requirements
 
@@ -20,7 +36,7 @@ Request a formal Copilot review; do not write an `@copilot review` comment.
 The comment invokes the coding agent and is not a pull-request review request.
 
 ```bash
-gh pr edit PR_NUMBER --repo BASE_OWNER/BASE_REPOSITORY --add-reviewer @copilot
+GH_HOST=HOST gh pr edit PR_NUMBER --repo HOST/BASE_OWNER/BASE_REPOSITORY --add-reviewer @copilot
 ```
 
 For the fail-closed gate below, use the equivalent REST reviewer request with
@@ -63,10 +79,18 @@ set -euo pipefail
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 
 # Derive both target repository and number from the actual PR URL.
-pr_url="https://github.example/BASE_OWNER/BASE_REPOSITORY/pull/PR_NUMBER"
-base_repo="$(printf '%s\n' "$pr_url" | awk -F/ '{print $(NF-3) "/" $(NF-2)}')"
-pr="$(printf '%s\n' "$pr_url" | awk -F/ '{print $NF}')"
-case "$base_repo" in */*) ;; *) fail "invalid PR URL";; esac
+# Supply the exact browser/API URL rather than a host placeholder. The parser
+# pins host/repository/number before any `gh` or Git network operation.
+pr_url="https://github.com/BASE_OWNER/BASE_REPOSITORY/pull/PR_NUMBER"
+contract="./.github/scripts/pr-gate-contract.sh"
+test -x "$contract" || fail "missing executable PR-gate contract helper"
+IFS=$'\t' read -r github_host base_repo pr <<EOF
+$($contract parse-pr-url "$pr_url")
+EOF
+hosted_repo="$github_host/$base_repo"
+gh_api() { env GH_HOST="$github_host" gh api --hostname "$github_host" "$@"; }
+gh_pr() { env GH_HOST="$github_host" gh pr "$@"; }
+case "$base_repo" in */*) ;; *) fail "invalid PR repository";; esac
 case "$pr" in ''|*[!0-9]*) fail "invalid PR number";; esac
 
 gate_root="$(mktemp -d)"
@@ -85,12 +109,13 @@ esac
 capture_identity() {
   # shellcheck disable=SC2016
   # GraphQL variables must reach gh unchanged.
-  gh api graphql -f query='
+  gh_api graphql -f query='
     query($owner:String!, $repo:String!, $pr:Int!) {
       repository(owner:$owner, name:$repo) {
         pullRequest(number:$pr) {
-          headRefName headRefOid baseRefName baseRefOid
-          headRepository { nameWithOwner }
+          headRefName headRefOid baseRefName baseRefOid isDraft mergeable mergeStateStatus
+          headRepository { id nameWithOwner }
+          baseRepository { id nameWithOwner }
           reviewDecision
           potentialMergeCommit { oid }
           mergeQueueEntry { id }
@@ -100,27 +125,17 @@ capture_identity() {
   ' -f owner="${base_repo%/*}" -f repo="${base_repo#*/}" -F pr="$pr"
 }
 
-# No workstation clock participates in review freshness. GitHub's HTTP Date is
-# the server-derived completion boundary; strict greater-than deliberately
-# rejects same-second review timestamps.
-server_date_to_ns() {
-  command -v ruby >/dev/null || return 1
-  # shellcheck disable=SC2016
-  ruby -r time -e '
-    s = ARGV.fetch(0); t = Time.httpdate(s).utc
-    abort unless t.utc? && s.match?(/\A(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), /)
-    puts (t.to_r * 1_000_000_000).to_i
-  ' "$1"
-}
-
-review_timestamp_to_ns() {
-  command -v ruby >/dev/null || return 1
-  # shellcheck disable=SC2016
-  ruby -r time -e '
-    s = ARGV.fetch(0)
-    abort unless s.match?(/\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z\z/)
-    t = Time.iso8601(s).utc; abort unless t.utc?
-    puts (t.to_r * 1_000_000_000).to_i
+# `reviewDecision`, mergeability, and merge-state legitimately change while CI
+# and reviews complete. Bind only immutable source/base/candidate identity
+# across the review request; validate mutable policy state in each snapshot.
+identity_binding() {
+  jq -S '
+    .data.repository.pullRequest |
+    {headRefName, headRefOid, baseRefName, baseRefOid,
+     headRepository: {id: .headRepository.id, nameWithOwner: .headRepository.nameWithOwner},
+     baseRepository: {id: .baseRepository.id, nameWithOwner: .baseRepository.nameWithOwner},
+     potentialMergeCommit: (.potentialMergeCommit | if . == null then null else {oid} end),
+     mergeQueueEntry: (.mergeQueueEntry | if . == null then null else {id} end)}
   ' "$1"
 }
 
@@ -128,14 +143,11 @@ request_formal_review() {
   review_request_http="$gate_root/review-request.http"
   # REST is the formal reviewer API equivalent of `gh pr edit --add-reviewer`.
   # --include preserves the GitHub server Date header with the successful POST.
-  gh api --include -X POST "repos/$base_repo/pulls/$pr/requested_reviewers" \
+  gh_api --include -X POST "repos/$base_repo/pulls/$pr/requested_reviewers" \
     -f "reviewers[]=$copilot_reviewer_login" >"$review_request_http"
-  request_server_date="$(awk '
-    tolower($1) == "date:" { $1=""; sub(/^[[:space:]]+/, ""); print; exit }
-    /^[[:space:]]*$/ { exit }
-  ' "$review_request_http")"
-  test -n "$request_server_date" || fail "GitHub review request omitted Date"
-  request_server_ns="$(server_date_to_ns "$request_server_date")" ||
+  request_server_date="$($contract request-date "$review_request_http")" ||
+    fail "ambiguous GitHub review-request Date"
+  request_server_ns="$($contract request-date-to-ns "$review_request_http")" ||
     fail "ambiguous GitHub review-request Date"
   case "$request_server_ns" in ''|*[!0-9]*)
     fail "invalid GitHub review-request boundary";;
@@ -152,8 +164,10 @@ jq -e '((.errors // []) | length) == 0 and .data != null and
        .data.repository.pullRequest != null and
        .data.repository.pullRequest.headRefOid and
        .data.repository.pullRequest.baseRefOid and
-       .data.repository.pullRequest.headRepository.nameWithOwner' \
+       .data.repository.pullRequest.headRepository.nameWithOwner and
+       .data.repository.pullRequest.baseRepository.nameWithOwner' \
   "$observed" >/dev/null || fail "incomplete PR identity"
+identity_binding "$observed" >"$gate_root/observed-identity-binding.json"
 base_ref="$(jq -r '.data.repository.pullRequest.baseRefName' "$observed")"
 ```
 
@@ -174,10 +188,12 @@ candidate_oid="$(jq -r \
 ```
 
 Once the requested review and required CI are complete, take the first complete
-evidence capture in `$gate_root/verified`. Its `identity.json` must byte-match
-`observed.json` before using it. Validate the evidence, then repeat the *same*
-collection into `$gate_root/final` immediately before ready/merge. Both captures
-must use the same filenames and include a fresh `identity.json`.
+evidence capture in `$gate_root/verified`. Its immutable source/base/candidate
+identity projection must byte-match the observed projection before use;
+approval/merge-state fields are deliberately re-read because they are expected
+to change while the review completes. Validate the evidence, then repeat the
+*same* collection into `$gate_root/final` immediately before ready/merge. Both
+captures must use the same filenames and include a fresh `identity.json`.
 
 ### Evidence that one gate snapshot must contain
 
@@ -185,19 +201,25 @@ Capture every page of each connection. A complete snapshot contains:
 
 | Evidence | Required fields and decision |
 | --- | --- |
-| PR identity | `headRefOid`, `baseRefOid`, head repository/ref, base ref, test-merge SHA, `reviewDecision` |
-| Formal reviews | review ID, configured reviewer `author.login`, state, `submittedAt`, `commit.oid`; select the newest configured Copilot review strictly after GitHub's `request_server_ns` response boundary |
-| Human approval | `reviewDecision` and current branch-ruleset/code-owner evidence for the pair; Copilot does not satisfy this row |
+| PR identity | pinned HTTPS host; `headRefOid`, `baseRefOid`, source/base repository and refs, test-merge SHA, `reviewDecision`, `mergeable`, `mergeStateStatus`, draft state |
+| Formal reviews | review ID, configured reviewer `author.login`, state, `submittedAt`, `commit.oid`; select the newest configured Copilot review no earlier than the first whole second after GitHub's server `Date` boundary |
+| Human approval | `reviewDecision == APPROVED`, zero unresolved threads, and the current `mergeable == MERGEABLE` / `mergeStateStatus == CLEAN` server predicate for the pair; Copilot does not satisfy this row |
 | Threads and comments | every thread ID/resolution/outdated state and every comment ID, minimized state/reason, author, path, line, and timestamp |
 | Checks | complete expected inventory, result, `head_sha`, check-suite ID, and `CheckRun.app.owner.login`, `CheckRun.app.slug`, and `CheckRun.app.id` |
 | Legacy statuses | every context, state, target URL, and `creator.login`/`creator.id`; reject a status that attempts to satisfy a required context because GitHub rules do not bind its creator |
-| Check suites | suite ID, `head_sha`, app/provider identity, and each associated PR's repository, head SHA/ref, and base SHA/ref |
+| Check suites | suite ID, `head_sha`, app/provider identity, suite repository identity/HTTPS URL, and each associated PR's source/base repository identity, refs, and SHAs |
 
 Fetch GitHub's effective branch rules and branch-protection object into every
-snapshot. They are the complete expected check/provider inventory: every
-required job must have one exact app ID and conclude `SUCCESS`. The gate rejects
-an empty, partial, legacy-only, or changed inventory; it does not accept a
-caller-provided “expected” list, `NEUTRAL`, or `SKIPPED` as a substitute.
+snapshot. Inventory **every active rule type and its parameters**, not only
+status checks. The contract validates App-bound required checks directly and
+uses GitHub's exact-PR final `MERGEABLE`/`CLEAN` predicate in addition for
+active `pull_request`, `required_signatures`, `required_workflows`,
+`required_deployments`, and `required_code_scanning` rules. A merge queue,
+linear-history rule, or any unrecognised active type fails closed with the
+server-provided type/parameters in the error: extend the verifier for that
+type, or remove/replace the rule before using this ready/merge gate. It never
+silently ignores a rule, accepts `NEUTRAL`/`SKIPPED`, or accepts a legacy
+required status, whose `creator` cannot prove a GitHub App integration.
 
 The following commands provide the raw, paginated review/thread/check material.
 Save each response under the gate directory and normalize it with sorted JSON
@@ -215,7 +237,7 @@ collect_reviews_and_threads() {
   # Formal reviews; evaluate the exact-login/latest/COMMENTED/time/head predicate.
   # shellcheck disable=SC2016
   # GraphQL variables must reach gh unchanged.
-  gh api graphql --paginate --slurp -f query='
+  gh_api graphql --paginate --slurp -f query='
   query($owner:String!, $repo:String!, $pr:Int!, $endCursor:String) {
     repository(owner:$owner, name:$repo) {
       pullRequest(number:$pr) {
@@ -245,18 +267,13 @@ jq -e --arg login "$copilot_reviewer_login" --arg head "$head_oid" '
   fail "missing current formal Copilot review"
 
 review_submitted_at="$(jq -r .submittedAt "$gate_dir/copilot-review.json")"
-review_submitted_ns="$(review_timestamp_to_ns "$review_submitted_at")" ||
-  fail "invalid formal Copilot submittedAt"
-case "$review_submitted_ns:$request_server_ns" in :*|*:|*[!0-9:]*|*:*:*)
-  fail "ambiguous formal-review freshness boundary";;
-esac
-test "$review_submitted_ns" -gt "$request_server_ns" ||
-  fail "formal Copilot review is not after GitHub request completion"
+$contract verify-review-freshness "$gate_root/review-request.http" "$review_submitted_at" ||
+  fail "formal Copilot review is not provably after GitHub request completion"
 
   # All review threads. Paginate every returned thread's comments separately.
   # shellcheck disable=SC2016
   # GraphQL variables must reach gh unchanged.
-  gh api graphql --paginate --slurp -f query='
+  gh_api graphql --paginate --slurp -f query='
   query($owner:String!, $repo:String!, $pr:Int!, $endCursor:String) {
     repository(owner:$owner, name:$repo) {
       pullRequest(number:$pr) {
@@ -287,7 +304,7 @@ thread_number=0
     thread_number=$((thread_number + 1))
     # shellcheck disable=SC2016
     # GraphQL variables must reach gh unchanged.
-    gh api graphql --paginate --slurp -f query='
+    gh_api graphql --paginate --slurp -f query='
       query($thread:ID!, $endCursor:String) {
         node(id:$thread) {
           ... on PullRequestReviewThread {
@@ -317,17 +334,18 @@ Resolve a thread only after its fix is present in the current head.
 ```bash
 collect_ci_and_statuses() {
   gate_dir="$1"
-  # REST carries check runs, suites, and legacy statuses; its full path scopes gh api.
+  # REST carries check runs, suites, and legacy statuses. `filter=latest`
+  # avoids treating a superseded failed rerun as the current required run.
   oid_list=("$head_oid")
   test "$candidate_oid" = "$head_oid" || oid_list+=("$candidate_oid")
   for oid in "${oid_list[@]}"; do
-    gh api --paginate --slurp \
-      "repos/$base_repo/commits/$oid/check-runs?per_page=100" \
+    gh_api --paginate --slurp \
+      "repos/$base_repo/commits/$oid/check-runs?per_page=100&filter=latest" \
       >"$gate_dir/check-runs-$oid.json"
-    gh api --paginate --slurp \
+    gh_api --paginate --slurp \
       "repos/$base_repo/commits/$oid/check-suites?per_page=100" \
       >"$gate_dir/check-suites-$oid.json"
-    gh api --paginate --slurp \
+    gh_api --paginate --slurp \
       "repos/$base_repo/commits/$oid/status?per_page=100" \
       >"$gate_dir/status-contexts-$oid.json"
 
@@ -372,96 +390,33 @@ green.
 ```bash
 collect_policy_inventory() {
   gate_dir="$1"
-  gh api --paginate --slurp \
+  gh_api --paginate --slurp \
     "repos/$base_repo/rules/branches/$base_ref" \
     >"$gate_dir/effective-rules.json"
   jq -e 'type == "array" and length > 0 and all(.[]; type == "array")' \
     "$gate_dir/effective-rules.json" >/dev/null ||
     fail "missing or malformed effective branch rules"
-  gh api "repos/$base_repo/branches/$base_ref/protection" \
-    >"$gate_dir/branch-protection.json"
-  jq -e 'type == "object" and (.url | type) == "string"' \
-    "$gate_dir/branch-protection.json" >/dev/null ||
-    fail "missing or malformed branch protection"
 
-  jq -n --arg repository "$base_repo" --arg baseRef "$base_ref" \
-    --slurpfile effective "$gate_dir/effective-rules.json" \
-    --slurpfile protection "$gate_dir/branch-protection.json" '
-    def effective: ($effective[0] | add);
-    def ruleChecks:
-      [effective[] | select(.type == "required_status_checks") |
-       (.parameters.required_status_checks // [])[]? |
-       {context: (.context // ""), appId: (.integration_id // .app_id)}];
-    def protectionChecks:
-      [($protection[0].required_status_checks.checks // [])[] |
-       {context: (.context // ""), appId: (.app_id // .integration_id)}];
-    def legacyContexts:
-      ($protection[0].required_status_checks.contexts // []);
-    (ruleChecks + protectionChecks) as $checks |
-    ([ $checks[] | .context ] | unique) as $names |
-    ([ $checks[] | .context ] | unique) as $boundLegacy |
-    legacyContexts as $legacy |
-    if ($checks | length) == 0 then
-      error("no server-required checks; refusing a no-op inventory")
-    elif any($checks[]; (.context | type) != "string" or .context == "" or
-                       (.appId | type) != "number" or .appId <= 0) then
-      error("required check lacks an exact integration ID")
-    elif ($names | length) != ($checks | length) then
-      error("duplicate required check context")
-    elif (($legacy - $boundLegacy) | length) != 0 then
-      error("legacy required status lacks an app/provider binding")
-    else {
-      schema: 1,
-      repository: $repository,
-      baseRef: $baseRef,
-      effectiveRules: effective,
-      branchProtection: $protection[0],
-      requiredCheckRuns: ($checks | unique_by([.context, .appId]) |
-                          sort_by(.context, .appId)),
-      legacyStatusPolicy: "reject-required-contexts-without-provider-binding"
-    } end
-  ' >"$gate_dir/expected-inventory.json" ||
-    fail "could not build exact expected check/provider inventory"
+  # A failed request is not evidence that protection is absent. Repositories
+  # using rulesets-only protection need a captured `{}` response produced by a
+  # separate, authenticated 404-aware collector; otherwise stop here.
+  gh_api "repos/$base_repo/branches/$base_ref/protection" \
+    >"$gate_dir/branch-protection.json" ||
+    fail "could not capture branch protection (do not substitute an empty object after an API failure)"
+  jq -e 'type == "object"' "$gate_dir/branch-protection.json" >/dev/null ||
+    fail "malformed branch protection"
+
+  "$contract" inventory-policy "$github_host" "$base_repo" "$base_ref" \
+    "$gate_dir/effective-rules.json" "$gate_dir/branch-protection.json" \
+    "$gate_dir/expected-inventory.json"
 }
 
 validate_exact_inventory() {
   snapshot="$1"
-  jq -e '.schema == 1 and (.requiredCheckRuns | type) == "array" and
-    (.requiredCheckRuns | length) > 0 and
-    all(.requiredCheckRuns[]; (.context | type) == "string" and
-      (.appId | type) == "number" and .appId > 0)' \
-    "$snapshot/expected-inventory.json" >/dev/null ||
-    fail "invalid or no-op expected inventory"
-  jq -e --arg repository "$base_repo" --arg head "$head_oid" \
-    --arg base "$base_oid" --arg baseRef "$base_ref" --arg candidate "$candidate_oid" \
-    --slurpfile expected "$snapshot/expected-inventory.json" \
-    --slurpfile runs "$snapshot/check-runs-normalized.json" \
-    --slurpfile suites "$snapshot/check-suites-normalized.json" \
-    --slurpfile statuses "$snapshot/status-contexts-normalized.json" '
-    $expected[0].requiredCheckRuns as $required |
-    def associated_suite($run):
-      [ $suites[0][] |
-        select(.id == $run.check_suite.id and .head_sha == $candidate and
-               .app.id == $run.app.id) |
-        .pull_requests[]? |
-        select(.head.sha == $head and .base.sha == $base and
-               .base.ref == $baseRef and
-               .base.repo.url == ("https://api.github.com/repos/" + $repository))
-      ] | length > 0;
-    def successful_required_run($need):
-      [ $runs[0][] |
-        select(.observedOid == $candidate and .head_sha == $candidate and
-               .name == $need.context and .app.id == $need.appId and
-               (.app.owner.login | type) == "string" and
-               (.app.slug | type) == "string" and .status == "completed" and
-               (.conclusion | ascii_upcase) == "SUCCESS" and associated_suite(.))
-      ] | length == 1;
-    ($required | length) > 0 and
-    all($required[]; successful_required_run(.)) and
-    ([ $statuses[0][] | select(.context as $context |
-       ($required | map(.context) | index($context)) != null) ] | length == 0)
-  ' "$snapshot/expected-inventory.json" >/dev/null ||
-    fail "required check/provider/suite result or legacy-status binding is invalid"
+  "$contract" verify-checks "$snapshot/identity.json" \
+    "$snapshot/expected-inventory.json" "$snapshot/repository.json" \
+    "$snapshot/check-runs-normalized.json" "$snapshot/check-suites-normalized.json" \
+    "$snapshot/status-contexts-normalized.json" "$snapshot/check-verdict.json"
 }
 
 # Bind policy to the observed base before asking for review. A policy change
@@ -481,15 +436,23 @@ capture_snapshot() {
     .data.repository.pullRequest.headRefOid != null and
     .data.repository.pullRequest.baseRefOid != null and
     .data.repository.pullRequest.headRepository.nameWithOwner != null and
+    .data.repository.pullRequest.baseRepository.nameWithOwner != null and
     .data.repository.pullRequest.mergeQueueEntry == null' \
     "$gate_dir/identity.json" >/dev/null || fail "invalid final PR identity"
-  cmp -s "$observed" "$gate_dir/identity.json" ||
+  identity_binding "$gate_dir/identity.json" >"$gate_dir/identity-binding.json"
+  cmp -s "$gate_root/observed-identity-binding.json" "$gate_dir/identity-binding.json" ||
     fail "PR head/base/candidate changed; restart and re-request Copilot"
   head_oid="$(jq -r '.data.repository.pullRequest.headRefOid' "$gate_dir/identity.json")"
   base_oid="$(jq -r '.data.repository.pullRequest.baseRefOid' "$gate_dir/identity.json")"
   candidate_oid="$(jq -r \
     '.data.repository.pullRequest.potentialMergeCommit.oid // .data.repository.pullRequest.headRefOid' \
     "$gate_dir/identity.json")"
+  gh_api "repos/$base_repo" >"$gate_dir/repository.json"
+  jq -e --arg host "$github_host" --arg repo "$base_repo" '
+    (.id | type) == "number" and .full_name == $repo and
+    .html_url == ("https://" + $host + "/" + $repo) and (.url | type) == "string"
+  ' "$gate_dir/repository.json" >/dev/null ||
+    fail "repository capture is not pinned to the HTTPS GitHub host"
   collect_policy_inventory "$gate_dir"
   cmp -s "$gate_root/observed-policy/expected-inventory.json" \
     "$gate_dir/expected-inventory.json" ||
@@ -541,7 +504,7 @@ cmp -s "$gate_root/verified/gate.jsonl" "$gate_root/final/gate.jsonl" || \
 
 # This is the only mutation in this block. Do not launch a browser or inspect
 # additional mutable state between the final manifest comparison and ready.
-gh pr ready "$pr" --repo "$base_repo"
+gh_pr ready "$pr" --repo "$hosted_repo"
 ```
 
 The final capture must still have the observed head/base pair. A changed head or
@@ -556,8 +519,9 @@ branch, and only after deriving its live source and base from the PR URL.
 ```bash
 set -euo pipefail
 
-pr_data="$(gh pr view "$pr" --repo "$base_repo" \
+pr_data="$(gh_pr view "$pr" --repo "$hosted_repo" \
   --json baseRefName,baseRefOid,headRefName,headRefOid,headRepository)"
+pr_identity="$(jq -S -c . <<<"$pr_data")"
 base_ref="$(jq -r .baseRefName <<<"$pr_data")"
 base_oid="$(jq -r .baseRefOid <<<"$pr_data")"
 head_ref="$(jq -r .headRefName <<<"$pr_data")"
@@ -572,12 +536,14 @@ if git config --get-regexp '^url\..*\.(insteadOf|pushInsteadOf)$' >/dev/null; th
   exit 1
 fi
 
-# A selected remote must have exactly one push URL, and both its fetch and push
-# targets must resolve to the current PR head repository.
+# A selected remote must have exactly one HTTPS fetch/push URL whose host and
+# repository exactly match the live same-repository PR source. Do not inspect
+# arbitrary SSH/custom URLs through `gh repo view`: that would make endpoint
+# verification depend on a second, unpinned host selection.
+expected_https_remote="https://$github_host/$head_repo.git"
 push_remote=""
 for candidate in $(git remote); do
-  fetch_repo="$(gh repo view "$(git remote get-url "$candidate")" \
-    --json nameWithOwner --jq .nameWithOwner 2>/dev/null || :)"
+  fetch_url="$(git remote get-url "$candidate")"
   push_urls="$(git remote get-url --push --all "$candidate")"
   push_count="$(printf '%s\n' "$push_urls" | awk 'NF { count++ } END { print count + 0 }')"
   if test "$push_count" != 1; then
@@ -585,10 +551,8 @@ for candidate in $(git remote); do
     continue
   fi
   push_url="$(printf '%s\n' "$push_urls" | sed -n '1p')"
-  push_repo="$(gh repo view "$push_url" --json nameWithOwner --jq .nameWithOwner \
-    2>/dev/null || :)"
-  if test "$fetch_repo" != "$head_repo" || test "$push_repo" != "$head_repo"; then
-    printf 'rejecting remote %s: endpoint is not the PR head repository\n' "$candidate" >&2
+  if test "$fetch_url" != "$expected_https_remote" || test "$push_url" != "$expected_https_remote"; then
+    printf 'rejecting remote %s: endpoint is not the pinned HTTPS PR source\n' "$candidate" >&2
     continue
   fi
   test -z "$push_remote" || { echo "ambiguous verified remotes" >&2; exit 1; }
@@ -615,6 +579,8 @@ git rebase --show-current-patch >/dev/null 2>&1 && { echo "rebase remains" >&2; 
 test -z "$(git status --porcelain)" || { echo "dirty after rebase" >&2; exit 1; }
 test "$(git merge-base HEAD "$push_remote/$base_ref")" = \
   "$(git rev-parse "$push_remote/$base_ref")"
+rebased_head="$(git rev-parse HEAD)"
+git cat-file -e "$rebased_head^{commit}"
 
 signature_statuses="$(git log --format='%G?' "$push_remote/$base_ref..HEAD")"
 printf '%s\n' "$signature_statuses"
@@ -623,11 +589,25 @@ if printf '%s\n' "$signature_statuses" | grep -Eq '[^G]'; then
   exit 1
 fi
 
-# Re-read live PR metadata; any movement means start over.
-test "$(gh pr view "$pr" --repo "$base_repo" \
-  --json baseRefName,baseRefOid,headRefName,headRefOid,headRepository)" = "$pr_data"
+# Re-read live PR metadata. Pin the immutable, verified post-rebase OID; any
+# source/base movement or local mutation means start over. The lease protects
+# the small interval between this read and the push.
+live_pr_data="$(gh_pr view "$pr" --repo "$hosted_repo" \
+  --json baseRefName,baseRefOid,headRefName,headRefOid,headRepository)"
+test "$(jq -S -c . <<<"$live_pr_data")" = "$pr_identity" || {
+  echo "PR moved while rebasing; do not push" >&2; exit 1;
+}
+test "$(git rev-parse HEAD)" = "$rebased_head" || {
+  echo "post-rebase OID changed after verification; do not push" >&2; exit 1;
+}
 git push --force-with-lease="refs/heads/$head_ref:$remote_head" \
-  "$push_remote" "HEAD:refs/heads/$head_ref"
+  "$push_remote" "$rebased_head:refs/heads/$head_ref"
+test "$(git ls-remote "$expected_https_remote" "refs/heads/$head_ref" | awk '{print $1}')" = "$rebased_head" || {
+  echo "remote did not retain the verified post-rebase OID" >&2; exit 1;
+}
+test "$(gh_pr view "$pr" --repo "$hosted_repo" --json headRefOid --jq .headRefOid)" = "$rebased_head" || {
+  echo "GitHub PR source is not the verified post-rebase OID" >&2; exit 1;
+}
 ```
 
 If a rebase stops, resolve and stage only the named conflict paths, then
@@ -648,7 +628,7 @@ stack_root_base=STACK_ROOT_BASE_REF
 git check-ref-format --branch "$stack_root_base" >/dev/null
 # shellcheck disable=SC2016
 # GraphQL variables must reach gh unchanged.
-gh api graphql --paginate --slurp -f query='
+gh_api graphql --paginate --slurp -f query='
   query($owner:String!, $repo:String!, $endCursor:String) {
     repository(owner:$owner, name:$repo) {
       pullRequests(first:100, states:OPEN, after:$endCursor) {
@@ -723,8 +703,22 @@ test -s "$body_file"
 # The caller supplies the actual intended base; do not silently substitute a
 # repository default. A workflow that explicitly targets the default may derive
 # it first, record that decision, then assign it here.
+github_host=github.com
 base_repo=BASE_OWNER/BASE_REPOSITORY
 base_ref=INTENDED_BASE_REF
+contract="./.github/scripts/pr-gate-contract.sh"
+test -x "$contract" || { echo "missing executable PR-gate contract helper" >&2; exit 1; }
+# Re-use the strict URL parser to validate the caller-supplied host/repository
+# before any API or Git network action. A temporary PR number is only syntax.
+IFS=$'\t' read -r parsed_host parsed_repo _ <<EOF
+$($contract parse-pr-url "https://$github_host/$base_repo/pull/1")
+EOF
+test "$parsed_host" = "$github_host" && test "$parsed_repo" = "$base_repo" || {
+  echo "invalid GitHub host or repository" >&2; exit 1;
+}
+hosted_repo="$github_host/$base_repo"
+gh_pr() { env GH_HOST="$github_host" gh pr "$@"; }
+gh_api() { env GH_HOST="$github_host" gh api --hostname "$github_host" "$@"; }
 git check-ref-format --branch "$base_ref" >/dev/null
 head_ref="$(git branch --show-current)"
 git check-ref-format --branch "$head_ref" >/dev/null
@@ -736,10 +730,10 @@ if git config --get-regexp '^url\..*\.(insteadOf|pushInsteadOf)$' >/dev/null; th
   echo "URL rewrite configuration is present; refusing draft creation" >&2
   exit 1
 fi
+expected_https_remote="https://$github_host/$base_repo.git"
 push_remote=""
 for candidate in $(git remote); do
-  fetch_repo="$(gh repo view "$(git remote get-url "$candidate")" \
-    --json nameWithOwner --jq .nameWithOwner 2>/dev/null || :)"
+  fetch_url="$(git remote get-url "$candidate")"
   push_urls="$(git remote get-url --push --all "$candidate")"
   push_count="$(printf '%s\n' "$push_urls" | awk 'NF { count++ } END { print count + 0 }')"
   if test "$push_count" != 1; then
@@ -747,10 +741,8 @@ for candidate in $(git remote); do
     continue
   fi
   push_url="$(printf '%s\n' "$push_urls" | sed -n '1p')"
-  push_repo="$(gh repo view "$push_url" --json nameWithOwner --jq .nameWithOwner \
-    2>/dev/null || :)"
-  if test "$fetch_repo" != "$base_repo" || test "$push_repo" != "$base_repo"; then
-    printf 'rejecting remote %s: endpoint is not the target repository\n' "$candidate" >&2
+  if test "$fetch_url" != "$expected_https_remote" || test "$push_url" != "$expected_https_remote"; then
+    printf 'rejecting remote %s: endpoint is not the pinned HTTPS target repository\n' "$candidate" >&2
     continue
   fi
   test -z "$push_remote" || { echo "ambiguous verified remotes" >&2; exit 1; }
@@ -764,14 +756,30 @@ git fetch "$push_remote" \
   "refs/heads/$head_ref:refs/remotes/$push_remote/$head_ref"
 git rev-parse --verify "$push_remote/$base_ref^{commit}" >/dev/null
 test "$(git rev-parse "$push_remote/$head_ref")" = "$(git rev-parse HEAD)"
+source_oid="$(git rev-parse HEAD)"
+base_oid="$(git rev-parse "$push_remote/$base_ref")"
 
-pr_url="$(gh pr create --repo "$base_repo" --draft \
+pr_url="$(gh_pr create --repo "$hosted_repo" --draft \
   --head "$head_ref" --base "$base_ref" --title "feat: description" \
   --body-file "$body_file")"
 printf '%s\n' "$pr_url"
+IFS=$'\t' read -r created_host created_repo created_pr <<EOF
+$($contract parse-pr-url "$pr_url")
+EOF
+pr="$created_pr"
+test "$created_host" = "$github_host" && test "$created_repo" = "$base_repo" || {
+  echo "PR creation returned a different GitHub host or repository" >&2; exit 1;
+}
+gh_pr view "$pr" --repo "$hosted_repo" \
+  --json headRefName,headRefOid,headRepository,baseRefName,baseRefOid,baseRepository \
+  | jq -e --arg repo "$base_repo" --arg head "$head_ref" --arg headOid "$source_oid" \
+      --arg base "$base_ref" --arg baseOid "$base_oid" '
+      .headRepository.nameWithOwner == $repo and .headRefName == $head and .headRefOid == $headOid and
+      .baseRepository.nameWithOwner == $repo and .baseRefName == $base and .baseRefOid == $baseOid
+    ' >/dev/null || { echo "created PR source/base does not match verified refs" >&2; exit 1; }
 
 # Use the same file-only rule for an existing PR description.
-gh pr edit PR_NUMBER --repo "$base_repo" --body-file "$body_file"
+gh_pr edit "$pr" --repo "$hosted_repo" --body-file "$body_file"
 ```
 
 Read the stored raw body, inspect `bodyHTML`, and check the rendered web page
@@ -779,16 +787,16 @@ for headings, newlines, links, dependency heads, scope, limitations, and test
 evidence. Mark a draft ready only after the complete gate passes.
 
 ```bash
-gh pr view PR_NUMBER --repo "$base_repo" --json body --jq .body
+gh_pr view "$pr" --repo "$hosted_repo" --json body --jq .body
 # shellcheck disable=SC2016
 # GraphQL variables must reach gh unchanged.
-gh api graphql -f query='
+gh_api graphql -f query='
   query($owner:String!, $repo:String!, $pr:Int!) {
     repository(owner:$owner, name:$repo) { pullRequest(number:$pr) { bodyHTML } }
   }
-' -f owner="${base_repo%/*}" -f repo="${base_repo#*/}" -F pr=PR_NUMBER \
+' -f owner="${base_repo%/*}" -f repo="${base_repo#*/}" -F pr="$pr" \
   --jq .data.repository.pullRequest.bodyHTML
-gh pr view PR_NUMBER --repo "$base_repo" --web
+gh_pr view "$pr" --repo "$hosted_repo" --web
 ```
 
 The browser check is description-only. The separate fail-closed gate block is
