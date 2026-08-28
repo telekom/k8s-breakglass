@@ -93,6 +93,11 @@ the Job's operation-scoped output volume; the collector does not race another
 writer by unlinking public paths during failure cleanup. The controller must delete the storage object
 idempotently on session termination, expiration, explicit deletion, and
 restart recovery. A failed cleanup remains observable and is retried.
+Crashdump enumeration has its own 30-second deadline within the 15-minute
+recipe lease. The collector starts `find` in a separate process group; deadline
+and signal cleanup send TERM and then KILL to that group. A timeout exits 2 with
+`coredump enumeration deadline exceeded`, leaves
+no ready marker, and does not permit a traversal descendant to survive.
 The controller's durable upload lease is at most 15 minutes, further bounded
 by the resolved `uploadTimeout` (default 10 minutes) and session expiry. A
 larger timeout cannot extend the 15-minute lease. Storage receives the upload

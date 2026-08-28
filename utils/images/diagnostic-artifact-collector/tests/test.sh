@@ -11,12 +11,16 @@ root_volume=diagnostic-artifact-test-${test_dir##*/}
 upload_volume=diagnostic-artifact-upload-${test_dir##*/}
 https_pid=
 proxy_pid=
+bounded_container=
 cleanup() {
 	if [ -n "$https_pid" ]; then
 		kill "$https_pid" >/dev/null 2>&1 || true
 	fi
 	if [ -n "$proxy_pid" ]; then
 		kill "$proxy_pid" >/dev/null 2>&1 || true
+	fi
+	if [ -n "$bounded_container" ]; then
+		docker rm -f "$bounded_container" >/dev/null 2>&1 || true
 	fi
 	rm -rf "$test_dir"
 	docker volume rm "$root_volume" "$upload_volume" >/dev/null 2>&1 || true
@@ -588,42 +592,64 @@ expect_failure() {
 	[ ! -e "$output/artifact.ready" ]
 }
 
-# Create high-cardinality fixtures in bounded batches. Calling mkdir/touch once
-# per entry makes the behavioral limit tests unnecessarily slow on Docker
-# Desktop/OrbStack bind mounts while proving no additional collector behavior.
-create_fixture_entries() {
-	directory=$1
-	count=$2
-	type=$3
+# Unlike the broad input-rejection helper above, traversal-bound tests must
+# prove their named bound rather than merely observing a non-zero result. Run
+# detached so the harness can fail on a deterministic external deadline even
+# if a Desktop bind mount or a future find implementation stalls.
+expect_bounded_collector_failure() {
+	output=$1
+	expected_diagnostic=$2
+	deadline_seconds=$3
 	shift 3
-	set --
-	i=1
-	while [ "$i" -le "$count" ]; do
-		case "$type" in
-		file)
-			set -- "$@" "$directory/candidate-$i.dump"
-			;;
-		directory)
-			set -- "$@" "$directory/dir-$i"
-			;;
-		esac
-		if [ "$#" -eq 128 ]; then
-			if [ "$type" = file ]; then
-				touch "$@"
-			else
-				mkdir "$@"
-			fi
-			set --
-		fi
-		i=$((i + 1))
+	mkdir -p "$output"
+	chmod 0777 "$output"
+	docker_opts=
+	while [ "$1" != -- ]; do
+		docker_opts="$docker_opts $1"
+		shift
 	done
-	if [ "$#" -gt 0 ]; then
-		if [ "$type" = file ]; then
-			touch "$@"
-		else
-			mkdir "$@"
+	shift
+	bounded_container="diagnostic-artifact-bounded-${test_dir##*/}-${deadline_seconds}"
+	# The test paths contain no spaces; options are deliberately limited to the
+	# fixed Docker flags and temporary fixture mounts below.
+	# shellcheck disable=SC2086
+	docker run -d --name "$bounded_container" --read-only --cap-drop=ALL --network none \
+		--user 65532:65532 \
+		--env BREAKGLASS_ARTIFACT_ID=dsa-0123456789abcdef01234567 \
+		--env BREAKGLASS_ARTIFACT_SESSION_NAMESPACE=breakglass-test \
+		--env BREAKGLASS_ARTIFACT_SESSION_NAME=diagnostic-smoke \
+		--env BREAKGLASS_ARTIFACT_SESSION_UID=uid-0123456789abcdef \
+		--env BREAKGLASS_ARTIFACT_REDACTION_PROFILE=credential-text.v1 \
+		--env BREAKGLASS_ARTIFACT_REDACTION_VERSION=1 \
+		--volume "$output:/output" $docker_opts "$image" "$@" >/dev/null
+	deadline=$(( $(date +%s) + deadline_seconds ))
+	while [ "$(docker inspect -f '{{.State.Running}}' "$bounded_container")" = true ]; do
+		if [ "$(date +%s)" -ge "$deadline" ]; then
+			docker stop --time 1 "$bounded_container" >/dev/null 2>&1 || true
+			echo "collector did not terminate within ${deadline_seconds}s for: $expected_diagnostic" >&2
+			exit 1
 		fi
+		sleep 1
+	done
+	exit_code=$(docker inspect -f '{{.State.ExitCode}}' "$bounded_container")
+	result=$(docker logs "$bounded_container" 2>&1 || true)
+	[ "$exit_code" = 2 ] || {
+		echo "unexpected collector exit code for $expected_diagnostic: $exit_code ($result)" >&2
+		exit 1
+	}
+	printf '%s\n' "$result" | grep -F "$expected_diagnostic" >/dev/null || {
+		echo "collector did not report $expected_diagnostic: $result" >&2
+		exit 1
+	}
+	[ ! -e "$output/artifact.tar.gz" ]
+	[ ! -e "$output/artifact.manifest.json" ]
+	[ ! -e "$output/artifact.ready" ]
+	if find "$output" -maxdepth 1 -name '.staging.*' -print | grep -q .; then
+		echo "collector left a staging directory after $expected_diagnostic" >&2
+		exit 1
 	fi
+	docker rm "$bounded_container" >/dev/null
+	bounded_container=
 }
 
 expect_preserved_collision() {
@@ -702,10 +728,14 @@ printf '%s\n' 'control-name fixture' >"$test_dir/control-coredumps/$control_name
 expect_failure "$test_dir/control-output" --env DIAGNOSTIC_NODE=node-a \
 	--volume "$test_dir/control-coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
 
-mkdir "$test_dir/candidate-coredumps" "$test_dir/candidate-output"
-create_fixture_entries "$test_dir/candidate-coredumps" 4097 file
-touch -t 200001010000 "$test_dir/candidate-coredumps/"*.dump
-expect_failure "$test_dir/candidate-output" --env DIAGNOSTIC_NODE=node-a \
+mkdir "$test_dir/candidate-coredumps" "$test_dir/candidate-output" "$test_dir/candidate-find"
+: >"$test_dir/candidate-coredumps/one.dump"
+# shellcheck disable=SC2016
+printf '%s\n' '#!/bin/sh' \
+	'yes /host-coredumps/one.dump | head -n 4097 | tr "\\n" "\\0"' >"$test_dir/candidate-find/find"
+chmod 0755 "$test_dir/candidate-find/find"
+expect_bounded_collector_failure "$test_dir/candidate-output" 'coredump candidate limit exceeded' 45 --env DIAGNOSTIC_NODE=node-a \
+	--volume "$test_dir/candidate-find/find:/usr/bin/find:ro" \
 	--volume "$test_dir/candidate-coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
 
 mkdir "$test_dir/long-path-coredumps" "$test_dir/long-path-output"
@@ -722,10 +752,33 @@ printf '%s\n' 'long path fixture' >"$long_parent/$long_name.dump"
 expect_failure "$test_dir/long-path-output" --env DIAGNOSTIC_NODE=node-a \
 	--volume "$test_dir/long-path-coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
 
-mkdir "$test_dir/entry-limit-coredumps" "$test_dir/entry-limit-output"
-create_fixture_entries "$test_dir/entry-limit-coredumps" 8192 directory
-expect_failure "$test_dir/entry-limit-output" --env DIAGNOSTIC_NODE=node-a \
+mkdir "$test_dir/entry-limit-coredumps" "$test_dir/entry-limit-output" "$test_dir/entry-find"
+# shellcheck disable=SC2016
+printf '%s\n' '#!/bin/sh' \
+	'yes /host-coredumps | head -n 8193 | tr "\\n" "\\0"' >"$test_dir/entry-find/find"
+chmod 0755 "$test_dir/entry-find/find"
+expect_bounded_collector_failure "$test_dir/entry-limit-output" 'coredump entry limit exceeded' 45 --env DIAGNOSTIC_NODE=node-a \
+	--volume "$test_dir/entry-find/find:/usr/bin/find:ro" \
 	--volume "$test_dir/entry-limit-coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
+
+# Replace only the image-owned find binary in this disposable test container to
+# emulate a pathological filesystem walk. The fixture and its descendant both
+# ignore TERM; the collector must still finish with the exact deadline failure
+# because it starts find in a separate session and escalates to group KILL.
+mkdir "$test_dir/stalled-find" "$test_dir/stalled-find-coredumps" "$test_dir/stalled-find-output"
+printf '%s\n' '#!/bin/sh' \
+	'trap "" TERM' \
+	'( trap "" TERM; while :; do sleep 1; done ) &' \
+	'printf "%s\\n" "$!" > /output/stalled-find-descendant.pid' \
+	'while :; do sleep 1; done' >"$test_dir/stalled-find/find"
+chmod 0755 "$test_dir/stalled-find/find"
+expect_bounded_collector_failure "$test_dir/stalled-find-output" 'coredump enumeration deadline exceeded' 45 --env DIAGNOSTIC_NODE=node-a \
+	--volume "$test_dir/stalled-find/find:/usr/bin/find:ro" \
+	--volume "$test_dir/stalled-find-coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
+[ -f "$test_dir/stalled-find-output/stalled-find-descendant.pid" ] || {
+	echo 'stalled find fixture did not start its TERM-resistant descendant' >&2
+	exit 1
+}
 
 expect_failure "$test_dir/not-ready" --env BREAKGLASS_ARTIFACT_UPLOAD_URL=https://upload.example.invalid/object \
 	-- upload --archive /output/artifact.tar.gz

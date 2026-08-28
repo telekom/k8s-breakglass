@@ -90,7 +90,8 @@ assume that a bind mount or host directory is writable. The checked-in
 contract with the real image and an emptyDir.
 
 The archive includes manifest.json, redacted stdout.log and stderr.log, and
-only the recipe's declared files. It enforces a 15-minute duration, at most
+only the recipe's declared files. It enforces a 15-minute duration and a
+separate 30-second crashdump enumeration deadline, at most
 8192 total filesystem entries and 4096 regular candidates before sorting
 (including stale files), and a 512-byte
 maximum printable-ASCII source path for crashdump collection. It also enforces 4096
@@ -112,6 +113,11 @@ and ready marker. The uploader accepts only those two ownership/mode pairs,
 opens the marker, manifest, and archive without following links, enforces the
 manifest's immutable per-recipe ceiling, and verifies archive content and
 identity remain unchanged across transfer.
+The traversal runs in its own process group; enumeration expiry and collector
+cleanup send TERM followed by KILL to that group, so a stuck finder descendant
+cannot outlive the failed collection. The collector exits 2 and
+emits the bounded diagnostic without publishing an archive, manifest, or ready
+marker.
 `BREAKGLASS_ARTIFACT_MAX_BYTES` can narrow the selected recipe archive ceiling
 for a session. The summary recipe is always capped at 16 MiB and crashdump at
 512 MiB; a deployment cap can only narrow those immutable ceilings. When

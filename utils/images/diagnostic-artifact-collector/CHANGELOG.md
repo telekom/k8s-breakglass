@@ -16,6 +16,9 @@ All notable changes to this image are documented here.
 
 ### Fixed
 
+- Added a strict 30-second crashdump enumeration deadline, exact bounded
+  failure diagnostics, and TERM-then-KILL process-group cleanup for `find`
+  batches and descendants.
 - Hardened uploads against symlink swaps, non-private files, empty bearer
   tokens, URL queries, and archive mutations during transfer.
 - Added the pinned builder CA bundle for verified HTTPS uploads and documented
