@@ -469,7 +469,11 @@ func TestAPIReloadsDuringLiveTraffic(t *testing.T) {
 		err = helpers.WaitForCondition(ctx, func() (bool, error) {
 			var reloaded breakglassv1alpha1.IdentityProvider
 			if err := cli.Get(ctx, types.NamespacedName{Name: testIDP.Name}, &reloaded); err != nil {
-				return false, err
+				// The API cache/server can transiently reject a read while the
+				// controller is reconciling. Treat that as not-ready and let the
+				// bounded poll retry; WaitForCondition still observes ctx
+				// cancellation and terminates the poll promptly.
+				return false, nil
 			}
 			if reloaded.Status.ObservedGeneration < targetGeneration {
 				return false, nil
