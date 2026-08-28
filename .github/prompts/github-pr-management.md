@@ -25,11 +25,12 @@ Treat a PR as approved only when one complete, current evidence snapshot passes.
 
   The prompt uses [`.github/scripts/pr-gate-contract.sh`](../scripts/pr-gate-contract.sh)
   as the executable reference for URL parsing, conservative review freshness,
-  complete evidence manifests, draft binding, policy inventory, and exact
-  check-suite evidence. It tests API-shaped
+  submitted-review selection, complete evidence manifests, draft binding,
+  policy inventory, and exact check-suite evidence. It tests API-shaped
   fixtures, including a synthetic merge candidate that differs from the source
-  head and attacker-controlled suite/status cases; it does not test for text
-  in this document.
+  head and attacker-controlled suite/status cases, and executes the draft
+  lifecycle block with mocked GitHub/Git contracts. Unrelated prose is not
+  treated as an executable requirement.
 
 ## Formal review requirements
 
@@ -277,15 +278,9 @@ jq -e 'all(.[]; .data.repository.pullRequest != null and
   .[-1].data.repository.pullRequest.reviews.pageInfo.hasNextPage == false' \
   "$gate_dir/reviews.json" >/dev/null || fail "missing review pageInfo"
 
-jq -e --arg login "$copilot_reviewer_login" --arg head "$head_oid" '
-  [ .[] | .data.repository.pullRequest.reviews.nodes[] |
-    select(.author.login == $login) ] |
-  if length == 0 then false else max_by(.submittedAt) |
-    if (.id != null and .state == "COMMENTED" and .submittedAt != null and
-        .commit.oid == $head) then . else false end
-  end
-' "$gate_dir/reviews.json" >"$gate_dir/copilot-review.json" ||
-  fail "missing current formal Copilot review"
+"$contract" select-copilot-review "$gate_dir/reviews.json" \
+  "$copilot_reviewer_login" "$head_oid" "$gate_dir/copilot-review.json" ||
+  fail "missing current, submitted formal Copilot review"
 
 review_submitted_at="$(jq -r .submittedAt "$gate_dir/copilot-review.json")"
 $contract verify-review-freshness "$gate_root/review-request.http" "$review_submitted_at" ||
@@ -497,6 +492,9 @@ capture_snapshot() {
 
 validate_snapshot() {
   snapshot="$1"
+  for evidence in "$snapshot"/*.json; do
+    "$contract" validate-json "$evidence"
+  done
   jq -e '.data.repository.pullRequest.reviewDecision == "APPROVED"' \
     "$snapshot/identity.json" >/dev/null || fail "missing current human approval"
   jq -e '[.[] | .data.repository.pullRequest.reviewThreads.nodes[] |
@@ -521,10 +519,12 @@ capture the **entire** evidence set again and compare the two manifests:
 ```bash
 manifest_snapshot() {
   snapshot="$1"
-  # JSON files are canonicalized. HTTP responses are parsed and validated,
+  # JSON files are canonicalized with duplicate object keys rejected. HTTP
+  # responses are parsed and validated,
   # then represented by final status, stable headers, and canonical body;
   # GitHub's volatile Date/request-ID/rate-limit transport metadata is
-  # deliberately excluded only after validation. Other artifacts use SHA-256.
+  # deliberately excluded only after validation. Repeated stable-header order
+  # is preserved. Other artifacts use SHA-256.
   # The helper omits only the manifest it is writing.
   "$contract" manifest-evidence "$snapshot" "$snapshot/gate.jsonl"
 }
@@ -733,6 +733,12 @@ set -euo pipefail
 body_file="$(mktemp -t breakglass-pr-description.XXXXXX.md)"
 vi "$body_file"                         # a known executable, not an EDITOR shell fragment
 test -s "$body_file"
+
+# The post-create verification writes into this run's private directory. Set it
+# up before the first PR mutation so a failed verification cannot be caused by
+# an unset path after the draft has already been created.
+gate_root="$(mktemp -d)"
+trap 'rm -rf "$gate_root"; rm -f "$body_file"' EXIT
 
 # The caller supplies the actual intended base; do not silently substitute a
 # repository default. A workflow that explicitly targets the default may derive

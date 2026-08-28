@@ -52,6 +52,13 @@ normalize_branch_protection_http() {
   require_file "$1"
   command -v ruby >/dev/null 2>&1 || fail "ruby is required"
   ruby -r json -r time -e '
+    class DuplicateJSONKeyError < StandardError; end
+    class UniqueHash < Hash
+      def []=(key, value)
+        raise DuplicateJSONKeyError, "duplicate JSON object key: #{key}" if key?(key)
+        super
+      end
+    end
     raw = File.binread(ARGV.fetch(0)).gsub("\r\n", "\n")
     blocks = raw.split(/\n\n/, -1)
     header_indexes = blocks.each_index.select { |index| blocks[index].start_with?("HTTP/") }
@@ -70,7 +77,7 @@ normalize_branch_protection_http() {
     body = blocks[(header_index + 1)..].join("\n\n")
     case code
     when "200"
-      parsed = JSON.parse(body)
+      parsed = JSON.parse(body, object_class: UniqueHash)
       abort "branch-protection response is not an object" unless parsed.is_a?(Hash)
       File.write(ARGV.fetch(1), JSON.generate(parsed) + "\n")
     when "404"
@@ -83,7 +90,7 @@ normalize_branch_protection_http() {
       content_types = headers.fetch("content-type", [])
       abort "404 missing/ambiguous JSON content type" unless content_types.length == 1 &&
         content_types.fetch(0).match?(/\Aapplication\/json(?:\s*;.*)?\z/i)
-      parsed = JSON.parse(body)
+      parsed = JSON.parse(body, object_class: UniqueHash)
       abort "404 error is not an object" unless parsed.is_a?(Hash)
       abort "unexpected 404 message" unless parsed["message"] == "Branch not protected"
       abort "missing 404 documentation URL" unless parsed["documentation_url"].is_a?(String) &&
@@ -103,6 +110,13 @@ manifest_evidence() {
   test -d "$1" || fail "missing snapshot directory: $1"
   command -v ruby >/dev/null 2>&1 || fail "ruby is required"
   ruby -r digest -r json -r time -e '
+    class DuplicateJSONKeyError < StandardError; end
+    class UniqueHash < Hash
+      def []=(key, value)
+        raise DuplicateJSONKeyError, "duplicate JSON object key: #{key}" if key?(key)
+        super
+      end
+    end
     root = File.realpath(ARGV.fetch(0))
     output = File.join(File.realpath(File.dirname(ARGV.fetch(1))), File.basename(ARGV.fetch(1)))
     abort "manifest output must be directly inside its snapshot" unless
@@ -152,8 +166,8 @@ manifest_evidence() {
         content_types.fetch(0).match?(%r{\Aapplication/(?:[A-Za-z0-9.+-]+\+)?json(?:\s*;.*)?\z}i)
       canonical_body = if json_body
         begin
-          {"json" => JSON.parse(body)}
-        rescue JSON::ParserError
+          {"json" => JSON.parse(body, object_class: UniqueHash)}
+        rescue JSON::ParserError, DuplicateJSONKeyError
           abort "invalid JSON HTTP body"
         end
       else
@@ -168,8 +182,10 @@ manifest_evidence() {
                           "x-ratelimit-remaining", "x-ratelimit-reset",
                           "x-ratelimit-resource", "x-ratelimit-used",
                           "server-timing", "via"]
+      # Preserve repeated-header order. RFC field ordering is not generally
+      # interchangeable, and security headers such as X-Frame-Options are not
+      # list-valued fields whose duplicate order can safely be discarded.
       stable_headers = headers.reject { |name, _| volatile_headers.include?(name) }
-        .transform_values { |values| values.sort }
       {"status" => code.to_i, "headers" => stable_headers, "body" => canonical_body}
     end
 
@@ -180,8 +196,8 @@ manifest_evidence() {
         relative = path.delete_prefix(root + File::SEPARATOR)
         evidence = if File.extname(path) == ".json"
           begin
-            canonical_json(JSON.parse(File.binread(path)))
-          rescue JSON::ParserError
+            canonical_json(JSON.parse(File.binread(path), object_class: UniqueHash))
+          rescue JSON::ParserError, DuplicateJSONKeyError
             abort "invalid JSON evidence: #{relative}"
           end
         elsif File.extname(path) == ".http"
@@ -227,6 +243,22 @@ request_date_to_ns() {
   ' "$value" || fail "ambiguous GitHub review-request Date"
 }
 
+validate_json() {
+  test "$#" = 1 || fail "usage: validate-json JSON_FILE"
+  require_file "$1"
+  command -v ruby >/dev/null 2>&1 || fail "ruby is required"
+  ruby -r json -e '
+    class DuplicateJSONKeyError < StandardError; end
+    class UniqueHash < Hash
+      def []=(key, value)
+        raise DuplicateJSONKeyError, "duplicate JSON object key: #{key}" if key?(key)
+        super
+      end
+    end
+    JSON.parse(File.binread(ARGV.fetch(0)), object_class: UniqueHash)
+  ' "$1" >/dev/null || fail "JSON evidence is malformed or contains duplicate object keys: $1"
+}
+
 review_timestamp_to_ns() {
   test "$#" = 1 || fail "usage: review-timestamp-to-ns RFC3339_UTC_TIMESTAMP"
   command -v ruby >/dev/null 2>&1 || fail "ruby is required"
@@ -252,11 +284,32 @@ verify_review_freshness() {
     fail "formal review is not provably after GitHub review-request completion"
 }
 
+select_copilot_review() {
+  test "$#" = 4 || fail "usage: select-copilot-review REVIEWS_JSON LOGIN HEAD_OID OUTPUT_JSON"
+  local reviews="$1" login="$2" head="$3" output="$4"
+  require_file "$reviews"
+  require_jq
+  validate_json "$reviews"
+  jq -e --arg login "$login" --arg head "$head" '
+    [ .[] | .data.repository.pullRequest.reviews.nodes[] |
+      select(.author.login == $login) ] as $reviews |
+    if (($reviews | length) == 0) or
+       any($reviews[]; .state == "PENDING" or .submittedAt == null) then
+      false
+    else
+      $reviews | max_by(.submittedAt) |
+      if (.id != null and .state == "COMMENTED" and .submittedAt != null and
+          .commit.oid == $head) then . else false end
+    end
+  ' "$reviews" >"$output" || fail "missing current, submitted formal Copilot review"
+}
+
 verify_created_draft() {
   test "$#" = 6 || fail "usage: verify-created-draft PR_JSON REPOSITORY HEAD_REF HEAD_OID BASE_REF BASE_OID"
   local pr_json="$1" repository="$2" head_ref="$3" head_oid="$4" base_ref="$5" base_oid="$6"
   require_jq
   require_file "$pr_json"
+  validate_json "$pr_json"
   jq -e --arg repository "$repository" --arg headRef "$head_ref" --arg headOid "$head_oid" \
     --arg baseRef "$base_ref" --arg baseOid "$base_oid" '
     type == "object" and .isDraft == true and
@@ -273,6 +326,8 @@ inventory_policy() {
   require_jq
   require_file "$effective"
   require_file "$protection"
+  validate_json "$effective"
+  validate_json "$protection"
 
   jq -n -e --arg host "$host" --arg repository "$repository" --arg baseRef "$base_ref" \
     --slurpfile effective "$effective" --slurpfile protection "$protection" '
@@ -544,6 +599,7 @@ verify_checks() {
   local item
   for item in "$identity" "$inventory" "$repository" "$runs" "$suites" "$statuses"; do
     require_file "$item"
+    validate_json "$item"
   done
 
   jq -n -e --slurpfile identity "$identity" --slurpfile inventory "$inventory" \
@@ -615,7 +671,9 @@ usage:
   pr-gate-contract.sh manifest-evidence SNAPSHOT_DIRECTORY OUTPUT_FILE
   pr-gate-contract.sh request-date HTTP_RESPONSE_FILE
   pr-gate-contract.sh request-date-to-ns HTTP_RESPONSE_FILE
+  pr-gate-contract.sh validate-json JSON_FILE
   pr-gate-contract.sh verify-review-freshness HTTP_RESPONSE_FILE RFC3339_UTC_TIMESTAMP
+  pr-gate-contract.sh select-copilot-review REVIEWS_JSON LOGIN HEAD_OID OUTPUT_JSON
   pr-gate-contract.sh verify-created-draft PR_JSON REPOSITORY HEAD_REF HEAD_OID BASE_REF BASE_OID
   pr-gate-contract.sh inventory-policy HOST REPOSITORY BASE_REF EFFECTIVE_JSON PROTECTION_JSON OUTPUT_JSON
   pr-gate-contract.sh verify-checks IDENTITY_JSON INVENTORY_JSON REPOSITORY_JSON RUNS_JSON SUITES_JSON STATUSES_JSON OUTPUT_JSON
@@ -630,7 +688,9 @@ case "$command" in
   manifest-evidence) shift; manifest_evidence "$@" ;;
   request-date) shift; request_date "$@" ;;
   request-date-to-ns) shift; request_date_to_ns "$@" ;;
+  validate-json) shift; validate_json "$@" ;;
   verify-review-freshness) shift; verify_review_freshness "$@" ;;
+  select-copilot-review) shift; select_copilot_review "$@" ;;
   verify-created-draft) shift; verify_created_draft "$@" ;;
   inventory-policy) shift; inventory_policy "$@" ;;
   verify-checks) shift; verify_checks "$@" ;;

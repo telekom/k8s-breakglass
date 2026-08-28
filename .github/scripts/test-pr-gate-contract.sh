@@ -45,6 +45,8 @@ write_fixture "$fixture_root/protection-200.http" $'HTTP/2 200 OK\r\nDate: Fri, 
 "$contract" normalize-branch-protection-http "$fixture_root/protection-200.http" "$fixture_root/protection-200.json"
 jq -e '.required_status_checks.checks == []' "$fixture_root/protection-200.json" >/dev/null ||
   fail "authenticated branch-protection 200 response was not normalized"
+write_fixture "$fixture_root/protection-200-duplicate.http" $'HTTP/2 200 OK\r\nDate: Fri, 28 Aug 2026 07:14:18 GMT\r\n\r\n{"required_status_checks":{},"required_status_checks":{}}'
+expect_failure "$contract" normalize-branch-protection-http "$fixture_root/protection-200-duplicate.http" "$fixture_root/ignored.json"
 write_fixture "$fixture_root/protection-404.http" $'HTTP/2 404 Not Found\r\nDate: Fri, 28 Aug 2026 07:14:18 GMT\r\nContent-Type: application/json; charset=utf-8\r\nX-GitHub-Request-Id: AB12:CD34:EF56\r\n\r\n{"message":"Branch not protected","documentation_url":"https://docs.github.com/rest/branches/branch-protection#get-branch-protection","status":"404"}'
 "$contract" normalize-branch-protection-http "$fixture_root/protection-404.http" "$fixture_root/protection-404.json"
 jq -e '. == {}' "$fixture_root/protection-404.json" >/dev/null ||
@@ -73,6 +75,59 @@ jq '.headRefOid = "attacker-head"' "$fixture_root/created-draft.json" >"$fixture
 expect_failure "$contract" verify-created-draft "$fixture_root/wrong-draft-head.json" telekom/k8s-breakglass \
   codex/network-debug source-head main base-head
 
+# The newest exact-login review must be submitted. A newer pending review must
+# not be hidden by max_by(.submittedAt) selecting an older submitted review.
+write_fixture "$fixture_root/reviews.json" '[
+  {"data":{"repository":{"pullRequest":{"reviews":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[
+    {"id":"submitted","author":{"login":"copilot[bot]"},"state":"COMMENTED","submittedAt":"2026-08-28T08:00:00Z","commit":{"oid":"source-head"}}
+  ]}}}}}
+]'
+"$contract" select-copilot-review "$fixture_root/reviews.json" 'copilot[bot]' source-head \
+  "$fixture_root/selected-review.json"
+jq -e '.id == "submitted"' "$fixture_root/selected-review.json" >/dev/null ||
+  fail "submitted Copilot review was not selected"
+write_fixture "$fixture_root/reviews-with-pending.json" '[
+  {"data":{"repository":{"pullRequest":{"reviews":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[
+    {"id":"submitted","author":{"login":"copilot[bot]"},"state":"COMMENTED","submittedAt":"2026-08-28T08:00:00Z","commit":{"oid":"source-head"}},
+    {"id":"pending","author":{"login":"copilot[bot]"},"state":"PENDING","submittedAt":null,"commit":null}
+  ]}}}}}
+]'
+expect_failure "$contract" select-copilot-review "$fixture_root/reviews-with-pending.json" 'copilot[bot]' \
+  source-head "$fixture_root/ignored.json"
+
+# Execute the actual draft-lifecycle fenced prompt block with mocked network
+# and Git commands. This catches standalone-snippet failures that helper-only
+# tests and docs grep cannot see, including an unset gate_root after create.
+mock_bin="$fixture_root/mock-bin"
+mkdir -p "$mock_bin"
+write_fixture "$mock_bin/vi" $'#!/usr/bin/env bash\nprintf "%s\\n" "test body" >"$1"\n'
+# The generated mock intentionally contains literal shell variables.
+# shellcheck disable=SC2016
+write_fixture "$mock_bin/gh" $'#!/usr/bin/env bash\nset -euo pipefail\ncase "${1-} ${2-}" in\n  "auth status") exit 0 ;;\n  "pr create")\n    printf "%s\\n" create >>"$DRAFT_LOG"\n    printf "%s\\n" "https://github.com/telekom/k8s-breakglass/pull/999"\n    exit 0\n    ;;\n  "pr view")\n    printf "%s\\n" "{\\"isDraft\\":true,\\"headRefName\\":\\"codex/network-debug\\",\\"headRefOid\\":\\"source-head\\",\\"headRepository\\":{\\"nameWithOwner\\":\\"telekom/k8s-breakglass\\"},\\"baseRefName\\":\\"main\\",\\"baseRefOid\\":\\"base-head\\",\\"baseRepository\\":{\\"nameWithOwner\\":\\"telekom/k8s-breakglass\\"}}"\n    exit 0\n    ;;\n  "pr edit")\n    printf "%s\\n" edit >>"$DRAFT_LOG"\n    exit 0\n    ;;\nesac\nexit 2\n'
+write_fixture "$mock_bin/git" $'#!/usr/bin/env bash\nset -euo pipefail\ncase "${1-}" in\n  check-ref-format) exit 0 ;;\n  branch) printf "%s\\n" codex/network-debug ; exit 0 ;;\n  config) exit 1 ;;\n  remote)\n    if [ "$#" = 1 ]; then printf "%s\\n" origin; exit 0; fi\n    if [ "${2-}" = get-url ]; then\n      printf "%s\\n" https://github.com/telekom/k8s-breakglass.git\n      exit 0\n    fi\n    ;;\n  fetch) exit 0 ;;\n  rev-parse)\n    for arg in "$@"; do\n      case "$arg" in\n        *origin/main*) printf "%s\\n" base-head; exit 0 ;;\n        *origin/codex/network-debug*|HEAD) printf "%s\\n" source-head; exit 0 ;;\n      esac\n    done\n    ;;\nesac\nexit 2\n'
+chmod +x "$mock_bin/vi" "$mock_bin/gh" "$mock_bin/git"
+draft_snippet="$fixture_root/draft-snippet.sh"
+awk '
+  /^```bash$/ { in_block = 1; block = ""; next }
+  in_block && /^```$/ {
+    if (block ~ /gh_pr create/) printf "%s", block
+    in_block = 0
+    next
+  }
+  in_block { block = block $0 ORS }
+' .github/prompts/github-pr-management.md >"$draft_snippet"
+sed -e 's|^base_repo=.*$|base_repo=telekom/k8s-breakglass|' \
+  -e 's|^base_ref=.*$|base_ref=main|' \
+  -e "s|^contract=.*$|contract=\"$contract\"|" \
+  "$draft_snippet" >"$draft_snippet.rendered"
+mv "$draft_snippet.rendered" "$draft_snippet"
+draft_log="$fixture_root/draft-lifecycle.log"
+DRAFT_LOG="$draft_log" PATH="$mock_bin:$PATH" /bin/bash "$draft_snippet" ||
+  fail "actual draft lifecycle prompt block failed under its mocked API contract"
+test "$(sed -n '1p' "$draft_log")" = create || fail "draft lifecycle did not create the draft"
+test "$(sed -n '2p' "$draft_log")" = edit ||
+  fail "draft lifecycle did not verify before editing the body"
+
 # The evidence manifest validates raw HTTP responses but projects away only
 # response-specific transport metadata. Equivalent GitHub responses must
 # compare equal despite a fresh Date/request ID and JSON key order; status,
@@ -98,12 +153,23 @@ write_fixture "$fixture_root/manifest-snapshot/branch-protection.http" $'HTTP/2 
 "$contract" manifest-evidence "$fixture_root/manifest-snapshot" "$fixture_root/manifest-snapshot/gate.jsonl"
 cmp -s "$fixture_root/first-manifest.jsonl" "$fixture_root/manifest-snapshot/gate.jsonl" &&
   fail "changed security-relevant HTTP header did not change the manifest"
+write_fixture "$fixture_root/manifest-snapshot/branch-protection.http" $'HTTP/2 200 OK\r\nDate: Fri, 28 Aug 2026 07:14:19 GMT\r\nX-GitHub-Request-Id: NINTH:REQUEST\r\nContent-Type: application/json\r\nX-Frame-Options: DENY\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n{"first":1,"second":2}'
+"$contract" manifest-evidence "$fixture_root/manifest-snapshot" "$fixture_root/manifest-snapshot/gate.jsonl"
+cp "$fixture_root/manifest-snapshot/gate.jsonl" "$fixture_root/repeated-header-manifest.jsonl"
+write_fixture "$fixture_root/manifest-snapshot/branch-protection.http" $'HTTP/2 200 OK\r\nDate: Fri, 28 Aug 2026 07:14:20 GMT\r\nX-GitHub-Request-Id: TENTH:REQUEST\r\nContent-Type: application/json\r\nX-Frame-Options: SAMEORIGIN\r\nX-Frame-Options: DENY\r\n\r\n{"first":1,"second":2}'
+"$contract" manifest-evidence "$fixture_root/manifest-snapshot" "$fixture_root/manifest-snapshot/gate.jsonl"
+cmp -s "$fixture_root/repeated-header-manifest.jsonl" "$fixture_root/manifest-snapshot/gate.jsonl" &&
+  fail "reordered repeated security headers did not change the manifest"
 write_fixture "$fixture_root/manifest-snapshot/branch-protection.http" $'HTTP/2 200 OK\r\nDate: Fri, 28 Aug 2026 07:14:19 GMT\r\nX-GitHub-Request-Id: SIXTH:REQUEST\r\nMalformed Header\r\n\r\n{}'
 expect_failure "$contract" manifest-evidence "$fixture_root/manifest-snapshot" "$fixture_root/manifest-snapshot/gate.jsonl"
 write_fixture "$fixture_root/manifest-snapshot/branch-protection.http" $'HTTP/2 200 OK\r\nDate: not-a-date\r\nX-GitHub-Request-Id: SEVENTH:REQUEST\r\nContent-Type: application/json\r\n\r\n{}'
 expect_failure "$contract" manifest-evidence "$fixture_root/manifest-snapshot" "$fixture_root/manifest-snapshot/gate.jsonl"
 write_fixture "$fixture_root/manifest-snapshot/branch-protection.http" $'HTTP/2 200 OK\r\nDate: Fri, 28 Aug 2026 07:14:19 GMT\r\nX-GitHub-Request-Id: EIGHTH:REQUEST\r\nContent-Type: application/json\r\n\r\nnot-json'
 expect_failure "$contract" manifest-evidence "$fixture_root/manifest-snapshot" "$fixture_root/manifest-snapshot/gate.jsonl"
+write_fixture "$fixture_root/manifest-snapshot/branch-protection.http" $'HTTP/2 200 OK\r\nDate: Fri, 28 Aug 2026 07:14:19 GMT\r\nX-GitHub-Request-Id: ELEVENTH:REQUEST\r\nContent-Type: application/json\r\n\r\n{"outer":{"a":1,"a":2}}'
+expect_failure "$contract" manifest-evidence "$fixture_root/manifest-snapshot" "$fixture_root/manifest-snapshot/gate.jsonl"
+write_fixture "$fixture_root/duplicate.json" '{"outer":{"a":1,"a":2}}'
+expect_failure "$contract" validate-json "$fixture_root/duplicate.json"
 
 write_fixture "$fixture_root/effective-rules.json" '[[
   {"type":"pull_request","parameters":{"dismiss_stale_reviews_on_push":true,"require_code_owner_review":true,"require_last_push_approval":false,"required_approving_review_count":1,"required_review_thread_resolution":true}},
