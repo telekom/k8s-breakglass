@@ -161,7 +161,8 @@ jobs:
           cp hard-expiry-setup.log hard-expiry-results.log hard-expiry-api-port-forward.log hard-expiry-diagnostics/ 2>/dev/null
           docker ps -a > hard-expiry-diagnostics/docker-ps.txt
           for cluster in breakglass-hub spoke-cluster-a spoke-cluster-b; do
-            kind export logs --name "$cluster" --dir "hard-expiry-diagnostics/$cluster" || true
+            mkdir -p "hard-expiry-diagnostics/$cluster"
+            kind export logs "hard-expiry-diagnostics/$cluster" --name "$cluster" || true
           done
 
       - name: Tear down hard-expiry clusters
