@@ -152,6 +152,12 @@ bootstrap cleans only that attempted name and any matching labeled node
 containers, while a pre-existing name is rejected. The dedicated CI job runs
 this target on a Linux runner with Docker and kind.
 
+Docker resource preflights preserve the ownership probe's result: an exact
+absent name is claimable, a foreign or otherwise occupied resource is reported
+as a collision, and a daemon inspection failure remains a separate error.
+Only the absent result permits creation, so a collision can never be mistaken
+for a transient inspection failure or be removed by cleanup.
+
 Selected-pod capture is performed by an approved controller injecting a
 short-lived ephemeral container into the selected Pod through the Kubernetes
 `ephemeralcontainers` subresource. Requesters never provide commands, PIDs,

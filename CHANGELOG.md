@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enumeration deadline deterministically retains its timeout diagnostic.
 - **Network-debug script guard checks**: Replaced ambiguous shell guard chains
   with explicit conditionals to keep static checks and runtime behavior aligned.
+- **Network-debug Docker collision diagnostics**: Distinguish foreign or
+  occupied resources from Docker inspection failures during integration
+  preflight, so only a proven-absent name can be claimed and collision cleanup
+  remains fail-closed.
 - **Storage image behavior CI cleanup**: The storage-debug integration cleanup
   now tolerates auto-removed Docker containers recorded in cidfiles while still
   refusing to delete foreign, still-existing containers.

@@ -58,6 +58,8 @@ PWRU_USE_DOCKER_TIMEOUT=true
 . "$(dirname -- "$0")/kind-ownership.sh"
 # shellcheck disable=SC1091
 . "$(dirname -- "$0")/pwru-lifecycle.sh"
+# shellcheck disable=SC1091
+. "$(dirname -- "$0")/docker-preflight.sh"
 
 requirement() {
 	printf 'REQUIREMENT: %s\n' "$*" >&2
@@ -226,21 +228,17 @@ kubectl create namespace "$NETWORK_NAMESPACE" >/dev/null || requirement "could n
 NETWORK_NAMESPACE_CREATED=true
 
 # Refuse collisions before claiming ownership. A daemon-reachable absent
-# result is the only safe state in which to proceed.
-if docker_resource_present network "$NETWORK"; then
-	requirement "refusing to reuse an existing network named $NETWORK"
-else
-	resource_status=$?
-	[ "$resource_status" -eq 1 ] || requirement "could not inspect the Docker network before creating it"
-fi
+# result is the only safe state in which to proceed. Status 3 means a resource
+# exists but is owned by another run; it is a collision, not an inspection
+# failure, and must never be deleted or reused.
+docker_require_resource_absent network "$NETWORK" \
+	"refusing to reuse an existing network named $NETWORK" \
+	"could not inspect the Docker network before creating it"
 NETWORK_CREATED=true
 docker_call network create --label "$DOCKER_OWNER_LABEL=$RUN_ID" "$NETWORK" >/dev/null || requirement "Docker could not create an ephemeral network"
-if docker_resource_present container "$CONTAINER"; then
-	requirement "refusing to reuse an existing fixture container named $CONTAINER"
-else
-	resource_status=$?
-	[ "$resource_status" -eq 1 ] || requirement "could not inspect the fixture container before creating it"
-fi
+docker_require_resource_absent container "$CONTAINER" \
+	"refusing to reuse an existing fixture container named $CONTAINER" \
+	"could not inspect the fixture container before creating it"
 CONTAINER_CREATED=true
 docker_call run --detach --name "$CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" --network "$NETWORK" \
 	--cap-drop ALL --security-opt no-new-privileges=true \

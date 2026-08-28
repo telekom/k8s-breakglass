@@ -36,6 +36,7 @@ sign: ## Sign an immutable image digest with keyless cosign.
 
 test: ## Run hermetic image behavior checks.
 	./tests/test.sh
+	./tests/test-docker-preflight.sh
 	./tests/test-kind-ownership.sh
 	./tests/test-pwru-lifecycle.sh
 
