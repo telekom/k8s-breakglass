@@ -21,13 +21,18 @@ const (
 
 type actionRequest struct {
 	action        string
-	ifindex       int
-	masterIfindex int
-	family        int
+	ifindex       uint32
+	masterIfindex uint32
+	family        uint8
 	address       net.IP
 	mac           net.HardwareAddr
-	vlan          int
+	vlan          uint16
 }
+
+const (
+	maximumIfindex uint32 = 1<<31 - 1
+	maximumVLAN    uint16 = 4094
+)
 
 func main() {
 	request, err := parseRequest(os.Args[1:])
@@ -52,7 +57,7 @@ func parseRequest(args []string) (actionRequest, error) {
 		if len(args) != 2 {
 			return request, fmt.Errorf("%s requires exactly IFINDEX", request.action)
 		}
-		ifindex, err := parsePositiveInt("ifindex", args[1], int(^uint32(0)>>1))
+		ifindex, err := parsePositiveUint32("ifindex", args[1], maximumIfindex)
 		if err != nil {
 			return request, err
 		}
@@ -61,13 +66,13 @@ func parseRequest(args []string) (actionRequest, error) {
 		if len(args) != 5 {
 			return request, errors.New("neighbor-replace requires exactly IFINDEX FAMILY ADDRESS MAC")
 		}
-		ifindex, err := parsePositiveInt("ifindex", args[1], int(^uint32(0)>>1))
+		ifindex, err := parsePositiveUint32("ifindex", args[1], maximumIfindex)
 		if err != nil {
 			return request, err
 		}
-		family, err := parsePositiveInt("address family", args[2], 6)
-		if err != nil || (family != 4 && family != 6) {
-			return request, errors.New("address family must be exactly 4 or 6")
+		family, err := parseAddressFamily(args[2])
+		if err != nil {
+			return request, err
 		}
 		address := net.ParseIP(args[3])
 		if address == nil || (family == 4 && address.To4() == nil) || (family == 6 && address.To4() != nil) {
@@ -85,11 +90,11 @@ func parseRequest(args []string) (actionRequest, error) {
 		if len(args) != 5 {
 			return request, errors.New("bridge-fdb-replace requires exactly PORT_IFINDEX MASTER_IFINDEX MAC VLAN")
 		}
-		ifindex, err := parsePositiveInt("port ifindex", args[1], int(^uint32(0)>>1))
+		ifindex, err := parsePositiveUint32("port ifindex", args[1], maximumIfindex)
 		if err != nil {
 			return request, err
 		}
-		masterIfindex, err := parsePositiveInt("master ifindex", args[2], int(^uint32(0)>>1))
+		masterIfindex, err := parsePositiveUint32("master ifindex", args[2], maximumIfindex)
 		if err != nil {
 			return request, err
 		}
@@ -100,7 +105,7 @@ func parseRequest(args []string) (actionRequest, error) {
 		if err != nil {
 			return request, err
 		}
-		vlan, err := parsePositiveInt("VLAN", args[4], 4094)
+		vlan, err := parsePositiveUint16("VLAN", args[4], maximumVLAN)
 		if err != nil {
 			return request, err
 		}
@@ -114,12 +119,28 @@ func parseRequest(args []string) (actionRequest, error) {
 	return request, nil
 }
 
-func parsePositiveInt(label, value string, maximum int) (int, error) {
-	parsed, err := strconv.Atoi(value)
-	if err != nil || parsed < 1 || parsed > maximum {
+func parsePositiveUint32(label, value string, maximum uint32) (uint32, error) {
+	parsed, err := strconv.ParseUint(value, 10, 32)
+	if err != nil || parsed < 1 || parsed > uint64(maximum) {
 		return 0, fmt.Errorf("%s must be an integer from 1 through %d", label, maximum)
 	}
-	return parsed, nil
+	return uint32(parsed), nil
+}
+
+func parsePositiveUint16(label, value string, maximum uint16) (uint16, error) {
+	parsed, err := strconv.ParseUint(value, 10, 16)
+	if err != nil || parsed < 1 || parsed > uint64(maximum) {
+		return 0, fmt.Errorf("%s must be an integer from 1 through %d", label, maximum)
+	}
+	return uint16(parsed), nil
+}
+
+func parseAddressFamily(value string) (uint8, error) {
+	parsed, err := strconv.ParseUint(value, 10, 8)
+	if err != nil || (parsed != 4 && parsed != 6) {
+		return 0, errors.New("address family must be exactly 4 or 6")
+	}
+	return uint8(parsed), nil
 }
 
 func parseUnicastMAC(value string) (net.HardwareAddr, error) {

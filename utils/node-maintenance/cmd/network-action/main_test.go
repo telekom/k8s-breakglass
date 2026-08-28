@@ -28,6 +28,29 @@ func TestParseRequestAcceptsOnlyFixedShapes(t *testing.T) {
 	}
 }
 
+func TestParseRequestPreservesTypedBoundaries(t *testing.T) {
+	t.Parallel()
+
+	linkRequest, err := parseRequest([]string{"link-cycle", "2147483647"})
+	if err != nil {
+		t.Fatalf("parse maximum ifindex: %v", err)
+	}
+	if linkRequest.ifindex != maximumIfindex {
+		t.Fatalf("maximum ifindex = %d, want %d", linkRequest.ifindex, maximumIfindex)
+	}
+
+	fdbRequest, err := parseRequest([]string{"bridge-fdb-replace", "2147483646", "2147483647", "02:00:00:00:00:12", "4094"})
+	if err != nil {
+		t.Fatalf("parse maximum master ifindex and VLAN: %v", err)
+	}
+	if fdbRequest.masterIfindex != maximumIfindex {
+		t.Fatalf("maximum master ifindex = %d, want %d", fdbRequest.masterIfindex, maximumIfindex)
+	}
+	if fdbRequest.vlan != maximumVLAN {
+		t.Fatalf("maximum VLAN = %d, want %d", fdbRequest.vlan, maximumVLAN)
+	}
+}
+
 func TestParseRequestRejectsExpansionAndInvalidIdentity(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -37,10 +60,12 @@ func TestParseRequestRejectsExpansionAndInvalidIdentity(t *testing.T) {
 		{name: "arbitrary action", args: []string{"shell", "1"}},
 		{name: "extra link argument", args: []string{"link-cycle", "1", "up"}},
 		{name: "zero ifindex", args: []string{"link-cycle", "0"}},
+		{name: "ifindex overflow", args: []string{"link-cycle", "2147483648"}},
 		{name: "wrong family", args: []string{"neighbor-replace", "2", "5", "192.0.2.1", "02:00:00:00:00:01"}},
 		{name: "family mismatch", args: []string{"neighbor-replace", "2", "6", "192.0.2.1", "02:00:00:00:00:01"}},
 		{name: "multicast MAC", args: []string{"neighbor-replace", "2", "4", "192.0.2.1", "01:00:00:00:00:01"}},
 		{name: "same port and master", args: []string{"bridge-fdb-replace", "3", "3", "02:00:00:00:00:01", "100"}},
+		{name: "master ifindex overflow", args: []string{"bridge-fdb-replace", "3", "2147483648", "02:00:00:00:00:01", "100"}},
 		{name: "VLAN zero", args: []string{"bridge-fdb-replace", "3", "4", "02:00:00:00:00:01", "0"}},
 		{name: "VLAN reserved", args: []string{"bridge-fdb-replace", "3", "4", "02:00:00:00:00:01", "4095"}},
 	}

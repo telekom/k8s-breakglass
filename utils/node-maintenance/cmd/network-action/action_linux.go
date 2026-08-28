@@ -45,10 +45,9 @@ const (
 )
 
 type linkIdentity struct {
-	ifindex int
-	name    string
-	master  int
-	kind    string
+	name   string
+	master uint32
+	kind   string
 }
 
 type routeNetlink struct {
@@ -142,10 +141,10 @@ func (connection *routeNetlink) close() {
 	_ = syscall.Close(connection.fd)
 }
 
-func (connection *routeNetlink) getLink(ifindex int) (linkIdentity, error) {
+func (connection *routeNetlink) getLink(ifindex uint32) (linkIdentity, error) {
 	payload := make([]byte, ifInfoMessageLength)
 	payload[0] = syscall.AF_UNSPEC
-	binary.NativeEndian.PutUint32(payload[4:8], uint32(ifindex))
+	binary.NativeEndian.PutUint32(payload[4:8], ifindex)
 	reply, err := connection.request(rtmGetLink, netlinkRequest, payload, rtmNewLink)
 	if err != nil {
 		return linkIdentity{}, err
@@ -153,7 +152,7 @@ func (connection *routeNetlink) getLink(ifindex int) (linkIdentity, error) {
 	if len(reply) < ifInfoMessageLength {
 		return linkIdentity{}, errors.New("short RTM_NEWLINK response")
 	}
-	actualIfindex := int(int32(binary.NativeEndian.Uint32(reply[4:8])))
+	actualIfindex := binary.NativeEndian.Uint32(reply[4:8])
 	if actualIfindex != ifindex {
 		return linkIdentity{}, fmt.Errorf("kernel returned ifindex %d for requested ifindex %d", actualIfindex, ifindex)
 	}
@@ -161,12 +160,12 @@ func (connection *routeNetlink) getLink(ifindex int) (linkIdentity, error) {
 	if err != nil {
 		return linkIdentity{}, err
 	}
-	identity := linkIdentity{ifindex: actualIfindex}
+	identity := linkIdentity{}
 	if name := attributes[iflaIfname]; len(name) > 0 {
 		identity.name = string(bytes.TrimRight(name, "\x00"))
 	}
 	if master := attributes[iflaMaster]; len(master) == 4 {
-		identity.master = int(binary.NativeEndian.Uint32(master))
+		identity.master = binary.NativeEndian.Uint32(master)
 	}
 	if linkInfo := attributes[iflaLinkInfo]; len(linkInfo) > 0 {
 		nested, nestedErr := parseNetlinkAttributes(linkInfo)
@@ -181,10 +180,10 @@ func (connection *routeNetlink) getLink(ifindex int) (linkIdentity, error) {
 	return identity, nil
 }
 
-func (connection *routeNetlink) setLinkUp(ifindex int, up bool) error {
+func (connection *routeNetlink) setLinkUp(ifindex uint32, up bool) error {
 	payload := make([]byte, ifInfoMessageLength)
 	payload[0] = syscall.AF_UNSPEC
-	binary.NativeEndian.PutUint32(payload[4:8], uint32(ifindex))
+	binary.NativeEndian.PutUint32(payload[4:8], ifindex)
 	if up {
 		binary.NativeEndian.PutUint32(payload[8:12], interfaceFlagUp)
 	}
@@ -202,7 +201,7 @@ func (connection *routeNetlink) replaceNeighbor(request actionRequest) error {
 		payload[0] = syscall.AF_INET6
 		request.address = request.address.To16()
 	}
-	binary.NativeEndian.PutUint32(payload[4:8], uint32(request.ifindex))
+	binary.NativeEndian.PutUint32(payload[4:8], request.ifindex)
 	binary.NativeEndian.PutUint16(payload[8:10], neighborReachable)
 	payload = appendAttribute(payload, ndaDestination, request.address)
 	payload = appendAttribute(payload, ndaLinkLayerAddress, request.mac)
@@ -213,12 +212,12 @@ func (connection *routeNetlink) replaceNeighbor(request actionRequest) error {
 func (connection *routeNetlink) replaceBridgeFDB(request actionRequest) error {
 	payload := make([]byte, neighborMessageLength)
 	payload[0] = addressFamilyBridge
-	binary.NativeEndian.PutUint32(payload[4:8], uint32(request.ifindex))
+	binary.NativeEndian.PutUint32(payload[4:8], request.ifindex)
 	binary.NativeEndian.PutUint16(payload[8:10], neighborNoARP)
 	payload[10] = neighborFlagMaster
 	payload = appendAttribute(payload, ndaLinkLayerAddress, request.mac)
 	vlan := make([]byte, 2)
-	binary.NativeEndian.PutUint16(vlan, uint16(request.vlan))
+	binary.NativeEndian.PutUint16(vlan, request.vlan)
 	payload = appendAttribute(payload, ndaVLAN, vlan)
 	_, err := connection.request(rtmNewNeighbor, netlinkRequest|netlinkAck|netlinkCreate|netlinkReplace, payload, 0)
 	return err
