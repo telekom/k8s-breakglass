@@ -877,7 +877,7 @@ func (s *SpokeHubAuthorizationSuite) TestRetiredEphemeralAdmissionRouteAndAPIMed
 	admissionReview := `{"apiVersion":"admission.k8s.io/v1","kind":"AdmissionReview","request":{"uid":"hard-expiry-retired-route","operation":"UPDATE","resource":{"group":"","version":"v1","resource":"pods"},"object":{},"oldObject":{}}}`
 	routeCmd := exec.CommandContext(ctx, "curl", "-k", "-sS", "-X", "POST",
 		"-H", "Content-Type: application/json", "--data", admissionReview,
-		"-o", "/dev/null", "-w", "%{http_code}", webhookURL+"/validate-ephemeral-containers")
+		"-o", "/dev/null", "-w", "%{http_code}", webhookURL+"/api/breakglass/webhook/validate-ephemeral-containers")
 	routeOutput, routeErr := routeCmd.Output()
 	s.Require().NoError(routeErr, "retired ephemeral admission route probe must complete")
 	s.Require().Equal("404", strings.TrimSpace(string(routeOutput)),
