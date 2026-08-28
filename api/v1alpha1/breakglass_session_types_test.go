@@ -153,7 +153,11 @@ func TestValidateUpdate_StateTransitionValidation(t *testing.T) {
 				(tc.to == SessionStateApproved || tc.to == SessionStateWaitingForScheduledTime)) ||
 				(tc.from == SessionStateWaitingForScheduledTime && tc.to == SessionStateApproved) {
 				old.Status.ExpiresAt = metav1.NewTime(time.Now().Add(time.Hour))
+				// Promotion out of Pending is valid only while its approval
+				// deadline is still live.
+				old.Status.TimeoutAt = metav1.NewTime(time.Now().Add(time.Hour))
 				updated.Status.ExpiresAt = old.Status.ExpiresAt
+				updated.Status.TimeoutAt = old.Status.TimeoutAt
 			}
 
 			_, err := updated.ValidateUpdate(context.Background(), old, updated)
@@ -304,6 +308,27 @@ func TestBreakglassSessionValidateDelete(t *testing.T) {
 	warnings, err := bs.ValidateDelete(context.Background(), bs)
 	if err != nil || warnings != nil {
 		t.Fatalf("expected ValidateDelete to allow delete, warnings=%v err=%v", warnings, err)
+	}
+}
+
+func TestBreakglassSessionValidateDeleteBlocksPendingDuplicateAudit(t *testing.T) {
+	bs := &BreakglassSession{}
+	bs.SetCondition(metav1.Condition{
+		Type:   string(SessionConditionTypeDuplicateCleanupAuditComplete),
+		Status: metav1.ConditionFalse,
+		Reason: "PendingDelivery",
+	})
+	if _, err := bs.ValidateDelete(context.Background(), bs); err == nil {
+		t.Fatal("expected deletion to be blocked while duplicate cleanup audit is pending")
+	}
+
+	bs.SetCondition(metav1.Condition{
+		Type:   string(SessionConditionTypeDuplicateCleanupAuditComplete),
+		Status: metav1.ConditionTrue,
+		Reason: "EmissionAccepted",
+	})
+	if _, err := bs.ValidateDelete(context.Background(), bs); err != nil {
+		t.Fatalf("expected acknowledged audit to permit deletion: %v", err)
 	}
 }
 

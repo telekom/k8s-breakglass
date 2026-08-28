@@ -144,9 +144,14 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 
 		// Verify condition was added
 		require.NotEmpty(t, gotNew.Status.Conditions)
-		cond := gotNew.Status.Conditions[len(gotNew.Status.Conditions)-1]
+		cond := gotNew.GetCondition(string(breakglassv1alpha1.SessionConditionTypeCanceled))
+		require.NotNil(t, cond)
 		assert.Equal(t, string(breakglassv1alpha1.SessionConditionTypeCanceled), cond.Type)
 		assert.Equal(t, "DuplicateSessionWithdrawn", cond.Reason)
+		auditCond := gotNew.GetCondition(string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete))
+		require.NotNil(t, auditCond)
+		assert.Equal(t, metav1.ConditionTrue, auditCond.Status)
+		assert.Equal(t, "AuditingDisabledAtCommit", auditCond.Reason)
 	})
 
 	t.Run("duplicate approved sessions — oldest kept, newest expired with metadata", func(t *testing.T) {
@@ -187,7 +192,8 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 
 		// Verify condition was added
 		require.NotEmpty(t, gotNew.Status.Conditions)
-		cond := gotNew.Status.Conditions[len(gotNew.Status.Conditions)-1]
+		cond := gotNew.GetCondition(string(breakglassv1alpha1.SessionConditionTypeExpired))
+		require.NotNil(t, cond)
 		assert.Equal(t, string(breakglassv1alpha1.SessionConditionTypeExpired), cond.Type)
 		assert.Equal(t, "DuplicateSessionTerminated", cond.Reason)
 	})
@@ -535,6 +541,84 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 	})
 }
 
+func TestDuplicateCleanupAuditOutboxDrainsAfterDeliveryFailure(t *testing.T) {
+	now := time.Now().UTC()
+	keep := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "keep-audit", Namespace: "breakglass", UID: "keep-uid", CreationTimestamp: metav1.NewTime(now.Add(-time.Minute))},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "cluster", User: "user", GrantedGroup: "admin"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+	}
+	duplicate := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "duplicate-audit", Namespace: "breakglass", UID: "duplicate-uid", CreationTimestamp: metav1.NewTime(now)},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "cluster", User: "user", GrantedGroup: "admin"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+	}
+	fc := newFakeClientWithSessions(keep, duplicate)
+	mgr := NewSessionManagerWithClient(fc)
+	recorder := &duplicateCleanupAuditRecorder{err: assert.AnError}
+	CleanupDuplicateSessions(context.Background(), zaptest.NewLogger(t).Sugar(), mgr, recorder)
+
+	var pending breakglassv1alpha1.BreakglassSession
+	require.NoError(t, fc.Get(context.Background(), client.ObjectKeyFromObject(duplicate), &pending))
+	require.Equal(t, breakglassv1alpha1.SessionStateWithdrawn, pending.Status.State)
+	pendingAudit := pending.GetCondition(string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete))
+	require.NotNil(t, pendingAudit)
+	assert.Equal(t, metav1.ConditionFalse, pendingAudit.Status)
+	assert.Equal(t, "PendingDelivery", pendingAudit.Reason)
+	assert.Empty(t, recorder.events)
+
+	firstTimestamp := pendingAudit.LastTransitionTime
+	recorder.err = nil
+	CleanupDuplicateSessions(context.Background(), zaptest.NewLogger(t).Sugar(), mgr, recorder)
+	var acknowledged breakglassv1alpha1.BreakglassSession
+	require.NoError(t, fc.Get(context.Background(), client.ObjectKeyFromObject(duplicate), &acknowledged))
+	ack := acknowledged.GetCondition(string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete))
+	require.NotNil(t, ack)
+	assert.Equal(t, metav1.ConditionTrue, ack.Status)
+	assert.Equal(t, "EmissionAccepted", ack.Reason)
+	require.Len(t, recorder.events, 1)
+	assert.Equal(t, "duplicate-cleanup/duplicate-uid", recorder.events[0].ID)
+	assert.True(t, firstTimestamp.Time.Equal(recorder.events[0].Timestamp), "retry event must retain the initial terminalization timestamp")
+}
+
+func TestDuplicateCleanupAuditAckFailureRetriesIdenticalEvent(t *testing.T) {
+	initial := metav1.NewTime(time.Unix(200, 0))
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "ack-retry", Namespace: "breakglass", UID: "ack-retry-uid"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "cluster", User: "user", GrantedGroup: "admin"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateExpired,
+			Conditions: []metav1.Condition{{
+				Type:               string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete),
+				Status:             metav1.ConditionFalse,
+				Reason:             "PendingDelivery",
+				LastTransitionTime: initial,
+			}},
+		},
+	}
+	var ackAttempts int
+	fc := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+		WithInterceptorFuncs(interceptor.Funcs{SubResourcePatch: func(_ context.Context, _ client.Client, subResource string, _ client.Object, _ client.Patch, _ ...client.SubResourcePatchOption) error {
+			if subResource == "status" && ackAttempts == 0 {
+				ackAttempts++
+				return apierrors.NewConflict(schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "breakglasssessions"}, session.Name, assert.AnError)
+			}
+			return nil
+		}}).Build()
+	recorder := &duplicateCleanupAuditRecorder{}
+	mgr := NewSessionManagerWithClient(fc)
+
+	// The first ack attempt conflicts. Since the fake interceptor does not
+	// persist the ack, a later drain must truthfully retry the same event.
+	require.NoError(t, drainDuplicateCleanupAudit(context.Background(), zaptest.NewLogger(t).Sugar(), mgr, session.Namespace, session.Name, recorder))
+	require.NoError(t, drainDuplicateCleanupAudit(context.Background(), zaptest.NewLogger(t).Sugar(), mgr, session.Namespace, session.Name, recorder))
+	require.Len(t, recorder.events, 2)
+	assert.Equal(t, recorder.events[0].ID, recorder.events[1].ID)
+	assert.True(t, recorder.events[0].Timestamp.Equal(recorder.events[1].Timestamp))
+	assert.Equal(t, recorder.events[0].Details, recorder.events[1].Details)
+}
+
 type duplicateCleanupAuditRecorder struct {
 	events []*audit.Event
 	err    error
@@ -558,8 +642,9 @@ func TestDuplicateCleanupAuditIsDurableAndAtLeastOnce(t *testing.T) {
 		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "prod", GrantedGroup: "admin"},
 		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateExpired},
 	}
+	condition := metav1.Condition{LastTransitionTime: metav1.NewTime(time.Unix(100, 0))}
 	recorder := &duplicateCleanupAuditRecorder{}
-	require.NoError(t, emitDuplicateCleanupAudit(context.Background(), session, recorder))
+	require.NoError(t, emitDuplicateCleanupAudit(context.Background(), duplicateCleanupAuditEvent(session, condition), recorder))
 	require.Len(t, recorder.events, 1)
 	assert.Equal(t, "duplicate-cleanup/stable-uid", recorder.events[0].ID)
 	assert.Equal(t, audit.EventSessionExpired, recorder.events[0].Type)
@@ -567,13 +652,14 @@ func TestDuplicateCleanupAuditIsDurableAndAtLeastOnce(t *testing.T) {
 
 	// Retries use the same ID as a correlation key. Delivery is explicitly
 	// at-least-once because sinks are not required to deduplicate event IDs.
-	require.NoError(t, emitDuplicateCleanupAudit(context.Background(), session, recorder))
+	require.NoError(t, emitDuplicateCleanupAudit(context.Background(), duplicateCleanupAuditEvent(session, condition), recorder))
 	assert.Equal(t, recorder.events[0].ID, recorder.events[1].ID)
 
 	recorder.err = assert.AnError
-	assert.Error(t, emitDuplicateCleanupAudit(context.Background(), session, recorder), "sink failure must be returned before terminal status is written")
+	assert.Error(t, emitDuplicateCleanupAudit(context.Background(), duplicateCleanupAuditEvent(session, condition), recorder), "sink failure must be returned")
 
-	// The terminal status update is gated on synchronous audit success.
+	// The terminal status is committed with a retryable audit outbox entry;
+	// failed delivery must not make the terminal object appear acknowledged.
 	stored := session.DeepCopy()
 	stored.Status.State = breakglassv1alpha1.SessionStatePending
 	stored.Status.TimeoutAt = metav1.NewTime(time.Now().Add(time.Hour))
@@ -583,9 +669,10 @@ func TestDuplicateCleanupAuditIsDurableAndAtLeastOnce(t *testing.T) {
 	updated, err := terminateDuplicateSession(context.Background(), zaptest.NewLogger(t).Sugar(), mgr, key, *stored, recorder)
 	assert.Error(t, err)
 	assert.False(t, updated)
-	var unchanged breakglassv1alpha1.BreakglassSession
-	require.NoError(t, fc.Get(context.Background(), client.ObjectKeyFromObject(stored), &unchanged))
-	assert.Equal(t, breakglassv1alpha1.SessionStatePending, unchanged.Status.State)
+	var terminal breakglassv1alpha1.BreakglassSession
+	require.NoError(t, fc.Get(context.Background(), client.ObjectKeyFromObject(stored), &terminal))
+	assert.Equal(t, breakglassv1alpha1.SessionStateWithdrawn, terminal.Status.State)
+	assert.Equal(t, metav1.ConditionFalse, terminal.GetCondition(string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete)).Status)
 }
 
 func TestDuplicateCleanupAuditRetriesAfterStatusConflict(t *testing.T) {
@@ -609,8 +696,7 @@ func TestDuplicateCleanupAuditRetriesAfterStatusConflict(t *testing.T) {
 	updated, err := terminateDuplicateSession(context.Background(), zaptest.NewLogger(t).Sugar(), NewSessionManagerWithClient(fc), duplicateKeyForSession(*session), *session, recorder)
 	require.NoError(t, err)
 	assert.True(t, updated)
-	assert.GreaterOrEqual(t, len(recorder.events), 2, "conflict retry is at-least-once")
-	assert.Equal(t, recorder.events[0].ID, recorder.events[1].ID)
+	assert.Empty(t, recorder.events, "status conflict before terminal commit must not emit")
 }
 
 func TestGetLiveDuplicateSessionRequiresNamespace(t *testing.T) {

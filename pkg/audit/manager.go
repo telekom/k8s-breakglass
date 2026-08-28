@@ -289,6 +289,10 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 // Metrics are incremented per-sink on success and failure.
 func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
 	if len(m.directSinks) == 0 {
+		switch m.sink.(type) {
+		case *IsolatedMultiSink, *QueuedSink:
+			return errors.New("no direct audit sinks configured; refusing asynchronous synchronous-audit fallback")
+		}
 		if err := m.sink.Write(ctx, event); err != nil {
 			metrics.AuditSinkErrors.WithLabelValues(m.sink.Name(), "sensitive_sync_fallback").Inc()
 			return err
@@ -329,8 +333,8 @@ func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
 	return errors.Join(errs...)
 }
 
-// EmitSync sends an audit event synchronously.
-// Use sparingly - for critical events only.
+// EmitSync sends an audit event synchronously to every configured direct sink.
+// It never traverses queued or isolated sink wrappers.
 func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
 	if !eventTypeAllowed(event.Type, m.config.IncludeEventTypes, m.config.ExcludeEventTypes) {
 		return nil
@@ -351,7 +355,7 @@ func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
 		event.Severity = SeverityForEventType(event.Type)
 	}
 
-	return m.sink.Write(ctx, event)
+	return m.syncWriteDirect(ctx, event)
 }
 
 // shouldSample returns true if the event should be sampled (dropped).

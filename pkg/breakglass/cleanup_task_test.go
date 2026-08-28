@@ -18,6 +18,28 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
+func TestCleanupRoutinePendingDuplicateAuditBlocksRetentionDeletion(t *testing.T) {
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-audit-delete", Namespace: "default"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "cluster", User: "user", GrantedGroup: "admin"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:         breakglassv1alpha1.SessionStateWithdrawn,
+			RetainedUntil: metav1.NewTime(time.Now().Add(-time.Hour)),
+			Conditions: []metav1.Condition{{
+				Type:   string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete),
+				Status: metav1.ConditionFalse,
+				Reason: "PendingDelivery",
+			}},
+		},
+	}
+	fc := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(session).Build()
+	routine := CleanupRoutine{Log: zaptest.NewLogger(t).Sugar(), Manager: NewSessionManagerWithClient(fc)}
+	routine.markCleanupExpiredSession(context.Background())
+
+	var retained breakglassv1alpha1.BreakglassSession
+	require.NoError(t, fc.Get(context.Background(), client.ObjectKeyFromObject(session), &retained), "pending audit outbox must retain the terminal object")
+}
+
 func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
 	// TestCleanupRoutine_markCleanupExpiredSession
 	//
