@@ -51,15 +51,22 @@ normalize_branch_protection_http() {
   test "$#" = 2 || fail "usage: normalize-branch-protection-http HTTP_RESPONSE_FILE OUTPUT_JSON"
   require_file "$1"
   command -v ruby >/dev/null 2>&1 || fail "ruby is required"
-  ruby -r json -e '
+  ruby -r json -r time -e '
     raw = File.binread(ARGV.fetch(0)).gsub("\r\n", "\n")
     blocks = raw.split(/\n\n/, -1)
     header_indexes = blocks.each_index.select { |index| blocks[index].start_with?("HTTP/") }
     abort "missing HTTP response headers" if header_indexes.empty?
     header_index = header_indexes.last
-    status = blocks.fetch(header_index).lines.first.to_s.strip
+    header_lines = blocks.fetch(header_index).lines.map(&:strip)
+    status = header_lines.shift.to_s
     code = status[/\AHTTP\/\S+\s+(\d{3})\b/, 1]
     abort "malformed HTTP status" unless code
+    headers = Hash.new { |hash, key| hash[key] = [] }
+    header_lines.each do |line|
+      name, value = line.split(":", 2)
+      abort "malformed HTTP header" unless name && value
+      headers[name.downcase] << value.strip
+    end
     body = blocks[(header_index + 1)..].join("\n\n")
     case code
     when "200"
@@ -67,14 +74,73 @@ normalize_branch_protection_http() {
       abort "branch-protection response is not an object" unless parsed.is_a?(Hash)
       File.write(ARGV.fetch(1), JSON.generate(parsed) + "\n")
     when "404"
-      # The authenticated endpoint conclusively says classic branch protection
-      # is absent. Preserve a normalized empty object rather than treating an
-      # arbitrary transport/API failure as absence.
+      dates = headers.fetch("date", [])
+      abort "404 missing/ambiguous Date header" unless dates.length == 1
+      Time.httpdate(dates.fetch(0))
+      request_ids = headers.fetch("x-github-request-id", [])
+      abort "404 missing/ambiguous GitHub request ID" unless request_ids.length == 1 &&
+        request_ids.fetch(0).match?(/\A[A-Za-z0-9:_-]+\z/)
+      content_types = headers.fetch("content-type", [])
+      abort "404 missing/ambiguous JSON content type" unless content_types.length == 1 &&
+        content_types.fetch(0).match?(/\Aapplication\/json(?:\s*;.*)?\z/i)
+      parsed = JSON.parse(body)
+      abort "404 error is not an object" unless parsed.is_a?(Hash)
+      abort "unexpected 404 message" unless parsed["message"] == "Branch not protected"
+      abort "missing 404 documentation URL" unless parsed["documentation_url"].is_a?(String) &&
+        parsed["documentation_url"].match?(%r{\Ahttps://docs\.github\.com/})
+      abort "unexpected 404 status" unless parsed["status"] == "404" || parsed["status"] == 404
+      # The authenticated, GitHub-shaped 404 conclusively says classic branch
+      # protection is absent. No other error is normalized as an empty policy.
       File.write(ARGV.fetch(1), "{}\n")
     else
       abort "branch-protection request returned HTTP #{code}"
     end
   ' "$1" "$2" || fail "could not normalize authenticated branch-protection response"
+}
+
+manifest_evidence() {
+  test "$#" = 2 || fail "usage: manifest-evidence SNAPSHOT_DIRECTORY OUTPUT_FILE"
+  test -d "$1" || fail "missing snapshot directory: $1"
+  command -v ruby >/dev/null 2>&1 || fail "ruby is required"
+  ruby -r digest -r json -e '
+    root = File.realpath(ARGV.fetch(0))
+    output = File.expand_path(ARGV.fetch(1))
+    abort "manifest output must be directly inside its snapshot" unless
+      File.realpath(File.dirname(output)) == root
+
+    def canonical_json(value)
+      case value
+      when Hash
+        "{" + value.keys.sort.map { |key|
+          JSON.generate(key) + ":" + canonical_json(value.fetch(key))
+        }.join(",") + "}"
+      when Array
+        "[" + value.map { |item| canonical_json(item) }.join(",") + "]"
+      else
+        JSON.generate(value)
+      end
+    end
+
+    entries = Dir.glob(File.join(root, "**", "*"), File::FNM_DOTMATCH)
+      .select { |path| File.file?(path) }
+      .reject { |path| File.expand_path(path) == output }
+      .map do |path|
+        relative = path.delete_prefix(root + File::SEPARATOR)
+        evidence = if File.extname(path) == ".json"
+          begin
+            canonical_json(JSON.parse(File.binread(path)))
+          rescue JSON::ParserError
+            abort "invalid JSON evidence: #{relative}"
+          end
+        else
+          "sha256:" + Digest::SHA256.file(path).hexdigest
+        end
+        [relative, evidence]
+      end
+    File.binwrite(output, entries.sort_by(&:first).map { |relative, evidence|
+      "#{relative}\t#{evidence}\n"
+    }.join)
+  ' "$1" "$2" || fail "could not create complete evidence manifest"
 }
 
 request_date() {
@@ -132,6 +198,21 @@ verify_review_freshness() {
     fail "formal review is not provably after GitHub review-request completion"
 }
 
+verify_created_draft() {
+  test "$#" = 6 || fail "usage: verify-created-draft PR_JSON REPOSITORY HEAD_REF HEAD_OID BASE_REF BASE_OID"
+  local pr_json="$1" repository="$2" head_ref="$3" head_oid="$4" base_ref="$5" base_oid="$6"
+  require_jq
+  require_file "$pr_json"
+  jq -e --arg repository "$repository" --arg headRef "$head_ref" --arg headOid "$head_oid" \
+    --arg baseRef "$base_ref" --arg baseOid "$base_oid" '
+    type == "object" and .isDraft == true and
+    (.headRepository | type) == "object" and .headRepository.nameWithOwner == $repository and
+    .headRefName == $headRef and .headRefOid == $headOid and
+    (.baseRepository | type) == "object" and .baseRepository.nameWithOwner == $repository and
+    .baseRefName == $baseRef and .baseRefOid == $baseOid
+  ' "$pr_json" >/dev/null || fail "created draft does not match the verified source/base repository, ref, and OID"
+}
+
 inventory_policy() {
   test "$#" = 6 || fail "usage: inventory-policy HOST REPOSITORY BASE_REF EFFECTIVE_JSON PROTECTION_JSON OUTPUT_JSON"
   local host="$1" repository="$2" base_ref="$3" effective="$4" protection="$5" output="$6"
@@ -151,26 +232,85 @@ inventory_policy() {
       else error("malformed paginated effective-rules response") end;
     def protection: $protection[0];
     def nonempty_string: type == "string" and length > 0;
-    def enabled_object: type == "object" and .enabled == true;
+    def json_integer: type == "number" and floor == .;
     def nonempty_restrictions:
-      [(.users // [])[], (.teams // [])[], (.apps // [])[]] | length > 0;
-    def valid_required_check:
+      [.users[], .teams[], .apps[]] | length > 0;
+    # Rulesets call this provider identifier `integration_id`; classic branch
+    # protection calls it `app_id`. Neither `null` nor -1 binds a check to an
+    # exact GitHub App, so this gate deliberately does not accept either.
+    def valid_ruleset_required_check:
       type == "object" and (.context | nonempty_string) and
-      ((.integration_id // .app_id) | type) == "number" and
-      (.integration_id // .app_id) > 0;
+      (.integration_id | json_integer) and .integration_id > 0;
+    def valid_classic_required_check:
+      type == "object" and (.context | nonempty_string) and
+      (.app_id | json_integer) and .app_id > 0;
     def valid_workflow:
-      type == "object" and (.repository_id | type) == "number" and .repository_id > 0 and
-      (.path | nonempty_string) and (.ref | nonempty_string) and
+      type == "object" and (.repository_id | json_integer) and .repository_id > 0 and
+      (.path | nonempty_string) and
+      ((has("ref") | not) or (.ref | nonempty_string)) and
       (.sha | type) == "string" and (.sha | test("^[0-9a-fA-F]{40}$"));
     def valid_code_scanning_tool:
       type == "object" and (.tool | nonempty_string) and
-      (.alerts_threshold | nonempty_string) and
-      (.security_alerts_threshold | nonempty_string);
+      (.alerts_threshold | IN("none", "errors", "errors_and_warnings", "all")) and
+      (.security_alerts_threshold |
+       IN("none", "critical", "high_or_higher", "medium_or_higher", "all"));
+    def valid_actor_lists:
+      type == "object" and (.users | type) == "array" and
+      (.teams | type) == "array" and (.apps | type) == "array";
+    def valid_pull_request_rule:
+      (.parameters | type) == "object" and
+      (.parameters.dismiss_stale_reviews_on_push | type) == "boolean" and
+      (.parameters.require_code_owner_review | type) == "boolean" and
+      (.parameters.require_last_push_approval | type) == "boolean" and
+      (.parameters.required_approving_review_count | json_integer) and
+      .parameters.required_approving_review_count >= 0 and
+      (.parameters.required_review_thread_resolution | type) == "boolean" and
+      ((.parameters.dismissal_restriction == null) or
+       ((.parameters.dismissal_restriction | type) == "object" and
+        (.parameters.dismissal_restriction.enabled | type) == "boolean" and
+        (.parameters.dismissal_restriction.allowed_actors | type) == "array" and
+        all(.parameters.dismissal_restriction.allowed_actors[];
+          (.id | json_integer) and .id > 0 and
+          (.type | IN("User", "Team", "IntegrationInstallation", "RepositoryRole"))))) and
+      ((.parameters.allowed_merge_methods == null) or
+       ((.parameters.allowed_merge_methods | type) == "array" and
+        (.parameters.allowed_merge_methods | length) > 0 and
+        all(.parameters.allowed_merge_methods[]; IN("merge", "squash", "rebase")))) and
+      ((.parameters.required_reviewers == null) or
+       ((.parameters.required_reviewers | type) == "array" and
+        all(.parameters.required_reviewers[];
+          type == "object" and (.file_patterns | type) == "array" and
+          all(.file_patterns[]; nonempty_string) and
+          (.minimum_approvals | json_integer) and .minimum_approvals >= 0 and
+          (.reviewer | type) == "object" and (.reviewer.id | json_integer) and
+          .reviewer.id > 0 and .reviewer.type == "Team")));
+    def valid_classic_pull_request_reviews:
+      type == "object" and
+      (.dismissal_restrictions | valid_actor_lists) and
+      (.dismiss_stale_reviews | type) == "boolean" and
+      (.require_code_owner_reviews | type) == "boolean" and
+      (.required_approving_review_count | json_integer) and
+      .required_approving_review_count >= 0 and
+      (.require_last_push_approval | type) == "boolean" and
+      ((.bypass_pull_request_allowances == null) or
+       (.bypass_pull_request_allowances | valid_actor_lists));
+    def valid_classic_status_checks:
+      type == "object" and (.strict | type) == "boolean" and
+      (.contexts | type) == "array" and all(.contexts[]; nonempty_string) and
+      (.checks | type) == "array" and all(.checks[]; valid_classic_required_check) and
+      ((.contexts | length) + (.checks | length)) > 0;
     def valid_known_ruleset_rule:
-      type == "object" and (.type | nonempty_string) and (.parameters | type) == "object" and
+      type == "object" and (.type | nonempty_string) and
       (if .type == "required_status_checks" then
+         (.parameters | type) == "object" and
+         (.parameters.strict_required_status_checks_policy | type) == "boolean" and
+         ((.parameters.do_not_enforce_on_create == null) or
+          (.parameters.do_not_enforce_on_create | type) == "boolean") and
          (.parameters.required_status_checks | type) == "array" and
-         all(.parameters.required_status_checks[]; valid_required_check)
+         (.parameters.required_status_checks | length) > 0 and
+         all(.parameters.required_status_checks[]; valid_ruleset_required_check)
+       elif .type == "pull_request" then
+         valid_pull_request_rule
        elif .type == "workflows" then
          (.parameters.workflows | type) == "array" and
          (.parameters.workflows | length) > 0 and
@@ -180,26 +320,29 @@ inventory_policy() {
          (.parameters.code_scanning_tools | length) > 0 and
          all(.parameters.code_scanning_tools[]; valid_code_scanning_tool)
        elif .type == "required_deployments" then
+         (.parameters | type) == "object" and
          (.parameters.required_deployment_environments | type) == "array" and
          (.parameters.required_deployment_environments | length) > 0 and
          all(.parameters.required_deployment_environments[]; nonempty_string)
-       else true end);
+       elif .type == "required_signatures" then
+         ((has("parameters") | not) or .parameters == null or
+          ((.parameters | type) == "object" and (.parameters | length) == 0))
+       else false end);
     def valid_classic_enabled_field($field):
       (protection[$field] == null) or
       ((protection[$field] | type) == "object" and
        (protection[$field].enabled | type) == "boolean");
+    def known_classic_fields:
+      ["url", "enabled", "required_status_checks", "required_pull_request_reviews",
+       "required_conversation_resolution", "required_signatures", "required_commit_signatures",
+       "required_linear_history", "enforce_admins", "allow_force_pushes", "allow_deletions",
+       "lock_branch", "allow_fork_syncing", "block_creations", "restrictions"];
     def valid_classic_protection:
       (protection | type) == "object" and
       ((protection.required_status_checks == null) or
-       ((protection.required_status_checks | type) == "object" and
-        ((protection.required_status_checks.checks // []) | type) == "array" and
-        all(protection.required_status_checks.checks[]?; valid_required_check) and
-        ((protection.required_status_checks.contexts // []) | type) == "array" and
-        all(protection.required_status_checks.contexts[]?; nonempty_string))) and
+       (protection.required_status_checks | valid_classic_status_checks)) and
       ((protection.required_pull_request_reviews == null) or
-       ((protection.required_pull_request_reviews | type) == "object" and
-        ((protection.required_pull_request_reviews.required_approving_review_count // 0) | type) == "number" and
-        (protection.required_pull_request_reviews.required_approving_review_count // 0) >= 0)) and
+       (protection.required_pull_request_reviews | valid_classic_pull_request_reviews)) and
       ((protection.required_conversation_resolution == null) or
        valid_classic_enabled_field("required_conversation_resolution")) and
       valid_classic_enabled_field("required_signatures") and
@@ -212,14 +355,14 @@ inventory_policy() {
       valid_classic_enabled_field("allow_fork_syncing") and
       valid_classic_enabled_field("block_creations") and
       ((protection.restrictions == null) or
-       ((protection.restrictions | type) == "object" and
-        ((protection.restrictions.users // []) | type) == "array" and
-        ((protection.restrictions.teams // []) | type) == "array" and
-        ((protection.restrictions.apps // []) | type) == "array"));
+       (protection.restrictions | valid_actor_lists)) and
+      ([protection | to_entries[] |
+        select(.key as $key | known_classic_fields | index($key) | not) |
+        select(.value != null)] | length) == 0;
     def has_classic_status_checks:
       (protection.required_status_checks | type) == "object" and
-      (((protection.required_status_checks.checks // []) | length) > 0 or
-       ((protection.required_status_checks.contexts // []) | length) > 0);
+      ((protection.required_status_checks.checks | length) > 0 or
+       (protection.required_status_checks.contexts | length) > 0);
     def classic_rules:
       [
         if has_classic_status_checks then
@@ -271,18 +414,7 @@ inventory_policy() {
            (protection.restrictions | nonempty_restrictions) then
           {type: "restrictions", source: "classic_branch_protection",
            parameters: protection.restrictions}
-        else empty end,
-        [protection | to_entries[] |
-         select(.key as $key |
-           ["url", "enabled", "required_status_checks", "required_pull_request_reviews",
-            "required_conversation_resolution", "required_signatures", "required_commit_signatures",
-            "required_linear_history", "enforce_admins", "allow_force_pushes", "allow_deletions",
-            "lock_branch", "allow_fork_syncing", "block_creations", "restrictions"] | index($key) | not) |
-         select((.value | type) == "boolean" and .value == true or
-                (.value | enabled_object) or
-                ((.value | type) == "array" and (.value | length) > 0)) |
-         {type: ("classic_" + .key), source: "classic_branch_protection", parameters: .value}
-        ][]
+        else empty end
       ];
     def rule_checks($all_rules):
       [$all_rules[] | select(.type == "required_status_checks") |
@@ -290,8 +422,11 @@ inventory_policy() {
        {context: (.context // ""), appId: (.integration_id // .app_id)}];
     def protection_checks:
       [((protection.required_status_checks.checks // [])[]?) |
-       {context: (.context // ""), appId: (.app_id // .integration_id)}];
-    def legacy_contexts: (protection.required_status_checks.contexts // []);
+       {context: .context, appId: .app_id}];
+    def legacy_contexts:
+      (protection.required_status_checks.contexts // []) as $contexts |
+      ([protection_checks[] | .context]) as $provider_bound |
+      [$contexts[] | select($provider_bound | index(.) | not)];
     def supported_type:
       . == "required_status_checks" or . == "pull_request" or
       . == "required_signatures" or . == "workflows" or
@@ -423,9 +558,11 @@ usage() {
 usage:
   pr-gate-contract.sh parse-pr-url HTTPS_PR_URL
   pr-gate-contract.sh normalize-branch-protection-http HTTP_RESPONSE_FILE OUTPUT_JSON
+  pr-gate-contract.sh manifest-evidence SNAPSHOT_DIRECTORY OUTPUT_FILE
   pr-gate-contract.sh request-date HTTP_RESPONSE_FILE
   pr-gate-contract.sh request-date-to-ns HTTP_RESPONSE_FILE
   pr-gate-contract.sh verify-review-freshness HTTP_RESPONSE_FILE RFC3339_UTC_TIMESTAMP
+  pr-gate-contract.sh verify-created-draft PR_JSON REPOSITORY HEAD_REF HEAD_OID BASE_REF BASE_OID
   pr-gate-contract.sh inventory-policy HOST REPOSITORY BASE_REF EFFECTIVE_JSON PROTECTION_JSON OUTPUT_JSON
   pr-gate-contract.sh verify-checks IDENTITY_JSON INVENTORY_JSON REPOSITORY_JSON RUNS_JSON SUITES_JSON STATUSES_JSON OUTPUT_JSON
 EOF
@@ -436,9 +573,11 @@ command="${1-}"
 case "$command" in
   parse-pr-url) shift; parse_pr_url "$@" ;;
   normalize-branch-protection-http) shift; normalize_branch_protection_http "$@" ;;
+  manifest-evidence) shift; manifest_evidence "$@" ;;
   request-date) shift; request_date "$@" ;;
   request-date-to-ns) shift; request_date_to_ns "$@" ;;
   verify-review-freshness) shift; verify_review_freshness "$@" ;;
+  verify-created-draft) shift; verify_created_draft "$@" ;;
   inventory-policy) shift; inventory_policy "$@" ;;
   verify-checks) shift; verify_checks "$@" ;;
   *) usage ;;

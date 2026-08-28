@@ -25,7 +25,8 @@ Treat a PR as approved only when one complete, current evidence snapshot passes.
 
   The prompt uses [`.github/scripts/pr-gate-contract.sh`](../scripts/pr-gate-contract.sh)
   as the executable reference for URL parsing, conservative review freshness,
-  policy inventory, and exact check-suite evidence. It tests API-shaped
+  complete evidence manifests, draft binding, policy inventory, and exact
+  check-suite evidence. It tests API-shaped
   fixtures, including a synthetic merge candidate that differs from the source
   head and attacker-controlled suite/status cases; it does not test for text
   in this document.
@@ -36,7 +37,7 @@ Request a formal Copilot review; do not write an `@copilot review` comment.
 The comment invokes the coding agent and is not a pull-request review request.
 
 ```bash
-GH_HOST=HOST gh pr edit PR_NUMBER --repo HOST/BASE_OWNER/BASE_REPOSITORY --add-reviewer @copilot
+env GH_HOST="$github_host" gh pr edit "$pr" --repo "$hosted_repo" --add-reviewer @copilot
 ```
 
 For the fail-closed gate below, use the equivalent REST reviewer request with
@@ -90,6 +91,8 @@ EOF
 hosted_repo="$github_host/$base_repo"
 gh_api() { env GH_HOST="$github_host" gh api --hostname "$github_host" "$@"; }
 gh_pr() { env GH_HOST="$github_host" gh pr "$@"; }
+gh auth status --hostname "$github_host" >/dev/null ||
+  fail "no authenticated gh session for the pinned GitHub host"
 case "$base_repo" in */*) ;; *) fail "invalid PR repository";; esac
 case "$pr" in ''|*[!0-9]*) fail "invalid PR number";; esac
 
@@ -226,6 +229,18 @@ server-provided type/parameters in the error: extend the verifier for that
 type, or remove/replace the rule before using this ready/merge gate. It never
 silently ignores a rule, accepts `NEUTRAL`/`SKIPPED`, or accepts a legacy
 required status, whose `creator` cannot prove a GitHub App integration.
+
+The policy verifier accepts only the documented payloads it can enforce:
+`pull_request` requires every review boolean and an integer approval count;
+`required_status_checks` requires its strict flag and a nonempty list of
+positive App integration IDs; workflow entries require an integer
+`repository_id`, path, and immutable SHA; and code-scanning thresholds must be
+GitHub's documented enum values. Classic status policy requires `strict`,
+`contexts`, and `checks`; classic reviews require their dismissal, code-owner,
+stale-review, last-push, and approval fields with their documented types. An
+empty active status-check list, a malformed payload, or an enabled control the
+contract does not model is fatal. A classic context that is also present in an
+exact App-bound classic check is permitted; any unbound context is rejected.
 
 The following commands provide the raw, paginated review/thread/check material.
 Save each response under the gate directory and normalize it with sorted JSON
@@ -408,8 +423,11 @@ collect_policy_inventory() {
 
   # Capture the authenticated HTTP response even when `gh` returns non-zero.
   # The contract accepts only a final HTTP 200 object or an authenticated 404
-  # (which conclusively means this branch has no classic protection); 401/403,
-  # 5xx, malformed headers/body, and every other status remain fatal.
+  # (which conclusively means this branch has no classic protection). A 404 is
+  # accepted only with one valid Date, a GitHub request ID, JSON content type,
+  # and GitHub's `Branch not protected` JSON error/documentation URL/status;
+  # empty, non-JSON, malformed, 401/403, 5xx, and every other response remain
+  # fatal.
   protection_http="$gate_dir/branch-protection.http"
   if gh_api --include "repos/$base_repo/branches/$base_ref/protection" \
     >"$protection_http"; then
@@ -503,12 +521,10 @@ capture the **entire** evidence set again and compare the two manifests:
 ```bash
 manifest_snapshot() {
   snapshot="$1"
-  find "$snapshot" -type f -name '*.json' -print | LC_ALL=C sort |
-    while IFS= read -r json; do
-      relative="${json#"$snapshot"/}"
-      printf '%s\t' "$relative"
-      jq -S -c . "$json"
-    done >"$snapshot/gate.jsonl"
+  # JSON files are canonicalized; every other captured artifact (including
+  # `.http` response evidence) is represented by its SHA-256. The helper
+  # rejects malformed JSON and omits only the manifest it is writing.
+  "$contract" manifest-evidence "$snapshot" "$snapshot/gate.jsonl"
 }
 
 # Both snapshots were collected and validated above. Reject any changed raw or
@@ -735,6 +751,9 @@ test "$parsed_host" = "$github_host" && test "$parsed_repo" = "$base_repo" || {
 hosted_repo="$github_host/$base_repo"
 gh_pr() { env GH_HOST="$github_host" gh pr "$@"; }
 gh_api() { env GH_HOST="$github_host" gh api --hostname "$github_host" "$@"; }
+gh auth status --hostname "$github_host" >/dev/null || {
+  echo "no authenticated gh session for the pinned GitHub host" >&2; exit 1;
+}
 git check-ref-format --branch "$base_ref" >/dev/null
 head_ref="$(git branch --show-current)"
 git check-ref-format --branch "$head_ref" >/dev/null
@@ -787,12 +806,10 @@ test "$created_host" = "$github_host" && test "$created_repo" = "$base_repo" || 
   echo "PR creation returned a different GitHub host or repository" >&2; exit 1;
 }
 gh_pr view "$pr" --repo "$hosted_repo" \
-  --json headRefName,headRefOid,headRepository,baseRefName,baseRefOid,baseRepository \
-  | jq -e --arg repo "$base_repo" --arg head "$head_ref" --arg headOid "$source_oid" \
-      --arg base "$base_ref" --arg baseOid "$base_oid" '
-      .headRepository.nameWithOwner == $repo and .headRefName == $head and .headRefOid == $headOid and
-      .baseRepository.nameWithOwner == $repo and .baseRefName == $base and .baseRefOid == $baseOid
-    ' >/dev/null || { echo "created PR source/base does not match verified refs" >&2; exit 1; }
+  --json isDraft,headRefName,headRefOid,headRepository,baseRefName,baseRefOid,baseRepository \
+  >"$gate_root/created-pr.json"
+"$contract" verify-created-draft "$gate_root/created-pr.json" "$base_repo" \
+  "$head_ref" "$source_oid" "$base_ref" "$base_oid"
 
 # Use the same file-only rule for an existing PR description.
 gh_pr edit "$pr" --repo "$hosted_repo" --body-file "$body_file"
