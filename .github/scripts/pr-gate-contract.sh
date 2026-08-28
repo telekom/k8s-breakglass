@@ -102,9 +102,9 @@ manifest_evidence() {
   test "$#" = 2 || fail "usage: manifest-evidence SNAPSHOT_DIRECTORY OUTPUT_FILE"
   test -d "$1" || fail "missing snapshot directory: $1"
   command -v ruby >/dev/null 2>&1 || fail "ruby is required"
-  ruby -r digest -r json -e '
+  ruby -r digest -r json -r time -e '
     root = File.realpath(ARGV.fetch(0))
-    output = File.expand_path(ARGV.fetch(1))
+    output = File.join(File.realpath(File.dirname(ARGV.fetch(1))), File.basename(ARGV.fetch(1)))
     abort "manifest output must be directly inside its snapshot" unless
       File.realpath(File.dirname(output)) == root
 
@@ -121,6 +121,58 @@ manifest_evidence() {
       end
     end
 
+    def canonical_http(path)
+      raw = File.binread(path).gsub("\r\n", "\n")
+      blocks = raw.split(/\n\n/, -1)
+      header_indexes = blocks.each_index.select { |index| blocks[index].start_with?("HTTP/") }
+      abort "missing HTTP response headers" if header_indexes.empty?
+      header_index = header_indexes.last
+      lines = blocks.fetch(header_index).lines.map(&:chomp)
+      status = lines.shift.to_s
+      code = status[/\AHTTP\/\d(?:\.\d)?\s+(\d{3})(?:\s|\z)/, 1]
+      abort "malformed HTTP status" unless code
+
+      headers = Hash.new { |hash, key| hash[key] = [] }
+      lines.each do |line|
+        name, value = line.split(":", 2)
+        abort "malformed HTTP header" unless name && value &&
+          name.match?(%r{\A[!#$%&*+\-.^_`|~0-9A-Za-z]+\z})
+        headers[name.downcase] << value.strip
+      end
+      dates = headers.fetch("date", [])
+      abort "missing/ambiguous HTTP Date" unless dates.length == 1
+      Time.httpdate(dates.fetch(0))
+      request_ids = headers.fetch("x-github-request-id", [])
+      abort "missing/ambiguous GitHub request ID" unless request_ids.length == 1 &&
+        request_ids.fetch(0).match?(/\A[A-Za-z0-9:_-]+\z/)
+
+      body = blocks[(header_index + 1)..].join("\n\n")
+      content_types = headers.fetch("content-type", [])
+      json_body = content_types.length == 1 &&
+        content_types.fetch(0).match?(%r{\Aapplication/(?:[A-Za-z0-9.+-]+\+)?json(?:\s*;.*)?\z}i)
+      canonical_body = if json_body
+        begin
+          {"json" => JSON.parse(body)}
+        rescue JSON::ParserError
+          abort "invalid JSON HTTP body"
+        end
+      else
+        {"sha256" => Digest::SHA256.hexdigest(body)}
+      end
+
+      # GitHub Date and request ID prove the response is a fresh, traceable
+      # transport event, but necessarily differ between equivalent snapshots.
+      # Every other header remains bound into the evidence projection so a
+      # changed content type, redirect, auth, or security policy is visible.
+      volatile_headers = ["date", "x-github-request-id", "x-ratelimit-limit",
+                          "x-ratelimit-remaining", "x-ratelimit-reset",
+                          "x-ratelimit-resource", "x-ratelimit-used",
+                          "server-timing", "via"]
+      stable_headers = headers.reject { |name, _| volatile_headers.include?(name) }
+        .transform_values { |values| values.sort }
+      {"status" => code.to_i, "headers" => stable_headers, "body" => canonical_body}
+    end
+
     entries = Dir.glob(File.join(root, "**", "*"), File::FNM_DOTMATCH)
       .select { |path| File.file?(path) }
       .reject { |path| File.expand_path(path) == output }
@@ -132,6 +184,8 @@ manifest_evidence() {
           rescue JSON::ParserError
             abort "invalid JSON evidence: #{relative}"
           end
+        elsif File.extname(path) == ".http"
+          canonical_json(canonical_http(path))
         else
           "sha256:" + Digest::SHA256.file(path).hexdigest
         end

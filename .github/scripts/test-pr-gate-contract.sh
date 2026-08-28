@@ -73,18 +73,37 @@ jq '.headRefOid = "attacker-head"' "$fixture_root/created-draft.json" >"$fixture
 expect_failure "$contract" verify-created-draft "$fixture_root/wrong-draft-head.json" telekom/k8s-breakglass \
   codex/network-debug source-head main base-head
 
-# The evidence manifest covers every artifact, rather than just JSON. This
-# catches a changed HTTP response (such as a different final status/header)
-# between the verified and final snapshots.
+# The evidence manifest validates raw HTTP responses but projects away only
+# response-specific transport metadata. Equivalent GitHub responses must
+# compare equal despite a fresh Date/request ID and JSON key order; status,
+# body, or security-header changes must not.
 mkdir -p "$fixture_root/manifest-snapshot"
 write_fixture "$fixture_root/manifest-snapshot/identity.json" '{"b":2,"a":1}'
-write_fixture "$fixture_root/manifest-snapshot/branch-protection.http" $'HTTP/2 200 OK\r\nDate: Fri, 28 Aug 2026 07:14:18 GMT\r\n\r\n{}'
+write_fixture "$fixture_root/manifest-snapshot/branch-protection.http" $'HTTP/2 200 OK\r\nDate: Fri, 28 Aug 2026 07:14:18 GMT\r\nX-GitHub-Request-Id: FIRST:REQUEST\r\nContent-Type: application/json\r\nX-GitHub-Api-Version: 2026-03-10\r\nX-Frame-Options: DENY\r\n\r\n{"second":2,"first":1}'
 "$contract" manifest-evidence "$fixture_root/manifest-snapshot" "$fixture_root/manifest-snapshot/gate.jsonl"
 cp "$fixture_root/manifest-snapshot/gate.jsonl" "$fixture_root/first-manifest.jsonl"
-write_fixture "$fixture_root/manifest-snapshot/branch-protection.http" $'HTTP/2 404 Not Found\r\nDate: Fri, 28 Aug 2026 07:14:19 GMT\r\n\r\n{}'
+write_fixture "$fixture_root/manifest-snapshot/branch-protection.http" $'HTTP/2 200 OK\r\nX-Frame-Options: DENY\r\nContent-Type: application/json\r\nX-GitHub-Request-Id: SECOND:REQUEST\r\nX-GitHub-Api-Version: 2026-03-10\r\nDate: Fri, 28 Aug 2026 07:14:19 GMT\r\n\r\n{"first":1,"second":2}'
+"$contract" manifest-evidence "$fixture_root/manifest-snapshot" "$fixture_root/manifest-snapshot/gate.jsonl"
+cmp -s "$fixture_root/first-manifest.jsonl" "$fixture_root/manifest-snapshot/gate.jsonl" ||
+  fail "volatile HTTP headers changed an equivalent evidence manifest"
+write_fixture "$fixture_root/manifest-snapshot/branch-protection.http" $'HTTP/2 404 Not Found\r\nDate: Fri, 28 Aug 2026 07:14:19 GMT\r\nX-GitHub-Request-Id: THIRD:REQUEST\r\nContent-Type: application/json\r\nX-GitHub-Api-Version: 2026-03-10\r\nX-Frame-Options: DENY\r\n\r\n{"first":1,"second":2}'
 "$contract" manifest-evidence "$fixture_root/manifest-snapshot" "$fixture_root/manifest-snapshot/gate.jsonl"
 cmp -s "$fixture_root/first-manifest.jsonl" "$fixture_root/manifest-snapshot/gate.jsonl" &&
-  fail "changed HTTP evidence did not change the manifest"
+  fail "changed HTTP status did not change the evidence manifest"
+write_fixture "$fixture_root/manifest-snapshot/branch-protection.http" $'HTTP/2 200 OK\r\nDate: Fri, 28 Aug 2026 07:14:19 GMT\r\nX-GitHub-Request-Id: FOURTH:REQUEST\r\nContent-Type: application/json\r\nX-GitHub-Api-Version: 2026-03-10\r\nX-Frame-Options: DENY\r\n\r\n{"first":1,"second":3}'
+"$contract" manifest-evidence "$fixture_root/manifest-snapshot" "$fixture_root/manifest-snapshot/gate.jsonl"
+cmp -s "$fixture_root/first-manifest.jsonl" "$fixture_root/manifest-snapshot/gate.jsonl" &&
+  fail "changed HTTP body did not change the evidence manifest"
+write_fixture "$fixture_root/manifest-snapshot/branch-protection.http" $'HTTP/2 200 OK\r\nDate: Fri, 28 Aug 2026 07:14:19 GMT\r\nX-GitHub-Request-Id: FIFTH:REQUEST\r\nContent-Type: application/json\r\nX-GitHub-Api-Version: 2026-03-10\r\nX-Frame-Options: SAMEORIGIN\r\n\r\n{"first":1,"second":2}'
+"$contract" manifest-evidence "$fixture_root/manifest-snapshot" "$fixture_root/manifest-snapshot/gate.jsonl"
+cmp -s "$fixture_root/first-manifest.jsonl" "$fixture_root/manifest-snapshot/gate.jsonl" &&
+  fail "changed security-relevant HTTP header did not change the manifest"
+write_fixture "$fixture_root/manifest-snapshot/branch-protection.http" $'HTTP/2 200 OK\r\nDate: Fri, 28 Aug 2026 07:14:19 GMT\r\nX-GitHub-Request-Id: SIXTH:REQUEST\r\nMalformed Header\r\n\r\n{}'
+expect_failure "$contract" manifest-evidence "$fixture_root/manifest-snapshot" "$fixture_root/manifest-snapshot/gate.jsonl"
+write_fixture "$fixture_root/manifest-snapshot/branch-protection.http" $'HTTP/2 200 OK\r\nDate: not-a-date\r\nX-GitHub-Request-Id: SEVENTH:REQUEST\r\nContent-Type: application/json\r\n\r\n{}'
+expect_failure "$contract" manifest-evidence "$fixture_root/manifest-snapshot" "$fixture_root/manifest-snapshot/gate.jsonl"
+write_fixture "$fixture_root/manifest-snapshot/branch-protection.http" $'HTTP/2 200 OK\r\nDate: Fri, 28 Aug 2026 07:14:19 GMT\r\nX-GitHub-Request-Id: EIGHTH:REQUEST\r\nContent-Type: application/json\r\n\r\nnot-json'
+expect_failure "$contract" manifest-evidence "$fixture_root/manifest-snapshot" "$fixture_root/manifest-snapshot/gate.jsonl"
 
 write_fixture "$fixture_root/effective-rules.json" '[[
   {"type":"pull_request","parameters":{"dismiss_stale_reviews_on_push":true,"require_code_owner_review":true,"require_last_push_approval":false,"required_approving_review_count":1,"required_review_thread_resolution":true}},

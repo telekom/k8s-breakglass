@@ -521,9 +521,11 @@ capture the **entire** evidence set again and compare the two manifests:
 ```bash
 manifest_snapshot() {
   snapshot="$1"
-  # JSON files are canonicalized; every other captured artifact (including
-  # `.http` response evidence) is represented by its SHA-256. The helper
-  # rejects malformed JSON and omits only the manifest it is writing.
+  # JSON files are canonicalized. HTTP responses are parsed and validated,
+  # then represented by final status, stable headers, and canonical body;
+  # GitHub's volatile Date/request-ID/rate-limit transport metadata is
+  # deliberately excluded only after validation. Other artifacts use SHA-256.
+  # The helper omits only the manifest it is writing.
   "$contract" manifest-evidence "$snapshot" "$snapshot/gate.jsonl"
 }
 
