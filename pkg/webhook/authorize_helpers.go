@@ -709,9 +709,6 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 			s.debugSessionNamespace = debugSession.Namespace
 			s.debugSessionName = debugSession.Name
 			s.debugSessionUID = string(debugSession.UID)
-			// Emit metric for debug session authorization
-			metrics.WebhookSARDecisions.WithLabelValues(
-				s.clusterLabel, "allowed", "debug-session").Inc()
 		}
 	}
 
@@ -965,6 +962,10 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 		if s.sar.Spec.ResourceAttributes != nil && (s.allowSource == "session" || s.allowSource == "rbac") {
 			metrics.WebhookSARDecisions.WithLabelValues(
 				s.clusterLabel, "allowed", s.allowSource).Inc()
+		}
+		if s.sar.Spec.ResourceAttributes != nil && s.allowSource == "debug-session" {
+			metrics.WebhookSARDecisions.WithLabelValues(
+				s.clusterLabel, "allowed", "debug-session").Inc()
 		}
 	} else {
 		metrics.WebhookSARDenied.WithLabelValues(s.clusterLabel).Inc()

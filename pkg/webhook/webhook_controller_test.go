@@ -679,6 +679,53 @@ func TestHandleAuthorize_MetricsSourceForRBACAllow(t *testing.T) {
 	}
 }
 
+func TestSendAuthorizationResponse_DebugSessionMetricFollowsFinalFence(t *testing.T) {
+	metrics.WebhookSARDecisions.Reset()
+	defer metrics.WebhookSARDecisions.Reset()
+
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	ds := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "metric-debug", Namespace: "default", UID: "metric-debug-uid"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:       breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt:   &future,
+			AllowedPods: []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod"}},
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{{
+				User: "user", Role: breakglassv1alpha1.ParticipantRoleParticipant,
+			}},
+		},
+	}
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds).Build()
+	wc := &WebhookController{log: zap.NewNop().Sugar(), sesManager: breakglass.NewSessionManagerWithClient(cli)}
+	ra := &authorization.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}
+
+	state := &authorizeState{
+		ctx: context.Background(), clusterName: "cluster", clusterLabel: "cluster", allowed: true, allowSource: "debug-session",
+		debugSessionNamespace: "default", debugSessionName: ds.Name, debugSessionUID: string(ds.UID), reqLog: zap.NewNop().Sugar(),
+		sar: authorization.SubjectAccessReview{Spec: authorization.SubjectAccessReviewSpec{User: "user", ResourceAttributes: ra}},
+	}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	wc.sendAuthorizationResponse(c, state)
+	require.True(t, state.allowed)
+	require.Equal(t, float64(1), testutil.ToFloat64(metrics.WebhookSARDecisions.WithLabelValues("cluster", "allowed", "debug-session")))
+
+	current := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(ds), current))
+	current.Status.State = breakglassv1alpha1.DebugSessionStateExpired
+	require.NoError(t, cli.Update(context.Background(), current))
+
+	state.allowed = true
+	state.allowSource = "debug-session"
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	wc.sendAuthorizationResponse(c, state)
+	require.False(t, state.allowed)
+	assert.Equal(t, float64(1), testutil.ToFloat64(metrics.WebhookSARDecisions.WithLabelValues("cluster", "allowed", "debug-session")),
+		"a debug-session allow metric must not be emitted before the final live fence")
+}
+
 // Test that processing a SAR emits an Info log with a structured `action` field
 func TestHandleAuthorize_LogsActionStructured(t *testing.T) {
 	// Build an observer to capture logs
