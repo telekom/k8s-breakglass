@@ -2,6 +2,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+FROM golang:1.27@sha256:c5b07c17f54c5f22230c4b4da6e90249165cf55368e01a52808cb92064e18836 AS network-action-builder
+
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /src
+COPY cmd/network-action/ ./
+RUN CGO_ENABLED=0 GO111MODULE=off GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
+      go build -trimpath -ldflags='-s -w' -o /out/network-action .
+
 # The manifest digest is pinned so every architecture starts from the same
 # reviewed Alpine release. BuildKit resolves the selected architecture.
 FROM alpine:3.22.1@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1
@@ -14,25 +23,32 @@ ARG BUILD_DATE=unknown
 # toolbox, a compiler, a package manager, or an interactive shell entrypoint.
 RUN apk add --no-cache \
         ethtool=6.14.1-r0 \
-        iproute2-minimal=6.15.0-r0 \
+        flock=2.41-r9 \
+        iproute2=6.15.0-r0 \
     && rm -f /sbin/apk /sbin/apk.static
 
 COPY bin/node-maintenance /usr/local/bin/node-maintenance
+COPY --from=network-action-builder /out/network-action /usr/local/sbin/network-action
 COPY lib/common.sh /usr/local/libexec/node-maintenance/common.sh
 COPY lib/network-repair.sh /usr/local/libexec/node-maintenance/network-repair
 COPY lib/node-recovery-preflight.sh /usr/local/libexec/node-maintenance/node-recovery
+COPY lib/kexec-recovery-validate.sh /usr/local/libexec/node-maintenance/kexec-recovery-validate
 COPY MOTD /etc/motd
 COPY README.md /usr/share/breakglass/runbooks/upstream/node-maintenance/README.md
 COPY runbooks/network-repair.md /usr/share/breakglass/runbooks/upstream/node-maintenance/network-repair.md
 COPY runbooks/node-recovery-preflight.md /usr/share/breakglass/runbooks/upstream/node-maintenance/node-recovery-preflight.md
+COPY runbooks/kexec-recovery-validation.md /usr/share/breakglass/runbooks/upstream/node-maintenance/kexec-recovery-validation.md
 
 RUN chmod 0555 /usr/local/bin/node-maintenance \
+        /usr/local/sbin/network-action \
         /usr/local/libexec/node-maintenance/network-repair \
         /usr/local/libexec/node-maintenance/node-recovery \
+        /usr/local/libexec/node-maintenance/kexec-recovery-validate \
     && chmod 0444 /usr/local/libexec/node-maintenance/common.sh /etc/motd \
         /usr/share/breakglass/runbooks/upstream/node-maintenance/README.md \
         /usr/share/breakglass/runbooks/upstream/node-maintenance/network-repair.md \
         /usr/share/breakglass/runbooks/upstream/node-maintenance/node-recovery-preflight.md \
+        /usr/share/breakglass/runbooks/upstream/node-maintenance/kexec-recovery-validation.md \
     && mkdir -p /evidence /usr/share/breakglass/runbooks/internal \
     && chmod 0700 /evidence \
     && chmod 0755 /usr/share/breakglass/runbooks/internal
@@ -47,14 +63,16 @@ LABEL org.opencontainers.image.title="Kubernetes node maintenance" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.base.name="alpine:3.22.1@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1" \
-      io.telekom.breakglass.node-maintenance.commands="node-recovery,network-repair" \
+      io.telekom.breakglass.node-maintenance.commands="node-recovery,network-repair,kexec-recovery-validate" \
       io.telekom.breakglass.node-maintenance.shell="not-supported" \
       io.telekom.breakglass.node-maintenance.capabilities="NET_ADMIN"
 
 # The image is root only for the explicitly allowlisted host-network operation.
 # Controller-owned immutable templates must use a no-capabilities preflight
-# context and a separate NET_ADMIN-only repair context; privileged is not part
-# of this image contract. The dispatcher rejects every other helper name.
+# context, a separate NET_ADMIN-only repair context, and a no-capability kexec
+# validation context. The image has no kexec executable or SYS_BOOT capability;
+# privileged is not part of this contract. The dispatcher rejects every other
+# helper name.
 # hadolint ignore=DL3002
 USER 0
 ENTRYPOINT ["/usr/local/bin/node-maintenance"]

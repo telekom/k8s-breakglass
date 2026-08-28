@@ -25,6 +25,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Storage diagnostics utility image**: Added the bounded `storage-debug`
   image with mounted-volume fio/ioping checks and controller-owned kubestr
   storage workflows.
+- **Node-maintenance utility image**: Added the generic, digest-pinnable
+  `node-maintenance` intent image with read-only node recovery evidence, exact
+  controller-approved link, auto-negotiation, neighbor, and bridge-FDB repair,
+  and fixed-provider recovery-input validation that never executes kexec. Its
+  runbooks, MOTD, bounded evidence bundles, controller-bound approval tuple,
+  node-level operation lock, and cleanup/expiry integration define the
+  supported operational boundary.
+
+### Removed
+
+- **Broad `flush-neighbors` network action (breaking)**: Removed the prior
+  broad neighbor-flush interface. It is superseded by independently approved,
+  intent-specific `neighbor-replace` for one exact neighbor tuple,
+  `bridge-fdb-replace` for one exact FDB tuple, and read-only `node-recovery`
+  evidence when mutation is not required.
 
 ### Fixed
 
@@ -48,6 +63,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now accepts both explicit and implicit `:latest` containerd references and
   deduplicates by manifest digest before creating the immutable local image
   reference.
+- **Node-maintenance recovery verification outcome**: Recovery evidence now
+  distinguishes a verified-file digest mismatch from failure to capture, read,
+  or parse a digest. Both outcomes fail closed without executing kexec, while
+  preserving the truthful outcome for incident handling.
 
 ## [0.1.0-rc.8] - 2026-08-22
 

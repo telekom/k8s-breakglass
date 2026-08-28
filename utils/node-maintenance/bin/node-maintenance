@@ -11,7 +11,8 @@ Usage: node-maintenance <command> [options]
 
 Commands (the only supported entrypoints):
   node-recovery             Collect read-only node evidence.
-  network-repair           Run one explicitly selected network repair.
+  network-repair            Run one explicitly selected network repair.
+  kexec-recovery-validate   Validate fixed provider recovery inputs; never execute.
 
 The image does not provide an unrestricted shell entrypoint. Use a runbook and
 pass an explicit target, evidence directory, and confirmation token.
@@ -32,6 +33,9 @@ case "$command_name" in
 		;;
 	network-repair)
 		exec /usr/local/libexec/node-maintenance/network-repair "$@"
+		;;
+	kexec-recovery-validate)
+		exec /usr/local/libexec/node-maintenance/kexec-recovery-validate "$@"
 		;;
 	-h|--help)
 		usage
