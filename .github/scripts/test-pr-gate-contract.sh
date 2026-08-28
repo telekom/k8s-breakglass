@@ -116,7 +116,7 @@ awk '
     next
   }
   in_block { block = block $0 ORS }
-' .github/prompts/github-pr-management.md >"$draft_snippet"
+' "$script_dir/../prompts/github-pr-management.md" >"$draft_snippet"
 sed -e 's|^base_repo=.*$|base_repo=telekom/k8s-breakglass|' \
   -e 's|^base_ref=.*$|base_ref=main|' \
   -e "s|^contract=.*$|contract=\"$contract\"|" \
