@@ -520,9 +520,10 @@ set +e
 		set -eu
 		. /usr/local/libexec/node-maintenance/common.sh
 		mkdir -m 0700 /evidence/child
-		printf orphan >/evidence/.capture.orphan
-		printf orphan >/evidence/child/.evidence-write.orphan
-		mkfifo -m 0600 /evidence/child/.capture-fifo.orphan
+		printf orphan >/evidence/.capture-0000000000000000000000000000000000000000000000000000000000000000.orphan
+		printf orphan >/evidence/child/.evidence-0000000000000000000000000000000000000000000000000000000000000000-write.orphan
+		mkfifo -m 0600 /evidence/child/.capture-0000000000000000000000000000000000000000000000000000000000000000-fifo.orphan
+		printf legacy >/evidence/child/.capture-status.legacy
 		EVIDENCE_DIR=/evidence/child
 		operation_id=stale-operation
 		recording_id=stale-recording
@@ -530,9 +531,10 @@ set +e
 		prepare_evidence_dir "$EVIDENCE_DIR"
 		acquire_operation_lock "$EVIDENCE_DIR" "$operation_digest"
 		cleanup_evidence_temporary_candidates
-		test ! -e /evidence/.capture.orphan
-		test ! -e /evidence/child/.evidence-write.orphan
-		test ! -e /evidence/child/.capture-fifo.orphan
+		test ! -e /evidence/.capture-0000000000000000000000000000000000000000000000000000000000000000.orphan
+		test ! -e /evidence/child/.evidence-0000000000000000000000000000000000000000000000000000000000000000-write.orphan
+		test ! -e /evidence/child/.capture-0000000000000000000000000000000000000000000000000000000000000000-fifo.orphan
+		test -f /evidence/child/.capture-status.legacy
 		test -f /evidence/.node-maintenance-operation.lock
 		release_operation_lock
 	' >"$fixture_dir/output" 2>&1
@@ -701,7 +703,7 @@ set +e
 			case "$1" in *capture-status*) return 1 ;; esac
 			command mktemp "$@"
 		}
-		capture "$bundle/setup" awk '\''BEGIN { print "setup" }'\''
+		capture "$bundle/setup" awk '\''BEGIN { print "setup" }'\'' || true
 	' >"$fixture_dir/setup-output" 2>&1
 setup_status=$?
 set -e
@@ -740,7 +742,7 @@ set +e
 			case "$1" in *exit_status=*) return 1 ;; esac
 			command printf "$@"
 		}
-		capture "$bundle/trailer" awk '\''BEGIN { print "trailer" }'\''
+		capture "$bundle/trailer" awk '\''BEGIN { print "trailer" }'\'' || true
 	' >"$fixture_dir/trailer-output" 2>&1
 trailer_status=$?
 set -e
@@ -757,8 +759,45 @@ if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
 else
 	fail 'injected capture trailer failure leaked a temporary candidate'
 fi
+"$docker_bin" rm "$container_name" >/dev/null || fail 'could not remove trailer-failure fixture container'
+container_name=
+set +e
+# shellcheck disable=SC2016
+"$docker_bin" run \
+	--name "${prefix}-injected-sync" --user 0 --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" \
+	--entrypoint /bin/sh "$image" -c '
+		set -eu
+		. /usr/local/libexec/node-maintenance/common.sh
+		EVIDENCE_DIR=/evidence
+		operation_id=quota-operation
+		recording_id=quota-recording
+		bundle=/evidence/quota
+		mkdir -m 0700 "$bundle"
+		tuple_digest=$(sha256_text quota-operation)
+		acquire_operation_lock /evidence "$tuple_digest"
+		trap '\''cleanup_evidence_temporary_candidates || true; release_operation_lock || true'\'' EXIT
+		sync() { return 1; }
+		capture "$bundle/sync" awk '\''BEGIN { print "sync" }'\'' || true
+	' >"$fixture_dir/sync-output" 2>&1
+sync_status=$?
+set -e
+cat "$fixture_dir/sync-output"
+container_name="${prefix}-injected-sync"
+assert_container_security "$container_name" none
+[ "$sync_status" -eq 2 ] || fail 'injected evidence sync failure returned an unexpected status'
+# shellcheck disable=SC2016
+if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" -c \
+	'test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)' ; then
+	:
+else
+	fail 'injected evidence sync failure leaked a temporary candidate'
+fi
 destroy_fixture
-pass 'injected capture setup and trailer failures clean partial candidates'
+pass 'injected capture setup, trailer, and sync failures clean partial candidates'
 
 run_command preflight 0 none read-only node-recovery --target-node node-a --interface lo \
 	--evidence-dir /evidence --confirm NODE-RECOVERY-PREFLIGHT
@@ -1130,6 +1169,48 @@ assert_container_security "$container_name" none
 "$docker_bin" kill --signal KILL "$holder_name" >/dev/null || fail 'could not SIGKILL flock holder'
 "$docker_bin" wait "$holder_name" >/dev/null 2>&1 || true
 "$docker_bin" rm "$holder_name" >/dev/null || fail 'could not remove killed flock holder'
+holder_name=
+# A pre-volume-root image used one lock per child. A live legacy descriptor must
+# block the new root-scoped helper, while its legacy temporary names remain
+# untouched for operator-led migration.
+legacy_holder_name="${prefix}-legacy-holder"
+holder_name="$legacy_holder_name"
+"$docker_bin" run -d --name "$legacy_holder_name" --user 0 --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" \
+	-c 'mkdir -m 0700 /evidence/legacy; exec 8>>/evidence/legacy/.node-maintenance-operation.lock; flock -n 8 || exit 71; printf legacy >/evidence/legacy-ready; while :; do sleep 60; done' \
+	>/dev/null || fail 'could not start legacy flock holder'
+legacy_ready=false
+attempt=0
+while [ "$attempt" -lt 20 ]; do
+	if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
+		--security-opt no-new-privileges --security-opt seccomp=builtin \
+		--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" \
+		-c 'test -f /evidence/legacy-ready'; then
+		legacy_ready=true
+		break
+	fi
+	attempt=$((attempt + 1))
+done
+[ "$legacy_ready" = true ] || fail 'legacy flock holder did not report readiness'
+set +e
+"$docker_bin" run --name "$container_name" --user 0 \
+	--env BREAKGLASS_NODE_NAME=node-a \
+	--env BREAKGLASS_OPERATION_ID=operation-legacy-competitor \
+	--env BREAKGLASS_RECORDING_ID=recording-legacy-competitor \
+	--network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" "$image" node-recovery \
+	--target-node node-a --interface lo --evidence-dir /evidence --confirm NODE-RECOVERY-PREFLIGHT \
+	>"$fixture_dir/legacy-output" 2>&1
+legacy_competitor_exit=$?
+set -e
+[ "$legacy_competitor_exit" -eq 2 ] || { cat "$fixture_dir/legacy-output"; fail 'legacy lock competitor returned an unexpected status'; }
+assert_container_security "$container_name" none
+"$docker_bin" rm "$container_name" >/dev/null || fail 'could not remove legacy lock competitor'
+"$docker_bin" kill --signal KILL "$legacy_holder_name" >/dev/null || fail 'could not SIGKILL legacy flock holder'
+"$docker_bin" wait "$legacy_holder_name" >/dev/null 2>&1 || true
+"$docker_bin" rm "$legacy_holder_name" >/dev/null || fail 'could not remove legacy flock holder'
 holder_name=
 set +e
 "$docker_bin" run --name "$container_name" --user 0 \

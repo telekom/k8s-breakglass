@@ -1,5 +1,5 @@
 {
-  "contractVersion": "node-maintenance.integration/v5",
+  "contractVersion": "node-maintenance.integration/v6",
   "imageContext": "utils/node-maintenance",
   "network": {
     "mode": "none",
@@ -107,6 +107,7 @@
     "injected-capture-failure-cleanup",
     "stale-temporary-recovery",
     "child-directory-shared-lock",
+    "live-legacy-lock-protection",
     "interface-name-replacement",
     "bridge-membership-change",
     "neighbor-argument-injection",

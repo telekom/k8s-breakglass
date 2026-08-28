@@ -139,6 +139,7 @@ operation_tuple_digest=$(sha256_text "target_node=$target_node&action=kexec-reco
 prepare_evidence_dir "$evidence_dir"
 acquire_operation_lock "$evidence_dir" "$operation_tuple_digest"
 trap 'cleanup_evidence_temporary_candidates || true; release_operation_lock || true' EXIT
+assert_no_active_legacy_locks || die "an older node-maintenance operation is active or requires migration"
 cleanup_evidence_temporary_candidates || die "cannot clean stale evidence temporary files"
 bundle=$(new_bundle "$evidence_dir" kexec-recovery-validate)
 write_metadata "$bundle/metadata" kexec-recovery-validate "$target_node" not-applicable validation-only

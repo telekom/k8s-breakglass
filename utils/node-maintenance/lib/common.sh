@@ -178,6 +178,7 @@ validate_recording_context() {
 	recording_id=${BREAKGLASS_RECORDING_ID:-}
 	validate_value "BREAKGLASS_OPERATION_ID" "$operation_id"
 	validate_value "BREAKGLASS_RECORDING_ID" "$recording_id"
+	operation_artifact_id=$(sha256_text "$operation_id")
 }
 
 validate_approved_action() {
@@ -213,6 +214,16 @@ sha256_text() {
 	digest=$(printf '%s' "$value" | sha256sum | awk 'NR == 1 { print $1 }') || die "cannot hash immutable operation tuple"
 	validate_sha256 "operation tuple digest" "$digest"
 	printf '%s\n' "$digest"
+}
+
+ensure_operation_artifact_id() {
+	# Direct users of the common capture contract (including image self-tests)
+	# may not have a controller recording context.  They still get a stable,
+	# exact-format artifact identity; production commands always derive it from
+	# the validated operation ID above.
+	if [ -z "${operation_artifact_id:-}" ]; then
+		operation_artifact_id=$(sha256_text "${operation_id:-node-maintenance-direct}")
+	fi
 }
 
 prepare_evidence_dir() {
@@ -284,14 +295,53 @@ acquire_operation_lock() {
 cleanup_evidence_temporary_candidates() {
 	# This function is called only while the root evidence-volume flock is held.
 	# A killed operation cannot run its EXIT trap, so the next lock holder removes
-	# only image-created temporary names owned by the helper.  Candidates live at
-	# the volume root or in one allowed child, never inside a committed bundle.
+	# only image-created temporary names owned by the helper. Candidates live at
+	# the selected volume root or safe child, never inside a committed bundle.
 	[ -d /evidence ] && [ ! -L /evidence ] || return 1
 	owner_uid=$(id -u) || return 1
-	find /evidence -xdev -mindepth 1 -maxdepth 2 -uid "$owner_uid" \
-		\( -name '.capture.*' -o -name '.capture-status.*' -o -name '.capture-fifo.*' -o -name '.capture-quota.*' \
-		-o -name '.evidence-write.*' -o -name '.evidence-append.*' \) \
-		\( -type f -o -type p \) -exec rm -f -- {} \;
+	cleanup_temporary_directory() {
+		directory=$1
+		[ -d "$directory" ] && [ ! -L "$directory" ] || return 0
+		for candidate in "$directory"/.capture-* "$directory"/.evidence-*; do
+			[ -e "$candidate" ] || [ -L "$candidate" ] || continue
+			[ -f "$candidate" ] || [ -p "$candidate" ] || continue
+			candidate_owner=$(stat -c %u "$candidate" 2>/dev/null) || return 1
+			[ "$candidate_owner" = "$owner_uid" ] || continue
+			candidate_name=${candidate##*/}
+			if ! printf '%s\n' "$candidate_name" | awk '
+				/^\.capture-[0-9A-Fa-f]+(-status|-fifo|-quota)?\.[A-Za-z0-9]+$/ { id=$0; sub(/^\.capture-/, "", id); sub(/(-status|-fifo|-quota)?\.[A-Za-z0-9]+$/, "", id); if (length(id) == 64) exit 0 }
+				/^\.evidence-[0-9A-Fa-f]+-(write|append)\.[A-Za-z0-9]+$/ { id=$0; sub(/^\.evidence-/, "", id); sub(/-(write|append)\.[A-Za-z0-9]+$/, "", id); if (length(id) == 64) exit 0 }
+				{ exit 1 }
+			'; then
+				continue
+			fi
+			rm -f "$candidate" || return 1
+		done
+	}
+	cleanup_temporary_directory /evidence || return 1
+	if [ "${EVIDENCE_DIR:-/evidence}" != /evidence ]; then
+		cleanup_temporary_directory "$EVIDENCE_DIR" || return 1
+	fi
+}
+
+assert_no_active_legacy_locks() {
+	# Releases before the volume-root lock used one lock file per safe child.
+	# Never remove or overwrite those files: reject a new operation while a
+	# legacy descriptor still holds one, and otherwise leave the stale file for
+	# an operator-led migration cleanup.
+	[ -d /evidence ] && [ ! -L /evidence ] || return 1
+	for legacy_lock in /evidence/*/.node-maintenance-operation.lock; do
+		[ -e "$legacy_lock" ] || [ -L "$legacy_lock" ] || continue
+		legacy_directory=${legacy_lock%/*}
+		[ -d "$legacy_directory" ] && [ ! -L "$legacy_directory" ] || return 1
+		legacy_resolved=$(readlink -f "$legacy_directory" 2>/dev/null) || return 1
+		[ "$legacy_resolved" = "$legacy_directory" ] || return 1
+		[ ! -L "$legacy_lock" ] || return 1
+		[ -f "$legacy_lock" ] || return 1
+		if ! (exec 8<"$legacy_lock" && flock -n 8); then
+			return 1
+		fi
+	done
 }
 
 release_operation_lock() {
@@ -380,8 +430,9 @@ commit_evidence_file() {
 	evidence_output=$2
 	assert_safe_evidence_output "$evidence_output"
 	[ -f "$evidence_candidate" ] && [ ! -L "$evidence_candidate" ] || die "evidence candidate is not a regular file"
+	ensure_operation_artifact_id
 	case "$evidence_candidate" in
-		"${EVIDENCE_DIR:?evidence directory is not initialized}"/.evidence-write.*|"$EVIDENCE_DIR"/.evidence-append.*|"$EVIDENCE_DIR"/.capture.*|"$EVIDENCE_DIR"/.capture-status.*|"$EVIDENCE_DIR"/.capture-fifo.*|"$EVIDENCE_DIR"/.capture-quota.*) ;;
+		"${EVIDENCE_DIR:?evidence directory is not initialized}"/.evidence-"$operation_artifact_id"-write.*|"$EVIDENCE_DIR"/.evidence-"$operation_artifact_id"-append.*|"$EVIDENCE_DIR"/.capture-"$operation_artifact_id".*|"$EVIDENCE_DIR"/.capture-"$operation_artifact_id"-status.*|"$EVIDENCE_DIR"/.capture-"$operation_artifact_id"-fifo.*|"$EVIDENCE_DIR"/.capture-"$operation_artifact_id"-quota.*) ;;
 		*) die "unsafe evidence candidate" ;;
 	esac
 
@@ -394,24 +445,36 @@ commit_evidence_file() {
 	maximum_kib=$((evidence_max_bytes / 1024))
 	final_kib=$((current_kib - output_kib + candidate_kib))
 	if [ "$final_kib" -gt "$maximum_kib" ]; then
-		rm -f "$evidence_candidate"
+		rm -f "$evidence_candidate" || die "cannot remove over-quota evidence candidate"
 		die "evidence quota exceeded"
 	fi
 
+	# Flush the complete candidate before rename.  BusyBox sync is part of the
+	# pinned base image and avoids an unreviewed filesystem-specific helper.
+	if ! command -v sync >/dev/null 2>&1; then
+		rm -f "$evidence_candidate" || true
+		die "sync utility is required for bounded evidence durability"
+	fi
+	if ! sync; then
+		rm -f "$evidence_candidate" || true
+		die "cannot flush bounded evidence candidate"
+	fi
 	# The process-held evidence-volume flock serializes all bundle writers. The
 	# candidate lives beside the bundle on the same controller-owned volume;
 	# rename replaces the output atomically only after the final quota is known.
 	mv -f "$evidence_candidate" "$evidence_output" || {
-		rm -f "$evidence_candidate"
+		rm -f "$evidence_candidate" || true
 		die "cannot commit bounded evidence output"
 	}
+	sync || die "cannot flush committed evidence output"
 }
 
 write_evidence() {
 	evidence_output=$1
-	evidence_candidate=$(mktemp "${EVIDENCE_DIR:?evidence directory is not initialized}/.evidence-write.XXXXXX") || die "cannot create bounded evidence candidate"
+	ensure_operation_artifact_id
+	evidence_candidate=$(mktemp "${EVIDENCE_DIR:?evidence directory is not initialized}/.evidence-$operation_artifact_id-write.XXXXXX") || die "cannot create bounded evidence candidate"
 	if ! cat >"$evidence_candidate"; then
-		rm -f "$evidence_candidate"
+		rm -f "$evidence_candidate" || true
 		die "cannot write bounded evidence candidate"
 	fi
 	commit_evidence_file "$evidence_candidate" "$evidence_output"
@@ -420,13 +483,14 @@ write_evidence() {
 append_evidence() {
 	evidence_output=$1
 	assert_safe_evidence_output "$evidence_output"
-	evidence_candidate=$(mktemp "${EVIDENCE_DIR:?evidence directory is not initialized}/.evidence-append.XXXXXX") || die "cannot create bounded evidence candidate"
+	ensure_operation_artifact_id
+	evidence_candidate=$(mktemp "${EVIDENCE_DIR:?evidence directory is not initialized}/.evidence-$operation_artifact_id-append.XXXXXX") || die "cannot create bounded evidence candidate"
 	if [ -e "$evidence_output" ] && ! cat "$evidence_output" >"$evidence_candidate"; then
-		rm -f "$evidence_candidate"
+		rm -f "$evidence_candidate" || true
 		die "cannot read existing evidence output"
 	fi
 	if ! cat >>"$evidence_candidate"; then
-		rm -f "$evidence_candidate"
+		rm -f "$evidence_candidate" || true
 		die "cannot append bounded evidence candidate"
 	fi
 	commit_evidence_file "$evidence_candidate" "$evidence_output"
@@ -435,51 +499,95 @@ append_evidence() {
 capture() {
 	output_file=$1
 	shift
+	ensure_operation_artifact_id
 	assert_safe_evidence_output "$output_file"
 	command -v timeout >/dev/null 2>&1 || die "timeout utility is required for bounded evidence capture"
-	temporary_file=$(mktemp "${EVIDENCE_DIR:?evidence directory is not initialized}/.capture.XXXXXX") || die "cannot create bounded capture temporary file"
-	status_file=$(mktemp "$EVIDENCE_DIR/.capture-status.XXXXXX") || die "cannot create capture status file"
-	fifo=$(mktemp "$EVIDENCE_DIR/.capture-fifo.XXXXXX") || die "cannot reserve capture pipe"
-	rm -f "$fifo"
-	mkfifo -m 0600 "$fifo" || die "cannot create capture pipe"
+	temporary_file=$(mktemp "${EVIDENCE_DIR:?evidence directory is not initialized}/.capture-$operation_artifact_id.XXXXXX") || die "cannot create bounded capture temporary file"
+	status_file=$(mktemp "$EVIDENCE_DIR/.capture-$operation_artifact_id-status.XXXXXX") || {
+		rm -f "$temporary_file" || true
+		die "cannot create capture status file"
+	}
+	fifo=$(mktemp "$EVIDENCE_DIR/.capture-$operation_artifact_id-fifo.XXXXXX") || {
+		rm -f "$temporary_file" "$status_file" || true
+		die "cannot reserve capture pipe"
+	}
+	rm -f "$fifo" || {
+		rm -f "$temporary_file" "$status_file" "$fifo" || true
+		die "cannot prepare capture pipe"
+	}
+	mkfifo -m 0600 "$fifo" || {
+		rm -f "$temporary_file" "$status_file" "$fifo" || true
+		die "cannot create capture pipe"
+	}
 	(
 		set +e
 		timeout "$capture_timeout_seconds" "$@" >"$fifo" 2>&1
-		printf '%s\n' "$?" >"$status_file"
+		producer_status=$?
+		if ! printf '%s\n' "$producer_status" >"$status_file"; then
+			exit 125
+		fi
 	) &
 	producer_pid=$!
 	# Read at most one byte beyond the fixed quota. Closing the FIFO then
 	# back-pressures or terminates a noisy producer instead of allowing an
 	# unbounded temporary file to grow before the quota is checked.
 	if ! head -c "$((capture_max_bytes + 1))" "$fifo" >"$temporary_file"; then
-		rm -f "$fifo" "$status_file" "$temporary_file"
+		rm -f "$fifo" "$status_file" "$temporary_file" || true
 		die "cannot read bounded command output"
 	fi
-	if wait "$producer_pid"; then :; else :; fi
-	rm -f "$fifo"
+	if ! wait "$producer_pid"; then
+		[ -s "$status_file" ] || {
+			rm -f "$fifo" "$status_file" "$temporary_file" || true
+			die "capture producer exited without reporting a status"
+		}
+	fi
+	rm -f "$fifo" || {
+		rm -f "$status_file" "$temporary_file" || true
+		die "cannot remove capture pipe"
+	}
 	[ -s "$status_file" ] || {
-		rm -f "$status_file" "$temporary_file"
+		rm -f "$status_file" "$temporary_file" || true
 		die "capture command did not report an exit status"
 	}
-	status=$(cat "$status_file")
-	rm -f "$status_file"
-	bytes=$(wc -c <"$temporary_file" | tr -d ' ')
+	status=$(cat "$status_file") || {
+		rm -f "$status_file" "$temporary_file" || true
+		die "cannot read capture command status"
+	}
+	rm -f "$status_file" || {
+		rm -f "$temporary_file" || true
+		die "cannot remove capture status file"
+	}
+	case "$status" in ''|*[!0-9]*) rm -f "$temporary_file" || true; die "capture command reported an invalid exit status" ;; esac
+	bytes=$(wc -c <"$temporary_file" | tr -d ' ') || {
+		rm -f "$temporary_file" || true
+		die "cannot determine bounded capture size"
+	}
+	case "$bytes" in ''|*[!0-9]*) rm -f "$temporary_file" || true; die "cannot determine bounded capture size" ;; esac
 	if [ "$bytes" -gt "$capture_max_bytes" ]; then
-		quota_file=$(mktemp "$EVIDENCE_DIR/.capture-quota.XXXXXX") || {
-			rm -f "$temporary_file"
+		quota_file=$(mktemp "$EVIDENCE_DIR/.capture-$operation_artifact_id-quota.XXXXXX") || {
+			rm -f "$temporary_file" || true
 			die "cannot create bounded capture candidate"
 		}
 		head -c "$capture_max_bytes" "$temporary_file" >"$quota_file" || {
-			rm -f "$temporary_file" "$quota_file"
+			rm -f "$temporary_file" "$quota_file" || true
 			die "cannot trim bounded capture candidate"
 		}
-		rm -f "$temporary_file"
+		rm -f "$temporary_file" || {
+			rm -f "$quota_file" || true
+			die "cannot remove bounded capture source"
+		}
 		temporary_file=$quota_file
-		printf '\ncapture_result=output-quota-exceeded\nexit_status=75\n' >>"$temporary_file"
+		if ! printf '\ncapture_result=output-quota-exceeded\nexit_status=75\n' >>"$temporary_file"; then
+			rm -f "$temporary_file" || true
+			die "cannot finalize bounded quota capture"
+		fi
 		commit_evidence_file "$temporary_file" "$output_file"
 		return 75
 	fi
-	printf '\nexit_status=%s\n' "$status" >>"$temporary_file"
+	if ! printf '\nexit_status=%s\n' "$status" >>"$temporary_file"; then
+		rm -f "$temporary_file" || true
+		die "cannot finalize bounded capture"
+	fi
 	commit_evidence_file "$temporary_file" "$output_file"
 	return "$status"
 }
