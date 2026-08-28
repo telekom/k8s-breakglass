@@ -578,6 +578,51 @@ func TestManagerEmitSync(t *testing.T) {
 	_ = manager.Close()
 }
 
+type blockingAuditSink struct {
+	started   chan struct{}
+	release   chan struct{}
+	startOnce sync.Once
+}
+
+func (s *blockingAuditSink) Write(_ context.Context, _ *Event) error {
+	s.startOnce.Do(func() { close(s.started) })
+	<-s.release
+	return nil
+}
+
+func (s *blockingAuditSink) Close() error { return nil }
+func (s *blockingAuditSink) Name() string { return "blocking-direct" }
+
+func TestManagerEmitSyncSerializesClose(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	direct := &blockingAuditSink{started: make(chan struct{}), release: make(chan struct{})}
+	manager := NewManager(&testSink{name: "primary"}, ManagerConfig{
+		QueueSize:   1,
+		WorkerCount: 1,
+		DirectSinks: []Sink{direct},
+	}, logger)
+
+	emitDone := make(chan error, 1)
+	go func() {
+		emitDone <- manager.EmitSync(context.Background(), &Event{Type: EventSessionRevoked})
+	}()
+	<-direct.started
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- manager.Close() }()
+
+	select {
+	case err := <-closeDone:
+		t.Fatalf("Close returned while synchronous sink write was blocked: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(direct.release)
+	require.NoError(t, <-emitDone)
+	require.NoError(t, <-closeDone)
+	assert.Error(t, manager.EmitSync(context.Background(), &Event{Type: EventSessionRevoked}), "closed manager must reject synchronous writes")
+}
+
 func TestManagerHelperMethods(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	var events []*Event

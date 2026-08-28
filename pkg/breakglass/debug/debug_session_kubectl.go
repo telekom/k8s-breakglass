@@ -39,6 +39,7 @@ import (
 // KubectlDebugHandler handles kubectl-debug mode operations
 type KubectlDebugHandler struct {
 	client     ctrlclient.Client
+	reader     ctrlclient.Reader
 	ccProvider ClientProviderInterface
 }
 
@@ -131,8 +132,20 @@ func kubectlDebugInternalErrorf(format string, args ...interface{}) error {
 
 // NewKubectlDebugHandler creates a new kubectl debug handler
 func NewKubectlDebugHandler(client ctrlclient.Client, ccProvider ClientProviderInterface) *KubectlDebugHandler {
+	return NewKubectlDebugHandlerWithReader(client, client, ccProvider)
+}
+
+// NewKubectlDebugHandlerWithReader creates a kubectl debug handler with a
+// cached client for discovery and a live reader for the authorization fence.
+// Cache state is only a candidate hint and must never be the final source of
+// truth for ephemeral-container authorization.
+func NewKubectlDebugHandlerWithReader(client ctrlclient.Client, reader ctrlclient.Reader, ccProvider ClientProviderInterface) *KubectlDebugHandler {
+	if reader == nil {
+		reader = client
+	}
 	return &KubectlDebugHandler{
 		client:     client,
+		reader:     reader,
 		ccProvider: ccProvider,
 	}
 }
@@ -226,16 +239,75 @@ func (h *KubectlDebugHandler) FindActiveSession(ctx context.Context, user, clust
 		if ds.Status.State != breakglassv1alpha1.DebugSessionStateActive {
 			continue
 		}
-		// Check expiration just in case status is stale
-		if ds.Status.ExpiresAt != nil && time.Now().After(ds.Status.ExpiresAt.Time) {
+		// Cached discovery is only a candidate hint. Require an identity before
+		// the exact-UID live read below; an empty UID cannot fence a replacement.
+		if ds.UID == "" {
 			continue
 		}
 
 		// Check if user is a participant
 		for _, p := range ds.Status.Participants {
 			if p.User == user && p.LeftAt == nil {
-				return &ds, nil
+				live, err := h.readLiveActiveSession(ctx, user, cluster, &ds)
+				if err != nil {
+					return nil, err
+				}
+				return live, nil
 			}
+		}
+	}
+	return nil, nil
+}
+
+// RevalidateActiveSession performs the final live authorization fence for an
+// ephemeral-container admission. The candidate came from cached discovery,
+// so its identity and all authorization state are checked again immediately
+// before allowing the request.
+func (h *KubectlDebugHandler) RevalidateActiveSession(
+	ctx context.Context,
+	user, cluster string,
+	candidate *breakglassv1alpha1.DebugSession,
+) (*breakglassv1alpha1.DebugSession, error) {
+	if candidate == nil || candidate.UID == "" {
+		return nil, nil
+	}
+	return h.readLiveActiveSession(ctx, user, cluster, candidate)
+}
+
+func (h *KubectlDebugHandler) readLiveActiveSession(
+	ctx context.Context,
+	user, cluster string,
+	candidate *breakglassv1alpha1.DebugSession,
+) (*breakglassv1alpha1.DebugSession, error) {
+	if candidate == nil || candidate.UID == "" || candidate.Namespace == "" || candidate.Name == "" {
+		return nil, nil
+	}
+	reader := h.reader
+	if reader == nil {
+		reader = h.client
+	}
+	if reader == nil {
+		return nil, errors.New("debug session live reader is not configured")
+	}
+
+	live := &breakglassv1alpha1.DebugSession{}
+	if err := reader.Get(ctx, ctrlclient.ObjectKey{Namespace: candidate.Namespace, Name: candidate.Name}, live); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read live debug session %s/%s: %w", candidate.Namespace, candidate.Name, err)
+	}
+
+	now := time.Now()
+	if live.UID == "" || live.UID != candidate.UID ||
+		(cluster != "" && live.Spec.Cluster != cluster) ||
+		live.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
+		live.Status.ExpiresAt == nil || !now.Before(live.Status.ExpiresAt.Time) {
+		return nil, nil
+	}
+	for _, participant := range live.Status.Participants {
+		if participant.User == user && participant.LeftAt == nil {
+			return live, nil
 		}
 	}
 	return nil, nil

@@ -242,8 +242,41 @@ type mockDebugHandler struct {
 	validateErr error
 }
 
+type fencingMockDebugHandler struct {
+	session         *breakglassv1alpha1.DebugSession
+	liveSession     *breakglassv1alpha1.DebugSession
+	validationErr   error
+	revalidationErr error
+}
+
+func (m *fencingMockDebugHandler) FindActiveSession(_ context.Context, _, _ string) (*breakglassv1alpha1.DebugSession, error) {
+	return m.session, nil
+}
+
+func (m *fencingMockDebugHandler) ValidateEphemeralContainerRequest(
+	_ context.Context,
+	_ *breakglassv1alpha1.DebugSession,
+	_, _, _ string,
+	_ []string,
+	_, _ bool,
+) error {
+	return m.validationErr
+}
+
+func (m *fencingMockDebugHandler) RevalidateActiveSession(
+	_ context.Context,
+	_, _ string,
+	_ *breakglassv1alpha1.DebugSession,
+) (*breakglassv1alpha1.DebugSession, error) {
+	return m.liveSession, m.revalidationErr
+}
+
 func (m *mockDebugHandler) FindActiveSession(ctx context.Context, user, cluster string) (*breakglassv1alpha1.DebugSession, error) {
 	return m.session, m.findErr
+}
+
+func (m *mockDebugHandler) RevalidateActiveSession(_ context.Context, _, _ string, _ *breakglassv1alpha1.DebugSession) (*breakglassv1alpha1.DebugSession, error) {
+	return m.session, nil
 }
 
 func (m *mockDebugHandler) ValidateEphemeralContainerRequest(
@@ -487,6 +520,40 @@ func TestEphemeralContainerWebhook_Handle(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEphemeralContainerWebhook_FinalLiveFenceDeniesRevokedCachedSession(t *testing.T) {
+	logger := zap.NewNop().Sugar()
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "cached-session"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
+		},
+	}
+	webhook := &EphemeralContainerWebhook{
+		Decoder: &mockDecoder{
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-pod", Namespace: "default"},
+				Spec: corev1.PodSpec{EphemeralContainers: []corev1.EphemeralContainer{
+					{EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "debug-1", Image: "busybox"}},
+				}},
+			},
+			oldPod: &corev1.Pod{},
+		},
+		DebugHandler: &fencingMockDebugHandler{session: session, liveSession: nil},
+		Log:          logger,
+	}
+
+	req := admission.Request{AdmissionRequest: admissionv1.AdmissionRequest{
+		SubResource: "ephemeralcontainers",
+		UserInfo:    authenticationv1.UserInfo{Username: "testuser"},
+	}}
+	ctx := context.WithValue(context.Background(), clusterContextKey, "test-cluster")
+	resp := webhook.Handle(ctx, req)
+
+	require.False(t, resp.Allowed)
+	require.NotNil(t, resp.Result)
+	assert.Contains(t, resp.Result.Message, "debug session is no longer active")
 }
 
 func TestNewEphemeralContainerWebhook(t *testing.T) {

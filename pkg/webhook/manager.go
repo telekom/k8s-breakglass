@@ -153,7 +153,7 @@ func Setup(
 				Client:       mgr.GetClient(),
 				Log:          log,
 				Decoder:      admission.NewDecoder(mgr.GetScheme()),
-				DebugHandler: debug.NewKubectlDebugHandler(mgr.GetClient(), nil),
+				DebugHandler: debug.NewKubectlDebugHandlerWithReader(mgr.GetClient(), mgr.GetAPIReader(), nil),
 			},
 		}
 

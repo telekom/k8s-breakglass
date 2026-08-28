@@ -268,7 +268,7 @@ type BreakglassSession struct {
 	Status BreakglassSessionStatus `json:"status,omitempty"`
 }
 
-//+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-breakglasssession,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=breakglasssessions;breakglasssessions/status,verbs=create;update,versions=v1alpha1,name=breakglasssession.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
+//+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-breakglasssession,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=breakglasssessions;breakglasssessions/status,verbs=create;update;delete,versions=v1alpha1,name=breakglasssession.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type
 func (bs *BreakglassSession) ValidateCreate(ctx context.Context, obj *BreakglassSession) (admission.Warnings, error) {
@@ -497,7 +497,14 @@ func isValidBreakglassSessionStateTransition(from, to BreakglassSessionState) bo
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
 func (bs *BreakglassSession) ValidateDelete(ctx context.Context, obj *BreakglassSession) (admission.Warnings, error) {
-	if condition := bs.GetCondition(string(SessionConditionTypeDuplicateCleanupAuditComplete)); condition != nil &&
+	// The controller-runtime validator invokes this method on the registered
+	// validator instance and passes the decoded old object separately. Read the
+	// argument so a real DELETE admission request cannot bypass the outbox
+	// deletion guard by presenting a validator receiver with empty status.
+	if obj == nil {
+		obj = bs
+	}
+	if condition := obj.GetCondition(string(SessionConditionTypeDuplicateCleanupAuditComplete)); condition != nil &&
 		condition.Status != metav1.ConditionTrue {
 		return nil, fmt.Errorf("duplicate cleanup audit delivery is pending; deletion is not allowed")
 	}

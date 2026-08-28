@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -36,6 +37,7 @@ func TestFindActiveSession(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "active-session",
 			Namespace: "default",
+			UID:       types.UID("active-session-uid"),
 		},
 		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "test-cluster",
@@ -43,6 +45,10 @@ func TestFindActiveSession(t *testing.T) {
 		},
 		Status: breakglassv1alpha1.DebugSessionStatus{
 			State: breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: func() *metav1.Time {
+				t := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+				return &t
+			}(),
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{
 				{User: "user@example.com"},
 			},
@@ -120,4 +126,162 @@ func TestFindActiveSession(t *testing.T) {
 	found, err = handlerLeft.FindActiveSession(context.Background(), "user@example.com", "test-cluster")
 	require.NoError(t, err)
 	assert.Nil(t, found)
+}
+
+func newActiveSessionForFence(name string, uid types.UID, expiresAt *metav1.Time) *breakglassv1alpha1.DebugSession {
+	return &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", UID: uid},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: expiresAt,
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
+				{User: "user@example.com"},
+			},
+		},
+	}
+}
+
+func TestFindActiveSessionRequiresStrictFutureExpiryAndUID(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	future := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	equal := metav1.NewTime(time.Now().UTC())
+	past := metav1.NewTime(time.Now().UTC().Add(-time.Hour))
+
+	tests := []struct {
+		name      string
+		expiresAt *metav1.Time
+		uid       types.UID
+		wantFound bool
+	}{
+		{name: "missing expiry", uid: types.UID("missing-expiry"), wantFound: false},
+		{name: "equal expiry", expiresAt: &equal, uid: types.UID("equal-expiry"), wantFound: false},
+		{name: "past expiry", expiresAt: &past, uid: types.UID("past-expiry"), wantFound: false},
+		{name: "future expiry", expiresAt: &future, uid: types.UID("future-expiry"), wantFound: true},
+		{name: "missing uid", expiresAt: &future, wantFound: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cached := newActiveSessionForFence("fenced-session", tt.uid, tt.expiresAt)
+			live := cached.DeepCopy()
+			cachedClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cached).Build()
+			liveClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(live).Build()
+			handler := NewKubectlDebugHandlerWithReader(cachedClient, liveClient, &mockClientProvider{})
+
+			found, err := handler.FindActiveSession(context.Background(), "user@example.com", "test-cluster")
+			require.NoError(t, err)
+			if tt.wantFound {
+				require.NotNil(t, found)
+				assert.Equal(t, tt.uid, found.UID)
+			} else {
+				assert.Nil(t, found)
+			}
+		})
+	}
+}
+
+func TestFindActiveSessionRejectsStaleCachedCandidates(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	future := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	cached := newActiveSessionForFence("fenced-session", types.UID("cached-uid"), &future)
+
+	tests := []struct {
+		name   string
+		mutate func(*breakglassv1alpha1.DebugSession)
+	}{
+		{name: "live terminated", mutate: func(ds *breakglassv1alpha1.DebugSession) {
+			ds.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+		}},
+		{name: "live replaced uid", mutate: func(ds *breakglassv1alpha1.DebugSession) {
+			ds.UID = types.UID("replacement-uid")
+		}},
+		{name: "live expired", mutate: func(ds *breakglassv1alpha1.DebugSession) {
+			expired := metav1.NewTime(time.Now().UTC().Add(-time.Hour))
+			ds.Status.ExpiresAt = &expired
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			live := cached.DeepCopy()
+			tt.mutate(live)
+			cachedClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cached.DeepCopy()).Build()
+			liveClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(live).Build()
+			handler := NewKubectlDebugHandlerWithReader(cachedClient, liveClient, &mockClientProvider{})
+
+			found, err := handler.FindActiveSession(context.Background(), "user@example.com", "test-cluster")
+			require.NoError(t, err)
+			assert.Nil(t, found)
+		})
+	}
+}
+
+func TestRevalidateActiveSessionRequiresExactUIDAndStrictFutureExpiry(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	future := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	live := newActiveSessionForFence("fenced-session", types.UID("live-uid"), &future)
+	liveClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(live).Build()
+	handler := NewKubectlDebugHandlerWithReader(nil, liveClient, &mockClientProvider{})
+
+	mismatched := live.DeepCopy()
+	mismatched.UID = types.UID("different-uid")
+	missing := live.DeepCopy()
+	missing.UID = ""
+	tests := []struct {
+		name      string
+		candidate *breakglassv1alpha1.DebugSession
+		wantFound bool
+	}{
+		{name: "missing candidate uid", candidate: missing, wantFound: false},
+		{name: "mismatched candidate uid", candidate: mismatched, wantFound: false},
+		{name: "exact candidate uid", candidate: live.DeepCopy(), wantFound: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			found, err := handler.RevalidateActiveSession(context.Background(), "user@example.com", "test-cluster", tt.candidate)
+			require.NoError(t, err)
+			if tt.wantFound {
+				require.NotNil(t, found)
+				assert.Equal(t, live.UID, found.UID)
+			} else {
+				assert.Nil(t, found)
+			}
+		})
+	}
+}
+
+func TestRevalidateActiveSessionRejectsMissingOrReachedExpiry(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	future := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	equal := metav1.NewTime(time.Now().UTC())
+	past := metav1.NewTime(time.Now().UTC().Add(-time.Hour))
+	tests := []struct {
+		name      string
+		expiresAt *metav1.Time
+		wantFound bool
+	}{
+		{name: "missing expiry", wantFound: false},
+		{name: "equal expiry", expiresAt: &equal, wantFound: false},
+		{name: "past expiry", expiresAt: &past, wantFound: false},
+		{name: "future expiry", expiresAt: &future, wantFound: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			live := newActiveSessionForFence("fenced-session", types.UID("live-uid"), tt.expiresAt)
+			reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(live).Build()
+			handler := NewKubectlDebugHandlerWithReader(nil, reader, &mockClientProvider{})
+
+			found, err := handler.RevalidateActiveSession(context.Background(), "user@example.com", "test-cluster", live.DeepCopy())
+			require.NoError(t, err)
+			if tt.wantFound {
+				require.NotNil(t, found)
+				assert.Equal(t, live.UID, found.UID)
+			} else {
+				assert.Nil(t, found)
+			}
+		})
+	}
 }

@@ -336,6 +336,15 @@ func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
 // EmitSync sends an audit event synchronously to every configured direct sink.
 // It never traverses queued or isolated sink wrappers.
 func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
+	// Keep the manager alive for the complete direct write. Close takes the
+	// exclusive lock before closing the async queue and sink, so a concurrent
+	// Close cannot race a synchronous sink write or close a sink underneath it.
+	m.closeMu.RLock()
+	defer m.closeMu.RUnlock()
+	if m.closed.Load() {
+		return errors.New("audit manager is closed")
+	}
+
 	if !eventTypeAllowed(event.Type, m.config.IncludeEventTypes, m.config.ExcludeEventTypes) {
 		return nil
 	}
