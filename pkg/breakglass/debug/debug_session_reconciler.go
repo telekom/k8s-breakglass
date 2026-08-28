@@ -349,6 +349,17 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		return c.terminalizeActiveSessionWithoutExpiry(ctx, ds)
 	}
 
+	// Resolve any target mutation whose status outcome was interrupted by a
+	// controller restart or an ambiguous target API response before handling
+	// expiry. Prepared intent is durable in the session status, so this read-only
+	// recovery either records the exact target result or marks an identity
+	// mismatch unknown without attempting a compensating mutation.
+	kubectlHandler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+	if err := kubectlHandler.RecoverPendingKubectlDebugOperations(ctx, ds); err != nil {
+		log.Warnw("Failed to recover prepared kubectl-debug operations", "error", err)
+		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	}
+
 	// Emit expiring-soon status message when within grace period
 	if ds.Status.ExpiresAt != nil && ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry != "" {
 		grace, err := time.ParseDuration(ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry)
