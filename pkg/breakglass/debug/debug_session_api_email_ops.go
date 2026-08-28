@@ -445,7 +445,11 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	}
 
 	// Create kubectl debug handler
-	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), &clusterClientAdapter{ccProvider: c.ccProvider})
+	provider := c.clusterClients
+	if provider == nil {
+		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
+	}
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider)
 
 	// Validate the request
 	capabilities := extractCapabilities(req.SecurityContext)
@@ -549,7 +553,11 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	}
 
 	// Create kubectl debug handler
-	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), &clusterClientAdapter{ccProvider: c.ccProvider})
+	provider := c.clusterClients
+	if provider == nil {
+		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
+	}
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider)
 
 	// Create the pod copy
 	pod, err := handler.CreatePodCopy(apiCtx, session, req.Namespace, req.PodName, req.DebugImage, username)
@@ -642,7 +650,11 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	}
 
 	// Create kubectl debug handler
-	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), &clusterClientAdapter{ccProvider: c.ccProvider})
+	provider := c.clusterClients
+	if provider == nil {
+		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
+	}
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider)
 
 	// Create the node debug pod
 	pod, err := handler.CreateNodeDebugPod(apiCtx, session, req.NodeName, username)
