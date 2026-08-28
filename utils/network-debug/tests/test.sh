@@ -31,6 +31,16 @@ printf '%s\n' 'pwru version v1.0.12'
 EOF
 chmod +x "$fixture/ip" "$fixture/pwru"
 
+cat >"$fixture/sed" <<'EOF'
+#!/bin/sh
+if [ "${1:-}" = '-nE' ]; then
+    printf '%s\n' 'unsupported sed ERE flags' >&2
+    exit 2
+fi
+exec /usr/bin/sed "$@"
+EOF
+chmod +x "$fixture/sed"
+
 if sh "$root/scripts/net-report" --not-an-option >/dev/null 2>&1; then
 	printf '%s\n' 'net-report accepted an unknown option' >&2
 	exit 1
@@ -95,9 +105,14 @@ fi
 exit 0
 EOF
 chmod +x "$capture_fixture/bin/tcpdump"
-cat >"$capture_fixture/bin/sha256sum" <<'EOF'
+system_sha256sum=$(command -v sha256sum 2>/dev/null || true)
+case "$system_sha256sum" in
+    /*) ;;
+    *) printf '%s\n' 'system sha256sum is required for capture fixture' >&2; exit 1 ;;
+esac
+cat >"$capture_fixture/bin/sha256sum" <<EOF
 #!/bin/sh
-shasum -a 256 "$@"
+exec "$system_sha256sum" "\$@"
 EOF
 chmod +x "$capture_fixture/bin/sha256sum"
 capture_report=$(FAKE_TCPDUMP_ARGS="$capture_fixture/args" NETWORK_DEBUG_WORK_DIR="$capture_fixture/work" \
@@ -201,8 +216,9 @@ fi
 EOF
 chmod +x "$capture_fixture/bin/tcpdump"
 actual_cr=$(printf 'tcp port 443\r')
-if NETWORK_DEBUG_WORK_DIR="$capture_fixture/work" PATH="$capture_fixture/bin:/usr/bin:/bin" \
-    sh "$root/scripts/net-debug" capture --filter "$actual_cr" >/dev/null 2>&1; then
+actual_cr_error=$(NETWORK_DEBUG_WORK_DIR="$capture_fixture/work" PATH="$capture_fixture/bin:/usr/bin:/bin" \
+    sh "$root/scripts/net-debug" capture --filter "$actual_cr" 2>&1 >/dev/null || true)
+if [ "$actual_cr_error" != 'net-debug: filter must not contain CR or LF' ]; then
     printf '%s\n' 'capture accepted a carriage return in its filter' >&2
     exit 1
 fi

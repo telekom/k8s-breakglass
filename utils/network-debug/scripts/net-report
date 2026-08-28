@@ -42,7 +42,7 @@ tool_version() {
 				;;
 			*) printf '%s\tinstalled\n' "$name"; return ;;
 		esac
-		version=$(printf '%s\n' "$value" | sed -nE 's/.*(v[0-9]+(\.[0-9]+){1,2}([.-][[:alnum:].-]+)?).*/\1/p' | sed -n '1p')
+		version=$(printf '%s\n' "$value" | sed -n 's/.*\(v[0-9][0-9]*\(\.[0-9][0-9]*\)\{1,2\}\([.-][[:alnum:].-]*\)\{0,1\}\).*/\1/p' | sed -n '1p')
 		if [ -n "$version" ]; then
 			printf '%s\t%s %s\n' "$name" "$name" "$version"
 		else

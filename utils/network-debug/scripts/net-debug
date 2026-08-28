@@ -36,7 +36,7 @@ newline='
 	carriage_return=$(printf '\rX')
 	carriage_return=${carriage_return%X}
 	case "$filter" in
-		*"$newline"*|*"$carriage_return"*) usage_error 'filter must not contain a newline' ;;
+		*"$newline"*|*"$carriage_return"*) usage_error 'filter must not contain CR or LF' ;;
 	esac
 }
 
