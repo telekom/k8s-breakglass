@@ -54,6 +54,7 @@ type ScheduledSessionActivator struct {
 	auditService   AuditEmitter
 	brandingName   string
 	disableEmail   bool
+	now            func() time.Time
 }
 
 // NewScheduledSessionActivator creates a new activator instance
@@ -62,6 +63,13 @@ func NewScheduledSessionActivator(log *zap.SugaredLogger, sessionManager *Sessio
 		log:            log,
 		sessionManager: sessionManager,
 	}
+}
+
+func (ssa *ScheduledSessionActivator) currentTime() time.Time {
+	if ssa.now != nil {
+		return ssa.now()
+	}
+	return time.Now()
 }
 
 // WithMailService sets the mail service for sending activation notifications
@@ -95,14 +103,13 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions(ctxs ...context.
 		return
 	}
 
-	now := time.Now()
 	for _, ses := range sessions {
 		if err := ctx.Err(); err != nil {
 			ssa.log.Infow("stopping scheduled session activation because context is cancelled", "error", err)
 			return
 		}
 		listedMissingScheduledTime := ses.Spec.ScheduledStartTime == nil || ses.Spec.ScheduledStartTime.IsZero()
-		if !listedMissingScheduledTime && now.Before(ses.Spec.ScheduledStartTime.Time) {
+		if !listedMissingScheduledTime && ssa.currentTime().Before(ses.Spec.ScheduledStartTime.Time) {
 			// Not yet time for this session; avoid a live read until the cached
 			// scheduledStartTime says this session may need a state transition.
 			continue
@@ -123,25 +130,34 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions(ctxs ...context.
 			ssa.log.Errorw("expiring session in WaitingForScheduledTime state with no ScheduledStartTime",
 				"session", ses.Name,
 				"namespace", ses.Namespace)
-			ssa.expireScheduledSession(ctx, ses, now, "missingScheduledStartTime", "MissingScheduledStartTime", "Session expired: WaitingForScheduledTime with no ScheduledStartTime set")
+			ssa.expireScheduledSession(ctx, ses, ssa.currentTime(), "missingScheduledStartTime", "MissingScheduledStartTime", "Session expired: WaitingForScheduledTime with no ScheduledStartTime set")
 			continue
 		}
 
 		scheduledTime := ses.Spec.ScheduledStartTime.Time
-		if now.Before(scheduledTime) {
+		if ssa.currentTime().Before(scheduledTime) {
 			// Live state moved the scheduled start into the future after the list read.
 			continue
 		}
 		// A scheduled session without an expiry is malformed and must fail
 		// closed rather than becoming an unbounded Approved session.
-		if ses.Status.ExpiresAt.IsZero() || !now.Before(ses.Status.ExpiresAt.Time) {
+		decisionNow := ssa.currentTime()
+		if ses.Status.ExpiresAt.IsZero() || !decisionNow.Before(ses.Status.ExpiresAt.Time) {
 			ssa.log.Infow("Expiring scheduled session whose validity ended before activation",
 				"session", ses.Name,
 				"namespace", ses.Namespace,
 				"scheduledStartTime", scheduledTime,
 				"expiresAt", ses.Status.ExpiresAt.Time,
-				"now", now)
-			ssa.expireScheduledSession(ctx, ses, now, "scheduledSessionExpiredBeforeActivation", "ScheduledSessionExpiredBeforeActivation", "Session expired before its scheduled activation was processed")
+				"now", decisionNow)
+			ssa.expireScheduledSession(ctx, ses, decisionNow, "scheduledSessionExpiredBeforeActivation", "ScheduledSessionExpiredBeforeActivation", "Session expired before its scheduled activation was processed")
+			continue
+		}
+		// Refresh the decision clock immediately before preparing the status
+		// transition. The list and live read can span the expiry boundary; a
+		// stale batch timestamp must never activate a lease that has just ended.
+		decisionNow = ssa.currentTime()
+		if !decisionNow.Before(ses.Status.ExpiresAt.Time) {
+			ssa.expireScheduledSession(ctx, ses, decisionNow, "scheduledSessionExpiredBeforeActivation", "ScheduledSessionExpiredBeforeActivation", "Session expired before its scheduled activation was processed")
 			continue
 		}
 
@@ -150,11 +166,11 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions(ctxs ...context.
 			"session", ses.Name,
 			"namespace", ses.Namespace,
 			"scheduledStartTime", scheduledTime,
-			"now", now)
+			"now", decisionNow)
 
 		// Transition to Approved state
 		ses.Status.State = breakglassv1alpha1.SessionStateApproved
-		ses.Status.ActualStartTime = metav1.Now()
+		ses.Status.ActualStartTime = metav1.NewTime(decisionNow)
 
 		// Add condition for audit trail
 		ses.SetCondition(metav1.Condition{

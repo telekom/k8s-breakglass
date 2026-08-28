@@ -341,7 +341,8 @@ current-context: webhook
 
 ### 9b. Create Authorization Config
 
-Create `/etc/kubernetes/breakglass-authz.yaml`:
+Create `/etc/kubernetes/breakglass-authz.yaml` on Kubernetes 1.34 or later
+(structured authorization configuration):
 
 ```yaml
 apiVersion: apiserver.config.k8s.io/v1
@@ -353,7 +354,9 @@ authorizers:
     name: breakglass
     webhook:
       timeout: 3s
-      authorizedTTL: 30s
+      # Required for exact BreakglassSession expiry; do not cache allows.
+      authorizedTTL: 5m
+      cacheAuthorizedRequests: false
       unauthorizedTTL: 30s
       subjectAccessReviewVersion: v1
       failurePolicy: Deny
@@ -365,6 +368,12 @@ authorizers:
         - expression: "!request.user.startsWith('system:')"
         - expression: "!('system:serviceaccounts' in request.groups)"
 ```
+
+On older Kubernetes versions, configure legacy webhook mode with
+`--authorization-mode=Node,RBAC,Webhook`, the webhook kubeconfig, and
+`--authorization-webhook-cache-authorized-ttl=0s` plus
+`--authorization-webhook-cache-unauthorized-ttl=0s`; do not enable positive
+webhook authorization caching.
 
 ### 9c. Update API Server
 

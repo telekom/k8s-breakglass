@@ -402,7 +402,7 @@ The target Kubernetes cluster's API server must be configured to accept OIDC tok
 Create an `AuthenticationConfiguration` file and pass it via `--authentication-config`:
 
 ```yaml
-apiVersion: apiserver.config.k8s.io/v1   # v1beta1 for K8s <1.34
+apiVersion: apiserver.config.k8s.io/v1
 kind: AuthenticationConfiguration
 jwt:
   - issuer:

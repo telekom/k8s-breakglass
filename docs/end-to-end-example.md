@@ -271,11 +271,13 @@ kubectl apply -f cluster-config.yaml
 
 ### 4.3 Configure Tenant Cluster Authorization Webhook
 
-On the tenant cluster, configure the API server to use breakglass as an authorization webhook:
+On Kubernetes 1.34 and later, configure the tenant API server to use
+breakglass as an authorization webhook. Positive authorization caching must be
+disabled so the session expiry boundary is enforced:
 
 ```yaml
 # /etc/kubernetes/authorization-config.yaml (API server)
-apiVersion: apiserver.config.k8s.io/v1beta1
+apiVersion: apiserver.config.k8s.io/v1
 kind: AuthorizationConfiguration
 authorizers:
   - type: Node
@@ -286,13 +288,20 @@ authorizers:
     name: breakglass
     webhook:
       timeout: 5s
-      failOpen: false
+      authorizedTTL: 5m
+      cacheAuthorizedRequests: false
+      failurePolicy: Deny
       subjectAccessReviewVersion: v1
       matchConditionSubjectAccessReviewVersion: v1
       connectionInfo:
         type: KubeConfigFile
         kubeConfigFile: /etc/kubernetes/breakglass-webhook.kubeconfig
 ```
+
+On older Kubernetes versions, use legacy webhook mode with the webhook
+kubeconfig and set `--authorization-webhook-cache-authorized-ttl=0s` and
+`--authorization-webhook-cache-unauthorized-ttl=0s`; do not use a positive
+authorized cache TTL.
 
 ```yaml
 # /etc/kubernetes/breakglass-webhook.kubeconfig

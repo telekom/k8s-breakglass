@@ -145,6 +145,12 @@ func TestValidateUpdate_StateTransitionValidation(t *testing.T) {
 			old.Status.State = tc.from
 			updated := base.DeepCopy()
 			updated.Status.State = tc.to
+			// Activation of a scheduled lease is valid only when the lease was
+			// initialized before it entered WaitingForScheduledTime.
+			if tc.from == SessionStateWaitingForScheduledTime && tc.to == SessionStateApproved {
+				old.Status.ExpiresAt = metav1.NewTime(time.Now().Add(time.Hour))
+				updated.Status.ExpiresAt = old.Status.ExpiresAt
+			}
 
 			_, err := updated.ValidateUpdate(context.Background(), old, updated)
 			if tc.wantErr {
@@ -197,6 +203,37 @@ func TestValidateUpdate_ExpiryCannotResurrectApprovedSession(t *testing.T) {
 	approved.Status.ExpiresAt = metav1.NewTime(now.Add(time.Hour))
 	if _, err := approved.ValidateUpdate(context.Background(), pending, approved); err != nil {
 		t.Fatalf("expected initial pre-boundary approval expiry to be valid: %v", err)
+	}
+
+	waiting := pending.DeepCopy()
+	waiting.Status.State = SessionStateWaitingForScheduledTime
+	waiting.Status.ExpiresAt = metav1.NewTime(now.Add(time.Minute))
+	waitingExpired := waiting.DeepCopy()
+	waitingExpired.Status.ExpiresAt = metav1.NewTime(now.Add(-time.Minute))
+	if _, err := waitingExpired.ValidateUpdate(context.Background(), waiting, waitingExpired); err != nil {
+		t.Fatalf("expected scheduled lease shortening to remain valid: %v", err)
+	}
+	waitingFuture := waiting.DeepCopy()
+	waitingFuture.Status.ExpiresAt = metav1.NewTime(now.Add(time.Hour))
+	if _, err := waitingFuture.ValidateUpdate(context.Background(), waiting, waitingFuture); err == nil {
+		t.Fatal("expected scheduled lease extension to be rejected")
+	}
+	waitingRevive := waiting.DeepCopy()
+	waitingRevive.Status.ExpiresAt = metav1.NewTime(now.Add(-time.Minute))
+	waitingRevive.Status.State = SessionStateApproved
+	if _, err := waitingRevive.ValidateUpdate(context.Background(), waitingExpired, waitingRevive); err == nil {
+		t.Fatal("expected expired scheduled session activation to be rejected")
+	}
+
+	terminalZero := &BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "terminal-zero"},
+		Spec:       BreakglassSessionSpec{Cluster: "cluster1", User: "user@example.com", GrantedGroup: "group-a"},
+		Status:     BreakglassSessionStatus{State: SessionStateExpired},
+	}
+	terminalFuture := terminalZero.DeepCopy()
+	terminalFuture.Status.ExpiresAt = metav1.NewTime(now.Add(time.Hour))
+	if _, err := terminalFuture.ValidateUpdate(context.Background(), terminalZero, terminalFuture); err == nil {
+		t.Fatal("expected terminal zero-expiry future write to be rejected")
 	}
 }
 
