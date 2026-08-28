@@ -524,6 +524,10 @@ set +e
 		printf orphan >/evidence/child/.evidence-0000000000000000000000000000000000000000000000000000000000000000-write.orphan
 		mkfifo -m 0600 /evidence/child/.capture-0000000000000000000000000000000000000000000000000000000000000000-fifo.orphan
 		printf legacy >/evidence/child/.capture-status.legacy
+		printf foreign >/evidence/.evidence-0000000000000000000000000000000000000000000000000000000000000000-write.foreign
+		chown 65534 /evidence/.evidence-0000000000000000000000000000000000000000000000000000000000000000-write.foreign
+		mkdir -m 0700 /evidence/child/completed-bundle
+		printf complete >/evidence/child/completed-bundle/.evidence-0000000000000000000000000000000000000000000000000000000000000000-write.complete
 		EVIDENCE_DIR=/evidence/child
 		operation_id=stale-operation
 		recording_id=stale-recording
@@ -535,6 +539,8 @@ set +e
 		test ! -e /evidence/child/.evidence-0000000000000000000000000000000000000000000000000000000000000000-write.orphan
 		test ! -e /evidence/child/.capture-0000000000000000000000000000000000000000000000000000000000000000-fifo.orphan
 		test -f /evidence/child/.capture-status.legacy
+		test "$(cat /evidence/.evidence-0000000000000000000000000000000000000000000000000000000000000000-write.foreign)" = foreign
+		test "$(cat /evidence/child/completed-bundle/.evidence-0000000000000000000000000000000000000000000000000000000000000000-write.complete)" = complete
 		test -f /evidence/.node-maintenance-operation.lock
 		release_operation_lock
 	' >"$fixture_dir/output" 2>&1
