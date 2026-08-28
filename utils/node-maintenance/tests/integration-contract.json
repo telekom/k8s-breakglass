@@ -1,5 +1,5 @@
 {
-  "contractVersion": "node-maintenance.integration/v6",
+  "contractVersion": "node-maintenance.integration/v7",
   "imageContext": "utils/node-maintenance",
   "network": {
     "mode": "none",
@@ -48,6 +48,7 @@
     "sharedEvidenceLeaseConcurrency": 1,
     "sharedEvidenceLock": "process-held-flock",
     "sharedEvidenceLockScope": "volume-root",
+    "legacyChildLock": "selected-child-held-flock",
     "staleTemporaryRecovery": "lock-held-owned-candidates",
     "activeHolderTimeoutRecovery": false,
     "crashRelease": "kernel-file-description-close",
