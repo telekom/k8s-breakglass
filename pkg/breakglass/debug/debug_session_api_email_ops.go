@@ -43,7 +43,7 @@ func (c *DebugSessionAPIController) sendDebugSessionRequestEmail(ctx context.Con
 	}
 
 	approverEmails := append([]string(nil), approvers.Users...)
-	approverEmails = c.notificationRecipients(ctx, approverEmails, notificationCfg)
+	approverEmails = buildNotificationRecipients(approverEmails, notificationCfg)
 
 	if len(approverEmails) == 0 {
 		c.log.Debugw("No email recipients configured for debug session approvers, skipping request email", "session", session.Name, "template", debugSessionTemplateName(template))
@@ -112,7 +112,7 @@ func (c *DebugSessionAPIController) sendDebugSessionApprovalEmail(ctx context.Co
 		c.log.Warnw("Skipping approval email - no valid email address", "session", session.Name, "recipient", recipientEmail)
 		return
 	}
-	recipients := c.notificationRecipients(ctx, []string{recipientEmail}, notificationCfg)
+	recipients := buildNotificationRecipients([]string{recipientEmail}, notificationCfg)
 
 	approvedAt := ""
 	expiresAt := ""
@@ -187,7 +187,7 @@ func (c *DebugSessionAPIController) sendDebugSessionRejectionEmail(ctx context.C
 		c.log.Warnw("Skipping rejection email - no valid email address", "session", session.Name, "recipient", recipientEmail)
 		return
 	}
-	recipients := c.notificationRecipients(ctx, []string{recipientEmail}, notificationCfg)
+	recipients := buildNotificationRecipients([]string{recipientEmail}, notificationCfg)
 
 	rejectedAt := ""
 	rejectorName := ""
@@ -302,7 +302,7 @@ func (c *DebugSessionAPIController) sendDebugSessionCreatedEmail(ctx context.Con
 		c.log.Warnw("Skipping session created email - no valid email address", "session", session.Name, "recipient", recipientEmail)
 		return
 	}
-	recipients := c.notificationRecipients(ctx, []string{recipientEmail}, notificationCfg)
+	recipients := buildNotificationRecipients([]string{recipientEmail}, notificationCfg)
 
 	// Use display name if available, fallback to username
 	requesterName := session.Spec.RequestedByDisplayName
@@ -431,8 +431,7 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	}
 
 	// Verify user can perform mutating debug operations
-	identity, _ := debugSessionRequestIdentity(ctx)
-	if !c.canUserOperateDebugResources(session, identity) {
+	if !c.canUserOperateDebugResources(session, username) {
 		apiresponses.RespondForbidden(ctx, "user is not allowed to modify debug resources for this session")
 		return
 	}
@@ -446,7 +445,7 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	}
 
 	// Create kubectl debug handler
-	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider}).WithAPIReader(c.reader()).withIdentity(identity)
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), &clusterClientAdapter{ccProvider: c.ccProvider})
 
 	// Validate the request
 	capabilities := extractCapabilities(req.SecurityContext)
@@ -536,8 +535,7 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	}
 
 	// Verify user can perform mutating debug operations
-	identity, _ := debugSessionRequestIdentity(ctx)
-	if !c.canUserOperateDebugResources(session, identity) {
+	if !c.canUserOperateDebugResources(session, username) {
 		apiresponses.RespondForbidden(ctx, "user is not allowed to modify debug resources for this session")
 		return
 	}
@@ -551,7 +549,7 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	}
 
 	// Create kubectl debug handler
-	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider}).WithAPIReader(c.reader()).withIdentity(identity)
+	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
 
 	// Create the pod copy
 	pod, err := handler.CreatePodCopy(apiCtx, session, req.Namespace, req.PodName, req.DebugImage, username)
@@ -630,8 +628,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	}
 
 	// Verify user can perform mutating debug operations
-	identity, _ := debugSessionRequestIdentity(ctx)
-	if !c.canUserOperateDebugResources(session, identity) {
+	if !c.canUserOperateDebugResources(session, username) {
 		apiresponses.RespondForbidden(ctx, "user is not allowed to modify debug resources for this session")
 		return
 	}
@@ -645,7 +642,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	}
 
 	// Create kubectl debug handler
-	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider}).WithAPIReader(c.reader()).withIdentity(identity)
+	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
 
 	// Create the node debug pod
 	pod, err := handler.CreateNodeDebugPod(apiCtx, session, req.NodeName, username)
@@ -677,7 +674,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 func respondKubectlDebugOperationError(ctx *gin.Context, err error, fallback string) {
 	switch kubectlDebugOperationHTTPStatus(err) {
 	case http.StatusForbidden:
-		apiresponses.RespondForbidden(ctx, "debug operation is not allowed")
+		apiresponses.RespondForbidden(ctx, err.Error())
 	case http.StatusBadRequest:
 		apiresponses.RespondBadRequest(ctx, err.Error())
 	default:
@@ -706,12 +703,6 @@ func kubectlDebugOperationHTTPStatus(err error) int {
 // clusterClientAdapter adapts cluster.ClientProvider to ClientProviderInterface
 type clusterClientAdapter struct {
 	ccProvider *cluster.ClientProvider
-}
-
-// AdaptClusterClientProvider exposes the same spoke client adapter used by debug
-// API operations to admission webhook setup. A nil provider fails closed.
-func AdaptClusterClientProvider(provider *cluster.ClientProvider) ClientProviderInterface {
-	return &clusterClientAdapter{ccProvider: provider}
 }
 
 func (a *clusterClientAdapter) GetClient(ctx context.Context, clusterName string) (ctrlclient.Client, error) {
@@ -743,8 +734,25 @@ func (c *DebugSessionAPIController) isUserParticipant(session *breakglassv1alpha
 }
 
 // canUserOperateDebugResources checks if the user can run mutating kubectl-debug operations.
-func (c *DebugSessionAPIController) canUserOperateDebugResources(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
-	return sessionParticipantCanOperate(session, identity)
+func (c *DebugSessionAPIController) canUserOperateDebugResources(session *breakglassv1alpha1.DebugSession, user string) bool {
+	if session.Spec.RequestedBy == user {
+		return true
+	}
+
+	for _, p := range session.Status.Participants {
+		if p.User != user || p.LeftAt != nil {
+			continue
+		}
+
+		switch p.Role {
+		case breakglassv1alpha1.ParticipantRoleOwner, breakglassv1alpha1.ParticipantRoleParticipant:
+			return true
+		default:
+			continue
+		}
+	}
+
+	return false
 }
 
 // extractCapabilities extracts capability names from a security context
@@ -810,7 +818,7 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 		}
 
 		totalActive++
-		if debugSessionIdentityMatchesProvider(identity, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
+		if debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
 			userActive++
 		}
 	}

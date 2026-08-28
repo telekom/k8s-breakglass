@@ -894,23 +894,30 @@ spec:
 
 ### Overview
 
-In addition to pre-deployed debug pods (DaemonSet/Deployment), this proposal supports **kubectl debug** workflows for ephemeral container debugging. This allows users to attach debug containers directly to existing workloads or nodes without modifying the original deployment.
+In addition to pre-deployed debug pods (DaemonSet/Deployment), this proposal
+describes **kubectl debug**-style workflows for ephemeral container debugging.
+The supported implementation performs injections through the authenticated
+DebugSession API. Direct target-cluster `pods/ephemeralcontainers` admission is
+not implemented: those writes are governed solely by target-cluster RBAC and
+are outside Breakglass.
 
 ### Use Cases
 
-1. **Ephemeral container debugging**: Inject a debug container into a running pod to inspect it without modifying the pod spec
+1. **Ephemeral container debugging**: Use the authenticated API to inject a debug container into a running pod to inspect it without modifying the deployment spec
 2. **Node debugging**: Create debug pods that share a node's namespaces (network, PID, IPC)
 3. **Pod copy debugging**: Create a copy of a failing pod with debug tooling added
 
-### Kubectl Debug Subresources
+### Kubectl Debug Operations
 
-Kubectl debug operations translate to these Kubernetes API calls:
+Breakglass exposes these operations through authenticated DebugSession API
+calls; the manager-owned target-cluster calls are subject to live session and
+policy fences:
 
-| kubectl command | API Resource | Subresource |
-|-----------------|--------------|-------------|
-| `kubectl debug pod/<name> -it --image=...` | pods | ephemeralcontainers |
-| `kubectl debug node/<name> -it --image=...` | nodes | proxy (creates pod) |
-| `kubectl debug pod/<name> --copy-to=...` | pods | - (creates new pod) |
+| Breakglass operation | Target resource | Effect |
+|---------------------|-----------------|--------|
+| DebugSession API ephemeral-container injection | authenticated Breakglass API | manager performs a fenced target Pod update |
+| DebugSession API node debugging | nodes | manager creates a controlled debug Pod |
+| DebugSession API pod copy | pods | manager creates a controlled copy |
 
 ### DebugSessionTemplate Extensions for Kubectl Debug
 
@@ -998,116 +1005,29 @@ spec:
     defaultDuration: "30m"
 ```
 
-### Webhook Integration for Ephemeral Containers
+### Ephemeral-Container Boundary
 
-The authorization webhook evaluates ephemeral container operations:
+The Breakglass authorization webhook does not grant or mediate direct
+`pods/ephemeralcontainers` writes. A direct target-cluster API request is
+governed by target-cluster RBAC and remains outside Breakglass. There is no
+Breakglass admission webhook for this subresource because admission cannot
+durably record immutable operation intent before allowing the Kubernetes write
+or confirm its outcome afterward.
 
-```go
-// In handleAuthorize, for ephemeral container operations:
-if ra.Resource == "pods" && ra.Subresource == "ephemeralcontainers" {
-    // Check if user has a debug session with kubectl-debug permissions
-    debugSessions, err := wc.getActiveDebugSessions(ctx, username, clusterName)
-    if err != nil {
-        reqLog.Warnw("Failed to check debug sessions", "error", err)
-    }
-    
-    for _, ds := range debugSessions {
-        template := ds.Status.ResolvedTemplate
-        if template == nil || template.Spec.Mode != "kubectl-debug" {
-            continue
-        }
-        
-        kd := template.Spec.KubectlDebug
-        if kd == nil || kd.EphemeralContainers == nil || !kd.EphemeralContainers.Enabled {
-            continue
-        }
-        
-        // Check namespace allowed
-        if !isNamespaceAllowed(ra.Namespace, kd.EphemeralContainers.AllowedNamespaces, 
-                                kd.EphemeralContainers.DeniedNamespaces) {
-            continue
-        }
-        
-        // Additional validation happens in admission webhook
-        reqLog.Infow("Allowing ephemeral container via debug session",
-            "debugSession", ds.Name,
-            "pod", ra.Name,
-            "namespace", ra.Namespace)
-        allowed = true
-        allowSource = "debug-session"
-        allowDetail = fmt.Sprintf("session=%s template=%s mode=kubectl-debug", 
-                                  ds.Name, template.Name)
-        break
-    }
-}
-```
-
-### Admission Webhook for Image/Capability Validation
-
-A separate validating admission webhook enforces image and security constraints:
-
-```go
-// ValidatingWebhookConfiguration for ephemeral containers
-// Triggers on: pods/ephemeralcontainers PATCH requests
-
-func (wh *DebugAdmissionWebhook) ValidateEphemeralContainer(ctx context.Context, 
-    req admission.Request) admission.Response {
-    
-    pod := &corev1.Pod{}
-    if err := wh.decoder.Decode(req, pod); err != nil {
-        return admission.Errored(http.StatusBadRequest, err)
-    }
-    
-    // Find the new ephemeral container
-    newContainer := findNewEphemeralContainer(req.OldObject, pod)
-    if newContainer == nil {
-        return admission.Allowed("no new ephemeral container")
-    }
-    
-    // Get user's active debug session
-    ds, err := wh.getDebugSessionForUser(ctx, req.UserInfo.Username, req.Namespace)
-    if err != nil || ds == nil {
-        return admission.Denied("no active debug session for ephemeral containers")
-    }
-    
-    template := ds.Status.ResolvedTemplate
-    ec := template.Spec.KubectlDebug.EphemeralContainers
-    
-    // Validate image
-    if !imageAllowed(newContainer.Image, ec.AllowedImages) {
-        return admission.Denied(fmt.Sprintf("image %s not in allowed list", newContainer.Image))
-    }
-    
-    // Validate image digest if required
-    if ec.RequireImageDigest && !hasImageDigest(newContainer.Image) {
-        return admission.Denied("ephemeral container images must use @sha256: digest")
-    }
-    
-    // Validate capabilities
-    if newContainer.SecurityContext != nil && 
-       newContainer.SecurityContext.Capabilities != nil {
-        for _, cap := range newContainer.SecurityContext.Capabilities.Add {
-            if !contains(ec.MaxCapabilities, string(cap)) {
-                return admission.Denied(fmt.Sprintf("capability %s not allowed", cap))
-            }
-        }
-    }
-    
-    // Validate non-root if required
-    if ec.RequireNonRoot {
-        sc := newContainer.SecurityContext
-        if sc == nil || sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot {
-            return admission.Denied("ephemeral container must run as non-root")
-        }
-    }
-    
-    return admission.Allowed("ephemeral container validated")
-}
-```
+Ephemeral containers are injected only through the authenticated
+`DebugSession` API operation. That operation validates the administrator-authored
+image, capability, namespace, and non-root policy, requires an active exact-UID
+lease, persists bounded evidence before the target update, and confirms the
+result afterward. At expiry, the controller revokes new Breakglass access and
+retains the immutable evidence; Kubernetes cannot remove an ephemeral
+container from a live Pod. This API path is separate from direct target API
+RBAC and is the only supported Breakglass-mediated injection path.
 
 ### DenyPolicy Integration
 
-Extend `PodSecurityRules` to handle ephemeral container requests:
+`PodSecurityRules` do not intercept direct ephemeral-container writes. The
+following historical example applies only to Breakglass-mediated access and
+does not add `ephemeralcontainers` to an authorization or admission webhook:
 
 ```yaml
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
@@ -1117,10 +1037,10 @@ metadata:
 spec:
   podSecurityRules:
     appliesTo:
-      subresources: ["exec", "attach", "portforward", "ephemeralcontainers"]
+      subresources: ["exec", "attach", "portforward"]
     
     # Evaluate the TARGET pod's security posture
-    # (same logic as exec - if pod is risky, deny ephemeral container injection)
+    # Evaluate the target Pod for Breakglass-mediated access.
     riskFactors:
       hostNetwork: 20
       hostPID: 25
@@ -1130,9 +1050,9 @@ spec:
         action: warn
       - maxScore: 100
         action: deny
-        reason: "Cannot inject ephemeral container into high-risk pod"
+        reason: "Cannot access a high-risk Pod through Breakglass"
     
-    # Block ephemeral containers in specific namespaces
+    # Block access in specific namespaces
     exemptions: {}  # No exemptions
 ```
 
@@ -1298,9 +1218,9 @@ spec:
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Kubectl debug mode | ✅ Implemented | Controller handles `kubectl-debug` mode via admission webhooks |
-| Ephemeral container injection | ✅ Implemented | Validation webhook implemented |
-| Node debugging | ✅ Implemented | Supported via debug pods and webhook validation |
+| Kubectl debug mode | ✅ Implemented | Controller handles `kubectl-debug` mode through authenticated API operations |
+| Ephemeral container injection | ✅ Implemented | Authenticated DebugSession API operation; no direct target admission route |
+| Node debugging | ✅ Implemented | Supported via manager-created debug Pods and authenticated API operations |
 | Pod copy operations | ✅ Implemented | Supported via status tracking |
 | Terminal sharing (tmux) | ✅ Implemented | tmux/screen multiplexer injection implemented |
 | Audit sidecar | ❌ Not started | Shell command logging sidecar not implemented |
@@ -1310,4 +1230,3 @@ spec:
 ### Remaining Work
 
 1. **Audit Sidecar**: In-pod command logging via audit sidecar is not implemented. Consider integrating with Tetragon/Falco as documented.
-
