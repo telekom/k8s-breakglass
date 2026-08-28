@@ -264,18 +264,30 @@ type WebhookController struct {
 // the requested operation on the pod via a debug session they are participating in.
 // Supports exec, attach, portforward, and log subresources based on AllowedPodOperations config.
 func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, username, clusterName string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (bool, string, string) {
+	ds, reason := wc.findDebugSessionAccess(ctx, username, clusterName, ra, reqLog)
+	if ds == nil {
+		return false, "", ""
+	}
+	return true, ds.Name, reason
+}
+
+// findDebugSessionAccess returns the exact live DebugSession that authorized
+// the request. Cached discovery is only a hint: the returned object is
+// reread through the API reader and must still be Active with a non-zero,
+// strictly-future expiry at the decision boundary.
+func (wc *WebhookController) findDebugSessionAccess(ctx context.Context, username, clusterName string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (*breakglassv1alpha1.DebugSession, string) {
 	// Only check for pods with supported subresources
 	if ra == nil || ra.Resource != "pods" || !isDebugSessionSubresource(ra.Subresource) {
-		return false, "", ""
+		return nil, ""
 	}
 
 	if ra.Name == "" || ra.Namespace == "" {
-		return false, "", ""
+		return nil, ""
 	}
 
 	if wc.escalManager == nil || wc.escalManager.Client == nil {
 		reqLog.Debug("Debug session check skipped: no client available")
-		return false, "", ""
+		return nil, ""
 	}
 
 	// List active debug sessions for this cluster using indexed fields
@@ -287,19 +299,37 @@ func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, userna
 	}
 	if err := wc.escalManager.List(ctx, debugSessionList, fieldSelector); err != nil {
 		reqLog.Warnw("Failed to list debug sessions for pod operation check", "error", err)
-		return false, "", ""
+		return nil, ""
 	}
 
 	// Check each active debug session
-	for _, ds := range debugSessionList.Items {
+	reader := client.Reader(wc.escalManager.Client)
+	if wc.sesManager != nil {
+		reader = wc.sesManager.Reader()
+	}
+	for _, discovered := range debugSessionList.Items {
+		ds := discovered.DeepCopy()
+		if reader != nil {
+			var live breakglassv1alpha1.DebugSession
+			if err := reader.Get(ctx, client.ObjectKey{Namespace: discovered.Namespace, Name: discovered.Name}, &live); err != nil {
+				reqLog.Debugw("Debug session discovery candidate disappeared before live fence", "session", discovered.Name, "error", err)
+				continue
+			}
+			ds = &live
+		}
 		// Only check active sessions for this cluster
 		if ds.Status.State != breakglassv1alpha1.DebugSessionStateActive || ds.Spec.Cluster != clusterName {
 			continue
 		}
-		if ds.Status.ExpiresAt != nil && !ds.Status.ExpiresAt.Time.After(time.Now()) {
-			reqLog.Debugw("Debug session skipped because it is expired",
-				"session", ds.Name,
-				"expiresAt", ds.Status.ExpiresAt.Time)
+		// Debug sessions must always carry a live lease. Missing, equal, and
+		// past expiry are all denied; only a strictly-future timestamp grants.
+		if ds.Status.ExpiresAt == nil || !time.Now().Before(ds.Status.ExpiresAt.Time) {
+			var expiresAt interface{}
+			if ds.Status.ExpiresAt != nil {
+				expiresAt = ds.Status.ExpiresAt.Time
+			}
+			reqLog.Debugw("Debug session skipped because it is expired or missing expiry",
+				"session", ds.Name, "expiresAt", expiresAt)
 			continue
 		}
 
@@ -347,11 +377,53 @@ func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, userna
 				"user", username,
 				"role", p.Role,
 				"operation", ra.Subresource)
-			return true, ds.Name, reason
+			return ds, reason
 		}
 	}
 
-	return false, "", ""
+	return nil, ""
+}
+
+// liveDebugSessionAccess is the final authorization fence for a debug-session
+// allow. It reads the exact candidate through the uncached reader and repeats
+// every identity/state/pod/participant/lease check at one decision instant.
+func (wc *WebhookController) liveDebugSessionAccess(ctx context.Context, username, clusterName string, ra *authorizationv1.ResourceAttributes, namespace, name, uid string) (bool, string) {
+	if wc.sesManager == nil || ra == nil || namespace == "" || name == "" {
+		return false, ""
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var ds breakglassv1alpha1.DebugSession
+	if err := wc.sesManager.Reader().Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &ds); err != nil {
+		return false, ""
+	}
+	if uid != "" && string(ds.UID) != uid {
+		return false, ""
+	}
+	if ds.Status.State != breakglassv1alpha1.DebugSessionStateActive || ds.Spec.Cluster != clusterName {
+		return false, ""
+	}
+	now := time.Now()
+	if ds.Status.ExpiresAt == nil || !now.Before(ds.Status.ExpiresAt.Time) {
+		return false, ""
+	}
+	podAllowed := false
+	for _, pod := range ds.Status.AllowedPods {
+		if pod.Namespace == ra.Namespace && pod.Name == ra.Name {
+			podAllowed = true
+			break
+		}
+	}
+	if !podAllowed || !ds.Status.AllowedPodOperations.IsOperationAllowed(ra.Subresource) {
+		return false, ""
+	}
+	for _, participant := range ds.Status.Participants {
+		if participant.User == username && participant.LeftAt == nil && canDebugSessionParticipantAccessPodOperations(participant.Role) {
+			return true, fmt.Sprintf("Allowed by debug session %s (role: %s, operation: %s)", ds.Name, participant.Role, ra.Subresource)
+		}
+	}
+	return false, ""
 }
 
 // getPodSecurityOverridesFromSessions retrieves the PodSecurityOverrides from the escalation
@@ -449,6 +521,11 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 
 	// Phase 5: Early debug-session allow (before deny policies)
 	if wc.checkEarlyDebugSession(c, s) {
+		// The early phase only records the debug-session candidate. Route it
+		// through the common final live fence before producing an allow response.
+		s.phases.LogSummary()
+		wc.buildFinalReason(s)
+		wc.sendAuthorizationResponse(c, s)
 		return
 	}
 

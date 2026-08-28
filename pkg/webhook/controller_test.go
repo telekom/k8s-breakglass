@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -1582,6 +1583,13 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			objs := make([]client.Object, 0, len(tt.debugSessions))
 			for i := range tt.debugSessions {
+				// Legacy fixtures predate the mandatory hard-expiry field; keep
+				// their intended active-session behavior explicit while dedicated
+				// boundary tests below cover missing expiry denial.
+				if tt.debugSessions[i].Status.State == breakglassv1alpha1.DebugSessionStateActive && tt.debugSessions[i].Status.ExpiresAt == nil {
+					expiresAt := metav1.NewTime(time.Now().Add(time.Hour))
+					tt.debugSessions[i].Status.ExpiresAt = &expiresAt
+				}
 				objs = append(objs, &tt.debugSessions[i])
 			}
 
@@ -1615,6 +1623,118 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCheckDebugSessionAccessRequiresStrictFutureLiveExpiry(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name      string
+		expiresAt *metav1.Time
+		state     breakglassv1alpha1.DebugSessionState
+		allowed   bool
+	}{
+		{name: "missing expiry", allowed: false},
+		{name: "equal expiry", expiresAt: func() *metav1.Time { v := metav1.NewTime(now); return &v }(), allowed: false},
+		{name: "past expiry", expiresAt: func() *metav1.Time { v := metav1.NewTime(now.Add(-time.Minute)); return &v }(), allowed: false},
+		{name: "future expiry", expiresAt: func() *metav1.Time { v := metav1.NewTime(now.Add(time.Hour)); return &v }(), allowed: true},
+		{name: "revoked state", expiresAt: func() *metav1.Time { v := metav1.NewTime(now.Add(time.Hour)); return &v }(), state: breakglassv1alpha1.DebugSessionStateTerminated, allowed: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := tt.state
+			if state == "" {
+				state = breakglassv1alpha1.DebugSessionStateActive
+			}
+			ds := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "boundary", Namespace: "default"},
+				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					State: state, ExpiresAt: tt.expiresAt,
+					AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod"}},
+					Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
+				},
+			}
+			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds)
+			for k, fn := range debugSessionIndexFnsWebhook {
+				builder = builder.WithIndex(&breakglassv1alpha1.DebugSession{}, k, fn)
+			}
+			cli := builder.Build()
+			wc := &WebhookController{log: zap.NewNop().Sugar(), escalManager: &escalation.EscalationManager{Client: cli}}
+			allowed, _, _ := wc.checkDebugSessionAccess(context.Background(), "user", "cluster", &authorizationv1.ResourceAttributes{
+				Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod",
+			}, zap.NewNop().Sugar())
+			assert.Equal(t, tt.allowed, allowed)
+		})
+	}
+}
+
+func TestDebugSessionFinalFenceRejectsStaleCachedAllow(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	cached := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "stale-debug", Namespace: "default", UID: "debug-uid"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
+			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod"}},
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
+	}
+	live := cached.DeepCopy()
+	live.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+	cacheClient := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(cached)
+	liveClient := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(live).Build()
+	for k, fn := range debugSessionIndexFnsWebhook {
+		cacheClient = cacheClient.WithIndex(&breakglassv1alpha1.DebugSession{}, k, fn)
+	}
+	cache := cacheClient.Build()
+	wc := &WebhookController{log: zap.NewNop().Sugar(),
+		escalManager: &escalation.EscalationManager{Client: cache},
+		sesManager:   breakglass.NewSessionManagerWithClientAndReader(cache, liveClient),
+	}
+	ra := &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}
+	allowed, _, _ := wc.checkDebugSessionAccess(context.Background(), "user", "cluster", ra, zap.NewNop().Sugar())
+	assert.False(t, allowed, "cached active discovery must not bypass the live state fence")
+
+	state := &authorizeState{ctx: context.Background(), clusterName: "cluster", allowed: true, allowSource: "debug-session",
+		debugSessionNamespace: "default", debugSessionName: "stale-debug", debugSessionUID: "debug-uid",
+		reqLog: zap.NewNop().Sugar(), sar: authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: "user", ResourceAttributes: ra}}}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	wc.sendAuthorizationResponse(c, state)
+	var response SubjectAccessReviewResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	assert.False(t, response.Status.Allowed, "final debug-session fence must reject a revoked live object")
+}
+
+func TestEarlyDebugSessionUsesCommonFinalFence(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	ds := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "early-debug", Namespace: "default", UID: "early-uid"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
+			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod"}},
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
+	}
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds)
+	for k, fn := range debugSessionIndexFnsWebhook {
+		builder = builder.WithIndex(&breakglassv1alpha1.DebugSession{}, k, fn)
+	}
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	wc := &WebhookController{log: zap.NewNop().Sugar(), escalManager: &escalation.EscalationManager{Client: cli}, sesManager: breakglass.NewSessionManagerWithClient(cli)}
+	s := &authorizeState{ctx: context.Background(), clusterName: "cluster", reqLog: zap.NewNop().Sugar(), phases: NewSARPhaseTracker("cluster", zap.NewNop().Sugar()), sar: authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: "user", ResourceAttributes: &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}}}}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	assert.True(t, wc.checkEarlyDebugSession(c, s))
+	assert.True(t, s.allowed)
+	assert.Equal(t, "debug-session", s.allowSource)
+
+	var current breakglassv1alpha1.DebugSession
+	require.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(ds), &current))
+	current.Status.State = breakglassv1alpha1.DebugSessionStateExpired
+	require.NoError(t, cli.Status().Update(context.Background(), &current))
+	w := httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	wc.sendAuthorizationResponse(c, s)
+	var response SubjectAccessReviewResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	assert.False(t, response.Status.Allowed, "early candidate must be rechecked after it is revoked")
 }
 
 // boolPtr returns a pointer to a bool value

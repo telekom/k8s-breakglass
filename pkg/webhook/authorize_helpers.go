@@ -78,12 +78,15 @@ type authorizeState struct {
 	impersonationWarnedLegacy bool
 
 	// Decision state (filled progressively)
-	allowed            bool
-	allowSource        string // "rbac" | "session" | "debug-session"
-	allowDetail        string
-	allowedSession     *sessionAuthorizationCandidate
-	allowedSessions    []sessionAuthorizationCandidate
-	sessionDerivedRBAC bool
+	allowed               bool
+	allowSource           string // "rbac" | "session" | "debug-session"
+	allowDetail           string
+	debugSessionNamespace string
+	debugSessionName      string
+	debugSessionUID       string
+	allowedSession        *sessionAuthorizationCandidate
+	allowedSessions       []sessionAuthorizationCandidate
+	sessionDerivedRBAC    bool
 	// sessionActivity fields are populated during authorization but recorded only
 	// after the final live authorization fence has passed.
 	sessionActivityName  string
@@ -317,24 +320,19 @@ func (wc *WebhookController) checkEarlyDebugSession(c *gin.Context, s *authorize
 	if s.sar.Spec.ResourceAttributes != nil {
 		ra := s.sar.Spec.ResourceAttributes
 		if ra.Resource == "pods" && isDebugSessionSubresource(ra.Subresource) && ra.Name != "" {
-			if debugAllowed, debugSession, debugReason := wc.checkDebugSessionAccess(
-				s.ctx, s.sar.Spec.User, s.clusterName, ra, s.reqLog); debugAllowed {
-				s.phases.EndPhase(PhaseDebugSession) // End debug_session phase
-				s.phases.LogSummary()                // Log timing summary
-				s.reqLog.Infow("Debug session authorizing pod operation (bypassing deny policies)",
-					"session", debugSession, "pod", ra.Name,
+			if debugSession, debugReason := wc.findDebugSessionAccess(
+				s.ctx, s.sar.Spec.User, s.clusterName, ra, s.reqLog); debugSession != nil {
+				s.allowed = true
+				s.allowSource = "debug-session"
+				s.allowDetail = fmt.Sprintf("session=%s", debugSession.Name)
+				s.reason = debugReason
+				s.debugSessionNamespace = debugSession.Namespace
+				s.debugSessionName = debugSession.Name
+				s.debugSessionUID = string(debugSession.UID)
+				s.phases.EndPhase(PhaseDebugSession)
+				s.reqLog.Infow("Debug session authorization candidate found (bypassing deny policies)",
+					"session", debugSession.Name, "pod", ra.Name,
 					"namespace", ra.Namespace, "operation", ra.Subresource)
-				metrics.WebhookSARAllowed.WithLabelValues(s.clusterLabel).Inc()
-				metrics.WebhookSARDecisions.WithLabelValues(
-					s.clusterLabel, "allowed", "debug-session").Inc()
-				metrics.WebhookSARDuration.WithLabelValues(s.clusterLabel, "allowed").
-					Observe(time.Since(s.startTime).Seconds())
-				reason := wc.finalizeReason(debugReason, true, s.clusterName)
-				c.JSON(http.StatusOK, &SubjectAccessReviewResponse{
-					ApiVersion: s.sar.APIVersion,
-					Kind:       s.sar.Kind,
-					Status:     SubjectAccessReviewResponseStatus{Allowed: true, Reason: reason},
-				})
 				return true
 			}
 		}
@@ -702,12 +700,15 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 	// Debug session pod exec check: allow exec into debug pods if user is a session participant
 	if !s.allowed && s.sar.Spec.ResourceAttributes != nil {
 		ra := s.sar.Spec.ResourceAttributes
-		if debugAllowed, debugSession, debugReason := wc.checkDebugSessionAccess(
-			s.ctx, username, s.clusterName, ra, s.reqLog); debugAllowed {
+		if debugSession, debugReason := wc.findDebugSessionAccess(
+			s.ctx, username, s.clusterName, ra, s.reqLog); debugSession != nil {
 			s.allowed = true
 			s.allowSource = "debug-session"
-			s.allowDetail = fmt.Sprintf("session=%s", debugSession)
+			s.allowDetail = fmt.Sprintf("session=%s", debugSession.Name)
 			s.reason = debugReason
+			s.debugSessionNamespace = debugSession.Namespace
+			s.debugSessionName = debugSession.Name
+			s.debugSessionUID = string(debugSession.UID)
 			// Emit metric for debug session authorization
 			metrics.WebhookSARDecisions.WithLabelValues(
 				s.clusterLabel, "allowed", "debug-session").Inc()
@@ -901,6 +902,21 @@ func (wc *WebhookController) buildFinalReason(s *authorizeState) {
 // denial diagnostics, and writes the JSON response.
 func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *authorizeState) {
 	username := s.sar.Spec.User
+
+	if s.allowed && s.allowSource == "debug-session" {
+		var ra *authorizationv1.ResourceAttributes
+		if s.sar.Spec.ResourceAttributes != nil {
+			ra = s.sar.Spec.ResourceAttributes
+		}
+		if ok, reason := wc.liveDebugSessionAccess(s.ctx, username, s.clusterName, ra,
+			s.debugSessionNamespace, s.debugSessionName, s.debugSessionUID); !ok {
+			s.allowed = false
+			s.allowSource = ""
+			s.reason = wc.finalizeReason("Debug session expired, was revoked, or no longer authorizes this pod operation", false, s.clusterName)
+		} else {
+			s.reason = reason
+		}
+	}
 
 	sessionDerivedAllow := s.allowSource == "session" || (s.allowSource == "rbac" && s.sessionDerivedRBAC)
 	if s.allowed && sessionDerivedAllow && wc.ccProvider != nil && s.clusterCfg != nil && !wc.isClusterConfigStillActive(s.ctx, s.clusterCfg) {
