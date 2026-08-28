@@ -429,8 +429,11 @@ run_network_fixture() {
 	shift 3
 	approved_request=$(approved_network_request "$@")
 	new_fixture "$label"
-	bridge_wrapper="$tmp_dir/fake-bridge"
-	if [ ! -e "$bridge_wrapper" ]; then
+	bridge_test_mode=0
+	bridge_mount_arg=
+	if [ "$label" = guard-fdb-vlan-output-quota ]; then
+		bridge_test_mode=1
+		bridge_wrapper="$tmp_dir/fake-bridge"
 		# The wrapper delegates every normal operation to Alpine's fixed bridge
 		# binary. One fixture enables a deliberately oversized show response to
 		# prove VLAN preflight consumes only persisted bounded capture output.
@@ -445,9 +448,8 @@ run_network_fixture() {
 			'if [ -x /usr/sbin/bridge ]; then exec /usr/sbin/bridge "$@"; fi' \
 			'exec /usr/bin/bridge "$@"' >"$bridge_wrapper"
 		chmod 0555 "$bridge_wrapper"
+		bridge_mount_arg="--mount=type=bind,source=$bridge_wrapper,destination=/usr/local/bin/bridge,readonly"
 	fi
-	bridge_test_mode=0
-	[ "$label" = guard-fdb-vlan-output-quota ] && bridge_test_mode=1
 	output_file="$fixture_dir/output"
 	set +e
 	"$docker_bin" run \
@@ -461,7 +463,7 @@ run_network_fixture() {
 		--network none --read-only --cap-drop ALL --cap-add NET_ADMIN \
 		--security-opt no-new-privileges --security-opt seccomp=builtin \
 		--mount "source=$volume_name,destination=/evidence" \
-		--mount "type=bind,source=$bridge_wrapper,destination=/usr/local/bin/bridge,readonly" \
+		${bridge_mount_arg:+"$bridge_mount_arg"} \
 		--entrypoint /bin/sh "$image" -c '
 			set -eu
 			ip link set lo up
