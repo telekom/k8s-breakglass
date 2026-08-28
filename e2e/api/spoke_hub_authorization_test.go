@@ -769,6 +769,14 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 		"continued denial should be reported as forbidden after rejected resurrection write, got: %s", output3)
 	t.Log("✓ Access after expiry: DENIED")
 
+	// Restoring CLEANUP_INTERVAL rolls the controller Deployment and briefly
+	// removes the service endpoint. The focused lane keeps the API port-forward
+	// alive across that rollout, but the restart window is still observable to a
+	// client. Wait for a real API response before the next suite test starts, so
+	// an expected rollout gap cannot masquerade as an API failure.
+	s.Require().NoError(s.approverAPI.WaitForAPIReady(s.ctx, 60*time.Second),
+		"hub API must be ready after restoring the controller deployment")
+
 	t.Log("=== Expired Session Test Passed! ===")
 }
 
@@ -784,6 +792,8 @@ func (s *SpokeHubAuthorizationSuite) TestHardExpiryMultipleIndependentSessions()
 		s.T().Skip("focused hard-expiry lane only")
 	}
 	t := s.T()
+	s.Require().NoError(s.approverAPI.WaitForAPIReady(s.ctx, 60*time.Second),
+		"hub API must be ready before creating independent hard-expiry sessions")
 	spokeCluster := s.mcCtx.Config.SpokeAClusterName
 	testUser := helpers.TestUsers.SchedulingTestRequester
 	userAPI := s.createAPIClientForUser(testUser)
@@ -928,7 +938,7 @@ func (s *SpokeHubAuthorizationSuite) TestRetiredEphemeralAdmissionRouteAndAPIMed
 					Enabled:           true,
 					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"default"}},
 					AllowedImages:     []string{"busybox:*"},
-					RequireNonRoot:    false,
+					RequireNonRoot:    true,
 				},
 			},
 			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
@@ -960,12 +970,16 @@ func (s *SpokeHubAuthorizationSuite) TestRetiredEphemeralAdmissionRouteAndAPIMed
 
 	image := "busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"
 	containerName := "hard-expiry-debug"
+	runAsNonRoot := true
 	s.Require().NoError(userAPI.InjectEphemeralContainer(ctx, t, session.Name, helpers.EphemeralContainerRequest{
 		Namespace:     targetPod.Namespace,
 		PodName:       targetPod.Name,
 		ContainerName: containerName,
 		Image:         image,
 		Command:       []string{"sh", "-c", "sleep 60"},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsNonRoot: &runAsNonRoot,
+		},
 	}), "supported API-mediated ephemeral injection must succeed")
 
 	var injectedPod corev1.Pod
