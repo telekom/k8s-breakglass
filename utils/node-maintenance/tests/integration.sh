@@ -182,6 +182,15 @@ new_fixture() {
 	mkdir -p "$fixture_dir"
 	"$docker_bin" volume create "$volume_name" >/dev/null || fail "could not create disposable volume '$volume_name'"
 	case "$label" in
+		stale-temporary-recovery)
+			# A constrained production container has no CHOWN capability. Seed the
+			# foreign-owned control first with an explicitly privileged, disposable
+			# setup container, then let the real image prove it preserves that file.
+			"$docker_bin" run --rm --user 0 --network none --cap-drop ALL --cap-add CHOWN \
+				--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" \
+				-c 'mkdir -m 0700 /evidence/child; printf foreign >/evidence/.evidence-0000000000000000000000000000000000000000000000000000000000000000-write.foreign; chown 65534 /evidence/.evidence-0000000000000000000000000000000000000000000000000000000000000000-write.foreign' \
+				|| fail 'could not seed the foreign-owned stale-candidate fixture'
+			;;
 		guard-evidence-symlink)
 			"$docker_bin" run --rm --entrypoint /bin/sh \
 				--mount "source=$volume_name,destination=/evidence" "$image" \
@@ -519,13 +528,10 @@ set +e
 	--entrypoint /bin/sh "$image" -c '
 		set -eu
 		. /usr/local/libexec/node-maintenance/common.sh
-		mkdir -m 0700 /evidence/child
 		printf orphan >/evidence/.capture-0000000000000000000000000000000000000000000000000000000000000000.orphan
 		printf orphan >/evidence/child/.evidence-0000000000000000000000000000000000000000000000000000000000000000-write.orphan
 		mkfifo -m 0600 /evidence/child/.capture-0000000000000000000000000000000000000000000000000000000000000000-fifo.orphan
 		printf legacy >/evidence/child/.capture-status.legacy
-		printf foreign >/evidence/.evidence-0000000000000000000000000000000000000000000000000000000000000000-write.foreign
-		chown 65534 /evidence/.evidence-0000000000000000000000000000000000000000000000000000000000000000-write.foreign
 		mkdir -m 0700 /evidence/child/completed-bundle
 		printf complete >/evidence/child/completed-bundle/.evidence-0000000000000000000000000000000000000000000000000000000000000000-write.complete
 		EVIDENCE_DIR=/evidence/child
@@ -540,6 +546,7 @@ set +e
 		test ! -e /evidence/child/.capture-0000000000000000000000000000000000000000000000000000000000000000-fifo.orphan
 		test -f /evidence/child/.capture-status.legacy
 		test "$(cat /evidence/.evidence-0000000000000000000000000000000000000000000000000000000000000000-write.foreign)" = foreign
+		test "$(stat -c %u /evidence/.evidence-0000000000000000000000000000000000000000000000000000000000000000-write.foreign)" = 65534
 		test "$(cat /evidence/child/completed-bundle/.evidence-0000000000000000000000000000000000000000000000000000000000000000-write.complete)" = complete
 		test -f /evidence/.node-maintenance-operation.lock
 		release_operation_lock
@@ -569,11 +576,26 @@ set +e
 		mkdir -m 0700 "$bundle"
 		operation_id=quota-operation
 		recording_id=quota-recording
+		operation_artifact_id=$(sha256_text "$operation_id")
 		tuple_digest=$(sha256_text quota-operation)
 		acquire_operation_lock /evidence "$tuple_digest"
 		trap '\''cleanup_evidence_temporary_candidates || true; release_operation_lock || true'\'' EXIT
 		printf seed >"$bundle/metadata"
-		head -c 4050 /dev/zero | tr "\\000" p >>"$bundle/metadata"
+		# Measure an actual filesystem allocation boundary. The payload passed to
+		# append_evidence is grown until the exact candidate is larger on disk than
+		# the current metadata, avoiding a filesystem-block-size assumption.
+		payload_file=/evidence/append-payload
+		: >"$payload_file"
+		output_kib=$(du -sk "$bundle/metadata" | awk "NR == 1 { print \\$1 }")
+		measure_candidate="$EVIDENCE_DIR/.evidence-$operation_artifact_id-append.measure"
+		while :; do
+			rm -f "$measure_candidate"
+			cat "$bundle/metadata" "$payload_file" >"$measure_candidate"
+			candidate_kib=$(du -sk "$measure_candidate" | awk "NR == 1 { print \\$1 }")
+			[ "$candidate_kib" -gt "$output_kib" ] && break
+			printf x >>"$payload_file"
+		done
+		rm -f "$measure_candidate"
 		maximum_kib=$((evidence_max_bytes / 1024))
 		: >"$bundle/fill"
 		while [ "$(du -sk "$bundle" | awk "NR == 1 { print \\$1 }")" -lt "$maximum_kib" ]; do
@@ -581,13 +603,14 @@ set +e
 		done
 		before=$(sha256sum "$bundle/metadata")
 		set +e
-		(printf "final=true\\n" | append_evidence "$bundle/metadata")
+		cat "$payload_file" | append_evidence "$bundle/metadata"
 		status=$?
 		set -e
 		[ "$status" -eq 2 ]
 		after=$(sha256sum "$bundle/metadata")
 		[ "$before" = "$after" ]
 		[ "$(du -sk "$bundle" | awk "NR == 1 { print \\$1 }")" -eq "$maximum_kib" ]
+		rm -f "$payload_file"
 		test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)"
 	' >"$fixture_dir/output" 2>&1
 metadata_quota_status=$?
@@ -703,10 +726,11 @@ set +e
 		bundle=/evidence/quota
 		mkdir -m 0700 "$bundle"
 		tuple_digest=$(sha256_text quota-operation)
+		operation_artifact_id=$(sha256_text "$operation_id")
 		acquire_operation_lock /evidence "$tuple_digest"
 		trap '\''cleanup_evidence_temporary_candidates || true; release_operation_lock || true'\'' EXIT
 		mktemp() {
-			case "$1" in *capture-status*) return 1 ;; esac
+			case "$1" in "$EVIDENCE_DIR/.capture-$operation_artifact_id-status.XXXXXX") return 1 ;; esac
 			command mktemp "$@"
 		}
 		capture "$bundle/setup" awk '\''BEGIN { print "setup" }'\'' || true
@@ -720,7 +744,7 @@ assert_container_security "$container_name" none
 if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
 	--security-opt no-new-privileges --security-opt seccomp=builtin \
 	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" -c \
-	'test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)' ; then
+	'test ! -e /evidence/quota/setup && test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)' ; then
 	:
 else
 	fail 'injected capture setup failure leaked a temporary candidate'
@@ -760,7 +784,7 @@ assert_container_security "$container_name" none
 if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
 	--security-opt no-new-privileges --security-opt seccomp=builtin \
 	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" -c \
-	'test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)' ; then
+	'test ! -e /evidence/quota/trailer && test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)' ; then
 	:
 else
 	fail 'injected capture trailer failure leaked a temporary candidate'
@@ -797,7 +821,7 @@ assert_container_security "$container_name" none
 if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
 	--security-opt no-new-privileges --security-opt seccomp=builtin \
 	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" -c \
-	'test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)' ; then
+	'test ! -e /evidence/quota/sync && test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)' ; then
 	:
 else
 	fail 'injected evidence sync failure leaked a temporary candidate'
@@ -1177,14 +1201,14 @@ assert_container_security "$container_name" none
 "$docker_bin" rm "$holder_name" >/dev/null || fail 'could not remove killed flock holder'
 holder_name=
 # A pre-volume-root image used one lock per child. A live legacy descriptor must
-# block the new root-scoped helper, while its legacy temporary names remain
-# untouched for operator-led migration.
+# block the new helper after it acquires the volume-root lock, while its
+# legacy temporary names remain untouched for operator-led migration.
 legacy_holder_name="${prefix}-legacy-holder"
 holder_name="$legacy_holder_name"
 "$docker_bin" run -d --name "$legacy_holder_name" --user 0 --network none --read-only --cap-drop ALL \
 	--security-opt no-new-privileges --security-opt seccomp=builtin \
 	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" \
-	-c 'mkdir -m 0700 /evidence/legacy; exec 8>>/evidence/legacy/.node-maintenance-operation.lock; flock -n 8 || exit 71; printf legacy >/evidence/legacy-ready; while :; do sleep 60; done' \
+	-c 'mkdir -m 0700 /evidence/legacy; exec 8>>/evidence/legacy/.node-maintenance-operation.lock; flock -n 8 || exit 71; printf legacy >/evidence/legacy/.capture-status.legacy; printf legacy >/evidence/legacy-ready; while :; do sleep 60; done' \
 	>/dev/null || fail 'could not start legacy flock holder'
 legacy_ready=false
 attempt=0
@@ -1207,11 +1231,18 @@ set +e
 	--network none --read-only --cap-drop ALL \
 	--security-opt no-new-privileges --security-opt seccomp=builtin \
 	--mount "source=$volume_name,destination=/evidence" "$image" node-recovery \
-	--target-node node-a --interface lo --evidence-dir /evidence --confirm NODE-RECOVERY-PREFLIGHT \
+	--target-node node-a --interface lo --evidence-dir /evidence/legacy --confirm NODE-RECOVERY-PREFLIGHT \
 	>"$fixture_dir/legacy-output" 2>&1
 legacy_competitor_exit=$?
 set -e
 [ "$legacy_competitor_exit" -eq 2 ] || { cat "$fixture_dir/legacy-output"; fail 'legacy lock competitor returned an unexpected status'; }
+# shellcheck disable=SC2016
+if ! "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" -c \
+	'test "$(cat /evidence/legacy/.capture-status.legacy)" = legacy'; then
+	fail 'legacy writer artifact was altered while the mixed-version competitor was denied'
+fi
 assert_container_security "$container_name" none
 "$docker_bin" rm "$container_name" >/dev/null || fail 'could not remove legacy lock competitor'
 "$docker_bin" kill --signal KILL "$legacy_holder_name" >/dev/null || fail 'could not SIGKILL legacy flock holder'

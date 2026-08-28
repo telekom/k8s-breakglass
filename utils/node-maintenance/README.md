@@ -67,7 +67,11 @@ including operations using different safe child directories, and permits one
 operation at a time; the controller must not share that evidence volume with
 an uncoordinated writer. After acquiring the root lock, the helper removes only
 its owned stale `.capture-*`/`.evidence-*` candidates from the root or one safe
-child, recovering files left by a killed container. The owner record
+child, recovering files left by a killed container.
+For a safe child, it also acquires and retains that child's legacy lock while
+holding the root lock; a live pre-volume-root writer therefore blocks before
+cleanup or evidence mutation, and its legacy artifacts are never removed.
+The owner record
 contains the operation, recording, approval, and SHA-256 digest of the exact
 approved tuple. Its timestamp and PID are audit context only, never liveness
 signals. The kernel releases exclusivity when the holder exits, is killed, or

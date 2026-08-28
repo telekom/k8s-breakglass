@@ -290,6 +290,28 @@ acquire_operation_lock() {
 	printf 'schema=node-maintenance-lock/v2\noperation_id=%s\nrecording_id=%s\napproval_id=%s\ntuple_sha256=%s\nholder_pid=%s\nacquired_epoch=%s\n' \
 		"$operation_id" "$recording_id" "${approval_id:-}" "$operation_lock_tuple_digest" "$$" "$(date -u +%s)" \
 		>&9 || die "cannot record operation lock owner"
+	# Before the volume-root lock was introduced, writers locked this selected
+	# child instead.  Acquire and retain that descriptor while the root lock is
+	# held so an old writer cannot pass its check after this operation starts.
+	legacy_operation_lock=
+	if [ "$directory" != /evidence ]; then
+		legacy_lock_candidate="$directory/$operation_lock_name"
+		[ ! -L "$legacy_lock_candidate" ] || die "legacy operation lock may not be a symlink"
+		if [ ! -e "$legacy_lock_candidate" ]; then
+			(umask 077; : >"$legacy_lock_candidate") || die "cannot create legacy operation lock"
+		fi
+		[ -f "$legacy_lock_candidate" ] && [ ! -L "$legacy_lock_candidate" ] || die "legacy operation lock must be a regular file"
+		resolved_legacy_lock=$(readlink -f "$legacy_lock_candidate" 2>/dev/null || true)
+		[ "$resolved_legacy_lock" = "$legacy_lock_candidate" ] || die "legacy operation lock did not resolve safely"
+		chmod 0600 "$legacy_lock_candidate" || die "cannot protect legacy operation lock"
+		exec 8>>"$legacy_lock_candidate" || die "cannot open legacy operation lock"
+		if ! flock -n 8; then
+			exec 8>&-
+			legacy_operation_lock=
+			die "another node-maintenance operation is active for this evidence child"
+		fi
+		legacy_operation_lock=$legacy_lock_candidate
+	fi
 }
 
 cleanup_evidence_temporary_candidates() {
@@ -304,6 +326,7 @@ cleanup_evidence_temporary_candidates() {
 		[ -d "$directory" ] && [ ! -L "$directory" ] || return 0
 		for candidate in "$directory"/.capture-* "$directory"/.evidence-*; do
 			[ -e "$candidate" ] || [ -L "$candidate" ] || continue
+			[ ! -L "$candidate" ] || continue
 			[ -f "$candidate" ] || [ -p "$candidate" ] || continue
 			candidate_owner=$(stat -c %u "$candidate" 2>/dev/null) || return 1
 			[ "$candidate_owner" = "$owner_uid" ] || continue
@@ -325,15 +348,20 @@ cleanup_evidence_temporary_candidates() {
 }
 
 assert_no_active_legacy_locks() {
-	# Releases before the volume-root lock used one lock file per safe child.
-	# Never remove or overwrite those files: reject a new operation while a
-	# legacy descriptor still holds one, and otherwise leave the stale file for
-	# an operator-led migration cleanup.
+	# The selected child's legacy lock is already held by descriptor 8 from
+	# acquire_operation_lock.  Check other legacy children as a compatibility
+	# guard; their artifacts are never removed by cleanup.  The selected-child
+	# check-and-act race is closed by retaining descriptor 8 for this operation.
 	[ -d /evidence ] && [ ! -L /evidence ] || return 1
 	for legacy_lock in /evidence/*/.node-maintenance-operation.lock; do
 		[ -e "$legacy_lock" ] || [ -L "$legacy_lock" ] || continue
+		if [ "${legacy_operation_lock:-}" = "$legacy_lock" ]; then
+			continue
+		fi
 		legacy_directory=${legacy_lock%/*}
 		[ -d "$legacy_directory" ] && [ ! -L "$legacy_directory" ] || return 1
+		legacy_child=${legacy_directory#/evidence/}
+		case "$legacy_child" in ''|*/*|.|..|*[!A-Za-z0-9_.-]*) return 1 ;; esac
 		legacy_resolved=$(readlink -f "$legacy_directory" 2>/dev/null) || return 1
 		[ "$legacy_resolved" = "$legacy_directory" ] || return 1
 		[ ! -L "$legacy_lock" ] || return 1
@@ -351,6 +379,13 @@ release_operation_lock() {
 		grep -Fqx "operation_id=$operation_id" /proc/self/fd/9 || return 1
 		grep -Fqx "recording_id=$recording_id" /proc/self/fd/9 || return 1
 		grep -Fqx "tuple_sha256=$operation_lock_tuple_digest" /proc/self/fd/9 || return 1
+		if [ -n "${legacy_operation_lock:-}" ]; then
+			[ -d "${EVIDENCE_DIR:?evidence directory is not initialized}" ] && [ ! -L "$EVIDENCE_DIR" ] || return 1
+			case "$legacy_operation_lock" in "$EVIDENCE_DIR/$operation_lock_name") ;; *) return 1 ;; esac
+			flock -u 8 || return 1
+			exec 8>&-
+			legacy_operation_lock=
+		fi
 		flock -u 9 || return 1
 		exec 9>&-
 		operation_lock=
