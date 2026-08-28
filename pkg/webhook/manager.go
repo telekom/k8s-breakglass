@@ -141,7 +141,6 @@ func Setup(
 		if err := registerWebhook(&breakglassv1alpha1.DebugSessionClusterBinding{}, "DebugSessionClusterBinding", mgr, log); err != nil {
 			return err
 		}
-
 	} else {
 		log.Infow("Validating webhooks disabled via --enable-validating-webhooks=false")
 	}
