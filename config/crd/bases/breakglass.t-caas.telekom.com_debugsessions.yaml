@@ -1401,6 +1401,10 @@ spec:
                               items:
                                 type: string
                               type: array
+                            containerDigest:
+                              description: containerDigest identifies the exact canonical
+                                ephemeral-container request.
+                              type: string
                             image:
                               description: image is the requested image.
                               type: string
@@ -1420,6 +1424,7 @@ spec:
                                 settings.
                               type: boolean
                           required:
+                          - containerDigest
                           - image
                           - name
                           - securityContextDigest

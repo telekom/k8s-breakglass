@@ -23,6 +23,8 @@ type KubectlDebugEphemeralContainerIntentApplyConfiguration struct {
 	Image *string `json:"image,omitempty"`
 	// command is the requested command.
 	Command []string `json:"command,omitempty"`
+	// containerDigest identifies the exact canonical ephemeral-container request.
+	ContainerDigest *string `json:"containerDigest,omitempty"`
 	// securityContextDigest identifies the complete requested security context.
 	SecurityContextDigest *string `json:"securityContextDigest,omitempty"`
 	// tty and stdin are the manager-owned terminal settings.
@@ -60,6 +62,14 @@ func (b *KubectlDebugEphemeralContainerIntentApplyConfiguration) WithCommand(val
 	for i := range values {
 		b.Command = append(b.Command, values[i])
 	}
+	return b
+}
+
+// WithContainerDigest sets the ContainerDigest field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ContainerDigest field is set to the value of the last call.
+func (b *KubectlDebugEphemeralContainerIntentApplyConfiguration) WithContainerDigest(value string) *KubectlDebugEphemeralContainerIntentApplyConfiguration {
+	b.ContainerDigest = &value
 	return b
 }
 
