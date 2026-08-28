@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   immutable `diagnostic-artifact-collector` image for reviewed system-summary
   and crashdump collection recipes, with private archive hand-off and a
   controller-issued upload boundary.
+- **Network-debug utility image**: Added the generic, digest-pinned
+  `network-debug` intent image with bounded network capture, selected-Pod
+  EphemeralContainer capture, host packet tracing, runbooks, and behavioral
+  CI proofs.
 - **OCI runbook bundle contract**: Documented the generic, additive contract for
   mounting signed, digest-pinned documentation bundles into approved debug
   templates through Kubernetes image volumes. The controller continues to use
@@ -31,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   terminated and verified absent before any spool is consumed. Expired
   controller upload responses are terminal and are not retried. A concurrent
   enumeration deadline deterministically retains its timeout diagnostic.
+- **Network-debug script guard checks**: Replaced ambiguous shell guard chains
+  with explicit conditionals to keep static checks and runtime behavior aligned.
+- **Network-debug Docker collision diagnostics**: Distinguish foreign or
+  occupied resources from Docker inspection failures during integration
+  preflight, so only a proven-absent name can be claimed and collision cleanup
+  remains fail-closed.
 - **Storage image behavior CI cleanup**: The storage-debug integration cleanup
   now tolerates auto-removed Docker containers recorded in cidfiles while still
   refusing to delete foreign, still-existing containers.

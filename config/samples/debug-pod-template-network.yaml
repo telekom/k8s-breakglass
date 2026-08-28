@@ -1,12 +1,14 @@
 # Network Debug Pod Template
-# Pre-built template for network troubleshooting with netshoot tools
+# Pre-built template for network troubleshooting with the reviewed network-debug image.
+# The digest below is intentionally an invalid placeholder. Replace it with the
+# published, signed network-debug manifest digest before applying this sample.
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugPodTemplate
 metadata:
   name: network-debug
 spec:
   displayName: "Network Debug"
-  description: "Network troubleshooting tools (netshoot) with NET_ADMIN and NET_RAW capabilities"
+  description: "Network troubleshooting tools with NET_ADMIN and NET_RAW capabilities"
   template:
     metadata:
       labels:
@@ -22,7 +24,7 @@ spec:
         kubernetes.io/os: linux
       containers:
       - name: netdebug
-        image: nicolaka/netshoot:latest
+        image: "ghcr.io/telekom/k8s-breakglass/utils/network-debug@sha256:REPLACE_WITH_PUBLISHED_NETWORK_DEBUG_MANIFEST_DIGEST"
         imagePullPolicy: IfNotPresent
         command: ["/bin/bash"]
         args: ["-c", "trap : TERM INT; sleep infinity & wait"]
