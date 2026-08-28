@@ -300,7 +300,9 @@ acquire_operation_lock() {
 		if [ ! -e "$legacy_lock_candidate" ]; then
 			(umask 077; : >"$legacy_lock_candidate") || die "cannot create legacy operation lock"
 		fi
-		[ -f "$legacy_lock_candidate" ] && [ ! -L "$legacy_lock_candidate" ] || die "legacy operation lock must be a regular file"
+		if [ ! -f "$legacy_lock_candidate" ] || [ -L "$legacy_lock_candidate" ]; then
+			die "legacy operation lock must be a regular file"
+		fi
 		resolved_legacy_lock=$(readlink -f "$legacy_lock_candidate" 2>/dev/null || true)
 		[ "$resolved_legacy_lock" = "$legacy_lock_candidate" ] || die "legacy operation lock did not resolve safely"
 		chmod 0600 "$legacy_lock_candidate" || die "cannot protect legacy operation lock"
@@ -456,7 +458,9 @@ assert_safe_evidence_output() {
 	case "$evidence_output" in "${bundle:?bundle is not initialized}"/*) ;; *) die "unsafe evidence output path" ;; esac
 	assert_safe_bundle "$bundle"
 	if [ -e "$evidence_output" ] || [ -L "$evidence_output" ]; then
-		[ -f "$evidence_output" ] && [ ! -L "$evidence_output" ] || die "evidence output is not a regular file"
+		if [ ! -f "$evidence_output" ] || [ -L "$evidence_output" ]; then
+			die "evidence output is not a regular file"
+		fi
 	fi
 }
 
@@ -464,7 +468,9 @@ commit_evidence_file() {
 	evidence_candidate=$1
 	evidence_output=$2
 	assert_safe_evidence_output "$evidence_output"
-	[ -f "$evidence_candidate" ] && [ ! -L "$evidence_candidate" ] || die "evidence candidate is not a regular file"
+	if [ ! -f "$evidence_candidate" ] || [ -L "$evidence_candidate" ]; then
+		die "evidence candidate is not a regular file"
+	fi
 	ensure_operation_artifact_id
 	case "$evidence_candidate" in
 		"${EVIDENCE_DIR:?evidence directory is not initialized}"/.evidence-"$operation_artifact_id"-write.*|"$EVIDENCE_DIR"/.evidence-"$operation_artifact_id"-append.*|"$EVIDENCE_DIR"/.capture-"$operation_artifact_id".*|"$EVIDENCE_DIR"/.capture-"$operation_artifact_id"-status.*|"$EVIDENCE_DIR"/.capture-"$operation_artifact_id"-fifo.*|"$EVIDENCE_DIR"/.capture-"$operation_artifact_id"-quota.*) ;;
