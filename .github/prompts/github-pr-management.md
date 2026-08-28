@@ -97,7 +97,7 @@ gh auth status --hostname "$github_host" >/dev/null ||
 case "$base_repo" in */*) ;; *) fail "invalid PR repository";; esac
 case "$pr" in ''|*[!0-9]*) fail "invalid PR number";; esac
 
-gate_root="$(mktemp -d)"
+gate_root="$(mktemp -d "${TMPDIR:-/tmp}/breakglass-pr-gate.XXXXXX")"
 trap 'rm -rf "$gate_root"' EXIT
 observed="$gate_root/observed.json"
 copilot_reviewer_login="${copilot_reviewer_login-}"
@@ -735,14 +735,14 @@ escaped newlines through `--body` or shell command substitution.
 ```bash
 set -euo pipefail
 
-body_file="$(mktemp -t breakglass-pr-description.XXXXXX.md)"
+body_file="$(mktemp "${TMPDIR:-/tmp}/breakglass-pr-description.XXXXXX.md")"
 vi "$body_file"                         # a known executable, not an EDITOR shell fragment
 test -s "$body_file"
 
 # The post-create verification writes into this run's private directory. Set it
 # up before the first PR mutation so a failed verification cannot be caused by
 # an unset path after the draft has already been created.
-gate_root="$(mktemp -d)"
+gate_root="$(mktemp -d "${TMPDIR:-/tmp}/breakglass-pr-gate.XXXXXX")"
 trap 'rm -rf "$gate_root"; rm -f "$body_file"' EXIT
 
 # The caller supplies the actual intended base; do not silently substitute a

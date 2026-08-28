@@ -8,7 +8,7 @@ set -euo pipefail
 
 script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 contract="$script_dir/pr-gate-contract.sh"
-fixture_root="$(mktemp -d)"
+fixture_root="$(mktemp -d "${TMPDIR:-/tmp}/breakglass-pr-contract.XXXXXX")"
 trap 'rm -rf "$fixture_root"' EXIT
 
 fail() {
@@ -122,7 +122,7 @@ write_fixture "$mock_bin/vi" $'#!/usr/bin/env bash\nprintf "%s\\n" "test body" >
 # shellcheck disable=SC2016
 write_fixture "$mock_bin/gh" $'#!/usr/bin/env bash\nset -euo pipefail\ncase "${1-} ${2-}" in\n  "auth status") exit 0 ;;\n  "pr create")\n    printf "%s\\n" create >>"$DRAFT_LOG"\n    printf "%s\\n" "https://github.com/telekom/k8s-breakglass/pull/999"\n    exit 0\n    ;;\n  "pr view")\n    printf "%s\\n" "{\\"isDraft\\":true,\\"headRefName\\":\\"codex/network-debug\\",\\"headRefOid\\":\\"source-head\\",\\"headRepository\\":{\\"nameWithOwner\\":\\"telekom/k8s-breakglass\\"},\\"baseRefName\\":\\"main\\",\\"baseRefOid\\":\\"base-head\\",\\"baseRepository\\":{\\"nameWithOwner\\":\\"telekom/k8s-breakglass\\"}}"\n    exit 0\n    ;;\n  "pr edit")\n    printf "%s\\n" edit >>"$DRAFT_LOG"\n    exit 0\n    ;;\nesac\nexit 2\n'
 write_fixture "$mock_bin/git" $'#!/usr/bin/env bash\nset -euo pipefail\ncase "${1-}" in\n  check-ref-format) exit 0 ;;\n  branch) printf "%s\\n" codex/network-debug ; exit 0 ;;\n  config) exit 1 ;;\n  remote)\n    if [ "$#" = 1 ]; then printf "%s\\n" origin; exit 0; fi\n    if [ "${2-}" = get-url ]; then\n      printf "%s\\n" https://github.com/telekom/k8s-breakglass.git\n      exit 0\n    fi\n    ;;\n  fetch) exit 0 ;;\n  rev-parse)\n    for arg in "$@"; do\n      case "$arg" in\n        *origin/main*) printf "%s\\n" base-head; exit 0 ;;\n        *origin/codex/network-debug*|HEAD) printf "%s\\n" source-head; exit 0 ;;\n      esac\n    done\n    ;;\nesac\nexit 2\n'
-write_fixture "$mock_bin/mktemp" $'#!/usr/bin/env bash\nset -euo pipefail\nresult="$(/usr/bin/mktemp "$@")"\nprintf "%s\\n" "$result"\nif [ -n "${MKTEMP_LOG-}" ]; then\n  printf "%s\\n" "$result" >>"$MKTEMP_LOG"\nfi\n'
+write_fixture "$mock_bin/mktemp" $'#!/usr/bin/env bash\nset -euo pipefail\nif [ "$#" = 1 ] && [ "$1" = "-d" ]; then\n  printf "%s\\n" "mktemp requires a template" >&2\n  exit 64\nfi\nresult="$(/usr/bin/mktemp "$@")"\nprintf "%s\\n" "$result"\nif [ -n "${MKTEMP_LOG-}" ]; then\n  printf "%s\\n" "$result" >>"$MKTEMP_LOG"\nfi\n'
 chmod +x "$mock_bin/vi" "$mock_bin/gh" "$mock_bin/git" "$mock_bin/mktemp"
 draft_snippet="$fixture_root/draft-snippet.sh"
 awk '
