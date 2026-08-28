@@ -32,7 +32,7 @@ Approval and rejection REST requests may omit the optional JSON body. When a bod
 |-------|---------|-------------------|-----------------|-----------|
 | `Pending` | Awaiting approval or scheduled start | ❌ No | Session created | `metadata.creationTimestamp` |
 | `WaitingForScheduledTime` | Approved but waiting for scheduled start | ❌ No | Approved with future `scheduledStartTime` | `approvedAt` + `scheduledStartTime` |
-| `Approved` | Active and granting privileges | ✅ Yes (if not expired) | Approver approved OR scheduled time reached | `approvedAt`, `expiresAt` |
+| `Approved` | Active and granting privileges | ✅ Yes (if not expired and `expiresAt` is present) | Approver approved OR scheduled time reached | `approvedAt`, `expiresAt` |
 | `Rejected` | Approver denied the request | ❌ No | Approver rejected request | `rejectedAt` (Terminal) |
 | `Withdrawn` | User canceled their own request | ❌ No | User withdrew before approval | `withdrawnAt` (Terminal) |
 | `Expired` | Session reached max duration, was explicitly ended after approval, OR missed scheduled activation until after expiry | ❌ No | Session time exceeded, scheduled activation was missed until after expiry, OR explicitly expired | `expiresAt` (Terminal) |
@@ -40,8 +40,9 @@ Approval and rejection REST requests may omit the optional JSON body. When a bod
 | `ApprovalTimeout` | Pending session timed out awaiting approval | ❌ No | Pending session exceeded timeout threshold | `timeoutAt` (Terminal) |
 
 `WaitingForScheduledTime` sessions are not valid for access until their scheduled
-start is reached, but they still reserve a request slot. Duplicate request checks
-and session limits count them until they activate or expire.
+start is reached, but they reserve a request slot only while their expiry is
+present and in the future. Malformed zero-expiry scheduled sessions fail closed
+and do not reserve capacity.
 
 The review UI exposes approve/reject actions only while a session is `Pending`.
 `WaitingForScheduledTime` sessions are already approved and awaiting their
@@ -60,6 +61,9 @@ Once a session enters a terminal state (**Rejected**, **Withdrawn**, **Expired**
 - These states take absolute precedence over any timestamps
 - Even if timestamps appear valid, the session is not valid
 - The state field is the only determinant for terminal state detection
+- An `Approved` session with a missing or zero `expiresAt` fails closed and is revoked by cleanup; approval never grants unbounded access.
+- Expiry always revokes access at the exact boundary. A future extension is effective only when durably accepted before the prior boundary; writing a future timestamp after expiry cannot resurrect a terminal session.
+- While a session is `Approved`, `status.expiresAt` is immutable against extension. The validating webhook also covers `breakglasssessions/status`, so controller or administrative status writes cannot move a reached expiry into the future; terminal revocation may shorten it to the current time.
 - Automatic expiry routines re-check live state before writing terminal status, so a concurrent withdraw, rejection, drop, or cancellation keeps its original terminal audit reason.
 - Scheduled sessions whose `expiresAt` is already in the past when cleanup reaches their `scheduledStartTime` are marked `Expired` instead of being activated
 - Scheduled activation re-reads the live session before granting access and skips the object if it has already left `WaitingForScheduledTime`.
@@ -446,7 +450,7 @@ GET /api/breakglassSessions?token=<session-name>
 Authorization: Bearer <token>
 ```
 
-When the token matches a session, the `200 OK` response contains `valid`, `canApprove`, and `alreadyActive`. `valid` is `false` when the session state is empty, for any terminal session state (`Rejected`, `Withdrawn`, `Expired`, `IdleExpired`, or `ApprovalTimeout`), for approved sessions whose `expiresAt` timestamp has passed, and for stale pending approvals whose `timeoutAt` timestamp has already elapsed. Stale pending approval links fail closed: `valid` and `canApprove` are both `false` until cleanup records the terminal `ApprovalTimeout` state.
+When the token matches a session, the `200 OK` response contains `valid`, `canApprove`, and `alreadyActive`. `valid` is `false` when the session state is empty, for any terminal session state (`Rejected`, `Withdrawn`, `Expired`, `IdleExpired`, or `ApprovalTimeout`), for approved sessions whose `expiresAt` is missing/zero or has passed, and for stale pending approvals whose `timeoutAt` timestamp has already elapsed. Stale pending approval links fail closed: `valid` and `canApprove` are both `false` until cleanup records the terminal `ApprovalTimeout` state.
 
 When the token does not match any session, the handler returns `404 Not Found` with:
 

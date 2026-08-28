@@ -160,6 +160,46 @@ func TestValidateUpdate_StateTransitionValidation(t *testing.T) {
 	}
 }
 
+func TestValidateUpdate_ExpiryCannotResurrectApprovedSession(t *testing.T) {
+	now := time.Now()
+	base := &BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "expiry-guard"},
+		Spec:       BreakglassSessionSpec{Cluster: "cluster1", User: "user@example.com", GrantedGroup: "group-a"},
+		Status: BreakglassSessionStatus{
+			State: SessionStateApproved, ExpiresAt: metav1.NewTime(now.Add(-time.Minute)),
+		},
+	}
+
+	postBoundary := base.DeepCopy()
+	postBoundary.Status.ExpiresAt = metav1.NewTime(now.Add(time.Hour))
+	if _, err := postBoundary.ValidateUpdate(context.Background(), base, postBoundary); err == nil {
+		t.Fatal("expected post-boundary future expiry write to be rejected")
+	}
+
+	shortened := base.DeepCopy()
+	shortened.Status.ExpiresAt = metav1.NewTime(now.Add(-2 * time.Minute))
+	if _, err := shortened.ValidateUpdate(context.Background(), base, shortened); err != nil {
+		t.Fatalf("expected active expiry shortening to remain valid: %v", err)
+	}
+
+	terminal := postBoundary.DeepCopy()
+	terminal.Status.State = SessionStateExpired
+	terminal.Status.ExpiresAt = metav1.NewTime(now)
+	if _, err := terminal.ValidateUpdate(context.Background(), base, terminal); err != nil {
+		t.Fatalf("expected terminal revocation with shortened expiry to remain valid: %v", err)
+	}
+
+	pending := base.DeepCopy()
+	pending.Status.State = SessionStatePending
+	pending.Status.ExpiresAt = metav1.Time{}
+	approved := pending.DeepCopy()
+	approved.Status.State = SessionStateApproved
+	approved.Status.ExpiresAt = metav1.NewTime(now.Add(time.Hour))
+	if _, err := approved.ValidateUpdate(context.Background(), pending, approved); err != nil {
+		t.Fatalf("expected initial pre-boundary approval expiry to be valid: %v", err)
+	}
+}
+
 func TestBreakglassSessionSetCondition(t *testing.T) {
 	bs := &BreakglassSession{}
 	cond := metav1.Condition{Type: "Ready", Status: metav1.ConditionTrue}

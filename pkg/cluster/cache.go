@@ -69,11 +69,12 @@ type cachedClientset struct {
 }
 
 type ClientProvider struct {
-	k8s  ctrlclient.Client
-	log  *zap.SugaredLogger
-	mu   sync.RWMutex
-	data map[string]*breakglassv1alpha1.ClusterConfig
-	rest map[string]*cachedRESTConfig
+	k8s        ctrlclient.Client
+	liveReader ctrlclient.Reader
+	log        *zap.SugaredLogger
+	mu         sync.RWMutex
+	data       map[string]*breakglassv1alpha1.ClusterConfig
+	rest       map[string]*cachedRESTConfig
 	// bareToCanonical maps bare-name cache keys to their canonical namespace/name keys.
 	// This allows evictClusterLocked to clean up bare-name aliases when the canonical entry is evicted.
 	bareToCanonical map[string]string
@@ -95,6 +96,15 @@ type ClientProvider struct {
 	// clientsets caches kubernetes.Clientset instances per cluster to avoid repeated
 	// creation during SubjectAccessReview, pod fetch, and namespace label lookups.
 	clientsets map[string]*cachedClientset
+}
+
+// WithLiveReader configures an uncached reader for final authorization fences.
+// The normal client remains cache-backed for hot-path lookups.
+func (p *ClientProvider) WithLiveReader(reader ctrlclient.Reader) *ClientProvider {
+	if reader != nil {
+		p.liveReader = reader
+	}
+	return p
 }
 
 func NewClientProvider(c ctrlclient.Client, log *zap.SugaredLogger) *ClientProvider {
@@ -207,6 +217,28 @@ func (p *ClientProvider) GetAcrossAllNamespaces(ctx context.Context, name string
 		return found, nil
 	}
 	return nil, fmt.Errorf("%w: %s", ErrClusterConfigNotFound, name)
+}
+
+// GetInNamespaceLive reads ClusterConfig directly from the backing client,
+// bypassing the provider cache. Authorization callers use this as a final
+// fence so a deleted or replaced ClusterConfig cannot leave a cached spoke
+// configuration authorizing a session.
+func (p *ClientProvider) GetInNamespaceLive(ctx context.Context, namespace, name string) (*breakglassv1alpha1.ClusterConfig, error) {
+	if p == nil || (p.k8s == nil && p.liveReader == nil) {
+		return nil, fmt.Errorf("cluster config live reader is not configured")
+	}
+	reader := p.liveReader
+	if reader == nil {
+		reader = p.k8s
+	}
+	var found breakglassv1alpha1.ClusterConfig
+	if err := reader.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &found); err != nil {
+		return nil, fmt.Errorf("get live clusterconfig %s/%s: %w", namespace, name, err)
+	}
+	if !found.DeletionTimestamp.IsZero() {
+		return nil, fmt.Errorf("ClusterConfig %s/%s is being deleted", namespace, name)
+	}
+	return &found, nil
 }
 
 // GetInNamespace fetches a ClusterConfig by metadata.name within the provided namespace.

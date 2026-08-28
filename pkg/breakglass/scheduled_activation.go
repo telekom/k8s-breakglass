@@ -132,7 +132,9 @@ func (ssa *ScheduledSessionActivator) ActivateScheduledSessions(ctxs ...context.
 			// Live state moved the scheduled start into the future after the list read.
 			continue
 		}
-		if !ses.Status.ExpiresAt.IsZero() && !now.Before(ses.Status.ExpiresAt.Time) {
+		// A scheduled session without an expiry is malformed and must fail
+		// closed rather than becoming an unbounded Approved session.
+		if ses.Status.ExpiresAt.IsZero() || !now.Before(ses.Status.ExpiresAt.Time) {
 			ssa.log.Infow("Expiring scheduled session whose validity ended before activation",
 				"session", ses.Name,
 				"namespace", ses.Namespace,
