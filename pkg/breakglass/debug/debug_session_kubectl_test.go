@@ -1731,6 +1731,8 @@ func TestKubectlDebugHandler_FinalMutationFencePreventsPrivilegedCreates(t *test
 				},
 			}
 			hubObject := session.DeepCopy()
+			mutateHub := false
+			mutationApplied := false
 			hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(hubObject).
 				WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 				WithInterceptorFuncs(interceptor.Funcs{
@@ -1738,16 +1740,32 @@ func TestKubectlDebugHandler_FinalMutationFencePreventsPrivilegedCreates(t *test
 						if err := cl.Get(ctx, key, obj, opts...); err != nil {
 							return err
 						}
-						scenario.mutate(obj.(*breakglassv1alpha1.DebugSession))
+						if mutateHub && !mutationApplied {
+							scenario.mutate(obj.(*breakglassv1alpha1.DebugSession))
+							mutationApplied = true
+						}
 						return nil
 					},
 				}).Build()
 			creates := 0
+			podReads := 0
 			targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "production"}},
 				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug-copies"}},
 				&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "production", UID: "source-pod-uid"}},
 			).WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+					if err := cl.Get(ctx, key, obj, opts...); err != nil {
+						return err
+					}
+					if _, ok := obj.(*corev1.Pod); ok && key.Name == "app" {
+						podReads++
+						if podReads == 2 {
+							mutateHub = true
+						}
+					}
+					return nil
+				},
 				Create: func(ctx context.Context, cl ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.CreateOption) error {
 					creates++
 					return cl.Create(ctx, obj, opts...)
@@ -1779,6 +1797,8 @@ func TestKubectlDebugHandler_FinalMutationFencePreventsPrivilegedCreates(t *test
 				},
 			}
 			hubObject := session.DeepCopy()
+			mutateHub := false
+			mutationApplied := false
 			hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(hubObject).
 				WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 				WithInterceptorFuncs(interceptor.Funcs{
@@ -1786,15 +1806,31 @@ func TestKubectlDebugHandler_FinalMutationFencePreventsPrivilegedCreates(t *test
 						if err := cl.Get(ctx, key, obj, opts...); err != nil {
 							return err
 						}
-						scenario.mutate(obj.(*breakglassv1alpha1.DebugSession))
+						if mutateHub && !mutationApplied {
+							scenario.mutate(obj.(*breakglassv1alpha1.DebugSession))
+							mutationApplied = true
+						}
 						return nil
 					},
 				}).Build()
 			creates := 0
+			nodeReads := 0
 			targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug"}},
 				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1", UID: "node-fence-uid"}},
 			).WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+					if err := cl.Get(ctx, key, obj, opts...); err != nil {
+						return err
+					}
+					if _, ok := obj.(*corev1.Node); ok && key.Name == "worker-1" {
+						nodeReads++
+						if nodeReads == 2 {
+							mutateHub = true
+						}
+					}
+					return nil
+				},
 				Create: func(ctx context.Context, cl ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.CreateOption) error {
 					creates++
 					return cl.Create(ctx, obj, opts...)
@@ -1806,6 +1842,97 @@ func TestKubectlDebugHandler_FinalMutationFencePreventsPrivilegedCreates(t *test
 			assert.Error(t, err)
 			assert.Nil(t, debugPod)
 			assert.Zero(t, creates, "a revoked or expired session must not create a privileged Node debug Pod")
+		})
+	}
+}
+
+func TestKubectlDebugHandler_FinalMutationFencePreventsEphemeralUpdate(t *testing.T) {
+	scenarios := []struct {
+		name   string
+		mutate func(*breakglassv1alpha1.DebugSession)
+	}{
+		{
+			name: "expiry equality",
+			mutate: func(ds *breakglassv1alpha1.DebugSession) {
+				expired := metav1.Now()
+				ds.Status.ExpiresAt = &expired
+			},
+		},
+		{
+			name: "revocation",
+			mutate: func(ds *breakglassv1alpha1.DebugSession) {
+				ds.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+			},
+		},
+		{
+			name: "participant removal",
+			mutate: func(ds *breakglassv1alpha1.DebugSession) {
+				ds.Status.Participants = nil
+			},
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			scheme := newKubectlTestScheme()
+			expiresAt := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "ephemeral-fence-session", Namespace: "default", UID: "ephemeral-fence-session-uid"},
+				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster", RequestedBy: "owner@example.com"},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					State:        breakglassv1alpha1.DebugSessionStateActive,
+					ExpiresAt:    &expiresAt,
+					Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "debugger@example.com", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						Mode:         breakglassv1alpha1.DebugSessionModeKubectlDebug,
+						KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{Enabled: true, AllowedImages: []string{"busybox:*"}}},
+					},
+				},
+			}
+			hubObject := session.DeepCopy()
+			mutateHub := false
+			mutationApplied := false
+			hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(hubObject).
+				WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+						if err := cl.Get(ctx, key, obj, opts...); err != nil {
+							return err
+						}
+						if mutateHub && !mutationApplied {
+							scenario.mutate(obj.(*breakglassv1alpha1.DebugSession))
+							mutationApplied = true
+						}
+						return nil
+					},
+				}).Build()
+			podReads := 0
+			updates := 0
+			targetClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithObjects(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "production", UID: "target-pod-uid"}}).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+						if err := cl.Get(ctx, key, obj, opts...); err != nil {
+							return err
+						}
+						if _, ok := obj.(*corev1.Pod); ok && key.Name == "app" {
+							podReads++
+							if podReads == 2 {
+								mutateHub = true
+							}
+						}
+						return nil
+					},
+					SubResourceUpdate: func(ctx context.Context, cl ctrlclient.Client, subResourceName string, obj ctrlclient.Object, opts ...ctrlclient.SubResourceUpdateOption) error {
+						updates++
+						return cl.Update(ctx, obj)
+					},
+				}).Build()
+			handler := NewKubectlDebugHandlerWithReader(hubClient, hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+			err := handler.InjectEphemeralContainer(context.Background(), session.DeepCopy(), "production", "app", "debugger", "busybox:stable", nil, nil, "debugger@example.com")
+			assert.Error(t, err)
+			assert.Zero(t, updates, "a revoked or expired session must not update the target Pod")
 		})
 	}
 }

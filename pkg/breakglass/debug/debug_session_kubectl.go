@@ -375,19 +375,16 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 		}
 	}
 
-	// Re-read both authorization state and the target Pod immediately before
-	// constructing the subresource update. A replacement Pod must never receive
-	// a mutation based on the old object's identity.
-	live, err = h.liveSessionForMutation(ctx, ds, user)
-	if err != nil {
-		return err
-	}
-	ds = live
+	// Re-read the target Pod and complete its identity checks before the final
+	// authorization fence. No target read may occur after the live session check.
 	freshPod := &corev1.Pod{}
 	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: namespace, Name: podName}, freshPod); err != nil {
 		return fmt.Errorf("failed to re-read pod %s/%s before injection: %w", namespace, podName, err)
 	}
 	if freshPod.UID == "" || freshPod.UID != pod.UID {
+		return kubectlDebugPolicyErrorf("target pod %s/%s changed during injection authorization", namespace, podName)
+	}
+	if pod.ResourceVersion != "" && freshPod.ResourceVersion != "" && freshPod.ResourceVersion != pod.ResourceVersion {
 		return kubectlDebugPolicyErrorf("target pod %s/%s changed during injection authorization", namespace, podName)
 	}
 	for _, ec := range freshPod.Spec.EphemeralContainers {
@@ -414,6 +411,16 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 
 	// Add the ephemeral container
 	freshPod.Spec.EphemeralContainers = append(freshPod.Spec.EphemeralContainers, ephemeralContainer)
+
+	// This must be the last slow operation before the target mutation. Any
+	// expiry, revocation, participant removal, or approved-plan change observed
+	// here prevents the update; native Kubernetes requests already admitted by
+	// the target API remain outside this boundary.
+	live, err = h.liveSessionForMutation(ctx, ds, user)
+	if err != nil {
+		return err
+	}
+	ds = live
 
 	// Update the pod using SubResource for ephemeral containers
 	if err := targetClient.SubResource("ephemeralcontainers").Update(ctx, freshPod); err != nil {
@@ -555,15 +562,8 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	copyPod.ResourceVersion = ""
 	copyPod.UID = ""
 
-	// Target reads above are only a candidate window. Re-read the hub session
-	// immediately before the privileged target create, then fence the source
-	// Pod identity as well. A revoked/expired session or replaced source Pod
-	// must never result in a copy being created.
-	live, err := h.liveSessionForMutation(ctx, ds, user)
-	if err != nil {
-		return nil, err
-	}
-	ds = live
+	// Re-read the source Pod and complete its identity checks before the final
+	// authorization fence. No target read may occur after the live session check.
 	freshOriginalPod := &corev1.Pod{}
 	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: originalNamespace, Name: originalPodName}, freshOriginalPod); err != nil {
 		return nil, fmt.Errorf("failed to re-read pod %s/%s before copy: %w", originalNamespace, originalPodName, err)
@@ -571,6 +571,16 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	if freshOriginalPod.UID == "" || originalPod.UID == "" || freshOriginalPod.UID != originalPod.UID {
 		return nil, kubectlDebugPolicyErrorf("source pod %s/%s changed during copy authorization", originalNamespace, originalPodName)
 	}
+	if originalPod.ResourceVersion != "" && freshOriginalPod.ResourceVersion != "" && freshOriginalPod.ResourceVersion != originalPod.ResourceVersion {
+		return nil, kubectlDebugPolicyErrorf("source pod %s/%s changed during copy authorization", originalNamespace, originalPodName)
+	}
+
+	// This must be the last slow operation before the privileged target create.
+	live, err := h.liveSessionForMutation(ctx, ds, user)
+	if err != nil {
+		return nil, err
+	}
+	ds = live
 
 	// Create the copy pod using Create (not SSA) because each pod copy must be unique
 	if err := targetClient.Create(ctx, copyPod); err != nil {
@@ -753,15 +763,8 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 		},
 	}
 
-	// All target reads and pod construction above are only a candidate window.
-	// Re-read the hub session and target Node immediately before creating the
-	// privileged hostPath Pod. This prevents expiry, revocation, participant
-	// removal, or Node replacement during the read window from becoming access.
-	live, err := h.liveSessionForMutation(ctx, ds, user)
-	if err != nil {
-		return nil, err
-	}
-	ds = live
+	// Re-read the target Node and complete its identity checks before the final
+	// authorization fence. No target read may occur after the live session check.
 	freshNode := &corev1.Node{}
 	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: nodeName}, freshNode); err != nil {
 		return nil, fmt.Errorf("failed to re-read node %s before debug pod creation: %w", nodeName, err)
@@ -769,6 +772,16 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	if node.UID == "" || freshNode.UID == "" || node.UID != freshNode.UID {
 		return nil, kubectlDebugPolicyErrorf("node %s changed during debug pod authorization", nodeName)
 	}
+	if node.ResourceVersion != "" && freshNode.ResourceVersion != "" && freshNode.ResourceVersion != node.ResourceVersion {
+		return nil, kubectlDebugPolicyErrorf("node %s changed during debug pod authorization", nodeName)
+	}
+
+	// This must be the last slow operation before the privileged target create.
+	live, err := h.liveSessionForMutation(ctx, ds, user)
+	if err != nil {
+		return nil, err
+	}
+	ds = live
 
 	// Create the pod using Create (not SSA) because each debug pod must be unique
 	if err := targetClient.Create(ctx, debugPod); err != nil {
