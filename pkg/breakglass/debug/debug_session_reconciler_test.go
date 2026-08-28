@@ -1206,6 +1206,56 @@ func TestDebugSessionReconciler_HandleActiveDoesNotMarkRenewedSessionExpiringSoo
 	assert.Empty(t, updated.Status.Message)
 }
 
+func TestDebugSessionReconciler_HandleActiveExpiresWhenRecoveryFails(t *testing.T) {
+	scheme := testScheme()
+	expiredAt := metav1.NewTime(time.Now().Add(-time.Minute))
+	session := newTestDebugSession("expired-recovery-session", "test-template", "test-cluster", "user@example.com")
+	session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	session.Status.ExpiresAt = &expiredAt
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{
+		Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+			ID:    "prepared-op",
+			Kind:  "ephemeral-container",
+			State: breakglassv1alpha1.KubectlDebugOperationPrepared,
+			TargetPod: breakglassv1alpha1.KubectlDebugOperationTargetPod{
+				Namespace: "default",
+				Name:      "target-pod",
+				UID:       "target-uid",
+			},
+			EphemeralContainer: breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{
+				Name:                  "debugger",
+				Image:                 "busybox:latest",
+				Command:               []string{"sh"},
+				SecurityContextDigest: "digest",
+				TTY:                   true,
+				Stdin:                 true,
+			},
+			RequestedBy: "user@example.com",
+			PreparedAt:  metav1.Now(),
+		}},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	controller := &DebugSessionController{
+		log:    zap.NewNop().Sugar(),
+		client: fakeClient,
+	}
+
+	result, err := controller.handleActive(context.Background(), session.DeepCopy())
+	require.NoError(t, err)
+	assert.Equal(t, ExpiredSessionRequeue, result.RequeueAfter)
+
+	var updated breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, updated.Status.State)
+	assert.Equal(t, "Session expired", updated.Status.Message)
+}
+
 func TestDebugSessionReconciler_KubectlDebugStatus(t *testing.T) {
 	scheme := testScheme()
 

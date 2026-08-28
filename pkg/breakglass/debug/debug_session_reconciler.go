@@ -357,7 +357,6 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 	kubectlHandler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
 	if err := kubectlHandler.RecoverPendingKubectlDebugOperations(ctx, ds); err != nil {
 		log.Warnw("Failed to recover prepared kubectl-debug operations", "error", err)
-		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
 
 	// Emit expiring-soon status message when within grace period
