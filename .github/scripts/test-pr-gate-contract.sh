@@ -41,27 +41,46 @@ write_fixture "$fixture_root/redirected-review-request.http" $'HTTP/2 302 Found\
 test "$("$contract" request-date "$fixture_root/redirected-review-request.http")" = 'Fri, 28 Aug 2026 07:14:18 GMT' ||
   fail "final HTTP response Date was not selected"
 
-write_fixture "$fixture_root/effective-rules.json" '[
-  {"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test","integration_id":15368}]}},
+write_fixture "$fixture_root/effective-rules.json" '[[
   {"type":"pull_request","parameters":{"required_approving_review_count":1,"require_code_owner_review":true}},
-  {"type":"required_workflows","parameters":{"workflows":[{"path":".github/workflows/test.yml","ref":"main"}]}},
+  {"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/test.yml","ref":"main"}]}}
+], [
+  {"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test","integration_id":15368}]}},
   {"type":"required_deployments","parameters":{"required_deployment_environments":["staging"]}},
-  {"type":"required_code_scanning","parameters":{"required_code_scanning_tools":[{"tool":"CodeQL"}]}},
+  {"type":"code_scanning","parameters":{"required_code_scanning_tools":[{"tool":"CodeQL"}]}},
   {"type":"required_signatures","parameters":{}}
-]'
+]]'
 write_fixture "$fixture_root/protection.json" '{"required_status_checks":{"checks":[],"contexts":[]}}'
 "$contract" inventory-policy github.com telekom/k8s-breakglass main \
   "$fixture_root/effective-rules.json" "$fixture_root/protection.json" "$fixture_root/inventory.json"
 jq -e '.schema == 2 and (.requiredCheckRuns == [{"context":"test","appId":15368}]) and .mergeStateRequired' \
   "$fixture_root/inventory.json" >/dev/null || fail "supported rules were not inventoried"
 
-write_fixture "$fixture_root/unknown-rule.json" '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test","integration_id":15368}]}},{"type":"commit_message_pattern","parameters":{"operator":"regex","pattern":".*"}}]'
+write_fixture "$fixture_root/unknown-rule.json" '[[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test","integration_id":15368}]}}],[{"type":"commit_message_pattern","parameters":{"operator":"regex","pattern":".*"}}]]'
 expect_failure "$contract" inventory-policy github.com telekom/k8s-breakglass main \
   "$fixture_root/unknown-rule.json" "$fixture_root/protection.json" "$fixture_root/ignored.json"
 
 write_fixture "$fixture_root/legacy-protection.json" '{"required_status_checks":{"checks":[],"contexts":["test"]}}'
 expect_failure "$contract" inventory-policy github.com telekom/k8s-breakglass main \
   "$fixture_root/effective-rules.json" "$fixture_root/legacy-protection.json" "$fixture_root/ignored.json"
+
+# Empty ruleset pages are valid API output. A real classic branch-protection
+# requirement must still produce a complete, usable inventory.
+write_fixture "$fixture_root/empty-effective-rules.json" '[[], []]'
+write_fixture "$fixture_root/classic-protection.json" '{
+  "required_status_checks":{"checks":[{"context":"test","app_id":15368}],"contexts":[]},
+  "required_pull_request_reviews":{"required_approving_review_count":1,"require_code_owner_reviews":true},
+  "required_conversation_resolution":{"enabled":true}
+}'
+"$contract" inventory-policy github.com telekom/k8s-breakglass main \
+  "$fixture_root/empty-effective-rules.json" "$fixture_root/classic-protection.json" "$fixture_root/classic-inventory.json"
+jq -e '.effectiveRules == [] and (.classicBranchProtectionRules | length) == 3 and
+  .requiredCheckRuns == [{"context":"test","appId":15368}]' \
+  "$fixture_root/classic-inventory.json" >/dev/null || fail "classic branch protection was not inventoried"
+
+write_fixture "$fixture_root/empty-protection.json" '{}'
+expect_failure "$contract" inventory-policy github.com telekom/k8s-breakglass main \
+  "$fixture_root/empty-effective-rules.json" "$fixture_root/empty-protection.json" "$fixture_root/ignored.json"
 
 write_fixture "$fixture_root/repository.json" '{
   "id": 42,
@@ -112,6 +131,12 @@ write_fixture "$fixture_root/statuses.json" '[]'
   "$fixture_root/statuses.json" "$fixture_root/verified.json"
 jq -e '.verified == true and (.acceptedHeads | index("source-head")) != null and (.acceptedHeads | index("synthetic-candidate")) != null' \
   "$fixture_root/verified.json" >/dev/null || fail "exact source-head evidence was not accepted"
+
+"$contract" verify-checks "$fixture_root/identity.json" "$fixture_root/classic-inventory.json" \
+  "$fixture_root/repository.json" "$fixture_root/runs.json" "$fixture_root/suites.json" \
+  "$fixture_root/statuses.json" "$fixture_root/classic-verified.json"
+jq -e '.verified == true' "$fixture_root/classic-verified.json" >/dev/null ||
+  fail "classic branch-protection evidence was not accepted"
 
 # The active workflow/deployment/code-scanning/signature rules are accepted
 # only while GitHub's own exact-PR aggregate predicate remains policy-clean.

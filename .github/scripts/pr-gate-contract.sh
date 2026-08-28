@@ -106,13 +106,40 @@ inventory_policy() {
   jq -n -e --arg host "$host" --arg repository "$repository" --arg baseRef "$base_ref" \
     --slurpfile effective "$effective" --slurpfile protection "$protection" '
     def rules:
-      if ($effective | length) == 1 and ($effective[0] | type) == "array" then $effective[0]
-      elif ($effective | length) == 1 and ($effective[0] | type) == "object" and
-           ($effective[0].rules | type) == "array" then $effective[0].rules
-      else error("malformed effective rules") end;
+      # `gh api --paginate --slurp` writes one array per API page, wrapped in
+      # a single JSON array. Keep every page: a required rule may be on a
+      # later page rather than the first one.
+      if ($effective | length) == 1 and ($effective[0] | type) == "array" and
+           all($effective[0][]; type == "array") then
+        [ $effective[0][] | .[] ]
+      else error("malformed paginated effective-rules response") end;
     def protection: $protection[0];
-    def rule_checks:
-      [rules[] | select(.type == "required_status_checks") |
+    def has_classic_status_checks:
+      (protection.required_status_checks | type) == "object" and
+      (((protection.required_status_checks.checks // []) | length) > 0 or
+       ((protection.required_status_checks.contexts // []) | length) > 0);
+    def classic_rules:
+      [
+        if has_classic_status_checks then
+          {type: "required_status_checks", source: "classic_branch_protection",
+           parameters: protection.required_status_checks}
+        else empty end,
+        if (protection.required_pull_request_reviews | type) == "object" then
+          {type: "pull_request", source: "classic_branch_protection",
+           parameters: protection.required_pull_request_reviews}
+        else empty end,
+        if protection.required_conversation_resolution.enabled == true then
+          {type: "pull_request", source: "classic_branch_protection",
+           parameters: protection.required_conversation_resolution}
+        else empty end,
+        if protection.required_signatures.enabled == true or
+           protection.required_commit_signatures.enabled == true then
+          {type: "required_signatures", source: "classic_branch_protection",
+           parameters: (protection.required_signatures // protection.required_commit_signatures)}
+        else empty end
+      ];
+    def rule_checks($all_rules):
+      [$all_rules[] | select(.type == "required_status_checks") |
        (.parameters.required_status_checks // [])[]? |
        {context: (.context // ""), appId: (.integration_id // .app_id)}];
     def protection_checks:
@@ -121,20 +148,22 @@ inventory_policy() {
     def legacy_contexts: (protection.required_status_checks.contexts // []);
     def supported_type:
       . == "required_status_checks" or . == "pull_request" or
-      . == "required_signatures" or . == "required_workflows" or
-      . == "required_deployments" or . == "required_code_scanning";
+      . == "required_signatures" or . == "workflows" or
+      . == "required_deployments" or . == "code_scanning";
     rules as $rules |
-    (rule_checks + protection_checks) as $checks |
+    classic_rules as $classic_rules |
+    ($rules + $classic_rules) as $all_rules |
+    (rule_checks($all_rules) + protection_checks) as $checks |
     ([ $checks[] | .context ] | unique) as $names |
     (legacy_contexts) as $legacy |
-    ([ $rules[] | select(.type | supported_type | not) |
+    ([ $all_rules[] | select(.type | supported_type | not) |
        {type, source, parameters} ]) as $unsupported |
     if ($host | test("\\A[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\\z"; "i") | not) then
       error("invalid GitHub host")
     elif ($repository | test("\\A[^/ ]+/[^/ ]+\\z") | not) then
       error("invalid repository")
-    elif ($rules | type) != "array" or ($rules | length) == 0 then
-      error("no effective server rules; refusing a no-op policy")
+    elif ($all_rules | type) != "array" or ($all_rules | length) == 0 then
+      error("no active ruleset or classic branch-protection requirement; refusing a no-op policy")
     elif ($unsupported | length) != 0 then
       error("unsupported active rule(s): " + ($unsupported | tojson) +
             "; extend the verifier for these exact type/parameters or remove the rule before using this gate")
@@ -151,6 +180,7 @@ inventory_policy() {
       repository: $repository,
       baseRef: $baseRef,
       effectiveRules: $rules,
+      classicBranchProtectionRules: $classic_rules,
       branchProtection: protection,
       requiredCheckRuns: ($checks | sort_by(.context, .appId)),
       mergeStateRequired: true,
@@ -158,9 +188,9 @@ inventory_policy() {
         required_status_checks: "exact App-bound check run and exact PR-associated suite",
         pull_request: "GitHub reviewDecision plus zero unresolved review threads",
         required_signatures: "exact PR final GitHub merge-state predicate",
-        required_workflows: "exact PR final GitHub merge-state predicate",
+        workflows: "exact PR final GitHub merge-state predicate",
         required_deployments: "exact PR final GitHub merge-state predicate",
-        required_code_scanning: "exact PR final GitHub merge-state predicate"
+        code_scanning: "exact PR final GitHub merge-state predicate"
       },
       legacyStatusPolicy: "reject-required-contexts-without-provider-binding"
     }

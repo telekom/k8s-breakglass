@@ -213,8 +213,11 @@ Fetch GitHub's effective branch rules and branch-protection object into every
 snapshot. Inventory **every active rule type and its parameters**, not only
 status checks. The contract validates App-bound required checks directly and
 uses GitHub's exact-PR final `MERGEABLE`/`CLEAN` predicate in addition for
-active `pull_request`, `required_signatures`, `required_workflows`,
-`required_deployments`, and `required_code_scanning` rules. A merge queue,
+active `pull_request`, `required_signatures`, `workflows`,
+`required_deployments`, and `code_scanning` rules. The effective ruleset pages
+and classic branch-protection requirements form one inventory: a repository
+with no rulesets but an App-bound classic required check is supported, while a
+repository with neither fails closed. A merge queue,
 linear-history rule, or any unrecognised active type fails closed with the
 server-provided type/parameters in the error: extend the verifier for that
 type, or remove/replace the rule before using this ready/merge gate. It never
@@ -393,7 +396,10 @@ collect_policy_inventory() {
   gh_api --paginate --slurp \
     "repos/$base_repo/rules/branches/$base_ref" \
     >"$gate_dir/effective-rules.json"
-  jq -e 'type == "array" and length > 0 and all(.[]; type == "array")' \
+  # `--slurp` yields an array of arrays, one per pagination page. Empty
+  # ruleset pages are valid; the contract combines them with classic branch
+  # protection and rejects only when both sources are genuinely no-op.
+  jq -e 'type == "array" and all(.[]; type == "array")' \
     "$gate_dir/effective-rules.json" >/dev/null ||
     fail "missing or malformed effective branch rules"
 
