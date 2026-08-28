@@ -64,6 +64,21 @@ output declaration input. The image writes a deterministic-entry-order tar.gz
 archive, an identical manifest sidecar, and finally /output/artifact.ready as
 the uploader hand-off. Existing destinations are rejected.
 
+Every manifest also carries the controller-supplied `artifact_id`, the
+`session` object (`namespace`, `name`, and immutable `uid`), the
+`redaction` profile/version, and a sorted `declared_outputs` list baked into
+the selected recipe. These values are bounded and required; the collector
+rejects missing or malformed `BREAKGLASS_ARTIFACT_*` identity variables and
+the uploader rejects unknown, duplicate, or replay-shaped manifest fields.
+The complete manifest is capped at 32 KiB; session strings are DNS-bounded,
+the artifact ID is `dsa-` plus 24 lowercase hex characters, and the immutable
+session UID is capped at 128 bytes.
+The sidecar is copied byte-for-byte into the archive, and the uploader sends
+that same immutable manifest. The controller must independently compare the
+artifact ID, session UID/namespace/name, recipe and inputs, redaction profile,
+and declared outputs with the one-time lease and live session; manifest values
+are bindings to check, not authorization by themselves.
+
 ## Deployment-owned output volume
 
 The controller or chart owns the `/output` emptyDir hand-off. Its pod-level
@@ -117,7 +132,9 @@ cancellation are terminal. The image carries the pinned builder's CA bundle
 for normal certificate verification and ignores
 ambient `SSL_CERT_FILE`, `SSL_CERT_DIR`, and proxy variables. HTTP endpoints
 are never accepted; development fixtures must use certificate-verified HTTPS
-with an injected test transport.
+with an injected test transport. A per-attempt request timeout is retryable
+only while the total operation context still has budget; once that context is
+done, cancellation/deadline is terminal.
 
 Before the first PUT and again after every successful response, the uploader
 streams and validates the gzip/tar contract: exactly one embedded manifest

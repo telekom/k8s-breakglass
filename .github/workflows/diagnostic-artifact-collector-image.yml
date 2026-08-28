@@ -41,8 +41,10 @@ jobs:
       - name: Install Kind
         env:
           KIND_VERSION: v0.32.0
+          KIND_SHA256: 50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54
         run: |
           curl -Lo ./kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          printf '%s  %s\n' "${KIND_SHA256}" kind | sha256sum --check --status -
           chmod 0755 ./kind
           sudo mv ./kind /usr/local/bin/kind
           kind version

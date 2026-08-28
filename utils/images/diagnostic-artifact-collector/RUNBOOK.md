@@ -27,6 +27,19 @@ values before creating output. The same cap is enforced by the uploader. Set
 `BREAKGLASS_ARTIFACT_UPLOAD_TIMEOUT` only when needed; it must be a positive
 Go duration no longer than 1 hour.
 
+The controller must also inject the bounded identity variables
+`BREAKGLASS_ARTIFACT_ID`, `BREAKGLASS_ARTIFACT_SESSION_NAMESPACE`,
+`BREAKGLASS_ARTIFACT_SESSION_NAME`, `BREAKGLASS_ARTIFACT_SESSION_UID`,
+`BREAKGLASS_ARTIFACT_REDACTION_PROFILE`, and
+`BREAKGLASS_ARTIFACT_REDACTION_VERSION`. The resulting manifest contains
+those values as `artifact_id`, `session`, and `redaction`, plus the sorted
+recipe-owned `declared_outputs`. The collector fails closed when any identity
+value is missing or malformed. The controller independently matches every
+identity, recipe/input, and output value against the one-time lease and live
+DebugSession; these fields are not trusted as authorization claims.
+The complete manifest is capped at 32 KiB; identity strings and the sorted
+output list have fixed byte bounds enforced by the image.
+
 The uploader is invoked as upload --archive /output/artifact.tar.gz. It checks
 that the marker, manifest sidecar, and archive are regular files with one of the two
 approved hand-off identities (UID/GID 65532 mode 0600, or root:65532 mode
@@ -40,7 +53,9 @@ non-TLS URLs, empty
 tokens, arbitrary headers, and methods are rejected. The URL and token are
 never logged. Only the image-pinned CA bundle is trusted; ambient
 `SSL_CERT_FILE`, `SSL_CERT_DIR`, and proxy variables are ignored. The
-controller should always issue a non-empty HMAC token.
+controller should always issue a non-empty HMAC token. A per-attempt request
+timeout is retried only while the total operation context remains live; a
+completed operation deadline is terminal.
 Before a PUT and after each successful response, the uploader streams the
 gzip/tar archive and verifies the embedded manifest, payload paths, duplicate
 members, source counts/bytes, and raw payload checksum against the private

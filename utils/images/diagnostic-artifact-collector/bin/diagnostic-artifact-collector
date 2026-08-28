@@ -54,6 +54,12 @@ MAX_SOURCE_CANDIDATES=4096
 MAX_SOURCE_ENTRIES=8192
 MAX_AGE_MINUTES=1440
 DETAIL_LEVEL=basic
+artifact_id=
+session_namespace=
+session_name=
+session_uid=
+redaction_profile=
+redaction_version=
 max_total_bytes=
 max_file_bytes=
 max_files=
@@ -148,6 +154,27 @@ validate_recipe_inputs() {
 			*) fail "DIAGNOSTIC_DETAIL_LEVEL must be basic or extended" ;;
 		esac
 	fi
+}
+
+validate_identity() {
+	artifact_id=$(printenv BREAKGLASS_ARTIFACT_ID 2>/dev/null || true)
+	session_namespace=$(printenv BREAKGLASS_ARTIFACT_SESSION_NAMESPACE 2>/dev/null || true)
+	session_name=$(printenv BREAKGLASS_ARTIFACT_SESSION_NAME 2>/dev/null || true)
+	session_uid=$(printenv BREAKGLASS_ARTIFACT_SESSION_UID 2>/dev/null || true)
+	redaction_profile=$(printenv BREAKGLASS_ARTIFACT_REDACTION_PROFILE 2>/dev/null || true)
+	redaction_version=$(printenv BREAKGLASS_ARTIFACT_REDACTION_VERSION 2>/dev/null || true)
+	printf '%s\n' "$artifact_id" | awk 'length($0) == 28 && $0 ~ /^dsa-[0-9a-f]{24}$/ { exit 0 } { exit 1 }' ||
+		fail "BREAKGLASS_ARTIFACT_ID is not a valid controller artifact ID"
+	printf '%s\n' "$session_namespace" | awk 'length($0) > 0 && length($0) <= 63 && $0 ~ /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/ { exit 0 } { exit 1 }' ||
+		fail "BREAKGLASS_ARTIFACT_SESSION_NAMESPACE is not a valid namespace"
+	printf '%s\n' "$session_name" | awk -F. 'length($0) > 0 && length($0) <= 253 { for (i = 1; i <= NF; i++) if (length($i) == 0 || length($i) > 63 || $i !~ /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/) exit 1; exit 0 } { exit 1 }' ||
+		fail "BREAKGLASS_ARTIFACT_SESSION_NAME is not a valid session name"
+	printf '%s\n' "$session_uid" | awk 'length($0) > 0 && length($0) <= 128 && $0 ~ /^[A-Za-z0-9._:-]+$/ { exit 0 } { exit 1 }' ||
+		fail "BREAKGLASS_ARTIFACT_SESSION_UID is not a valid session UID"
+	printf '%s\n' "$redaction_profile" | awk 'length($0) > 0 && length($0) <= 128 && $0 ~ /^[A-Za-z0-9._-]+$/ { exit 0 } { exit 1 }' ||
+		fail "BREAKGLASS_ARTIFACT_REDACTION_PROFILE is invalid"
+	printf '%s\n' "$redaction_version" | awk 'length($0) <= 4 && $0 ~ /^[1-9][0-9]{0,3}$/ { exit 0 } { exit 1 }' ||
+		fail "BREAKGLASS_ARTIFACT_REDACTION_VERSION is invalid"
 }
 
 validate_environment() {
@@ -396,6 +423,11 @@ write_manifest() {
 		printf '  "schema_version": "diagnostic-artifact/v1",\n'
 		printf '  "recipe": "%s",\n' "$recipe"
 		printf '  "recipe_version": 1,\n'
+		printf '  "artifact_id": "%s",\n' "$artifact_id"
+		printf '  "session": {"namespace": "%s", "name": "%s", "uid": "%s"},\n' \
+			"$session_namespace" "$session_name" "$session_uid"
+		printf '  "redaction": {"profile": "%s", "version": %s},\n' \
+			"$redaction_profile" "$redaction_version"
 		if [ "$recipe" = crashdump-collection.v1 ]; then
 			printf '  "node": "%s",\n' "$node"
 		else
@@ -409,6 +441,13 @@ write_manifest() {
 			printf '\n    "detailLevel": "%s",\n    "maxArchiveBytes": %s\n' "$DETAIL_LEVEL" "$max_archive_bytes"
 		fi
 		printf '  },\n'
+		printf '  "declared_outputs": ['
+		if [ "$recipe" = crashdump-collection.v1 ]; then
+			printf '"files/coredumps/", "manifest.json", "stderr.log", "stdout.log"'
+		else
+			printf '"files/system-summary.json", "manifest.json", "stderr.log", "stdout.log"'
+		fi
+		printf '],\n'
 		printf '  "payload_sha256": "%s",\n' "$payload_sha256"
 		printf '  "file_count": %s,\n' "$file_count"
 		printf '  "bytes": %s,\n' "$total_bytes"
@@ -519,6 +558,7 @@ fi
 if [ "$#" -eq 5 ] && [ "$1" = collect ] && [ "$2" = --recipe ] && [ "$4" = --output ]; then
 	validate_fixed_output "$5"
 	validate_environment
+	validate_identity
 	validate_max_archive_bytes
 	assert_output_boundary
 	stage=$(mktemp -d "$OUTPUT_DIR/.staging.XXXXXX")
@@ -530,6 +570,7 @@ fi
 if [ "$#" -eq 3 ] && [ "$1" = upload ] && [ "$2" = --archive ]; then
 	validate_fixed_output "$3"
 	validate_environment
+	validate_identity
 	validate_max_archive_bytes
 	upload "$3"
 	exit 0

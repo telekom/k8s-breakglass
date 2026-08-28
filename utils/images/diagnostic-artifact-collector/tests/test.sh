@@ -53,7 +53,14 @@ run_image() {
 	# the fixed Docker flags and temporary fixture mounts below.
 	# shellcheck disable=SC2086
 	docker run --rm --read-only --cap-drop=ALL --network none \
-		--user 65532:65532 --volume "$output:/output" $docker_opts "$image" "$@"
+		--user 65532:65532 \
+		--env BREAKGLASS_ARTIFACT_ID=dsa-0123456789abcdef01234567 \
+		--env BREAKGLASS_ARTIFACT_SESSION_NAMESPACE=breakglass-test \
+		--env BREAKGLASS_ARTIFACT_SESSION_NAME=diagnostic-smoke \
+		--env BREAKGLASS_ARTIFACT_SESSION_UID=uid-0123456789abcdef \
+		--env BREAKGLASS_ARTIFACT_REDACTION_PROFILE=credential-text.v1 \
+		--env BREAKGLASS_ARTIFACT_REDACTION_VERSION=1 \
+		--volume "$output:/output" $docker_opts "$image" "$@"
 }
 
 run_image_default() {
@@ -69,6 +76,12 @@ run_image_default() {
 	shift
 	# shellcheck disable=SC2086
 	docker run --rm --read-only --cap-drop=ALL --network none \
+		--env BREAKGLASS_ARTIFACT_ID=dsa-0123456789abcdef01234567 \
+		--env BREAKGLASS_ARTIFACT_SESSION_NAMESPACE=breakglass-test \
+		--env BREAKGLASS_ARTIFACT_SESSION_NAME=diagnostic-smoke \
+		--env BREAKGLASS_ARTIFACT_SESSION_UID=uid-0123456789abcdef \
+		--env BREAKGLASS_ARTIFACT_REDACTION_PROFILE=credential-text.v1 \
+		--env BREAKGLASS_ARTIFACT_REDACTION_VERSION=1 \
 		--volume "$output:/output" $docker_opts "$image" "$@"
 }
 
@@ -86,7 +99,14 @@ run_root_collector() {
 	# This is the real hand-off contract: no CAP_CHOWN workaround is allowed.
 	# shellcheck disable=SC2086
 	docker run --rm --read-only --cap-drop=ALL --network none \
-		--user 0:65532 --volume "$output:/output" $docker_opts "$image" "$@"
+		--user 0:65532 \
+		--env BREAKGLASS_ARTIFACT_ID=dsa-0123456789abcdef01234567 \
+		--env BREAKGLASS_ARTIFACT_SESSION_NAMESPACE=breakglass-test \
+		--env BREAKGLASS_ARTIFACT_SESSION_NAME=diagnostic-smoke \
+		--env BREAKGLASS_ARTIFACT_SESSION_UID=uid-0123456789abcdef \
+		--env BREAKGLASS_ARTIFACT_REDACTION_PROFILE=credential-text.v1 \
+		--env BREAKGLASS_ARTIFACT_REDACTION_VERSION=1 \
+		--volume "$output:/output" $docker_opts "$image" "$@"
 }
 
 assert_handoff_metadata() {
@@ -311,6 +331,12 @@ done
 # broken before any network operation is attempted.
 if uploader_result=$(docker run --rm --read-only --cap-drop=ALL --network none \
 	--user 65532:65532 --volume "$root_volume:/output" \
+	--env BREAKGLASS_ARTIFACT_ID=dsa-0123456789abcdef01234567 \
+	--env BREAKGLASS_ARTIFACT_SESSION_NAMESPACE=breakglass-test \
+	--env BREAKGLASS_ARTIFACT_SESSION_NAME=diagnostic-smoke \
+	--env BREAKGLASS_ARTIFACT_SESSION_UID=uid-0123456789abcdef \
+	--env BREAKGLASS_ARTIFACT_REDACTION_PROFILE=credential-text.v1 \
+	--env BREAKGLASS_ARTIFACT_REDACTION_VERSION=1 \
 	--env BREAKGLASS_ARTIFACT_UPLOAD_URL=http://upload.example.invalid/object \
 	--env BREAKGLASS_ARTIFACT_UPLOAD_TOKEN=behavioral-test-token \
 	--entrypoint /usr/local/bin/diagnostic-artifact-upload "$image" \
@@ -330,6 +356,12 @@ fi
 # is exactly the archive produced by the collector.
 docker volume create "$upload_volume" >/dev/null
 docker run --rm --read-only --cap-drop=ALL --network none \
+	--env BREAKGLASS_ARTIFACT_ID=dsa-0123456789abcdef01234567 \
+	--env BREAKGLASS_ARTIFACT_SESSION_NAMESPACE=breakglass-test \
+	--env BREAKGLASS_ARTIFACT_SESSION_NAME=diagnostic-smoke \
+	--env BREAKGLASS_ARTIFACT_SESSION_UID=uid-0123456789abcdef \
+	--env BREAKGLASS_ARTIFACT_REDACTION_PROFILE=credential-text.v1 \
+	--env BREAKGLASS_ARTIFACT_REDACTION_VERSION=1 \
 	--volume "$upload_volume:/output" "$image" \
 	collect --recipe system-summary.v1 --output /output/artifact.tar.gz
 expected_upload="$test_dir/expected-upload.tar.gz"
@@ -398,6 +430,12 @@ https_port=$(cat "$https_port_file")
 if attacker_ca_result=$(docker run --rm --read-only --cap-drop=ALL \
 	--add-host=host.docker.internal:host-gateway \
 	--volume "$upload_volume:/output" --volume "$https_cert:/tmp/attacker-ca.pem:ro" \
+	--env BREAKGLASS_ARTIFACT_ID=dsa-0123456789abcdef01234567 \
+	--env BREAKGLASS_ARTIFACT_SESSION_NAMESPACE=breakglass-test \
+	--env BREAKGLASS_ARTIFACT_SESSION_NAME=diagnostic-smoke \
+	--env BREAKGLASS_ARTIFACT_SESSION_UID=uid-0123456789abcdef \
+	--env BREAKGLASS_ARTIFACT_REDACTION_PROFILE=credential-text.v1 \
+	--env BREAKGLASS_ARTIFACT_REDACTION_VERSION=1 \
 	--env SSL_CERT_FILE=/tmp/attacker-ca.pem --env SSL_CERT_DIR=/tmp \
 	--env BREAKGLASS_ARTIFACT_UPLOAD_URL="https://host.docker.internal:$https_port/exact-object" \
 	--env BREAKGLASS_ARTIFACT_UPLOAD_TOKEN=packaged-upload-token \
@@ -466,6 +504,12 @@ docker run --rm --read-only --cap-drop=ALL \
 	--add-host=host.docker.internal:host-gateway \
 	--volume "$upload_volume:/output" \
 	--volume "$https_cert:/etc/ssl/certs/ca-certificates.crt:ro" \
+	--env BREAKGLASS_ARTIFACT_ID=dsa-0123456789abcdef01234567 \
+	--env BREAKGLASS_ARTIFACT_SESSION_NAMESPACE=breakglass-test \
+	--env BREAKGLASS_ARTIFACT_SESSION_NAME=diagnostic-smoke \
+	--env BREAKGLASS_ARTIFACT_SESSION_UID=uid-0123456789abcdef \
+	--env BREAKGLASS_ARTIFACT_REDACTION_PROFILE=credential-text.v1 \
+	--env BREAKGLASS_ARTIFACT_REDACTION_VERSION=1 \
 	--env HTTP_PROXY="http://host.docker.internal:$proxy_port" \
 	--env HTTPS_PROXY="http://host.docker.internal:$proxy_port" \
 	--env BREAKGLASS_ARTIFACT_UPLOAD_URL="https://host.docker.internal:$https_port/exact-object" \
@@ -492,12 +536,18 @@ docker run --rm --read-only --cap-drop=ALL --network none \
 	--user 65532:65532 --volume "$upload_volume:/output" --entrypoint /bin/sh "$image" -ceu '
 		rm -f /output/artifact.tar.gz /output/artifact.manifest.json /output/artifact.ready
 		truncate -s 16777217 /output/artifact.tar.gz
-		printf "%s\n" '\''{"schema_version":"diagnostic-artifact/v1","recipe":"system-summary.v1","recipe_version":1,"node":null,"archive_format":"tar.gz","inputs":{"maxArchiveBytes":16777216,"detailLevel":"basic"},"payload_sha256":"0000000000000000000000000000000000000000000000000000000000000000","file_count":1,"bytes":1,"exit_code":0,"exit_semantics":"0=complete; non-zero=not published"}'\'' > /output/artifact.manifest.json
+		printf "%s\n" '\''{"schema_version":"diagnostic-artifact/v1","recipe":"system-summary.v1","recipe_version":1,"artifact_id":"dsa-0123456789abcdef01234567","session":{"namespace":"breakglass-test","name":"diagnostic-smoke","uid":"uid-0123456789abcdef"},"redaction":{"profile":"credential-text.v1","version":1},"node":null,"archive_format":"tar.gz","inputs":{"maxArchiveBytes":16777216,"detailLevel":"basic"},"declared_outputs":["files/system-summary.json","manifest.json","stderr.log","stdout.log"],"payload_sha256":"0000000000000000000000000000000000000000000000000000000000000000","file_count":1,"bytes":1,"exit_code":0,"exit_semantics":"0=complete; non-zero=not published"}'\'' > /output/artifact.manifest.json
 		printf "ready\n" > /output/artifact.ready
 		chmod 0600 /output/artifact.tar.gz /output/artifact.manifest.json /output/artifact.ready
 	'
 if summary_limit_result=$(docker run --rm --read-only --cap-drop=ALL --network none \
 	--user 65532:65532 --volume "$upload_volume:/output" \
+	--env BREAKGLASS_ARTIFACT_ID=dsa-0123456789abcdef01234567 \
+	--env BREAKGLASS_ARTIFACT_SESSION_NAMESPACE=breakglass-test \
+	--env BREAKGLASS_ARTIFACT_SESSION_NAME=diagnostic-smoke \
+	--env BREAKGLASS_ARTIFACT_SESSION_UID=uid-0123456789abcdef \
+	--env BREAKGLASS_ARTIFACT_REDACTION_PROFILE=credential-text.v1 \
+	--env BREAKGLASS_ARTIFACT_REDACTION_VERSION=1 \
 	--env BREAKGLASS_ARTIFACT_UPLOAD_URL=https://upload.example.invalid/object \
 	--env BREAKGLASS_ARTIFACT_UPLOAD_TOKEN=packaged-upload-token \
 	--entrypoint /usr/local/bin/diagnostic-artifact-upload "$image" \
@@ -523,7 +573,14 @@ expect_failure() {
 	shift
 	# shellcheck disable=SC2086
 	if docker run --rm --read-only --cap-drop=ALL --network none \
-		--user 65532:65532 --volume "$output:/output" $docker_opts "$image" "$@"; then
+		--user 65532:65532 \
+		--env BREAKGLASS_ARTIFACT_ID=dsa-0123456789abcdef01234567 \
+		--env BREAKGLASS_ARTIFACT_SESSION_NAMESPACE=breakglass-test \
+		--env BREAKGLASS_ARTIFACT_SESSION_NAME=diagnostic-smoke \
+		--env BREAKGLASS_ARTIFACT_SESSION_UID=uid-0123456789abcdef \
+		--env BREAKGLASS_ARTIFACT_REDACTION_PROFILE=credential-text.v1 \
+		--env BREAKGLASS_ARTIFACT_REDACTION_VERSION=1 \
+		--volume "$output:/output" $docker_opts "$image" "$@"; then
 		echo "unsafe invocation unexpectedly succeeded: $*" >&2
 		exit 1
 	fi
@@ -607,6 +664,10 @@ expect_preserved_collision artifact.ready
 expect_failure "$test_dir/missing-node" --volume "$test_dir/coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
 expect_failure "$test_dir/bad-node" --env DIAGNOSTIC_NODE='../escape' \
 	--volume "$test_dir/coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
+expect_failure "$test_dir/missing-artifact-identity" --env BREAKGLASS_ARTIFACT_SESSION_UID= \
+	-- collect --recipe system-summary.v1 --output /output/artifact.tar.gz
+expect_failure "$test_dir/leading-zero-redaction-version" --env BREAKGLASS_ARTIFACT_REDACTION_VERSION=01 \
+	-- collect --recipe system-summary.v1 --output /output/artifact.tar.gz
 
 mkdir "$test_dir/symlink-coredumps" "$test_dir/symlink-output"
 ln -s "$test_dir/coredumps/nested/panic.dump" "$test_dir/symlink-coredumps/link.dump"

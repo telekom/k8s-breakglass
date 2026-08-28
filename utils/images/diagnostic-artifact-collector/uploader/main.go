@@ -30,18 +30,19 @@ import (
 )
 
 const (
-	archivePath      = "/output/artifact.tar.gz"
-	readyMarker      = "ready\n"
-	maxArchiveBytes  = int64(536870912)
-	maxTokenBytes    = 4096
-	uploadTimeout    = 10 * time.Minute
-	maxAttempts      = 3
-	maxManifestBytes = int64(65536)
-	retryDelay       = 250 * time.Millisecond
-	pinnedCABundle   = "/etc/ssl/certs/ca-certificates.crt"
-	tarBlockSize     = int64(512)
-	maxTarMembers    = int64(8192)
-	maxTarMetadata   = int64(1 << 20)
+	archivePath           = "/output/artifact.tar.gz"
+	readyMarker           = "ready\n"
+	maxArchiveBytes       = int64(536870912)
+	maxTokenBytes         = 4096
+	uploadTimeout         = 10 * time.Minute
+	maxAttempts           = 3
+	maxManifestBytes      = int64(32768)
+	retryDelay            = 250 * time.Millisecond
+	pinnedCABundle        = "/etc/ssl/certs/ca-certificates.crt"
+	tarBlockSize          = int64(512)
+	maxTarMembers         = int64(8192)
+	maxTarMetadata        = int64(1 << 20)
+	maxPendingTarMetadata = int64(1 << 20)
 )
 
 var (
@@ -64,9 +65,19 @@ func (err *uploadResponseError) Error() string {
 }
 
 type artifactManifest struct {
-	SchemaVersion string  `json:"schema_version"`
-	Recipe        string  `json:"recipe"`
-	RecipeVersion int     `json:"recipe_version"`
+	SchemaVersion string `json:"schema_version"`
+	Recipe        string `json:"recipe"`
+	RecipeVersion int    `json:"recipe_version"`
+	ArtifactID    string `json:"artifact_id"`
+	Session       struct {
+		Namespace string `json:"namespace"`
+		Name      string `json:"name"`
+		UID       string `json:"uid"`
+	} `json:"session"`
+	Redaction struct {
+		Profile string `json:"profile"`
+		Version int    `json:"version"`
+	} `json:"redaction"`
 	Node          *string `json:"node"`
 	ArchiveFormat string  `json:"archive_format"`
 	Inputs        struct {
@@ -75,11 +86,12 @@ type artifactManifest struct {
 		Node            *string `json:"node"`
 		DetailLevel     *string `json:"detailLevel"`
 	} `json:"inputs"`
-	PayloadSHA256 string `json:"payload_sha256"`
-	FileCount     int64  `json:"file_count"`
-	Bytes         int64  `json:"bytes"`
-	ExitCode      int    `json:"exit_code"`
-	ExitSemantics string `json:"exit_semantics"`
+	DeclaredOutputs []string `json:"declared_outputs"`
+	PayloadSHA256   string   `json:"payload_sha256"`
+	FileCount       int64    `json:"file_count"`
+	Bytes           int64    `json:"bytes"`
+	ExitCode        int      `json:"exit_code"`
+	ExitSemantics   string   `json:"exit_semantics"`
 }
 
 func main() {
@@ -94,19 +106,40 @@ func main() {
 }
 
 func upload(ctx context.Context) error {
+	if err := contextErr(ctx); err != nil {
+		return err
+	}
+	timeout, err := configuredUploadTimeout()
+	if err != nil {
+		return err
+	}
+	operationCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if err := contextErr(operationCtx); err != nil {
+		return err
+	}
 	ready, err := os.Lstat(readyPath)
 	if err != nil {
+		if contextError := contextErr(operationCtx); contextError != nil {
+			return contextError
+		}
 		return errors.New("artifact.ready is required before upload")
+	}
+	if err := contextErr(operationCtx); err != nil {
+		return err
 	}
 	if !isPrivateRegular(ready) {
 		return errors.New("artifact.ready is not a regular private file")
 	}
-	readyFile, err := openPrivateNoFollow(readyPath, ready)
+	readyFile, err := openPrivateNoFollowContext(operationCtx, readyPath, ready)
 	if err != nil {
 		return fmt.Errorf("open artifact.ready without following links: %w", err)
 	}
-	marker, readErr := io.ReadAll(io.LimitReader(readyFile, int64(len(readyMarker)+1)))
+	marker, readErr := io.ReadAll(&contextLimitedReader{ctx: operationCtx, reader: readyFile, remaining: int64(len(readyMarker) + 1)})
 	closeErr := readyFile.Close()
+	if err := contextErr(operationCtx); err != nil {
+		return err
+	}
 	if readErr != nil {
 		return errors.New("read artifact.ready marker")
 	}
@@ -120,8 +153,14 @@ func upload(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	manifestContract, manifestBytes, recipeMaxBytes, err := readArtifactManifest(filepath.Join(filepath.Dir(artifactPath), "artifact.manifest.json"))
+	if err := contextErr(operationCtx); err != nil {
+		return err
+	}
+	manifestContract, manifestBytes, recipeMaxBytes, err := readArtifactManifest(operationCtx, filepath.Join(filepath.Dir(artifactPath), "artifact.manifest.json"))
 	if err != nil {
+		return err
+	}
+	if err := validateManifestEnvironment(manifestContract); err != nil {
 		return err
 	}
 	if configuredMaxBytes > recipeMaxBytes {
@@ -129,7 +168,13 @@ func upload(ctx context.Context) error {
 	}
 	archive, err := os.Lstat(artifactPath)
 	if err != nil {
+		if contextError := contextErr(operationCtx); contextError != nil {
+			return contextError
+		}
 		return fmt.Errorf("inspect archive: %w", err)
+	}
+	if err := contextErr(operationCtx); err != nil {
+		return err
 	}
 	if !isPrivateRegular(archive) {
 		return errors.New("archive is not a regular private file")
@@ -137,31 +182,37 @@ func upload(ctx context.Context) error {
 	if archive.Size() < 1 || archive.Size() > configuredMaxBytes {
 		return fmt.Errorf("archive size %d is outside the bounded upload limit", archive.Size())
 	}
-	file, err := openArchiveNoFollow(archive)
+	file, err := openArchiveNoFollowContext(operationCtx, archive)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = file.Close() }()
+	if err := contextErr(operationCtx); err != nil {
+		return err
+	}
 	endpoint, err := uploadURL()
 	if err != nil {
+		return err
+	}
+	if err := contextErr(operationCtx); err != nil {
 		return err
 	}
 	token, err := uploadToken()
 	if err != nil {
 		return err
 	}
-	timeout, err := configuredUploadTimeout()
-	if err != nil {
+	if err := contextErr(operationCtx); err != nil {
 		return err
 	}
-	uploadCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	if err := verifyArchiveContract(uploadCtx, file, archive.Size(), manifestContract, manifestBytes); err != nil {
+	if err := verifyArchiveContract(operationCtx, file, archive.Size(), manifestContract, manifestBytes); err != nil {
 		return err
 	}
 	client := newUploadHTTPClient()
 	if client == nil {
 		return errors.New("upload HTTP client is unavailable")
+	}
+	if err := contextErr(operationCtx); err != nil {
+		return err
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return errRedirect
@@ -170,16 +221,19 @@ func upload(ctx context.Context) error {
 		client.Timeout = timeout
 	}
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		err = putOnce(uploadCtx, client, endpoint, token, file, archive.Size(), manifestContract, manifestBytes)
+		err = putOnce(operationCtx, client, endpoint, token, file, archive.Size(), manifestContract, manifestBytes)
 		if err == nil {
 			return nil
 		}
 		if !retryable(err) || attempt == maxAttempts {
 			return err
 		}
+		if contextError := contextErr(operationCtx); contextError != nil {
+			return contextError
+		}
 		select {
-		case <-uploadCtx.Done():
-			return uploadCtx.Err()
+		case <-operationCtx.Done():
+			return operationCtx.Err()
 		case <-time.After(retryDelay):
 		}
 	}
@@ -187,7 +241,7 @@ func upload(ctx context.Context) error {
 }
 
 func recipeArchiveLimit(path string) (int64, error) {
-	contract, _, limit, err := readArtifactManifest(path)
+	contract, _, limit, err := readArtifactManifest(context.Background(), path)
 	if err != nil {
 		return 0, err
 	}
@@ -197,23 +251,38 @@ func recipeArchiveLimit(path string) (int64, error) {
 	return limit, nil
 }
 
-func readArtifactManifest(path string) (artifactManifest, []byte, int64, error) {
+func readArtifactManifest(ctx context.Context, path string) (artifactManifest, []byte, int64, error) {
 	var contract artifactManifest
+	if err := contextErr(ctx); err != nil {
+		return contract, nil, 0, err
+	}
 	manifest, err := os.Lstat(path)
 	if err != nil {
+		if contextError := contextErr(ctx); contextError != nil {
+			return contract, nil, 0, contextError
+		}
 		return contract, nil, 0, errors.New("artifact manifest is required before upload")
 	}
 	if !isPrivateRegular(manifest) || manifest.Size() < 1 || manifest.Size() > maxManifestBytes {
 		return contract, nil, 0, errors.New("artifact manifest is not a bounded private file")
 	}
-	file, err := openPrivateNoFollow(path, manifest)
+	if err := contextErr(ctx); err != nil {
+		return contract, nil, 0, err
+	}
+	file, err := openPrivateNoFollowContext(ctx, path, manifest)
 	if err != nil {
 		return contract, nil, 0, fmt.Errorf("open artifact manifest without following links: %w", err)
 	}
-	manifestBytes, readErr := io.ReadAll(io.LimitReader(file, maxManifestBytes+1))
+	manifestBytes, readErr := io.ReadAll(&contextLimitedReader{ctx: ctx, reader: file, remaining: maxManifestBytes + 1})
 	closeErr := file.Close()
+	if err := contextErr(ctx); err != nil {
+		return contract, nil, 0, err
+	}
 	if readErr != nil || closeErr != nil || int64(len(manifestBytes)) != manifest.Size() {
 		return contract, nil, 0, errors.New("read artifact manifest")
+	}
+	if err := rejectDuplicateJSONKeys(manifestBytes); err != nil {
+		return contract, nil, 0, errors.New("artifact manifest is invalid")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(manifestBytes))
 	decoder.DisallowUnknownFields()
@@ -231,12 +300,88 @@ func readArtifactManifest(path string) (artifactManifest, []byte, int64, error) 
 	return contract, manifestBytes, limit, nil
 }
 
+// rejectDuplicateJSONKeys walks the JSON token stream without decoding into a
+// map (which would silently discard duplicate keys). Manifest fields are a
+// signed contract, so ambiguous last-key-wins decoding is not acceptable.
+func rejectDuplicateJSONKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := walkJSONValue(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("JSON has trailing content")
+		}
+		return err
+	}
+	return nil
+}
+
+func walkJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, isDelimiter := token.(json.Delim)
+	if !isDelimiter {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			key, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			keyString, ok := key.(string)
+			if !ok {
+				return errors.New("JSON object key is not a string")
+			}
+			if _, duplicate := seen[keyString]; duplicate {
+				return errors.New("JSON object contains a duplicate key")
+			}
+			seen[keyString] = struct{}{}
+			if err := walkJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim('}') {
+			return errors.New("JSON object is not closed")
+		}
+	case '[':
+		for decoder.More() {
+			if err := walkJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim(']') {
+			return errors.New("JSON array is not closed")
+		}
+	default:
+		return errors.New("JSON delimiter is invalid")
+	}
+	return nil
+}
+
 func validateManifestContract(contract artifactManifest) (int64, error) {
 	if contract.SchemaVersion != "diagnostic-artifact/v1" || contract.RecipeVersion != 1 ||
 		contract.ArchiveFormat != "tar.gz" || contract.ExitCode != 0 ||
 		contract.ExitSemantics != "0=complete; non-zero=not published" ||
 		len(contract.PayloadSHA256) != sha256.Size*2 || contract.FileCount < 0 || contract.Bytes < 0 {
 		return 0, errors.New("artifact manifest identity is invalid")
+	}
+	if !validArtifactID(contract.ArtifactID) ||
+		!validDNSName(contract.Session.Namespace, 63) ||
+		!validDNSName(contract.Session.Name, 253) ||
+		!validOpaqueIdentity(contract.Session.UID, 128) ||
+		!validRedactionProfile(contract.Redaction.Profile) ||
+		contract.Redaction.Version < 1 || contract.Redaction.Version > 9999 ||
+		!validDeclaredOutputs(contract.DeclaredOutputs) {
+		return 0, errors.New("artifact manifest authorization identity is invalid")
 	}
 	if _, err := hex.DecodeString(contract.PayloadSHA256); err != nil {
 		return 0, errors.New("artifact manifest payload checksum is invalid")
@@ -262,10 +407,126 @@ func validateManifestContract(contract artifactManifest) (int64, error) {
 	default:
 		return 0, errors.New("artifact manifest recipe is not allowlisted")
 	}
+	expectedOutputs := []string{"files/system-summary.json", "manifest.json", "stderr.log", "stdout.log"}
+	if contract.Recipe == "crashdump-collection.v1" {
+		expectedOutputs = []string{"files/coredumps/", "manifest.json", "stderr.log", "stdout.log"}
+	}
+	if !sameStrings(contract.DeclaredOutputs, expectedOutputs) {
+		return 0, errors.New("artifact manifest declared outputs do not match the recipe")
+	}
 	if contract.Inputs.MaxArchiveBytes < 1 || contract.Inputs.MaxArchiveBytes > immutableLimit {
 		return 0, errors.New("artifact manifest archive limit exceeds the immutable recipe ceiling")
 	}
 	return contract.Inputs.MaxArchiveBytes, nil
+}
+
+func validateManifestEnvironment(contract artifactManifest) error {
+	values := map[string]string{
+		"BREAKGLASS_ARTIFACT_ID":                contract.ArtifactID,
+		"BREAKGLASS_ARTIFACT_SESSION_NAMESPACE": contract.Session.Namespace,
+		"BREAKGLASS_ARTIFACT_SESSION_NAME":      contract.Session.Name,
+		"BREAKGLASS_ARTIFACT_SESSION_UID":       contract.Session.UID,
+		"BREAKGLASS_ARTIFACT_REDACTION_PROFILE": contract.Redaction.Profile,
+		"BREAKGLASS_ARTIFACT_REDACTION_VERSION": strconv.Itoa(contract.Redaction.Version),
+	}
+	for name, expected := range values {
+		actual, present := os.LookupEnv(name)
+		if !present || actual != expected {
+			return fmt.Errorf("artifact manifest does not match %s", name)
+		}
+	}
+	return nil
+}
+
+func sameStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func validArtifactID(value string) bool {
+	if len(value) != len("dsa-")+24 || !strings.HasPrefix(value, "dsa-") {
+		return false
+	}
+	for _, character := range value[len("dsa-"):] {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func validDNSName(value string, maximum int) bool {
+	if len(value) == 0 || len(value) > maximum || strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") {
+		return false
+	}
+	for _, label := range strings.Split(value, ".") {
+		if len(label) == 0 || len(label) > 63 ||
+			!isDNSAlphaNumeric(rune(label[0])) || !isDNSAlphaNumeric(rune(label[len(label)-1])) {
+			return false
+		}
+		for _, character := range label {
+			if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isDNSAlphaNumeric(character rune) bool {
+	return (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9')
+}
+
+func validOpaqueIdentity(value string, maximum int) bool {
+	if len(value) == 0 || len(value) > maximum {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'A' || character > 'Z') && (character < 'a' || character > 'z') &&
+			(character < '0' || character > '9') && !strings.ContainsRune("._:-", character) {
+			return false
+		}
+	}
+	return true
+}
+
+func validRedactionProfile(value string) bool {
+	if len(value) == 0 || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'A' || character > 'Z') && (character < 'a' || character > 'z') &&
+			(character < '0' || character > '9') && !strings.ContainsRune("._-", character) {
+			return false
+		}
+	}
+	return true
+}
+
+func validDeclaredOutputs(outputs []string) bool {
+	if len(outputs) > 32 {
+		return false
+	}
+	for index, output := range outputs {
+		if len(output) == 0 || len(output) > 512 || strings.HasPrefix(output, "/") || strings.Contains(output, "//") {
+			return false
+		}
+		clean := strings.TrimSuffix(output, "/")
+		if clean == "" || strings.Contains(clean, "\\") || path.Clean(clean) != clean || strings.HasPrefix(clean, "../") || clean == ".." {
+			return false
+		}
+		if index > 0 && outputs[index-1] >= output {
+			return false
+		}
+	}
+	return true
 }
 
 func configuredMaxArchiveBytes() (int64, error) {
@@ -333,12 +594,23 @@ func isPrivateRegular(info os.FileInfo) bool {
 // The output directory is shared with the uploader, so opening by path without
 // O_NOFOLLOW would permit a symlink swap to exfiltrate a file.
 func openPrivateNoFollow(path string, expected os.FileInfo) (*os.File, error) {
+	return openPrivateNoFollowContext(context.Background(), path, expected)
+}
+
+func openPrivateNoFollowContext(ctx context.Context, path string, expected os.FileInfo) (*os.File, error) {
+	if err := contextErr(ctx); err != nil {
+		return nil, err
+	}
 	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, err
 	}
 	if fd < 0 {
 		return nil, errors.New("open private file returned an invalid descriptor")
+	}
+	if err := contextErr(ctx); err != nil {
+		_ = syscall.Close(fd)
+		return nil, err
 	}
 	file := os.NewFile(uintptr(fd), path)
 	if file == nil {
@@ -350,6 +622,10 @@ func openPrivateNoFollow(path string, expected os.FileInfo) (*os.File, error) {
 		_ = file.Close()
 		return nil, fmt.Errorf("stat opened file: %w", statErr)
 	}
+	if err := contextErr(ctx); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
 	if !isPrivateRegular(info) || !os.SameFile(expected, info) || info.Size() != expected.Size() {
 		_ = file.Close()
 		return nil, errors.New("file changed while it was opened")
@@ -358,7 +634,11 @@ func openPrivateNoFollow(path string, expected os.FileInfo) (*os.File, error) {
 }
 
 func openArchiveNoFollow(expected os.FileInfo) (*os.File, error) {
-	file, err := openPrivateNoFollow(artifactPath, expected)
+	return openArchiveNoFollowContext(context.Background(), expected)
+}
+
+func openArchiveNoFollowContext(ctx context.Context, expected os.FileInfo) (*os.File, error) {
+	file, err := openPrivateNoFollowContext(ctx, artifactPath, expected)
 	if err != nil {
 		return nil, fmt.Errorf("open archive without following links: %w", err)
 	}
@@ -379,6 +659,9 @@ func verifyArchiveContract(ctx context.Context, file *os.File, size int64, contr
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("rewind archive for contract verification: %w", err)
 	}
+	if err := contextErr(ctx); err != nil {
+		return err
+	}
 	compressed := &contextLimitedReader{ctx: ctx, reader: file, remaining: size}
 	reader, err := gzip.NewReader(compressed)
 	if err != nil {
@@ -391,6 +674,7 @@ func verifyArchiveContract(ctx context.Context, file *os.File, size int64, contr
 	seen := make(map[string]struct{})
 	var pending []byte
 	var pendingName string
+	var pendingBytes int64
 	var members, payloadFiles, payloadBytes int64
 	var foundStdout, foundStderr, foundFiles, foundCrashDir, foundManifest bool
 	var embedded []byte
@@ -462,9 +746,23 @@ func verifyArchiveContract(ctx context.Context, file *os.File, size int64, contr
 			if padded > maxTarMetadata {
 				return errors.New("archive extension record is too large")
 			}
-			metadata := make([]byte, padded)
+			recordBytes, err := tarRecordSize(padded)
+			if err != nil {
+				return errors.New("archive extension record is invalid")
+			}
+			if recordBytes > maxPendingTarMetadata || pendingBytes > maxPendingTarMetadata-recordBytes {
+				return errors.New("archive extension metadata exceeds the bounded contract")
+			}
+			if recordBytes > int64(maxInt()) {
+				return errors.New("archive extension record is too large")
+			}
+			metadata := make([]byte, int(recordBytes))
 			copy(metadata, header)
-			if err := readFullContext(ctx, reader, metadata[tarBlockSize:]); err != nil {
+			memberEnd, err := tarMemberEnd(recordBytes, member.size, int64(len(metadata)))
+			if err != nil {
+				return errors.New("archive extension record is invalid")
+			}
+			if err := readFullContext(ctx, reader, metadata[int(tarBlockSize):]); err != nil {
 				if contextError := contextErr(ctx); contextError != nil {
 					return contextError
 				}
@@ -474,11 +772,12 @@ func verifyArchiveContract(ctx context.Context, file *os.File, size int64, contr
 			if tarBytes > maxTarBytes {
 				return errors.New("archive extension record is too large")
 			}
-			name, err := parseTarExtension(member.typeflag, metadata[tarBlockSize:member.size])
+			name, err := parseTarExtension(member.typeflag, metadata[int(tarBlockSize):int(memberEnd)])
 			if err != nil {
 				return err
 			}
 			pending = append(pending, metadata...)
+			pendingBytes += recordBytes
 			if name != "" {
 				pendingName = name
 			}
@@ -498,11 +797,14 @@ func verifyArchiveContract(ctx context.Context, file *os.File, size int64, contr
 		}
 		seen[name] = struct{}{}
 		includeInPayloadHash := name != "manifest.json"
-		if includeInPayloadHash {
+		if len(pending) > 0 {
 			hash.Write(pending)
+		}
+		if includeInPayloadHash {
 			hash.Write(header)
 		}
 		pending = nil
+		pendingBytes = 0
 		pendingName = ""
 
 		switch {
@@ -518,7 +820,7 @@ func verifyArchiveContract(ctx context.Context, file *os.File, size int64, contr
 				return errors.New("archive contains an unexpected directory")
 			}
 		case name == "manifest.json":
-			if foundManifest || member.size > maxManifestBytes {
+			if foundManifest || member.size > maxManifestBytes || member.size > int64(maxInt()) {
 				return errors.New("archive embedded manifest is invalid")
 			}
 			foundManifest = true
@@ -580,6 +882,9 @@ func verifyArchiveContract(ctx context.Context, file *os.File, size int64, contr
 	if contract.Recipe == "crashdump-collection.v1" && !foundCrashDir {
 		return errors.New("archive is missing the crashdump directory")
 	}
+	if err := rejectDuplicateJSONKeys(embedded); err != nil {
+		return errors.New("archive embedded manifest is invalid")
+	}
 	if !bytes.Equal(embedded, sidecar) {
 		return errors.New("archive embedded manifest differs from sidecar")
 	}
@@ -588,6 +893,9 @@ func verifyArchiveContract(ctx context.Context, file *os.File, size int64, contr
 	}
 	if !strings.EqualFold(hex.EncodeToString(hash.Sum(nil)), contract.PayloadSHA256) {
 		return errors.New("archive payload checksum does not match the manifest")
+	}
+	if err := contextErr(ctx); err != nil {
+		return err
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return errors.New("archive could not be rewound after contract verification")
@@ -717,11 +1025,25 @@ func parseTarHeader(header []byte) (tarMember, error) {
 	if len(header) != int(tarBlockSize) {
 		return member, errors.New("tar header has an invalid size")
 	}
+	// BusyBox tar (the image's fixed runtime) uses the historical POSIX
+	// spelling "ustar  \0", while archive/tar and GNU tar use
+	// "ustar\0000".  Accept only these two complete, known layouts; a
+	// partially matching magic/version must still fail closed.
+	if !bytes.Equal(header[257:265], []byte("ustar\x0000")) &&
+		!bytes.Equal(header[257:265], []byte("ustar  \x00")) {
+		return member, errors.New("tar header magic or version is invalid")
+	}
 	if err := verifyTarChecksum(header); err != nil {
 		return member, err
 	}
-	name := tarString(header[0:100])
-	prefix := tarString(header[345:500])
+	name, err := tarString(header[0:100])
+	if err != nil {
+		return member, errors.New("tar member name padding is invalid")
+	}
+	prefix, err := tarString(header[345:500])
+	if err != nil {
+		return member, errors.New("tar member prefix padding is invalid")
+	}
 	if prefix != "" {
 		name = prefix + "/" + name
 	}
@@ -788,11 +1110,41 @@ func parseTarNumber(field []byte) (int64, error) {
 	return value, nil
 }
 
-func tarString(field []byte) string {
+func tarString(field []byte) (string, error) {
 	if index := bytes.IndexByte(field, 0); index >= 0 {
+		for _, value := range field[index+1:] {
+			if value != 0 {
+				return "", errors.New("tar string has nonzero padding")
+			}
+		}
 		field = field[:index]
 	}
-	return string(field)
+	return string(field), nil
+}
+
+func maxInt() int {
+	return int(^uint(0) >> 1)
+}
+
+func tarRecordSize(contentPadded int64) (int64, error) {
+	if contentPadded < 0 || contentPadded > int64(^uint64(0)>>1)-tarBlockSize {
+		return 0, errors.New("tar record size overflows")
+	}
+	return tarBlockSize + contentPadded, nil
+}
+
+func tarMemberEnd(padded, size, available int64) (int64, error) {
+	if padded < tarBlockSize || size < 0 || size > padded-tarBlockSize {
+		return 0, errors.New("tar member size is outside its padded record")
+	}
+	if size > int64(^uint64(0)>>1)-tarBlockSize {
+		return 0, errors.New("tar member size overflows")
+	}
+	end := tarBlockSize + size
+	if end > available {
+		return 0, errors.New("tar member size exceeds its record")
+	}
+	return end, nil
 }
 
 func paddedTarSize(size int64) (int64, error) {
@@ -817,19 +1169,29 @@ func parseTarExtension(typeflag byte, content []byte) (string, error) {
 			return "", errors.New("tar long-name extension is invalid")
 		}
 		name := string(content[:nameEnd])
-		if len(name) > 4096 {
+		if len(name) > 4096 || strings.IndexFunc(name, func(r rune) bool { return r < 0x20 || r > 0x7e }) >= 0 {
 			return "", errors.New("tar long-name extension is invalid")
 		}
 		return name, nil
 	case 'x':
 		var name string
+		foundPath := false
 		for len(content) > 0 {
 			space := bytes.IndexByte(content, ' ')
 			if space <= 0 || space >= len(content) {
 				return "", errors.New("tar PAX extension is invalid")
 			}
-			length, err := strconv.Atoi(string(content[:space]))
-			if err != nil || length < space+3 || length > len(content) {
+			for _, digit := range content[:space] {
+				if digit < '0' || digit > '9' {
+					return "", errors.New("tar PAX extension length is invalid")
+				}
+			}
+			length64, err := strconv.ParseInt(string(content[:space]), 10, 64)
+			if err != nil || length64 > int64(maxInt()) {
+				return "", errors.New("tar PAX extension length is invalid")
+			}
+			length := int(length64)
+			if length < space+3 || length > len(content) {
 				return "", errors.New("tar PAX extension length is invalid")
 			}
 			record := content[:length]
@@ -841,10 +1203,20 @@ func parseTarExtension(typeflag byte, content []byte) (string, error) {
 				return "", errors.New("tar PAX extension record is invalid")
 			}
 			equal += space + 1
-			if string(record[space+1:equal]) == "path" {
-				name = string(record[equal+1 : length-1])
+			key := string(record[space+1 : equal])
+			if key != "path" || foundPath {
+				return "", errors.New("tar PAX extension key is not accepted")
 			}
+			value := record[equal+1 : length-1]
+			if len(value) == 0 || bytes.IndexByte(value, 0) >= 0 || strings.IndexFunc(string(value), func(r rune) bool { return r < 0x20 || r > 0x7e }) >= 0 {
+				return "", errors.New("tar PAX extension path is invalid")
+			}
+			name = string(value)
+			foundPath = true
 			content = content[length:]
+		}
+		if !foundPath {
+			return "", errors.New("tar PAX extension path is missing")
 		}
 		return name, nil
 	default:
@@ -938,15 +1310,24 @@ func uploadToken() (string, error) {
 }
 
 func putOnce(ctx context.Context, client *http.Client, endpoint *url.URL, token string, file *os.File, size int64, contract artifactManifest, sidecar []byte) error {
+	if err := contextErr(ctx); err != nil {
+		return err
+	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("rewind archive: %w", err)
+	}
+	if err := contextErr(ctx); err != nil {
+		return err
 	}
 	before, err := file.Stat()
 	if err != nil || !isPrivateRegular(before) || before.Size() != size {
 		return errors.New("archive changed before upload")
 	}
+	if err := contextErr(ctx); err != nil {
+		return err
+	}
 	uploadDigest := sha256.New()
-	reader := &countingReader{reader: io.TeeReader(io.LimitReader(file, size), uploadDigest)}
+	reader := &countingReader{reader: io.TeeReader(&contextLimitedReader{ctx: ctx, reader: file, remaining: size}, uploadDigest)}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint.String(), reader)
 	if err != nil {
 		return fmt.Errorf("create upload request: %w", err)
@@ -959,6 +1340,9 @@ func putOnce(ctx context.Context, client *http.Client, endpoint *url.URL, token 
 	}
 	response, err := client.Do(request)
 	if err != nil {
+		if contextError := contextErr(ctx); contextError != nil {
+			return contextError
+		}
 		if errors.Is(err, errRedirect) {
 			return errRedirect
 		}
@@ -968,7 +1352,9 @@ func putOnce(ctx context.Context, client *http.Client, endpoint *url.URL, token 
 		return fmt.Errorf("send upload: %w", err)
 	}
 	defer func() { _ = response.Body.Close() }()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1024))
+	if err := drainResponse(ctx, response.Body, 1024); err != nil {
+		return err
+	}
 	if response.StatusCode >= 300 && response.StatusCode < 400 {
 		return errRedirect
 	}
@@ -983,6 +1369,9 @@ func putOnce(ctx context.Context, client *http.Client, endpoint *url.URL, token 
 		return fmt.Errorf("archive contract changed after upload: %w", err)
 	}
 	after, statErr := file.Stat()
+	if contextError := contextErr(ctx); contextError != nil {
+		return contextError
+	}
 	if statErr != nil || !isPrivateRegular(after) || after.Size() != size || reader.n != size ||
 		!os.SameFile(before, after) || !before.ModTime().Equal(after.ModTime()) {
 		return errors.New("archive changed or was truncated during upload")
@@ -990,16 +1379,33 @@ func putOnce(ctx context.Context, client *http.Client, endpoint *url.URL, token 
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return errors.New("archive could not be verified after upload")
 	}
+	if err := contextErr(ctx); err != nil {
+		return err
+	}
 	verifiedDigest := sha256.New()
-	verifiedBytes, err := io.CopyN(verifiedDigest, file, size)
+	verifiedBytes, err := io.CopyN(verifiedDigest, &contextLimitedReader{ctx: ctx, reader: file, remaining: size}, size)
+	if contextError := contextErr(ctx); contextError != nil {
+		return contextError
+	}
 	if err != nil || verifiedBytes != size || !bytes.Equal(uploadDigest.Sum(nil), verifiedDigest.Sum(nil)) {
 		return errors.New("archive content changed during upload")
 	}
 	var extra [1]byte
-	if n, readErr := file.Read(extra[:]); n != 0 || (readErr != nil && !errors.Is(readErr, io.EOF)) {
+	extraReader := &contextLimitedReader{ctx: ctx, reader: file, remaining: 1}
+	if n, readErr := extraReader.Read(extra[:]); n != 0 || (readErr != nil && !errors.Is(readErr, io.EOF)) {
 		return errors.New("archive size changed during upload")
 	}
 	return nil
+}
+
+func drainResponse(ctx context.Context, body io.Reader, limit int64) error {
+	if _, err := io.Copy(io.Discard, &contextLimitedReader{ctx: ctx, reader: io.LimitReader(body, limit), remaining: limit}); err != nil {
+		if contextError := contextErr(ctx); contextError != nil {
+			return contextError
+		}
+		return fmt.Errorf("read upload response: %w", err)
+	}
+	return contextErr(ctx)
 }
 
 type countingReader struct {
@@ -1022,15 +1428,15 @@ func (err *uploadTransportError) Error() string { return err.cause.Error() }
 func (err *uploadTransportError) Unwrap() error { return err.cause }
 
 func transientTransport(err error) bool {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
-	}
 	var urlError *url.Error
 	if !errors.As(err, &urlError) {
 		return false
 	}
 	if urlError.Timeout() {
 		return true
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
 	}
 	return errors.Is(urlError.Err, syscall.ECONNRESET) ||
 		errors.Is(urlError.Err, syscall.ECONNREFUSED) ||

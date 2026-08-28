@@ -5,6 +5,7 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/ecdsa"
@@ -212,7 +213,7 @@ func TestUploadRejectsCorruptOrTamperedArchive(t *testing.T) {
 			name: "forged embedded manifest",
 			make: func(t *testing.T, path string, sidecar []byte) {
 				forged := append([]byte(nil), sidecar...)
-				forged[len(forged)-2] = 'x'
+				forged = bytes.Replace(forged, []byte(`"exit_code":0`), []byte(`"exit_code":1`), 1)
 				if err := os.WriteFile(path, gzipBytes(t, tarBytes(t, []byte("archive-bytes"), forged)), 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -529,6 +530,219 @@ func TestUploadRejectsManifestWithUnknownFields(t *testing.T) {
 	}
 }
 
+func TestManifestRejectsDuplicateJSONKeys(t *testing.T) {
+	manifestPath := filepath.Join(t.TempDir(), "artifact.manifest.json")
+	valid := string(systemSummaryManifest(16777216))
+	for name, body := range map[string]string{
+		"top-level": strings.Replace(valid, `"recipe":"system-summary.v1",`, `"recipe":"system-summary.v1","recipe":"crashdump-collection.v1",`, 1),
+		"nested":    strings.Replace(valid, `"detailLevel":"basic"`, `"detailLevel":"basic","detailLevel":"extended"`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := os.WriteFile(manifestPath, []byte(body), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := recipeArchiveLimit(manifestPath); err == nil || !strings.Contains(err.Error(), "manifest is invalid") {
+				t.Fatalf("recipeArchiveLimit() error = %v, want duplicate-key rejection", err)
+			}
+		})
+	}
+}
+
+func TestManifestRejectsUnboundOrForgedAuthorizationFields(t *testing.T) {
+	manifestPath := filepath.Join(t.TempDir(), "artifact.manifest.json")
+	valid := string(systemSummaryManifest(16777216))
+	for name, body := range map[string]string{
+		"artifact ID":       strings.Replace(valid, "dsa-0123456789abcdef01234567", "dsa-0123456789abcdef0123456!", 1),
+		"session namespace": strings.Replace(valid, `"namespace":"breakglass-test"`, `"namespace":"../other"`, 1),
+		"session UID":       strings.Replace(valid, `"uid":"uid-0123456789abcdef"`, `"uid":""`, 1),
+		"redaction profile": strings.Replace(valid, `"profile":"credential-text.v1"`, `"profile":"raw secrets"`, 1),
+		"redaction version": strings.Replace(valid, `"version":1`, `"version":0`, 1),
+		"unknown output":    strings.Replace(valid, `"files/system-summary.json","manifest.json","stderr.log","stdout.log"`, `"files/other.json","manifest.json","stderr.log","stdout.log"`, 1),
+		"duplicate output":  strings.Replace(valid, `"files/system-summary.json","manifest.json","stderr.log","stdout.log"`, `"files/system-summary.json","files/system-summary.json","stderr.log","stdout.log"`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := os.WriteFile(manifestPath, []byte(body), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := recipeArchiveLimit(manifestPath); err == nil {
+				t.Fatal("recipeArchiveLimit() unexpectedly accepted forged authorization fields")
+			}
+		})
+	}
+}
+
+func TestUploadRejectsManifestEnvironmentMismatch(t *testing.T) {
+	path, ready := uploadFixture(t, []byte("archive-bytes"))
+	oldPath, oldReady := artifactPath, readyPath
+	defer func() { artifactPath, readyPath = oldPath, oldReady }()
+	artifactPath, readyPath = path, ready
+	t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_URL", "https://upload.example.invalid/object")
+	t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_TOKEN", "one-time-token")
+	for name, value := range map[string]string{
+		"artifact":    "dsa-abcdefabcdefabcdefabcdef",
+		"session uid": "uid-replayed",
+		"redaction":   "unredacted.v1",
+	} {
+		t.Run(name, func(t *testing.T) {
+			switch name {
+			case "artifact":
+				t.Setenv("BREAKGLASS_ARTIFACT_ID", value)
+			case "session uid":
+				t.Setenv("BREAKGLASS_ARTIFACT_SESSION_UID", value)
+			case "redaction":
+				t.Setenv("BREAKGLASS_ARTIFACT_REDACTION_PROFILE", value)
+			}
+			if err := upload(context.Background()); err == nil || !strings.Contains(err.Error(), "does not match") {
+				t.Fatalf("upload() error = %v, want manifest/environment binding failure", err)
+			}
+		})
+	}
+}
+
+func TestEmbeddedManifestRejectsDuplicateJSONKeys(t *testing.T) {
+	path, ready := uploadFixture(t, []byte("archive-bytes"))
+	oldPath, oldReady := artifactPath, readyPath
+	defer func() { artifactPath, readyPath = oldPath, oldReady }()
+	artifactPath, readyPath = path, ready
+	sidecar, err := os.ReadFile(filepath.Join(filepath.Dir(path), "artifact.manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicate := bytes.Replace(sidecar, []byte(`"recipe":"crashdump-collection.v1",`), []byte(`"recipe":"crashdump-collection.v1","recipe":"crashdump-collection.v1",`), 1)
+	archive := gzipBytes(t, tarBytes(t, []byte("archive-bytes"), duplicate))
+	if err := os.WriteFile(path, archive, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(path), "artifact.manifest.json"), sidecar, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_URL", "https://upload.example.invalid/object")
+	t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_TOKEN", "one-time-token")
+	if err := upload(context.Background()); err == nil || !strings.Contains(err.Error(), "embedded manifest is invalid") {
+		t.Fatalf("upload() error = %v, want embedded duplicate-key rejection", err)
+	}
+}
+
+func TestTarExtensionParsingIsNarrowAndBounded(t *testing.T) {
+	validLongName := append([]byte("files/coredumps/long-name.dump"), 0)
+	validLongName = append(validLongName, make([]byte, 8)...)
+	validPAX := paxRecord("path", "files/coredumps/pax-name.dump")
+	for _, test := range []struct {
+		name     string
+		typeflag byte
+		content  []byte
+		want     string
+		valid    bool
+	}{
+		{name: "valid GNU long name", typeflag: 'L', content: validLongName, want: "files/coredumps/long-name.dump", valid: true},
+		{name: "zero GNU long name", typeflag: 'L', content: []byte{0}, valid: false},
+		{name: "missing GNU terminator", typeflag: 'L', content: []byte("name"), valid: false},
+		{name: "nonzero GNU padding", typeflag: 'L', content: []byte{'n', 0, 1}, valid: false},
+		{name: "valid PAX path", typeflag: 'x', content: validPAX, want: "files/coredumps/pax-name.dump", valid: true},
+		{name: "zero PAX record", typeflag: 'x', content: nil, valid: false},
+		{name: "malformed PAX length", typeflag: 'x', content: []byte("5 path=x\n"), valid: false},
+		{name: "PAX size is unsupported", typeflag: 'x', content: paxRecord("size", "1"), valid: false},
+		{name: "PAX mtime is unsupported", typeflag: 'x', content: paxRecord("mtime", "1"), valid: false},
+		{name: "GNU sparse is unsupported", typeflag: 'x', content: paxRecord("GNU.sparse.map", "0,1"), valid: false},
+		{name: "GNU long link is unsupported", typeflag: 'K', content: validLongName, valid: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parseTarExtension(test.typeflag, test.content)
+			if test.valid {
+				if err != nil || got != test.want {
+					t.Fatalf("parseTarExtension() = %q, %v, want %q", got, err, test.want)
+				}
+			} else if err == nil {
+				t.Fatalf("parseTarExtension() unexpectedly accepted %q", got)
+			}
+		})
+	}
+}
+
+func TestTarHeaderRejectsBadMagicAndStringPadding(t *testing.T) {
+	valid := rawTarHeader("files", tar.TypeDir, 0)
+	if _, err := parseTarHeader(valid); err != nil {
+		t.Fatalf("valid tar header rejected: %v", err)
+	}
+	busybox := append([]byte(nil), valid...)
+	copy(busybox[257:265], []byte("ustar  \x00"))
+	setTarChecksum(busybox)
+	if _, err := parseTarHeader(busybox); err != nil {
+		t.Fatalf("BusyBox tar header rejected: %v", err)
+	}
+	for name, mutate := range map[string]func([]byte){
+		"magic":          func(header []byte) { header[257] = 'x' },
+		"name padding":   func(header []byte) { header[5] = 0; header[6] = 'x' },
+		"prefix padding": func(header []byte) { header[345] = 0; header[346] = 'x' },
+	} {
+		t.Run(name, func(t *testing.T) {
+			header := append([]byte(nil), valid...)
+			mutate(header)
+			setTarChecksum(header)
+			if _, err := parseTarHeader(header); err == nil {
+				t.Fatal("parseTarHeader() unexpectedly accepted malformed header")
+			}
+		})
+	}
+}
+
+func TestArchiveRejectsCompressedExtensionMetadataAccumulation(t *testing.T) {
+	const extensionSize = 600000
+	content := make([]byte, extensionSize)
+	content[0] = 'x'
+	content[1] = 0
+	var raw bytes.Buffer
+	for index := 0; index < 2; index++ {
+		header := rawTarHeader("././@LongLink", 'L', extensionSize)
+		raw.Write(header)
+		raw.Write(content)
+		raw.Write(make([]byte, int(paddedTarSizeForTest(extensionSize))-extensionSize))
+	}
+	compressed := gzipBytes(t, raw.Bytes())
+	if len(compressed) > 10000 {
+		t.Fatalf("compressed extension fixture is not a bounded bomb: %d bytes", len(compressed))
+	}
+	archivePath := filepath.Join(t.TempDir(), "artifact.tar.gz")
+	if err := os.WriteFile(archivePath, compressed, 0600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyArchiveContract(context.Background(), file, info.Size(), artifactManifest{}, nil); err == nil || !strings.Contains(err.Error(), "extension metadata") {
+		t.Fatalf("verifyArchiveContract() error = %v, want aggregate extension bound", err)
+	}
+}
+
+func TestUploadStopsBeforePreflightWhenContextIsCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := upload(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("upload() error = %v, want context canceled", err)
+	}
+}
+
+func TestContextLimitedReaderDoesNotEnterBlockingPreflightRead(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	started := make(chan struct{}, 1)
+	reader := &contextLimitedReader{ctx: ctx, reader: blockingReader{started: started}, remaining: 1}
+	if _, err := reader.Read(make([]byte, 1)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("contextLimitedReader.Read() error = %v, want context canceled", err)
+	}
+	select {
+	case <-started:
+		t.Fatal("blocking preflight source was read after cancellation")
+	default:
+	}
+}
+
 func TestRecipeArchiveLimitRejectsMissingWrongAndCrossRecipeIdentity(t *testing.T) {
 	manifest := filepath.Join(t.TempDir(), "artifact.manifest.json")
 	validSummary := string(systemSummaryManifest(16777216))
@@ -592,8 +806,35 @@ func TestRetryableUsesTypedFailures(t *testing.T) {
 	if err == nil {
 		t.Fatal("http.Client timeout unexpectedly succeeded")
 	}
-	if retryable(err) {
-		t.Fatalf("retryable(http.Client timeout %T: %v) = true, want false", err, err)
+	if !retryable(err) {
+		t.Fatalf("retryable(http.Client timeout %T: %v) = false, want true", err, err)
+	}
+}
+
+func TestUploadRetriesPerAttemptTimeoutOnlyWithinTotalBudget(t *testing.T) {
+	path, ready := uploadFixture(t, []byte("archive-bytes"))
+	oldPath, oldReady, oldFactory := artifactPath, readyPath, newUploadHTTPClient
+	defer func() { artifactPath, readyPath, newUploadHTTPClient = oldPath, oldReady, oldFactory }()
+	artifactPath, readyPath = path, ready
+	t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_URL", "https://upload.example.invalid/object")
+	t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_TOKEN", "one-time-token")
+	t.Setenv("BREAKGLASS_ARTIFACT_UPLOAD_TIMEOUT", "2s")
+	calls := 0
+	newUploadHTTPClient = func() *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			calls++
+			if calls < maxAttempts {
+				return nil, &url.Error{Op: "PUT", URL: request.URL.String(), Err: perAttemptTimeoutError{}}
+			}
+			_, _ = io.Copy(io.Discard, request.Body)
+			return &http.Response{StatusCode: http.StatusCreated, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
+		})}
+	}
+	if err := upload(context.Background()); err != nil {
+		t.Fatalf("upload() error = %v", err)
+	}
+	if calls != maxAttempts {
+		t.Fatalf("upload() made %d requests, want %d attempts while total budget remained", calls, maxAttempts)
 	}
 }
 
@@ -652,8 +893,8 @@ func TestUploadTimeoutBoundsRetryBudget(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("upload() error = %v, want deadline exceeded", err)
 	}
-	if calls != 1 {
-		t.Fatalf("upload() made %d requests after total timeout, want 1", calls)
+	if calls > 1 {
+		t.Fatalf("upload() made %d requests after total timeout, want at most 1", calls)
 	}
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("upload() exceeded total timeout budget: %s", elapsed)
@@ -665,6 +906,12 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return f(request)
 }
+
+type perAttemptTimeoutError struct{}
+
+func (perAttemptTimeoutError) Error() string   { return "per-attempt timeout" }
+func (perAttemptTimeoutError) Timeout() bool   { return true }
+func (perAttemptTimeoutError) Temporary() bool { return true }
 
 func TestUploadRejectsMissingReadyAndOversizedArchive(t *testing.T) {
 	path, ready := uploadFixture(t, []byte("archive-bytes"))
@@ -702,6 +949,12 @@ func TestUploadRejectsHTTPWithoutDowngrade(t *testing.T) {
 
 func uploadFixture(t *testing.T, content []byte) (string, string) {
 	t.Helper()
+	t.Setenv("BREAKGLASS_ARTIFACT_ID", "dsa-0123456789abcdef01234567")
+	t.Setenv("BREAKGLASS_ARTIFACT_SESSION_NAMESPACE", "breakglass-test")
+	t.Setenv("BREAKGLASS_ARTIFACT_SESSION_NAME", "diagnostic-smoke")
+	t.Setenv("BREAKGLASS_ARTIFACT_SESSION_UID", "uid-0123456789abcdef")
+	t.Setenv("BREAKGLASS_ARTIFACT_REDACTION_PROFILE", "credential-text.v1")
+	t.Setenv("BREAKGLASS_ARTIFACT_REDACTION_VERSION", "1")
 	dir := t.TempDir()
 	archive := filepath.Join(dir, "artifact.tar.gz")
 	ready := filepath.Join(dir, "artifact.ready")
@@ -803,15 +1056,65 @@ func tarBytes(t *testing.T, content, manifest []byte) []byte {
 }
 
 func systemSummaryManifest(maxBytes int64) []byte {
-	return []byte(fmt.Sprintf(`{"schema_version":"diagnostic-artifact/v1","recipe":"system-summary.v1","recipe_version":1,"node":null,"archive_format":"tar.gz","inputs":{"maxArchiveBytes":%d,"detailLevel":"basic"},"payload_sha256":"0000000000000000000000000000000000000000000000000000000000000000","file_count":1,"bytes":1,"exit_code":0,"exit_semantics":"0=complete; non-zero=not published"}`+"\n", maxBytes))
+	return []byte(fmt.Sprintf(`{"schema_version":"diagnostic-artifact/v1","recipe":"system-summary.v1","recipe_version":1,"artifact_id":"dsa-0123456789abcdef01234567","session":{"namespace":"breakglass-test","name":"diagnostic-smoke","uid":"uid-0123456789abcdef"},"redaction":{"profile":"credential-text.v1","version":1},"node":null,"archive_format":"tar.gz","inputs":{"maxArchiveBytes":%d,"detailLevel":"basic"},"declared_outputs":["files/system-summary.json","manifest.json","stderr.log","stdout.log"],"payload_sha256":"0000000000000000000000000000000000000000000000000000000000000000","file_count":1,"bytes":1,"exit_code":0,"exit_semantics":"0=complete; non-zero=not published"}`+"\n", maxBytes))
 }
 
 func crashdumpManifest(maxBytes int64) []byte {
-	return []byte(fmt.Sprintf(`{"schema_version":"diagnostic-artifact/v1","recipe":"crashdump-collection.v1","recipe_version":1,"node":"node-a","archive_format":"tar.gz","inputs":{"maxAgeMinutes":1440,"node":"node-a","maxArchiveBytes":%d},"payload_sha256":"0000000000000000000000000000000000000000000000000000000000000000","file_count":0,"bytes":0,"exit_code":0,"exit_semantics":"0=complete; non-zero=not published"}`+"\n", maxBytes))
+	return []byte(fmt.Sprintf(`{"schema_version":"diagnostic-artifact/v1","recipe":"crashdump-collection.v1","recipe_version":1,"artifact_id":"dsa-0123456789abcdef01234567","session":{"namespace":"breakglass-test","name":"diagnostic-smoke","uid":"uid-0123456789abcdef"},"redaction":{"profile":"credential-text.v1","version":1},"node":"node-a","archive_format":"tar.gz","inputs":{"maxAgeMinutes":1440,"node":"node-a","maxArchiveBytes":%d},"declared_outputs":["files/coredumps/","manifest.json","stderr.log","stdout.log"],"payload_sha256":"0000000000000000000000000000000000000000000000000000000000000000","file_count":0,"bytes":0,"exit_code":0,"exit_semantics":"0=complete; non-zero=not published"}`+"\n", maxBytes))
 }
 
 func validCrashdumpManifest(maxBytes int64, payloadSHA string, fileCount, bytes int64) []byte {
-	return []byte(fmt.Sprintf(`{"schema_version":"diagnostic-artifact/v1","recipe":"crashdump-collection.v1","recipe_version":1,"node":"node-a","archive_format":"tar.gz","inputs":{"maxAgeMinutes":1440,"node":"node-a","maxArchiveBytes":%d},"payload_sha256":"%s","file_count":%d,"bytes":%d,"exit_code":0,"exit_semantics":"0=complete; non-zero=not published"}`+"\n", maxBytes, payloadSHA, fileCount, bytes))
+	return []byte(fmt.Sprintf(`{"schema_version":"diagnostic-artifact/v1","recipe":"crashdump-collection.v1","recipe_version":1,"artifact_id":"dsa-0123456789abcdef01234567","session":{"namespace":"breakglass-test","name":"diagnostic-smoke","uid":"uid-0123456789abcdef"},"redaction":{"profile":"credential-text.v1","version":1},"node":"node-a","archive_format":"tar.gz","inputs":{"maxAgeMinutes":1440,"node":"node-a","maxArchiveBytes":%d},"declared_outputs":["files/coredumps/","manifest.json","stderr.log","stdout.log"],"payload_sha256":"%s","file_count":%d,"bytes":%d,"exit_code":0,"exit_semantics":"0=complete; non-zero=not published"}`+"\n", maxBytes, payloadSHA, fileCount, bytes))
+}
+
+func paxRecord(key, value string) []byte {
+	for length := len(key) + len(value) + 3; ; length++ {
+		record := fmt.Sprintf("%d %s=%s\n", length, key, value)
+		if len(record) == length {
+			return []byte(record)
+		}
+	}
+}
+
+func rawTarHeader(name string, typeflag byte, size int64) []byte {
+	header := make([]byte, int(tarBlockSize))
+	copy(header[0:100], name)
+	copy(header[100:108], "0000644\x00")
+	copy(header[108:116], "0000000\x00")
+	copy(header[116:124], "0000000\x00")
+	copy(header[124:136], fmt.Sprintf("%011o\x00", size))
+	copy(header[136:148], "00000000000\x00")
+	for index := 148; index < 156; index++ {
+		header[index] = ' '
+	}
+	copy(header[156:157], []byte{typeflag})
+	copy(header[257:265], []byte("ustar\x0000"))
+	setTarChecksum(header)
+	return header
+}
+
+func setTarChecksum(header []byte) {
+	for index := 148; index < 156; index++ {
+		header[index] = ' '
+	}
+	var sum int64
+	for _, value := range header {
+		sum += int64(value)
+	}
+	copy(header[148:156], fmt.Sprintf("%06o\x00 ", sum))
+}
+
+func paddedTarSizeForTest(size int64) int64 {
+	return ((size + tarBlockSize - 1) / tarBlockSize) * tarBlockSize
+}
+
+type blockingReader struct {
+	started chan<- struct{}
+}
+
+func (reader blockingReader) Read([]byte) (int, error) {
+	reader.started <- struct{}{}
+	return 0, io.ErrNoProgress
 }
 
 func writeCertificateBundle(t *testing.T, path string, certificateDER []byte) {

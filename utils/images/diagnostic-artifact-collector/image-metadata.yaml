@@ -65,6 +65,29 @@ contract:
   uploader: /usr/local/bin/diagnostic-artifact-upload
   intents:
     - diagnostic-artifact-collection
+  manifest_identity:
+    artifact_id:
+      source: BREAKGLASS_ARTIFACT_ID
+      pattern: dsa-[a-f0-9]{24}
+    session:
+      namespace:
+        source: BREAKGLASS_ARTIFACT_SESSION_NAMESPACE
+        maximum_bytes: 63
+      name:
+        source: BREAKGLASS_ARTIFACT_SESSION_NAME
+        maximum_bytes: 253
+      uid:
+        source: BREAKGLASS_ARTIFACT_SESSION_UID
+        maximum_bytes: 128
+    redaction:
+      profile:
+        source: BREAKGLASS_ARTIFACT_REDACTION_PROFILE
+        maximum_bytes: 128
+      version:
+        source: BREAKGLASS_ARTIFACT_REDACTION_VERSION
+        minimum: 1
+        maximum: 9999
+    declared_outputs: baked-recipe-exact-sorted-list
   recipes:
     - id: crashdump-collection.v1
       inputs:
@@ -94,6 +117,10 @@ contract:
         - system-summary.json
   archive:
     format: tar.gz
+    manifest:
+      max_bytes: 32768
+      identity: artifact_id+session+redaction
+      declared_outputs: exact-sorted-baked-recipe-list
     includes:
       - manifest.json
       - stdout.log
