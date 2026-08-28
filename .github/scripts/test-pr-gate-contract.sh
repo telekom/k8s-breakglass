@@ -113,6 +113,13 @@ write_fixture "$fixture_root/statuses.json" '[]'
 jq -e '.verified == true and (.acceptedHeads | index("source-head")) != null and (.acceptedHeads | index("synthetic-candidate")) != null' \
   "$fixture_root/verified.json" >/dev/null || fail "exact source-head evidence was not accepted"
 
+# The active workflow/deployment/code-scanning/signature rules are accepted
+# only while GitHub's own exact-PR aggregate predicate remains policy-clean.
+jq '.data.repository.pullRequest.mergeStateStatus = "BLOCKED"' "$fixture_root/identity.json" >"$fixture_root/blocked-identity.json"
+expect_failure "$contract" verify-checks "$fixture_root/blocked-identity.json" "$fixture_root/inventory.json" \
+  "$fixture_root/repository.json" "$fixture_root/runs.json" "$fixture_root/suites.json" \
+  "$fixture_root/statuses.json" "$fixture_root/ignored.json"
+
 # The converse supported GitHub shape also passes: a check suite may be built
 # for the synthetic candidate while its PR association still names the exact
 # source/base pair.
