@@ -254,7 +254,7 @@ func findMatchingEphemeralOperation(
 		if operation.Kind != kubectlDebugOperationKindEphemeralContainer ||
 			(operation.State != breakglassv1alpha1.KubectlDebugOperationPrepared && operation.State != breakglassv1alpha1.KubectlDebugOperationCompleted) ||
 			operation.TargetPod.Namespace != targetNamespace || operation.TargetPod.Name != targetPodName || operation.TargetPod.UID != targetPodUID ||
-			!ephemeralContainerIntentEqual(&operation.EphemeralContainer, containerName, image, command, securityContext) {
+			!ephemeralContainerIntentEqual(&operation.EphemeralContainer, containerName, image, command, true, true, securityContext) {
 			continue
 		}
 		return operation
@@ -275,6 +275,8 @@ func ephemeralContainerIntentEqual(
 	intent *breakglassv1alpha1.KubectlDebugEphemeralContainerIntent,
 	name, image string,
 	command []string,
+	tty bool,
+	stdin bool,
 	securityContext *corev1.SecurityContext,
 ) bool {
 	if intent == nil {
@@ -282,7 +284,7 @@ func ephemeralContainerIntentEqual(
 	}
 	return intent.Name == name && intent.Image == image &&
 		apiequality.Semantic.DeepEqual(intent.Command, command) &&
-		intent.TTY && intent.Stdin &&
+		intent.TTY == tty && intent.Stdin == stdin &&
 		intent.SecurityContextDigest == securityContextDigest(securityContext)
 }
 
@@ -437,7 +439,15 @@ func (h *KubectlDebugHandler) RecoverPendingKubectlDebugOperations(ctx context.C
 				continue
 			}
 			found = true
-			matches = ephemeralContainerIntentEqual(&operation.EphemeralContainer, container.Name, container.Image, container.Command, container.SecurityContext)
+			matches = ephemeralContainerIntentEqual(
+				&operation.EphemeralContainer,
+				container.Name,
+				container.Image,
+				container.Command,
+				container.TTY,
+				container.Stdin,
+				container.SecurityContext,
+			)
 			break
 		}
 		if !found {
@@ -651,20 +661,6 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	if pod.UID == "" {
 		return kubectlDebugPolicyErrorf("target pod %s/%s has no UID", namespace, podName)
 	}
-	// Recovery above may have completed an operation whose target mutation
-	// succeeded but whose outcome write was interrupted. Treat that exact
-	// operation as an idempotent retry before the normal duplicate-name check.
-	if recovered := findMatchingEphemeralOperation(&ds.Status, namespace, podName, pod.UID, containerName, image, command, securityContext); recovered != nil && recovered.State == breakglassv1alpha1.KubectlDebugOperationCompleted {
-		return nil
-	}
-
-	// Check if container name already exists
-	for _, ec := range pod.Spec.EphemeralContainers {
-		if ec.Name == containerName {
-			return fmt.Errorf("ephemeral container %s already exists in pod", containerName)
-		}
-	}
-
 	// Re-read the target Pod and complete its identity checks before the final
 	// authorization fence. No target read may occur after the live session check.
 	freshPod := &corev1.Pod{}
@@ -677,12 +673,6 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	if pod.ResourceVersion != "" && freshPod.ResourceVersion != "" && freshPod.ResourceVersion != pod.ResourceVersion {
 		return kubectlDebugPolicyErrorf("target pod %s/%s changed during injection authorization", namespace, podName)
 	}
-	for _, ec := range freshPod.Spec.EphemeralContainers {
-		if ec.Name == containerName {
-			return fmt.Errorf("ephemeral container %s already exists in pod", containerName)
-		}
-	}
-
 	// Create ephemeral container spec
 	ephemeralContainer := corev1.EphemeralContainer{
 		EphemeralContainerCommon: corev1.EphemeralContainerCommon{
@@ -697,6 +687,23 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 
 	if securityContext != nil {
 		ephemeralContainer.SecurityContext = securityContext
+	}
+	if recovered := findMatchingEphemeralOperation(
+		&ds.Status,
+		namespace,
+		podName,
+		pod.UID,
+		containerName,
+		image,
+		command,
+		ephemeralContainer.SecurityContext,
+	); recovered != nil && recovered.State == breakglassv1alpha1.KubectlDebugOperationCompleted {
+		return nil
+	}
+	for _, ec := range freshPod.Spec.EphemeralContainers {
+		if ec.Name == containerName {
+			return fmt.Errorf("ephemeral container %s already exists in pod", containerName)
+		}
 	}
 	// Add the ephemeral container to the request object. The target API has not
 	// been mutated yet; the durable operation intent below is persisted first.
