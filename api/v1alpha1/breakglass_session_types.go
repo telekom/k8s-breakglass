@@ -372,6 +372,13 @@ func validateExpiryUpdate(oldObj, newObj *BreakglassSession) field.ErrorList {
 	if activeOrScheduled(oldState) && oldExpiry.IsZero() && activeOrScheduled(newState) && !newExpiry.IsZero() {
 		return invalid("an active or scheduled session with a missing expiry cannot be assigned a future expiry")
 	}
+	// Every transition into an access-bearing or scheduled state must establish
+	// a live lease. This also prevents a malformed Pending object with an
+	// already-elapsed deadline from being approved or scheduled after the fact.
+	if activeOrScheduled(newState) && oldState != newState &&
+		(newExpiry.IsZero() || !decisionNow.Before(newExpiry.Time)) {
+		return invalid("an active or scheduled session must have an expiry in the future when activated")
+	}
 	if oldState == SessionStateWaitingForScheduledTime && newState == SessionStateApproved && oldExpiry.IsZero() {
 		return invalid("a scheduled session with a missing expiry cannot be activated")
 	}

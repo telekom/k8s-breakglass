@@ -27,6 +27,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/suite"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -122,6 +124,68 @@ func (s *SpokeHubAuthorizationSuite) TearDownSuite() {
 	if s.cancel != nil {
 		s.cancel()
 	}
+}
+
+// holdSessionExpiryCleanup pauses only the controller's periodic cleanup loop
+// while leaving its webhook pod serving. This makes the status-admission proof
+// deterministic: the first post-boundary write is evaluated while the stored
+// session is still Approved, then the normal controller expiry is restored and
+// verified separately.
+func (s *SpokeHubAuthorizationSuite) holdSessionExpiryCleanup() func() {
+	const deploymentName = "breakglass-manager"
+	const deploymentNamespace = "breakglass-system"
+	const cleanupEnv = "CLEANUP_INTERVAL"
+
+	var deployment appsv1.Deployment
+	err := s.hubClient.Get(s.ctx, client.ObjectKey{Namespace: deploymentNamespace, Name: deploymentName}, &deployment)
+	s.Require().NoError(err, "hard-expiry proof requires the breakglass controller deployment")
+
+	original := deployment.DeepCopy()
+	patched := deployment.DeepCopy()
+	found := false
+	for containerIndex := range patched.Spec.Template.Spec.Containers {
+		container := &patched.Spec.Template.Spec.Containers[containerIndex]
+		for envIndex := range container.Env {
+			if container.Env[envIndex].Name == cleanupEnv {
+				container.Env[envIndex].Value = "1h"
+				found = true
+			}
+		}
+		if !found {
+			container.Env = append(container.Env, corev1.EnvVar{Name: cleanupEnv, Value: "1h"})
+			found = true
+		}
+	}
+	s.Require().True(found, "breakglass controller deployment must have a writable cleanup interval")
+	s.Require().NoError(s.hubClient.Update(s.ctx, patched), "pause cleanup loop before expiry boundary")
+	s.waitForControllerDeployment(s.ctx, deploymentNamespace, deploymentName, patched.Generation)
+
+	return func() {
+		var current appsv1.Deployment
+		if err := s.hubClient.Get(context.Background(), client.ObjectKey{Namespace: deploymentNamespace, Name: deploymentName}, &current); err != nil {
+			s.T().Logf("cleanup-loop restore skipped: controller deployment unavailable: %v", err)
+			return
+		}
+		current.Spec.Template.Spec.Containers = original.Spec.Template.Spec.Containers
+		if err := s.hubClient.Update(context.Background(), &current); err != nil {
+			s.T().Logf("cleanup-loop restore failed: %v", err)
+			return
+		}
+		s.waitForControllerDeployment(context.Background(), deploymentNamespace, deploymentName, current.Generation)
+	}
+}
+
+func (s *SpokeHubAuthorizationSuite) waitForControllerDeployment(ctx context.Context, namespace, name string, generation int64) {
+	s.Require().Eventually(func() bool {
+		var deployment appsv1.Deployment
+		if err := s.hubClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &deployment); err != nil {
+			return false
+		}
+		return deployment.Generation >= generation &&
+			deployment.Status.ObservedGeneration >= generation &&
+			deployment.Status.ReadyReplicas >= 1 &&
+			deployment.Status.UpdatedReplicas >= 1
+	}, 2*time.Minute, 500*time.Millisecond, "controller deployment %s/%s did not become ready for generation %d", namespace, name, generation)
 }
 
 // TestUserWithoutSessionDenied verifies that a user without an active breakglass session
@@ -440,69 +504,113 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 	s.Require().NoError(err1, "Initial access must be allowed before expiresAt: %s", output1)
 	t.Log("✓ Initial access: ALLOWED")
 
-	// Exercise the same request just before expiry. This proves the session is
-	// still live and makes the subsequent deny transition a real boundary test.
-	t.Logf("Step 4: Waiting for the persisted expiresAt boundary (%s)", expiresAt.UTC().Format(time.RFC3339))
-	for time.Until(expiresAt) > 10*time.Second {
-		select {
-		case <-s.ctx.Done():
-			s.Require().FailNow("test context cancelled while waiting for pre-expiry access")
-		case <-time.After(time.Second):
+	// Hold periodic cleanup while this test crosses the boundary. The webhook
+	// remains available, but the session stays Approved for the immediate
+	// post-boundary status-admission proof; natural terminalization is checked
+	// after the original cleanup interval is restored.
+	restoreCleanup := s.holdSessionExpiryCleanup()
+	restoredCleanup := false
+	defer func() {
+		if !restoredCleanup {
+			restoreCleanup()
 		}
-	}
-	nearStart := time.Now()
-	outputNear, errNear := s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
-	nearComplete := time.Now()
-	s.Require().NoError(errNear, "access must remain allowed before persisted expiresAt: %s", outputNear)
-	s.Require().True(nearComplete.Before(expiresAt), "near-expiry request must complete before expiresAt (started %s, completed %s, expires %s)", nearStart, nearComplete, expiresAt)
+	}()
 
-	// Wait for the actual persisted boundary. A bounded context keeps a broken
-	// controller from making the suite hang indefinitely.
-	for time.Now().Before(expiresAt) {
-		remaining := time.Until(expiresAt)
+	// Probe the exact same OIDC request every 150ms from T-3s through T+3s.
+	// Requests that straddle the boundary are deliberately unclassified; every
+	// request that starts at or after the boundary must be denied.
+	const probeWindow = 3 * time.Second
+	const probeInterval = 150 * time.Millisecond
+	t.Logf("Step 4: Probing persisted expiresAt boundary (%s)", expiresAt.UTC().Format(time.RFC3339Nano))
+	for time.Until(expiresAt.Add(-probeWindow)) > 0 {
+		remaining := time.Until(expiresAt.Add(-probeWindow))
 		if remaining > time.Second {
 			remaining = time.Second
 		}
 		select {
 		case <-s.ctx.Done():
-			s.Require().FailNow("test context cancelled while waiting for session expiry")
+			s.Require().FailNow("test context cancelled while waiting for the expiry probe window")
 		case <-time.After(remaining):
 		}
 	}
 
-	// Cross the persisted boundary by a small margin before the first request.
-	// This avoids relying on local clock scheduling jitter while still proving
-	// that no post-expiry allow is returned.
-	t.Log("Step 5: Employee attempts access after expiry - should be denied")
-	time.Sleep(2 * time.Second)
-	output2, err2 := s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
-	s.Require().Error(err2, "post-expiry Kubernetes request must be denied: %s", output2)
-	s.Assert().True(strings.Contains(output2, "forbidden") || strings.Contains(output2, "Forbidden") || strings.Contains(output2, "denied"),
-		"Error should indicate forbidden after expiry, got: %s", output2)
+	var preBoundaryAllows, postBoundaryDenials, probes int
+	resurrectionAttempted := false
+	var beforeResurrectionUID string
+	for time.Now().Before(expiresAt.Add(probeWindow)) {
+		probeStart := time.Now()
+		probeOutput, probeErr := s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
+		probeComplete := time.Now()
+		probes++
 
-	// The status webhook is part of the hard-expiry boundary: a caller cannot
-	// write a future expiry after the lease elapsed and resurrect access.
-	// Let the controller record its normal terminal state before attempting the
-	// forbidden future-expiry status write, avoiding a controller-update race.
+		switch {
+		case probeStart.Before(expiresAt) && probeComplete.Before(expiresAt):
+			preBoundaryAllows++
+			s.Require().NoError(probeErr, "request completed before expiresAt but was denied (started %s, completed %s): %s", probeStart, probeComplete, probeOutput)
+		case !probeStart.Before(expiresAt):
+			postBoundaryDenials++
+			s.Require().Error(probeErr, "request started at/after expiresAt must be denied immediately (started %s, expires %s): %s", probeStart, expiresAt, probeOutput)
+			s.Require().Less(probeComplete.Sub(probeStart), 5*time.Second, "post-boundary denial must return before the kubectl request timeout")
+			s.Require().True(strings.Contains(strings.ToLower(probeOutput), "forbidden") || strings.Contains(strings.ToLower(probeOutput), "denied"),
+				"post-boundary denial should be reported as forbidden, got: %s", probeOutput)
+
+			// The status webhook is part of the same hard-expiry boundary. This
+			// happens on the first post-boundary request while cleanup is paused,
+			// so the stored object is provably still Approved.
+			if !resurrectionAttempted {
+				resurrectionAttempted = true
+				var current breakglassv1alpha1.BreakglassSession
+				s.Require().NoError(s.hubClient.Get(s.ctx, client.ObjectKeyFromObject(session), &current))
+				s.Require().Equal(breakglassv1alpha1.SessionStateApproved, current.Status.State,
+					"the first post-boundary resurrection attempt must target the still-Approved persisted session")
+				beforeResurrectionUID = string(current.UID)
+				beforeResurrectionState := current.Status.State
+				beforeResurrectionExpiry := current.Status.ExpiresAt.Time
+				resurrection := current.DeepCopy()
+				resurrection.Status.ExpiresAt = metav1.NewTime(expiresAt.Add(time.Hour))
+				resurrectionErr := s.hubClient.Status().Update(s.ctx, resurrection)
+				s.Require().Error(resurrectionErr, "status future-expiry write after the boundary must be rejected")
+				s.Require().True(apierrors.IsInvalid(resurrectionErr), "future-expiry status write must be an admission validation error: %v", resurrectionErr)
+
+				var afterRejectedWrite breakglassv1alpha1.BreakglassSession
+				s.Require().NoError(s.hubClient.Get(s.ctx, client.ObjectKeyFromObject(session), &afterRejectedWrite))
+				s.Require().Equal(beforeResurrectionUID, string(afterRejectedWrite.UID), "rejected status write must not replace the session object")
+				s.Require().Equal(beforeResurrectionState, afterRejectedWrite.Status.State, "rejected status write must not change terminal state")
+				s.Require().Equal(beforeResurrectionExpiry, afterRejectedWrite.Status.ExpiresAt.Time,
+					"rejected status write must leave the persisted expiry unchanged")
+			}
+			// A request that starts before expiry but completes after it is a
+			// straddler. It is intentionally not classified by this proof.
+		}
+
+		nextProbe := probeStart.Add(probeInterval)
+		if delay := time.Until(nextProbe); delay > 0 {
+			select {
+			case <-s.ctx.Done():
+				s.Require().FailNow("test context cancelled while probing the expiry boundary")
+			case <-time.After(delay):
+			}
+		}
+	}
+	s.Require().Greater(probes, 0, "expiry probe loop must execute at least once")
+	s.Require().Greater(preBoundaryAllows, 0, "expiry probe loop must observe an allowed request completed before the boundary")
+	s.Require().Greater(postBoundaryDenials, 0, "expiry probe loop must observe an immediate denial starting at/after the boundary")
+	s.Require().True(resurrectionAttempted, "expiry probe loop must attempt post-boundary status resurrection while Approved")
+
+	// Restore the normal cleanup interval and separately prove controller-owned
+	// terminalization. This is intentionally after the immediate status proof.
+	restoreCleanup()
+	restoredCleanup = true
+
+	// Only after the immediate rejected write has been checked do we wait for
+	// the controller to record its normal terminal state.
 	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
 		breakglassv1alpha1.SessionStateExpired, 30*time.Second)
-	var current breakglassv1alpha1.BreakglassSession
-	s.Require().NoError(s.hubClient.Get(s.ctx, client.ObjectKeyFromObject(session), &current))
-	beforeResurrectionUID := current.UID
-	beforeResurrectionState := current.Status.State
-	beforeResurrectionExpiry := current.Status.ExpiresAt.Time
-	resurrection := current.DeepCopy()
-	resurrection.Status.ExpiresAt = metav1.NewTime(time.Now().Add(time.Hour))
-	resurrectionErr := s.hubClient.Status().Update(s.ctx, resurrection)
-	s.Require().Error(resurrectionErr, "status future-expiry write after the boundary must be rejected")
-	s.Require().True(apierrors.IsInvalid(resurrectionErr), "future-expiry status write must be an admission validation error: %v", resurrectionErr)
-
-	var afterRejectedWrite breakglassv1alpha1.BreakglassSession
-	s.Require().NoError(s.hubClient.Get(s.ctx, client.ObjectKeyFromObject(session), &afterRejectedWrite))
-	s.Require().Equal(beforeResurrectionUID, afterRejectedWrite.UID, "rejected status write must not replace the session object")
-	s.Require().Equal(beforeResurrectionState, afterRejectedWrite.Status.State, "rejected status write must not change terminal state")
-	s.Require().Equal(beforeResurrectionExpiry, afterRejectedWrite.Status.ExpiresAt.Time,
-		"rejected status write must leave the persisted expiry unchanged")
+	var terminal breakglassv1alpha1.BreakglassSession
+	s.Require().NoError(s.hubClient.Get(s.ctx, client.ObjectKeyFromObject(session), &terminal))
+	s.Require().Equal(beforeResurrectionUID, string(terminal.UID), "expiry cleanup must not replace the session object")
+	s.Require().Equal(breakglassv1alpha1.SessionStateExpired, terminal.Status.State,
+		"a rejected post-boundary status write must not prevent terminal expiry")
 	output3, err3 := s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
 	s.Require().Error(err3, "access must remain denied after rejected resurrection write: %s", output3)
 	s.Require().True(strings.Contains(output3, "forbidden") || strings.Contains(output3, "Forbidden") || strings.Contains(output3, "denied"),

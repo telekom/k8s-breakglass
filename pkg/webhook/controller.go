@@ -488,56 +488,84 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	wc.sendAuthorizationResponse(c, s)
 }
 
-// isSessionAccessStillActive performs the final authorization fence against a
-// live session read. Session discovery and the target-cluster SAR can take long
-// enough for a session to expire or be dropped after the cached discovery read.
-// A failed read denies access rather than trusting that stale snapshot.
-func (wc *WebhookController) isSessionAccessStillActive(ctx context.Context, sessions []breakglassv1alpha1.BreakglassSession, candidate *sessionAuthorizationCandidate) bool {
+// liveSessionAuthorizationCandidates performs the final authorization fence
+// against exact live session reads. Session discovery and the target-cluster SAR
+// can take long enough for a session to expire or be dropped after the cached
+// discovery read. A failed read removes that candidate rather than trusting the
+// stale snapshot. When candidates were attributed to the allow, any one live
+// candidate is sufficient; when no attribution was possible, all discovered
+// sessions are treated as contributors and must remain live.
+func (wc *WebhookController) liveSessionAuthorizationCandidates(ctx context.Context, sessions []breakglassv1alpha1.BreakglassSession, candidates []sessionAuthorizationCandidate) []sessionAuthorizationCandidate {
 	if wc.sesManager == nil {
-		return false
+		return nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	refs := make([]*sessionAuthorizationCandidate, 0, 1)
-	if candidate != nil {
-		refs = append(refs, candidate)
-	} else {
+	refs := candidates
+	allCandidates := len(refs) == 0
+	if allCandidates {
 		if len(sessions) == 0 {
-			return false
+			return nil
 		}
+		refs = make([]sessionAuthorizationCandidate, 0, len(sessions))
 		for i := range sessions {
 			session := &sessions[i]
-			refs = append(refs, &sessionAuthorizationCandidate{
+			refs = append(refs, sessionAuthorizationCandidate{
 				namespace: session.Namespace, name: session.Name, uid: string(session.UID), user: session.Spec.User,
 				cluster: session.Spec.Cluster, grantedGroup: session.Spec.GrantedGroup,
+				identityProviderName: session.Spec.IdentityProviderName,
 			})
 		}
 	}
-	currentSessions := make([]breakglassv1alpha1.BreakglassSession, 0, len(refs))
+	currentSessions := make([]struct {
+		candidate sessionAuthorizationCandidate
+		session   breakglassv1alpha1.BreakglassSession
+	}, 0, len(refs))
 	for _, ref := range refs {
-		if ref == nil || ref.name == "" {
-			return false
+		if ref.name == "" {
+			if allCandidates {
+				return nil
+			}
+			continue
 		}
 		var current breakglassv1alpha1.BreakglassSession
 		if err := wc.sesManager.Reader().Get(ctx, client.ObjectKey{Namespace: ref.namespace, Name: ref.name}, &current); err != nil {
 			if wc.log != nil {
 				wc.log.Debugw("final session access fence could not read session", "session", ref.name, "error", err)
 			}
-			return false
+			continue
 		}
-		if string(current.UID) != ref.uid || current.Spec.User != ref.user || current.Spec.Cluster != ref.cluster || current.Spec.GrantedGroup != ref.grantedGroup || !current.Status.RejectedAt.IsZero() {
-			return false
+		if string(current.UID) != ref.uid || current.Spec.User != ref.user || current.Spec.Cluster != ref.cluster || current.Spec.GrantedGroup != ref.grantedGroup || current.Spec.IdentityProviderName != ref.identityProviderName || !current.Status.RejectedAt.IsZero() {
+			continue
 		}
-		currentSessions = append(currentSessions, current)
+		currentSessions = append(currentSessions, struct {
+			candidate sessionAuthorizationCandidate
+			session   breakglassv1alpha1.BreakglassSession
+		}{candidate: ref, session: current})
 	}
 	now := time.Now()
+	live := make([]sessionAuthorizationCandidate, 0, len(currentSessions))
 	for _, current := range currentSessions {
-		if !breakglass.IsSessionAccessActiveAt(current, now) {
-			return false
+		if breakglass.IsSessionAccessActiveAt(current.session, now) {
+			live = append(live, current.candidate)
 		}
 	}
-	return true
+	if allCandidates && len(live) != len(refs) {
+		return nil
+	}
+	return live
+}
+
+// isSessionAccessStillActive retains the narrow helper used by existing tests
+// and callers while applying the same any-live-candidate semantics used by the
+// request path when an attributed candidate is provided.
+func (wc *WebhookController) isSessionAccessStillActive(ctx context.Context, sessions []breakglassv1alpha1.BreakglassSession, candidate *sessionAuthorizationCandidate) bool {
+	var candidates []sessionAuthorizationCandidate
+	if candidate != nil {
+		candidates = []sessionAuthorizationCandidate{*candidate}
+	}
+	return len(wc.liveSessionAuthorizationCandidates(ctx, sessions, candidates)) > 0
 }
 
 func (wc *WebhookController) isClusterConfigStillActive(ctx context.Context, configured *breakglassv1alpha1.ClusterConfig) bool {
@@ -891,24 +919,34 @@ func dedupeStrings(in []string) []string {
 	return out
 }
 
-// authorizeViaSessions performs per-session SubjectAccessReviews using the session's granted group.
+// authorizeViaSessions performs per-session SubjectAccessReviews using the
+// session's granted group. It retains the historical first-winner return shape;
+// the request path uses authorizeViaSessionsWithCandidates so every independent
+// winner can be revalidated by the final live fence.
 func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.Config, sessions []breakglassv1alpha1.BreakglassSession, incoming authorizationv1.SubjectAccessReview, clusterName string, reqLog ...*zap.SugaredLogger) (bool, string, string, string) {
+	allowed, group, name, impersonated, _ := wc.authorizeViaSessionsWithCandidates(ctx, rc, sessions, incoming, clusterName, reqLog...)
+	return allowed, group, name, impersonated
+}
+
+func (wc *WebhookController) authorizeViaSessionsWithCandidates(ctx context.Context, rc *rest.Config, sessions []breakglassv1alpha1.BreakglassSession, incoming authorizationv1.SubjectAccessReview, clusterName string, reqLog ...*zap.SugaredLogger) (bool, string, string, string, []sessionAuthorizationCandidate) {
 	// Resolve logger once to avoid repeated if/else chains.
 	log := wc.log
 	if len(reqLog) > 0 && reqLog[0] != nil {
 		log = reqLog[0]
 	}
 	if len(sessions) == 0 || (incoming.Spec.ResourceAttributes == nil && incoming.Spec.NonResourceAttributes == nil) {
-		return false, "", "", ""
+		return false, "", "", "", nil
 	}
 	clientset, err := kubernetes.NewForConfig(rc)
 	if err != nil {
 		if log != nil {
 			log.With("error", err).Error("failed creating clientset for session SAR")
 		}
-		return false, "", "", ""
+		return false, "", "", "", nil
 	}
 	sarClient := clientset.AuthorizationV1().SubjectAccessReviews()
+	var firstGroup, firstName, firstImpersonated string
+	var candidates []sessionAuthorizationCandidate
 	for _, s := range sessions {
 		// Never trust a caller-supplied session snapshot for authorization. The
 		// final response also performs a live read because this loop can cross
@@ -1034,17 +1072,25 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 				}
 			}
 			if resp != nil && resp.Status.Allowed {
-				metrics.WebhookSessionSARsAllowed.WithLabelValues(clusterName).Inc()
-				// Track IDP-based authorization if session has IDP specified
-				if s.Spec.IdentityProviderName != "" {
-					metrics.EscalationIDPAuthorizationChecks.WithLabelValues(s.Spec.GrantedGroup, s.Spec.IdentityProviderName, "allowed").Inc()
+				if firstName == "" {
+					firstGroup, firstName, firstImpersonated = s.Spec.GrantedGroup, s.Name, g
 				}
-				return true, s.Spec.GrantedGroup, s.Name, g
+				candidates = append(candidates, sessionAuthorizationCandidate{
+					namespace: s.Namespace, name: s.Name, uid: string(s.UID),
+					user: s.Spec.User, cluster: s.Spec.Cluster, grantedGroup: s.Spec.GrantedGroup,
+					identityProviderName: s.Spec.IdentityProviderName,
+				})
+				// One successful impersonation group is enough for this session;
+				// continue with the other sessions to preserve independent winners.
+				break
 			}
 			metrics.WebhookSessionSARsDenied.WithLabelValues(clusterName).Inc()
 		}
 	}
-	return false, "", "", ""
+	if firstName == "" {
+		return false, "", "", "", nil
+	}
+	return true, firstGroup, firstName, firstImpersonated, candidates
 }
 
 func (wc *WebhookController) SetCanDoFn(f func(ctx context.Context, rc *rest.Config, groups []string, sar authorizationv1.SubjectAccessReview, clustername string) (bool, error)) {

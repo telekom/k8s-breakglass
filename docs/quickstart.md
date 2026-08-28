@@ -205,6 +205,7 @@ authorizers:
       cacheAuthorizedRequests: false
       unauthorizedTTL: 30s
       subjectAccessReviewVersion: v1
+      matchConditionSubjectAccessReviewVersion: v1
       failurePolicy: Deny
       connectionInfo:
         type: KubeConfigFile

@@ -145,9 +145,13 @@ func TestValidateUpdate_StateTransitionValidation(t *testing.T) {
 			old.Status.State = tc.from
 			updated := base.DeepCopy()
 			updated.Status.State = tc.to
-			// Activation of a scheduled lease is valid only when the lease was
-			// initialized before it entered WaitingForScheduledTime.
-			if tc.from == SessionStateWaitingForScheduledTime && tc.to == SessionStateApproved {
+			// Access-bearing transitions are valid only with a live lease. For
+			// scheduled activation the lease was initialized before entering
+			// WaitingForScheduledTime; for approval it is established by the
+			// approval update itself.
+			if (tc.from == SessionStatePending &&
+				(tc.to == SessionStateApproved || tc.to == SessionStateWaitingForScheduledTime)) ||
+				(tc.from == SessionStateWaitingForScheduledTime && tc.to == SessionStateApproved) {
 				old.Status.ExpiresAt = metav1.NewTime(time.Now().Add(time.Hour))
 				updated.Status.ExpiresAt = old.Status.ExpiresAt
 			}
@@ -234,6 +238,25 @@ func TestValidateUpdate_ExpiryCannotResurrectApprovedSession(t *testing.T) {
 	terminalFuture.Status.ExpiresAt = metav1.NewTime(now.Add(time.Hour))
 	if _, err := terminalFuture.ValidateUpdate(context.Background(), terminalZero, terminalFuture); err == nil {
 		t.Fatal("expected terminal zero-expiry future write to be rejected")
+	}
+
+	// A malformed Pending object must not be promoted into an access-bearing
+	// state with a missing or already-elapsed lease.
+	for _, state := range []BreakglassSessionState{SessionStateApproved, SessionStateWaitingForScheduledTime} {
+		pendingExpired := pending.DeepCopy()
+		pendingExpired.Status.ExpiresAt = metav1.NewTime(now.Add(-time.Second))
+		promoted := pendingExpired.DeepCopy()
+		promoted.Status.State = state
+		if _, err := promoted.ValidateUpdate(context.Background(), pendingExpired, promoted); err == nil {
+			t.Fatalf("expected pending -> %s with an expired lease to be rejected", state)
+		}
+
+		pendingZero := pending.DeepCopy()
+		promotedZero := pendingZero.DeepCopy()
+		promotedZero.Status.State = state
+		if _, err := promotedZero.ValidateUpdate(context.Background(), pendingZero, promotedZero); err == nil {
+			t.Fatalf("expected pending -> %s with a missing lease to be rejected", state)
+		}
 	}
 }
 

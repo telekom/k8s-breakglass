@@ -24,6 +24,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/impersonation"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
 	"go.uber.org/zap"
@@ -252,6 +253,23 @@ func TestGetSessionsWithIDPMismatchInfoRequiresActiveExpiry(t *testing.T) {
 			},
 		},
 	}
+	for _, state := range []breakglassv1alpha1.BreakglassSessionState{
+		breakglassv1alpha1.SessionStatePending,
+		breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+		breakglassv1alpha1.SessionStateRejected,
+		breakglassv1alpha1.SessionStateWithdrawn,
+		breakglassv1alpha1.SessionStateIdleExpired,
+		breakglassv1alpha1.SessionStateTimeout,
+	} {
+		sessions = append(sessions, &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "non-active-" + string(state)},
+			Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: user, Cluster: cluster},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     state,
+				ExpiresAt: metav1.NewTime(now.Add(time.Hour)),
+			},
+		})
+	}
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(sessions...).Build()
 	wc := &WebhookController{sesManager: breakglass.NewSessionManagerWithClient(cli)}
 
@@ -326,6 +344,108 @@ func TestSendAuthorizationResponseRechecksLiveSession(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 	assert.False(t, response.Status.Allowed)
 	assert.False(t, s.allowed)
+}
+
+func TestSendAuthorizationResponseFinalFenceSuppressesAllowSideEffects(t *testing.T) {
+	logger := zap.NewNop()
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "expired-before-side-effects", Namespace: "breakglass", UID: "expired-side-effects-uid"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user", Cluster: "cluster", GrantedGroup: "admin"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(time.Now().Add(-time.Minute)),
+		},
+	}
+	base := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(session).Build()
+	tracker := NewActivityTracker(base, WithFlushInterval(time.Hour))
+	defer tracker.Stop(context.Background())
+	wc := &WebhookController{
+		log:             logger.Sugar(),
+		sesManager:      breakglass.NewSessionManagerWithClient(base),
+		activityTracker: tracker,
+	}
+
+	metrics.WebhookSARAllowed.Reset()
+	metrics.WebhookSessionSARsAllowed.Reset()
+	metrics.ImpersonationSARDecisions.Reset()
+	defer metrics.WebhookSARAllowed.Reset()
+	defer metrics.WebhookSessionSARsAllowed.Reset()
+	defer metrics.ImpersonationSARDecisions.Reset()
+
+	s := &authorizeState{
+		ctx: context.Background(), clusterName: "cluster", allowed: true, allowSource: "session",
+		sessions: []breakglassv1alpha1.BreakglassSession{*session},
+		allowedSessions: []sessionAuthorizationCandidate{{
+			namespace: session.Namespace, name: session.Name, uid: string(session.UID),
+			user: session.Spec.User, cluster: session.Spec.Cluster, grantedGroup: session.Spec.GrantedGroup,
+		}},
+		sessionActivityName: session.Name, sessionActivityGroup: session.Spec.GrantedGroup,
+		impersonation: &impersonation.Request{
+			Verb: impersonation.ParsedVerb{Kind: impersonation.VerbKindIdentity, Mode: impersonation.ModeUserInfo},
+		},
+		reqLog: logger.Sugar(), sar: authorization.SubjectAccessReview{TypeMeta: metav1.TypeMeta{APIVersion: "authorization.k8s.io/v1", Kind: "SubjectAccessReview"}},
+	}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	wc.sendAuthorizationResponse(c, s)
+
+	var response SubjectAccessReviewResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	assert.False(t, response.Status.Allowed)
+	assert.Equal(t, float64(0), testutil.ToFloat64(metrics.WebhookSARAllowed.WithLabelValues("")), "final-fenced request must not emit an allow metric")
+	assert.Equal(t, float64(0), testutil.ToFloat64(metrics.WebhookSessionSARsAllowed.WithLabelValues("cluster")), "revoked session SAR must not emit an allow-labelled probe metric")
+	assert.Equal(t, float64(0), testutil.ToFloat64(metrics.ImpersonationSARDecisions.WithLabelValues("cluster", "user-info", "allowed", "session")), "revoked session must not emit an allowed impersonation metric")
+	tracker.mu.Lock()
+	assert.Empty(t, tracker.entries, "revoked session must not record activity")
+	tracker.mu.Unlock()
+}
+
+func TestSendAuthorizationResponseKeepsSecondLiveSessionWinner(t *testing.T) {
+	logger := zap.NewNop()
+	now := time.Now()
+	first := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "first-winner", Namespace: "breakglass", UID: "first-uid"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user", Cluster: "cluster", GrantedGroup: "first-group"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(now.Add(time.Hour))},
+	}
+	second := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "second-winner", Namespace: "breakglass", UID: "second-uid"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user", Cluster: "cluster", GrantedGroup: "second-group"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(now.Add(time.Hour))},
+	}
+	base := fake.NewClientBuilder().WithScheme(breakglass.Scheme).
+		WithObjects(first, second).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	reader := &revokingSessionReader{
+		Reader: base,
+		onGet: func(ctx context.Context) {
+			var current breakglassv1alpha1.BreakglassSession
+			require.NoError(t, base.Get(ctx, client.ObjectKeyFromObject(first), &current))
+			current.Status.State = breakglassv1alpha1.SessionStateExpired
+			require.NoError(t, base.Status().Update(ctx, &current))
+		},
+	}
+	wc := &WebhookController{
+		log:        logger.Sugar(),
+		sesManager: breakglass.NewSessionManagerWithClientAndReader(base, reader),
+	}
+	s := &authorizeState{
+		ctx: context.Background(), clusterName: "cluster", allowed: true, allowSource: "session",
+		sessions: []breakglassv1alpha1.BreakglassSession{*first, *second},
+		allowedSessions: []sessionAuthorizationCandidate{
+			{namespace: "breakglass", name: first.Name, uid: string(first.UID), user: "user", cluster: "cluster", grantedGroup: "first-group"},
+			{namespace: "breakglass", name: second.Name, uid: string(second.UID), user: "user", cluster: "cluster", grantedGroup: "second-group"},
+		},
+		reqLog: logger.Sugar(), sar: authorization.SubjectAccessReview{TypeMeta: metav1.TypeMeta{APIVersion: "authorization.k8s.io/v1", Kind: "SubjectAccessReview"}},
+	}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	wc.sendAuthorizationResponse(c, s)
+
+	var response SubjectAccessReviewResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	assert.True(t, response.Status.Allowed, "the still-live independent winner must preserve access")
+	require.Len(t, s.allowedSessions, 1)
+	assert.Equal(t, second.Name, s.allowedSessions[0].name)
 }
 
 func TestSendAuthorizationResponseDoesNotFenceIndependentRBAC(t *testing.T) {
@@ -947,8 +1067,9 @@ func TestAuthorizeViaSessions_AllowsWhenSessionSARAllowed(t *testing.T) {
 	}
 }
 
-// Ensures sessions carrying an IdentityProviderName record the IDP authorization metric when allowed
-func TestAuthorizeViaSessions_WithIdentityProviderRecordsMetric(t *testing.T) {
+// Session SAR probes must not emit an allow-labelled metric until the final
+// live fence accepts the candidate.
+func TestAuthorizeViaSessions_DefersAllowMetricUntilFinalFence(t *testing.T) {
 	controller := SetupController(nil)
 	metrics.EscalationIDPAuthorizationChecks.Reset()
 	defer metrics.EscalationIDPAuthorizationChecks.Reset()
@@ -986,8 +1107,30 @@ func TestAuthorizeViaSessions_WithIdentityProviderRecordsMetric(t *testing.T) {
 		ses.Spec.IdentityProviderName,
 		"allowed",
 	))
+	if metricValue != 0 {
+		t.Fatalf("session SAR probe must not record an allow event before final fence, got %v", metricValue)
+	}
+
+	// Persist the same candidate and run the final response path. Only now may
+	// the allow-labelled IDP metric be emitted.
+	ses.Namespace = "default"
+	require.NoError(t, controller.sesManager.Client.Create(context.Background(), &ses))
+	_, _, _, _, candidates := controller.authorizeViaSessionsWithCandidates(context.Background(), rc, []breakglassv1alpha1.BreakglassSession{ses}, sar, "test-cluster")
+	state := &authorizeState{
+		ctx: context.Background(), clusterName: "test-cluster", allowed: true, allowSource: "session",
+		allowedSessions: candidates, sessions: []breakglassv1alpha1.BreakglassSession{ses}, reqLog: zap.NewNop().Sugar(),
+		sar: sar,
+	}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	controller.sendAuthorizationResponse(c, state)
+	metricValue = testutil.ToFloat64(metrics.EscalationIDPAuthorizationChecks.WithLabelValues(
+		ses.Spec.GrantedGroup,
+		ses.Spec.IdentityProviderName,
+		"allowed",
+	))
 	if metricValue != 1 {
-		t.Fatalf("expected EscalationIDPAuthorizationChecks to record 1 allowed event, got %v", metricValue)
+		t.Fatalf("expected final fenced IDP authorization to record 1 allowed event, got %v", metricValue)
 	}
 }
 
