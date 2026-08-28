@@ -143,10 +143,14 @@ case "$action" in
 			record_event operation-completed preflight-failed
 			die "interface '$interface' is not attached to exact bridge '$bridge_name'; no repair was attempted (evidence: $bundle)"
 		fi
-		capture "$bundle/before-bridge-vlan.txt" bridge vlan show dev "$interface" || true
-		# Defined by the sourced fixed-limit contract in common.sh.
-		# shellcheck disable=SC2154
-		if ! timeout "$capture_timeout_seconds" bridge vlan show dev "$interface" | awk -v requested="$vlan" '
+		# Capture once through the fixed timeout and byte quota. The persisted
+		# bounded output is both the audit evidence and the membership input;
+		# never run an uncaptured second probe that could bypass the limits.
+		if ! capture "$bundle/before-bridge-vlan.txt" bridge vlan show dev "$interface"; then
+			record_event operation-completed preflight-failed
+			die "could not capture VLAN membership for exact bridge port '$interface'; no repair was attempted (evidence: $bundle)"
+		fi
+		if ! awk -v requested="$vlan" '
 			{
 				for (i = 1; i <= NF; i++) {
 					if ($i ~ /^[0-9]+$/ && $i == requested) found = 1
@@ -156,8 +160,8 @@ case "$action" in
 					}
 				}
 			}
-			END { exit(found ? 0 : 1) }
-		'; then
+		END { exit(found ? 0 : 1) }
+		' "$bundle/before-bridge-vlan.txt"; then
 			record_event operation-completed preflight-failed
 			die "VLAN '$vlan' is not configured on exact bridge port '$interface'; no repair was attempted (evidence: $bundle)"
 		fi

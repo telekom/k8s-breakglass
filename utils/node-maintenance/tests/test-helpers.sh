@@ -113,6 +113,9 @@ BREAKGLASS_NODE_NAME=node-a assert_rejected 'host evidence path is rejected' "$p
 BREAKGLASS_NODE_NAME=node-a assert_rejected 'kexec validation rejects caller-selected paths' "$kexec_validate" \
 	--target-node node-a --recovery-profile rescue-a --kernel-path /tmp/kernel \
 	--evidence-dir /evidence --confirm KEXEC-RECOVERY-VALIDATE
+assert_rejected_with_message 'duplicate kexec option is rejected before provider validation' '--target-node may be supplied only once' "$kexec_validate" \
+	--target-node node-a --target-node node-a --recovery-profile rescue-a \
+	--evidence-dir /evidence --confirm KEXEC-RECOVERY-VALIDATE
 BREAKGLASS_NODE_NAME=node-a BREAKGLASS_OPERATION_ID=op-a BREAKGLASS_RECORDING_ID=record-a \
 	BREAKGLASS_APPROVAL_ID=approval-a BREAKGLASS_APPROVED_ACTION=link-cycle \
 	assert_rejected 'controller action binding mismatch is rejected' "$network_repair" \

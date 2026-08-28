@@ -317,7 +317,7 @@ assert_container_security() {
 
 bundle_from_output() {
 	output_file=$1
-	bundle=$(sed -n 's/.*Evidence: //p' "$output_file" | tail -n 1)
+	bundle=$(sed -n 's/.*[Ee]vidence: //p' "$output_file" | tail -n 1)
 	case "$bundle" in
 		/evidence/*) ;;
 		*) fail "output did not contain a safe evidence bundle path: '$bundle'" ;;
@@ -429,6 +429,25 @@ run_network_fixture() {
 	shift 3
 	approved_request=$(approved_network_request "$@")
 	new_fixture "$label"
+	bridge_wrapper="$tmp_dir/fake-bridge"
+	if [ ! -e "$bridge_wrapper" ]; then
+		# The wrapper delegates every normal operation to Alpine's fixed bridge
+		# binary. One fixture enables a deliberately oversized show response to
+		# prove VLAN preflight consumes only persisted bounded capture output.
+		# shellcheck disable=SC2016
+		printf '%s\n' \
+			'#!/bin/sh' \
+			'if [ "${NODE_MAINTENANCE_TEST_BRIDGE_OUTPUT_QUOTA:-0}" = 1 ] && [ "$#" -eq 4 ] && [ "$1" = vlan ] && [ "$2" = show ] && [ "$3" = dev ] && [ "$4" = fdb0 ]; then' \
+			'printf "%s\n" "port    vlan ids" "fdb0     100"' \
+				'awk '\''BEGIN { for (i = 0; i < 40000; i++) print "oversized" }'\''' \
+				'exit 0' \
+			'fi' \
+			'if [ -x /usr/sbin/bridge ]; then exec /usr/sbin/bridge "$@"; fi' \
+			'exec /usr/bin/bridge "$@"' >"$bridge_wrapper"
+		chmod 0555 "$bridge_wrapper"
+	fi
+	bridge_test_mode=0
+	[ "$label" = guard-fdb-vlan-output-quota ] && bridge_test_mode=1
 	output_file="$fixture_dir/output"
 	set +e
 	"$docker_bin" run \
@@ -438,9 +457,11 @@ run_network_fixture() {
 		--env BREAKGLASS_APPROVAL_ID="approval-$label" \
 		--env BREAKGLASS_APPROVED_ACTION="$approved_action" \
 		--env BREAKGLASS_APPROVED_NETWORK_REQUEST="$approved_request" \
+		--env NODE_MAINTENANCE_TEST_BRIDGE_OUTPUT_QUOTA="$bridge_test_mode" \
 		--network none --read-only --cap-drop ALL --cap-add NET_ADMIN \
 		--security-opt no-new-privileges --security-opt seccomp=builtin \
 		--mount "source=$volume_name,destination=/evidence" \
+		--mount "type=bind,source=$bridge_wrapper,destination=/usr/local/bin/bridge,readonly" \
 		--entrypoint /bin/sh "$image" -c '
 			set -eu
 			ip link set lo up
@@ -509,6 +530,24 @@ grep -Ei '^02:00:00:00:01:00 .*vlan 100 .*static' "$fdb_host_bundle/after-fdb-en
 grep -q '^action_exit_status=0$' "$fdb_host_bundle/metadata" || fail 'bridge-fdb-replace did not record success'
 destroy_fixture
 pass 'bridge-fdb-replace changes only the exact bridge, port, MAC, and VLAN entry'
+
+run_network_fixture guard-fdb-vlan-output-quota nonzero bridge-fdb-replace network-repair \
+	--target-node node-a --interface fdb0 --bridge br0 --action bridge-fdb-replace \
+	--entry-mac 02:00:00:00:01:00 --vlan 100 \
+	--evidence-dir /evidence --confirm NETWORK-REPAIR
+grep -q 'could not capture VLAN membership' "$fixture_dir/output" \
+	|| fail 'oversized VLAN output did not fail closed at bounded capture'
+quota_bundle=$(bundle_from_output "$fixture_dir/output")
+quota_host_bundle=$(copy_bundle "$fixture_dir/output" "$quota_bundle")
+assert_capture_statuses "$quota_host_bundle" before-bridge-vlan.txt
+[ "$(wc -c <"$quota_host_bundle/before-bridge-vlan.txt" | tr -d ' ')" -le 32832 ] \
+	|| fail 'oversized VLAN evidence exceeded the bounded capture allowance'
+grep -q '^capture_result=output-quota-exceeded$' "$quota_host_bundle/before-bridge-vlan.txt" \
+	|| fail 'oversized VLAN evidence did not record the quota failure'
+[ ! -e "$quota_host_bundle/action-bridge-fdb-replace.txt" ] \
+	|| fail 'oversized VLAN output reached the mutating FDB action'
+destroy_fixture
+pass 'oversized VLAN preflight output is bounded, persisted, and fails closed before mutation'
 
 run_network_fixture guard-fdb-wrong-bridge nonzero bridge-fdb-replace network-repair \
 	--target-node node-a --interface fdb0 --bridge br1 --action bridge-fdb-replace \
@@ -773,6 +812,35 @@ run_kexec_validation() {
 		[ "$actual_exit" -eq "$expected_exit" ] || fail "$label returned $actual_exit, expected $expected_exit"
 	fi
 }
+
+new_fixture guard-kexec-duplicate-option
+set +e
+"$docker_bin" run --name "$container_name" --user 0 \
+	--env BREAKGLASS_NODE_NAME=node-a \
+	--network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" \
+	"$image" kexec-recovery-validate \
+	--target-node node-a --target-node node-a --recovery-profile rescue-a \
+	--evidence-dir /evidence --confirm KEXEC-RECOVERY-VALIDATE \
+	>"$fixture_dir/output" 2>&1
+duplicate_kexec_exit=$?
+set -e
+cat "$fixture_dir/output"
+assert_container_security "$container_name" none
+[ "$duplicate_kexec_exit" -eq 2 ] || fail "duplicate kexec option returned $duplicate_kexec_exit, expected 2"
+grep -q -- '--target-node may be supplied only once' "$fixture_dir/output" \
+	|| fail 'duplicate kexec option did not fail during argument parsing'
+if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" \
+	-c '! find /evidence -mindepth 1 -maxdepth 1 -print | grep -q .'; then
+	:
+else
+	fail 'duplicate kexec option created evidence before argument validation'
+fi
+destroy_fixture
+pass 'duplicate kexec options are rejected before provider validation and evidence creation'
 
 run_kexec_validation kexec-validation 0 readonly kexec-recovery-validate rescue-a \
 	"$kernel_digest" "$initrd_digest" "$cmdline_digest" \
