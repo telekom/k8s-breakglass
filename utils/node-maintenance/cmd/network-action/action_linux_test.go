@@ -7,6 +7,8 @@
 package main
 
 import (
+	"errors"
+	"syscall"
 	"testing"
 	"unsafe"
 )
@@ -25,5 +27,18 @@ func TestEthtoolABIShape(t *testing.T) {
 	}
 	if got, want := unsafe.Sizeof(ifreqData{}), uintptr(40); got != want {
 		t.Fatalf("ifreqData size = %d, want %d", got, want)
+	}
+}
+
+func TestNetlinkErrnoDecoding(t *testing.T) {
+	t.Parallel()
+
+	if err := netlinkErrno(^uint32(2) + 1); !errors.Is(err, syscall.Errno(2)) {
+		t.Fatalf("negative netlink errno = %v, want %v", err, syscall.Errno(2))
+	}
+	for _, code := range []uint32{1, maxNetlinkErrno + 1} {
+		if err := netlinkErrno(code); err == nil {
+			t.Fatalf("netlinkErrno(%d) unexpectedly succeeded", code)
+		}
 	}
 }

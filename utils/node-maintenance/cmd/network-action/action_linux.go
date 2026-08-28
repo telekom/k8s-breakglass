@@ -42,6 +42,8 @@ const (
 	addressFamilyBridge   = 7
 	siocEthtool           = 0x8946
 	ethtoolNwayReset      = 0x9
+	maxNetlinkLength      = 1<<16 - 1
+	maxNetlinkErrno       = 1<<12 - 1
 )
 
 type linkIdentity struct {
@@ -203,9 +205,16 @@ func (connection *routeNetlink) replaceNeighbor(request actionRequest) error {
 	}
 	binary.NativeEndian.PutUint32(payload[4:8], request.ifindex)
 	binary.NativeEndian.PutUint16(payload[8:10], neighborReachable)
-	payload = appendAttribute(payload, ndaDestination, request.address)
-	payload = appendAttribute(payload, ndaLinkLayerAddress, request.mac)
-	_, err := connection.request(rtmNewNeighbor, netlinkRequest|netlinkAck|netlinkCreate|netlinkReplace, payload, 0)
+	var err error
+	payload, err = appendAttribute(payload, ndaDestination, request.address)
+	if err != nil {
+		return err
+	}
+	payload, err = appendAttribute(payload, ndaLinkLayerAddress, request.mac)
+	if err != nil {
+		return err
+	}
+	_, err = connection.request(rtmNewNeighbor, netlinkRequest|netlinkAck|netlinkCreate|netlinkReplace, payload, 0)
 	return err
 }
 
@@ -215,18 +224,29 @@ func (connection *routeNetlink) replaceBridgeFDB(request actionRequest) error {
 	binary.NativeEndian.PutUint32(payload[4:8], request.ifindex)
 	binary.NativeEndian.PutUint16(payload[8:10], neighborNoARP)
 	payload[10] = neighborFlagMaster
-	payload = appendAttribute(payload, ndaLinkLayerAddress, request.mac)
+	var err error
+	payload, err = appendAttribute(payload, ndaLinkLayerAddress, request.mac)
+	if err != nil {
+		return err
+	}
 	vlan := make([]byte, 2)
 	binary.NativeEndian.PutUint16(vlan, request.vlan)
-	payload = appendAttribute(payload, ndaVLAN, vlan)
-	_, err := connection.request(rtmNewNeighbor, netlinkRequest|netlinkAck|netlinkCreate|netlinkReplace, payload, 0)
+	payload, err = appendAttribute(payload, ndaVLAN, vlan)
+	if err != nil {
+		return err
+	}
+	_, err = connection.request(rtmNewNeighbor, netlinkRequest|netlinkAck|netlinkCreate|netlinkReplace, payload, 0)
 	return err
 }
 
 func (connection *routeNetlink) request(messageType uint16, flags uint16, payload []byte, expectedType uint16) ([]byte, error) {
 	connection.seq++
 	request := make([]byte, netlinkHeaderLength+len(payload))
-	binary.NativeEndian.PutUint32(request[0:4], uint32(len(request)))
+	requestLength := len(request)
+	if requestLength > maxNetlinkLength {
+		return nil, errors.New("netlink request is too large")
+	}
+	binary.NativeEndian.PutUint32(request[0:4], uint32(requestLength))
 	binary.NativeEndian.PutUint16(request[4:6], messageType)
 	binary.NativeEndian.PutUint16(request[6:8], flags)
 	binary.NativeEndian.PutUint32(request[8:12], connection.seq)
@@ -255,11 +275,14 @@ func (connection *routeNetlink) request(messageType uint16, flags uint16, payloa
 				if len(message.Data) < 4 {
 					return nil, errors.New("short netlink error response")
 				}
-				code := int32(binary.NativeEndian.Uint32(message.Data[:4]))
+				code := binary.NativeEndian.Uint32(message.Data[:4])
 				if code == 0 {
 					return nil, nil
 				}
-				return nil, syscall.Errno(-code)
+				if err := netlinkErrno(code); err != nil {
+					return nil, err
+				}
+				return nil, nil
 			}
 			if expectedType != 0 && message.Header.Type == expectedType {
 				return message.Data, nil
@@ -268,15 +291,29 @@ func (connection *routeNetlink) request(messageType uint16, flags uint16, payloa
 	}
 }
 
-func appendAttribute(message []byte, attributeType uint16, data []byte) []byte {
+func netlinkErrno(code uint32) error {
+	if code&0x80000000 == 0 {
+		return errors.New("netlink error response has a positive error code")
+	}
+	magnitude := ^code + 1
+	if magnitude > maxNetlinkErrno {
+		return errors.New("netlink error response has an out-of-range errno")
+	}
+	return syscall.Errno(magnitude)
+}
+
+func appendAttribute(message []byte, attributeType uint16, data []byte) ([]byte, error) {
 	attributeLength := 4 + len(data)
 	alignedLength := align4(attributeLength)
 	start := len(message)
+	if attributeLength > maxNetlinkLength {
+		return nil, errors.New("netlink attribute is too large")
+	}
 	message = append(message, make([]byte, alignedLength)...)
 	binary.NativeEndian.PutUint16(message[start:start+2], uint16(attributeLength))
 	binary.NativeEndian.PutUint16(message[start+2:start+4], attributeType)
 	copy(message[start+4:start+attributeLength], data)
-	return message
+	return message, nil
 }
 
 func parseNetlinkAttributes(data []byte) (map[uint16][]byte, error) {
@@ -329,10 +366,21 @@ func restartAutonegotiation(interfaceName string) error {
 	value := ethtoolValue{command: ethtoolNwayReset}
 	request := ifreqData{data: uintptr(unsafe.Pointer(&value))} // #nosec G103 -- the ethtool ifreq ABI requires a pointer to the command payload, which remains live through the ioctl.
 	copy(request.name[:], interfaceName)
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(socket), siocEthtool, uintptr(unsafe.Pointer(&request))) // #nosec G103 -- SYS_IOCTL requires the address of the ABI-shaped ifreq structure.
+	socketPointer, err := fileDescriptorUintptr(socket)
+	if err != nil {
+		return err
+	}
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, socketPointer, siocEthtool, uintptr(unsafe.Pointer(&request))) // #nosec G103 -- SYS_IOCTL requires the address of the ABI-shaped ifreq structure.
 	runtime.KeepAlive(value)
 	if errno != 0 {
 		return errno
 	}
 	return nil
+}
+
+func fileDescriptorUintptr(fd int) (uintptr, error) {
+	if fd < 0 {
+		return 0, errors.New("socket file descriptor is invalid")
+	}
+	return uintptr(fd), nil
 }
