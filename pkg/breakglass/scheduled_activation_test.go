@@ -279,6 +279,46 @@ func TestActivateScheduledSessions(t *testing.T) {
 		assert.Equal(t, "scheduledSessionExpiredBeforeActivation", updated.Status.ReasonEnded)
 	})
 
+	t.Run("rejects activation when the live-read fence reaches equality", func(t *testing.T) {
+		boundary := time.Now().Add(100 * time.Millisecond)
+		session := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "scheduled-live-read-boundary", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				User: "test@example.com", Cluster: "test-cluster", GrantedGroup: "admin",
+				ScheduledStartTime: &metav1.Time{Time: boundary.Add(-time.Minute)},
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+				ExpiresAt: metav1.NewTime(boundary),
+			},
+		}
+		fakeClient := newFakeActivationClient(session)
+		clockValues := []time.Time{
+			boundary.Add(-time.Second), // listed scheduled-start check
+			boundary.Add(-time.Second), // live scheduled-start check
+			boundary.Add(-time.Second), // initial lease check
+			boundary.Add(-time.Second), // activation decision
+			boundary,                   // final live-read fence: equality is expired
+		}
+		clockIndex := 0
+		activator := NewScheduledSessionActivator(logger, NewSessionManagerWithClient(fakeClient)).
+			WithMailService(nil, "TestBranding", true)
+		activator.now = func() time.Time {
+			value := clockValues[clockIndex]
+			if clockIndex < len(clockValues)-1 {
+				clockIndex++
+			}
+			return value
+		}
+
+		activator.ActivateScheduledSessions()
+
+		var updated breakglassv1alpha1.BreakglassSession
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &updated))
+		assert.Equal(t, breakglassv1alpha1.SessionStateWaitingForScheduledTime, updated.Status.State,
+			"the final fresh-read expiry fence must prevent late activation")
+	})
+
 	t.Run("canceled context skips scheduled activation", func(t *testing.T) {
 		scheduledTime := time.Now().Add(-5 * time.Minute)
 		session := &breakglassv1alpha1.BreakglassSession{

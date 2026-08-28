@@ -1,0 +1,155 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+name: Breakglass hard expiry
+
+on:
+  pull_request:
+    paths:
+      - "api/**"
+      - "e2e/api/spoke_hub_authorization_test.go"
+      - "e2e/helpers/**"
+      - "e2e/kind-setup-multi.sh"
+      - "pkg/breakglass/**"
+      - "pkg/config/**"
+      - "pkg/utils/**"
+      - "pkg/webhook/**"
+      - "utils/config/authorization-configuration.yaml"
+      - ".github/workflows/hard-expiry.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  KIND_VERSION: v0.32.0
+  BUSYBOX_IMAGE: busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+  # cacheAuthorizedRequests is available in the structured authorization
+  # configuration from Kubernetes 1.34. This lane exercises that supported
+  # boundary; the regular full suite remains on its current 1.36 image.
+  KIND_NODE_IMAGE: kindest/node:v1.34.0@sha256:7416a61b42b1662ca6ca89f02028ac133a309a2a30ba309614e8ec94d976dc5a
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  hard-expiry:
+    name: Hard expiry behavior (Kubernetes 1.34)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Kind
+        run: |
+          set -Eeuo pipefail
+          kind_sha256=50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54
+          curl --fail --silent --show-error --location \
+            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" \
+            --output ./kind
+          echo "${kind_sha256}  ./kind" | sha256sum --check --status
+          chmod 0755 ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+
+      - name: Build controller image
+        run: docker build --tag breakglass:hard-expiry .
+
+      - name: Set up Kubernetes 1.34 hub and spokes
+        run: |
+          set -Eeuo pipefail
+          chmod +x e2e/kind-setup-multi.sh
+          PRESERVE_ON_FAILURE=true \
+            KIND_RETAIN_ON_FAILURE=true \
+            SKIP_PROXY=true \
+            IMAGE=breakglass:hard-expiry \
+            BUSYBOX_IMAGE="${BUSYBOX_IMAGE}" \
+            UI_FLAVOUR=telekom \
+            KIND_NODE_IMAGE="${KIND_NODE_IMAGE}" \
+            ./e2e/kind-setup-multi.sh 2>&1 | tee hard-expiry-setup.log
+          test -s e2e/kind-setup-multi-tdir/env.sh
+
+      - name: Export isolated OIDC test environment
+        run: |
+          set -Eeuo pipefail
+          source e2e/kind-setup-multi-tdir/env.sh
+          for name in \
+            E2E_HUB_KUBECONFIG E2E_SPOKE_A_KUBECONFIG E2E_SPOKE_B_KUBECONFIG \
+            E2E_SPOKE_A_OIDC_KUBECONFIG E2E_SPOKE_B_OIDC_KUBECONFIG \
+            E2E_HUB_EXTERNAL_IP E2E_HUB_WEBHOOK_URL KEYCLOAK_CA_FILE \
+            KEYCLOAK_INTERNAL_URL TLS_DIR; do
+            value="${!name:-}"
+            test -n "$value"
+            case "$name" in
+              *_KUBECONFIG|KEYCLOAK_CA_FILE|TLS_DIR) value="$(realpath "$value")" ;;
+            esac
+            printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
+          done
+          {
+            echo "E2E_TEST=true"
+            echo "E2E_MULTI_CLUSTER=true"
+            echo "E2E_HARD_EXPIRY=true"
+            echo "E2E_NAMESPACE=breakglass-system"
+            echo "E2E_CLUSTER_NAME=spoke-cluster-a"
+            echo "KEYCLOAK_HOST=https://localhost:8443"
+            echo "KEYCLOAK_REALM=breakglass-e2e"
+            echo "KEYCLOAK_CLIENT_ID=breakglass-ui"
+            echo "KEYCLOAK_ISSUER_HOST=e2e-keycloak:8443"
+          } >> "$GITHUB_ENV"
+
+      - name: Forward hub API
+        run: |
+          set -Eeuo pipefail
+          kubectl --kubeconfig "$E2E_HUB_KUBECONFIG" \
+            -n breakglass-system port-forward svc/breakglass-breakglass 8080:8080 \
+            > hard-expiry-api-port-forward.log 2>&1 &
+          echo "HARD_EXPIRY_API_FORWARD_PID=$!" >> "$GITHUB_ENV"
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8080/healthz >/dev/null; then
+              echo "E2E_HUB_API_URL=http://127.0.0.1:8080" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 1
+          done
+          cat hard-expiry-api-port-forward.log
+          exit 1
+
+      - name: Run focused unit boundary tests
+        run: |
+          set -Eeuo pipefail
+          make GO_TEST_COUNT=1 test-hard-expiry-unit
+
+      - name: Run focused Kubernetes 1.34 hard-expiry behavior
+        run: |
+          set -Eeuo pipefail
+          make test-hard-expiry-e2e 2>&1 | tee hard-expiry-results.log
+
+      - name: Collect hard-expiry diagnostics
+        if: failure()
+        run: |
+          set +e
+          mkdir -p hard-expiry-diagnostics
+          cp hard-expiry-setup.log hard-expiry-results.log hard-expiry-api-port-forward.log hard-expiry-diagnostics/ 2>/dev/null
+          docker ps -a > hard-expiry-diagnostics/docker-ps.txt
+          for cluster in breakglass-hub spoke-cluster-a spoke-cluster-b; do
+            kind export logs --name "$cluster" --dir "hard-expiry-diagnostics/$cluster" || true
+          done
+
+      - name: Tear down hard-expiry clusters
+        if: always()
+        run: |
+          set +e
+          if [ -n "${HARD_EXPIRY_API_FORWARD_PID:-}" ]; then
+            kill "$HARD_EXPIRY_API_FORWARD_PID" 2>/dev/null || true
+          fi
+          kind delete cluster --name breakglass-hub
+          kind delete cluster --name spoke-cluster-a
+          kind delete cluster --name spoke-cluster-b
+          docker rm -f e2e-keycloak 2>/dev/null || true

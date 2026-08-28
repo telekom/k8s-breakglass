@@ -51,6 +51,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
 	t.Run("expires approved session past ExpiresAt", func(t *testing.T) {
+		naturalExpiry := metav1.NewTime(time.Now().UTC().Truncate(time.Second).Add(-1 * time.Hour))
 		session := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "approved-expired",
@@ -65,7 +66,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 				State:           breakglassv1alpha1.SessionStateApproved,
 				ApprovedAt:      metav1.NewTime(time.Now().UTC().Add(-2 * time.Hour)),
 				ActualStartTime: metav1.NewTime(time.Now().UTC().Add(-2 * time.Hour)),
-				ExpiresAt:       metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)), // Already past
+				ExpiresAt:       naturalExpiry, // Already past
 			},
 		}
 
@@ -87,6 +88,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, updated.Status.State)
 		assert.Equal(t, "timeExpired", updated.Status.ReasonEnded)
+		assert.True(t, updated.Status.ExpiresAt.Time.Equal(naturalExpiry.Time), "natural expiry must not be rewritten during cleanup: got %v, want %v", updated.Status.ExpiresAt.Time, naturalExpiry.Time)
 		require.False(t, updated.Status.RetainedUntil.IsZero(), "expired sessions must get terminal retention")
 		assert.True(t, updated.Status.RetainedUntil.After(time.Now()))
 
@@ -296,6 +298,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, updated.Status.State,
 			"an Approved session without an expiry must fail closed and be revoked")
+		assert.False(t, updated.Status.ExpiresAt.IsZero(), "terminalized malformed session must get a fail-closed expiry")
 	})
 
 	t.Run("ignores non-approved sessions", func(t *testing.T) {
@@ -437,6 +440,7 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 			&updated)
 		require.NoError(t, err)
 		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, updated.Status.State)
+		assert.False(t, updated.Status.ExpiresAt.IsZero(), "terminalized malformed session must get a fail-closed expiry")
 		assert.Equal(t, "timeExpired", updated.Status.ReasonEnded)
 	})
 

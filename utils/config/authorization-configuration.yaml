@@ -23,7 +23,7 @@ authorizers:
         type: KubeConfigFile
         kubeConfigFile: /files/breakglass-authz-webhook.yaml
       matchConditions:
-      - expression: "'system:authenticated' in request.groups"
-      - expression: "!request.user.startsWith('system:')"
-      - expression: has(request.resourceAttributes)
-      - expression: "!request.user.startsWith('kubernetes')"
+        - expression: "'system:authenticated' in request.groups"
+        - expression: "!request.user.startsWith('system:')"
+        - expression: has(request.resourceAttributes)
+        - expression: "!request.user.startsWith('kubernetes')"

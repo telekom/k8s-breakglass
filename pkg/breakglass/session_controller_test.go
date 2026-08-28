@@ -3692,6 +3692,19 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 		t.Fatalf("expected approved session, got state=%s approvedAt=%v", got.Status.State, got.Status.ApprovedAt)
 	}
 
+	// Model a cleanup lag: the lease has already elapsed while the stored state
+	// is still Approved. Dropping it must not rewrite the natural boundary into
+	// the later action time.
+	originalExpiresAt := metav1.NewTime(time.Now().UTC().Truncate(time.Second).Add(-time.Minute))
+	var staleApproved breakglassv1alpha1.BreakglassSession
+	if err := cli.Get(context.Background(), client.ObjectKey{Name: name}, &staleApproved); err != nil {
+		t.Fatalf("failed to fetch approved session before drop: %v", err)
+	}
+	staleApproved.Status.ExpiresAt = originalExpiresAt
+	if err := cli.Status().Update(context.Background(), &staleApproved); err != nil {
+		t.Fatalf("failed to model elapsed approved lease: %v", err)
+	}
+
 	// drop as owner -> should transition to Expired
 	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/drop", name), nil)
 	w = httptest.NewRecorder()
@@ -3716,6 +3729,13 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 	}
 	if gotAfterDrop.Status.ExpiresAt.IsZero() {
 		t.Fatalf("expected ExpiresAt to be set for expired session")
+	}
+	var persistedAfterDrop breakglassv1alpha1.BreakglassSession
+	if err := cli.Get(context.Background(), client.ObjectKey{Name: name}, &persistedAfterDrop); err != nil {
+		t.Fatalf("failed to fetch dropped session: %v", err)
+	}
+	if !persistedAfterDrop.Status.ExpiresAt.Time.Equal(originalExpiresAt.Time) {
+		t.Fatalf("drop moved an elapsed expiry forward: got %v, want %v", persistedAfterDrop.Status.ExpiresAt.Time, originalExpiresAt.Time)
 	}
 
 	// ensure expired is terminal: further approve attempts must fail
@@ -3748,6 +3768,7 @@ func TestDropScheduledApprovedSessionExpiresAndPreservesApprovalHistory(t *testi
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			State:          breakglassv1alpha1.SessionStateWaitingForScheduledTime,
 			ApprovedAt:     approvedAt,
+			ExpiresAt:      metav1.NewTime(baseTime.Add(-time.Minute)),
 			ApprovalReason: "approved for scheduled maintenance",
 			Approver:       "approver@e.com",
 			Approvers:      []string{"approver@e.com"},
@@ -3775,7 +3796,7 @@ func TestDropScheduledApprovedSessionExpiresAndPreservesApprovalHistory(t *testi
 	var got breakglassv1alpha1.BreakglassSession
 	require.NoError(t, cli.Get(context.Background(), client.ObjectKey{Name: "scheduled-drop"}, &got))
 	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, got.Status.State)
-	assert.False(t, got.Status.ExpiresAt.IsZero())
+	assert.True(t, got.Status.ExpiresAt.Time.Equal(baseTime.Add(-time.Minute)), "scheduled owner drop must preserve elapsed expiry: got %v, want %v", got.Status.ExpiresAt.Time, baseTime.Add(-time.Minute))
 	assert.True(t, got.Status.WithdrawnAt.IsZero(), "scheduled approved drops must not be recorded as withdrawals")
 	assert.True(t, got.Status.ApprovedAt.Time.Equal(approvedAt.Time), "approvedAt changed")
 	assert.Equal(t, "approved for scheduled maintenance", got.Status.ApprovalReason)
@@ -3864,6 +3885,9 @@ func TestOwnerActionsMatchAlternateAuthIdentifiers(t *testing.T) {
 	}
 
 	approvedAt := metav1.NewTime(time.Now().Add(-time.Minute))
+	withdrawExpiry := metav1.NewTime(time.Now().UTC().Truncate(time.Second).Add(-time.Minute))
+	dropExpiry := metav1.NewTime(time.Now().UTC().Truncate(time.Second).Add(-time.Minute))
+	rejectExpiry := metav1.NewTime(time.Now().UTC().Truncate(time.Second).Add(-2 * time.Minute))
 	withdrawByUsername := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "owner-username-withdraw"},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -3871,7 +3895,7 @@ func TestOwnerActionsMatchAlternateAuthIdentifiers(t *testing.T) {
 			User:         "owner-username",
 			GrantedGroup: "g",
 		},
-		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, ExpiresAt: withdrawExpiry, TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour))},
 	}
 	dropByUsername := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "owner-username-drop"},
@@ -3883,6 +3907,7 @@ func TestOwnerActionsMatchAlternateAuthIdentifiers(t *testing.T) {
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			State:      breakglassv1alpha1.SessionStateApproved,
 			ApprovedAt: approvedAt,
+			ExpiresAt:  dropExpiry,
 		},
 	}
 	rejectBySubject := &breakglassv1alpha1.BreakglassSession{
@@ -3892,7 +3917,7 @@ func TestOwnerActionsMatchAlternateAuthIdentifiers(t *testing.T) {
 			User:         "owner-subject",
 			GrantedGroup: "g",
 		},
-		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, ExpiresAt: rejectExpiry, TimeoutAt: metav1.NewTime(time.Now().Add(time.Hour))},
 	}
 
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
@@ -3923,6 +3948,7 @@ func TestOwnerActionsMatchAlternateAuthIdentifiers(t *testing.T) {
 	var got breakglassv1alpha1.BreakglassSession
 	require.NoError(t, ss.Get(context.Background(), client.ObjectKey{Name: "owner-username-withdraw"}, &got))
 	require.Equal(t, breakglassv1alpha1.SessionStateWithdrawn, got.Status.State)
+	assert.True(t, got.Status.ExpiresAt.Time.Equal(withdrawExpiry.Time), "withdraw must preserve an elapsed expiry: got %v, want %v", got.Status.ExpiresAt.Time, withdrawExpiry.Time)
 
 	req, _ = http.NewRequest(http.MethodPost, "/breakglassSessions/owner-username-drop/drop", nil)
 	w = httptest.NewRecorder()
@@ -3931,6 +3957,7 @@ func TestOwnerActionsMatchAlternateAuthIdentifiers(t *testing.T) {
 
 	require.NoError(t, ss.Get(context.Background(), client.ObjectKey{Name: "owner-username-drop"}, &got))
 	require.Equal(t, breakglassv1alpha1.SessionStateExpired, got.Status.State)
+	assert.True(t, got.Status.ExpiresAt.Time.Equal(dropExpiry.Time), "drop must preserve an elapsed expiry: got %v, want %v", got.Status.ExpiresAt.Time, dropExpiry.Time)
 
 	req, _ = http.NewRequest(http.MethodPost, "/breakglassSessions/owner-subject-reject/reject", nil)
 	w = httptest.NewRecorder()
@@ -3939,6 +3966,7 @@ func TestOwnerActionsMatchAlternateAuthIdentifiers(t *testing.T) {
 
 	require.NoError(t, ss.Get(context.Background(), client.ObjectKey{Name: "owner-subject-reject"}, &got))
 	require.Equal(t, breakglassv1alpha1.SessionStateRejected, got.Status.State)
+	assert.True(t, got.Status.ExpiresAt.Time.Equal(rejectExpiry.Time), "reject must preserve an elapsed expiry: got %v, want %v", got.Status.ExpiresAt.Time, rejectExpiry.Time)
 }
 
 // TestApproverCancelRunningSession verifies that an approver can cancel a running session
@@ -4029,6 +4057,19 @@ func TestApproverCancelRunningSession(t *testing.T) {
 		t.Fatalf("expected approve to succeed, got %d", w.Result().StatusCode)
 	}
 
+	// The approver may cancel after the controller has observed an elapsed
+	// lease but before natural cleanup updates the state. Preserve that
+	// already-reached boundary rather than renewing it to cancellation time.
+	originalExpiresAt := metav1.NewTime(time.Now().UTC().Truncate(time.Second).Add(-time.Minute))
+	var staleApproved breakglassv1alpha1.BreakglassSession
+	if err := cli.Get(context.Background(), client.ObjectKey{Name: name}, &staleApproved); err != nil {
+		t.Fatalf("failed to fetch approved session before cancel: %v", err)
+	}
+	staleApproved.Status.ExpiresAt = originalExpiresAt
+	if err := cli.Status().Update(context.Background(), &staleApproved); err != nil {
+		t.Fatalf("failed to model elapsed approved lease: %v", err)
+	}
+
 	// cancel as approver -> should transition to Expired
 	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/cancel", name), nil)
 	w = httptest.NewRecorder()
@@ -4044,6 +4085,13 @@ func TestApproverCancelRunningSession(t *testing.T) {
 	}
 	if canceled.Status.State != breakglassv1alpha1.SessionStateExpired {
 		t.Fatalf("expected expired session after cancel, got state=%s", canceled.Status.State)
+	}
+	var persistedCanceled breakglassv1alpha1.BreakglassSession
+	if err := cli.Get(context.Background(), client.ObjectKey{Name: name}, &persistedCanceled); err != nil {
+		t.Fatalf("failed to fetch canceled session: %v", err)
+	}
+	if !persistedCanceled.Status.ExpiresAt.Time.Equal(originalExpiresAt.Time) {
+		t.Fatalf("cancel moved an elapsed expiry forward: got %v, want %v", persistedCanceled.Status.ExpiresAt.Time, originalExpiresAt.Time)
 	}
 
 	// Now test that non-approver cannot cancel: override middleware to use non-approver email
@@ -5030,6 +5078,11 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "b@ex.com", GrantedGroup: "g"},
 		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ApprovedAt: metav1.NewTime(now.Add(-time.Minute)), ExpiresAt: metav1.NewTime(now.Add(time.Hour))},
 	}
+	expiredApproved := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "st-approved-expired"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "st-cl", User: "b@ex.com", GrantedGroup: "g"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ApprovedAt: metav1.NewTime(now.Add(-2 * time.Hour)), ExpiresAt: metav1.NewTime(now.Add(-time.Minute))},
+	}
 	waiting := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "st-waiting"},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -5065,7 +5118,7 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
-	builder.WithObjects(pending, pendingForApprovedOwner, approved, waiting, rejected, withdrawn, expired, timeout)
+	builder.WithObjects(pending, pendingForApprovedOwner, approved, expiredApproved, waiting, rejected, withdrawn, expired, timeout)
 	cli := builder.Build()
 	sesmanager := SessionManager{Client: cli}
 	escmanager := testEscalationLookup{Client: cli}
@@ -5146,6 +5199,12 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 	}
 	for st, expectedName := range tests {
 		got := queryByState(st)
+		if st == "approved" {
+			if len(got) != 2 {
+				t.Fatalf("Expected both approved sessions before activeOnly filtering, got: %#v", got)
+			}
+			continue
+		}
 		if len(got) != 1 || got[0].Name != expectedName {
 			t.Fatalf("Expected one session named %s for state %s, got: %#v", expectedName, st, got)
 		}
@@ -5725,6 +5784,47 @@ func TestGetBreakglassSessionByNameApprovalTimedOutMetadata(t *testing.T) {
 	require.Equal(t, true, approvalMeta["isApprover"], "approver should keep read access to stale pending sessions")
 	require.Equal(t, false, approvalMeta["canApprove"], "timed-out pending sessions must not be approvable")
 	require.Equal(t, false, approvalMeta["canReject"], "timed-out pending sessions must not be rejectable")
+}
+
+func TestGetBreakglassSessionByNameExpiredApprovalMetadata(t *testing.T) {
+	// The controller can lag behind the deadline. The API response must still
+	// tell the UI that an Approved object is expired while cleanup catches up.
+	naturalExpiry := metav1.NewTime(time.Now().UTC().Add(-time.Minute))
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "expired-approved-meta"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cl-expired",
+			User:         "alice@example.com",
+			GrantedGroup: "admin",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: naturalExpiry,
+		},
+	}
+	cli := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(session).Build()
+	sessionManager := SessionManager{Client: cli}
+	escalationManager := testEscalationLookup{Client: cli}
+	logger, _ := zap.NewDevelopment()
+	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sessionManager, &escalationManager, func(c *gin.Context) {
+		c.Set("email", "alice@example.com")
+		c.Set("username", "alice")
+		c.Set("user_id", "alice@example.com")
+		c.Next()
+	}, "/config/config.yaml", nil, cli)
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+
+	req := httptest.NewRequest(http.MethodGet, "/breakglassSessions/expired-approved-meta", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+	approvalMeta, ok := body["approvalMeta"].(map[string]any)
+	require.True(t, ok, "response body missing approvalMeta: %#v", body)
+	assert.Equal(t, "Approved", approvalMeta["sessionState"])
+	assert.Equal(t, "This session has expired", approvalMeta["stateMessage"])
 }
 
 // Fake identity provider that returns an error for GetEmail to exercise error paths
@@ -7624,8 +7724,8 @@ func TestIsSessionApprovalTimedOut(t *testing.T) {
 					TimeoutAt:  metav1.Time{},
 				},
 			},
-			expected: false,
-			reason:   "session is pending but no timeout is set",
+			expected: true,
+			reason:   "session is pending but no timeout is set; approval must fail closed",
 		},
 		{
 			name: "timeout_state_already_set",

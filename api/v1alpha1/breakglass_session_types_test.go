@@ -195,18 +195,36 @@ func TestValidateUpdate_ExpiryCannotResurrectApprovedSession(t *testing.T) {
 	terminal := postBoundary.DeepCopy()
 	terminal.Status.State = SessionStateExpired
 	terminal.Status.ExpiresAt = metav1.NewTime(now)
-	if _, err := terminal.ValidateUpdate(context.Background(), base, terminal); err != nil {
+	if _, err := terminal.ValidateUpdate(context.Background(), postBoundary, terminal); err != nil {
 		t.Fatalf("expected terminal revocation with shortened expiry to remain valid: %v", err)
+	}
+
+	staleTerminal := base.DeepCopy()
+	staleTerminal.Status.State = SessionStateExpired
+	staleTerminal.Status.ExpiresAt = metav1.NewTime(now)
+	if _, err := staleTerminal.ValidateUpdate(context.Background(), base, staleTerminal); err == nil {
+		t.Fatal("expected terminal transition after the old boundary to retain the elapsed expiry")
 	}
 
 	pending := base.DeepCopy()
 	pending.Status.State = SessionStatePending
 	pending.Status.ExpiresAt = metav1.Time{}
+	pending.Status.TimeoutAt = metav1.NewTime(now.Add(time.Minute))
 	approved := pending.DeepCopy()
 	approved.Status.State = SessionStateApproved
 	approved.Status.ExpiresAt = metav1.NewTime(now.Add(time.Hour))
 	if _, err := approved.ValidateUpdate(context.Background(), pending, approved); err != nil {
 		t.Fatalf("expected initial pre-boundary approval expiry to be valid: %v", err)
+	}
+	missingTimeout := pending.DeepCopy()
+	missingTimeout.Status.TimeoutAt = metav1.Time{}
+	if _, err := approved.ValidateUpdate(context.Background(), missingTimeout, approved); err == nil {
+		t.Fatal("expected pending promotion without TimeoutAt to be rejected")
+	}
+	expiredTimeout := pending.DeepCopy()
+	expiredTimeout.Status.TimeoutAt = metav1.NewTime(now)
+	if _, err := approved.ValidateUpdate(context.Background(), expiredTimeout, approved); err == nil {
+		t.Fatal("expected pending promotion at TimeoutAt boundary to be rejected")
 	}
 
 	waiting := pending.DeepCopy()

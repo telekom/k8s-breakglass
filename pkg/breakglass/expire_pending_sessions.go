@@ -6,6 +6,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -36,6 +37,7 @@ func (wc *BreakglassSessionController) ExpirePendingSessions(ctxs ...context.Con
 				breakglassv1alpha1.SessionStatePending,
 				IsSessionApprovalTimedOut,
 				func(current *breakglassv1alpha1.BreakglassSession) {
+					current.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(current.Status.ExpiresAt, now)
 					current.Status.State = breakglassv1alpha1.SessionStateTimeout
 					retainFor := ParseRetainFor(current.Spec, wc.log)
 					current.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))

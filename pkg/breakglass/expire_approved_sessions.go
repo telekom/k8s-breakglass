@@ -8,6 +8,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -40,6 +41,7 @@ func (wc *BreakglassSessionController) ExpireApprovedSessions(ctxs ...context.Co
 				breakglassv1alpha1.SessionStateApproved,
 				IsSessionExpired,
 				func(current *breakglassv1alpha1.BreakglassSession) {
+					current.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(current.Status.ExpiresAt, now)
 					current.Status.State = breakglassv1alpha1.SessionStateExpired
 					current.SetCondition(metav1.Condition{
 						Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),

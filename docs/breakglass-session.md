@@ -18,8 +18,8 @@ The `BreakglassSession` custom resource represents an active or requested privil
 
 The breakglass controller implements a **state-first validation architecture** where:
 
-1. **State is the ultimate authority** - A session's validity is determined by its `state` field, not timestamps
-2. **Lease timestamps are monotonic** - A regular session has no renewal operation: its expiry is set when it is approved and cannot be extended. Terminal controller actions may shorten the expiry while preserving the audit record.
+1. **State and lease are both authoritative** - Terminal states always deny; an `Approved` session grants access only while its non-zero `expiresAt` lease is strictly in the future
+2. **Lease timestamps are monotonic** - A regular session has no renewal operation: its expiry is set when it is approved and cannot be extended. Terminal controller actions may shorten a still-live lease while preserving the audit record; after the boundary they retain the already-elapsed timestamp.
 3. **Terminal states are never valid** - Rejected, Withdrawn, Expired, and ApprovalTimeout sessions can never be reactivated
 
 Admission webhooks enforce valid state transitions and reject invalid updates (for example, preventing terminal states from reverting to active states).
@@ -60,11 +60,11 @@ Once a session enters a terminal state (**Rejected**, **Withdrawn**, **Expired**
 
 - These states take absolute precedence over any timestamps
 - Even if timestamps appear valid, the session is not valid
-- The state field is the only determinant for terminal state detection
+- The state field determines whether a session is terminal; an `Approved` session additionally requires a non-zero lease that is still strictly in the future
 - An `Approved` session with a missing or zero `expiresAt` fails closed and is revoked by cleanup; approval never grants unbounded access.
 - Expiry always revokes access at the exact boundary. Regular sessions have no renewal or extension operation; a future timestamp written after expiry cannot resurrect a terminal session.
-- While a session is `Approved` or `WaitingForScheduledTime`, `status.expiresAt` cannot be extended. The validating webhook also covers `breakglasssessions/status`, so controller or administrative status writes cannot move a reached expiry into the future; terminal revocation may shorten it to the current time.
-- The authorization webhook governs new Kubernetes authorization requests. Kubernetes cannot terminate an already-established native `exec`, `attach`, or `port-forward` stream at expiry; strict profiles must use an expiry-aware proxy or controller-owned workload termination where that distinction matters.
+- While a session is `Approved` or `WaitingForScheduledTime`, `status.expiresAt` cannot be extended. The validating webhook also covers `breakglasssessions/status`, so controller or administrative status writes cannot move a reached expiry into the future; terminal revocation may shorten only a still-live lease to the current time, while post-boundary cleanup preserves the natural timestamp.
+- The authorization webhook governs new Kubernetes authorization requests. Kubernetes cannot terminate an already-established native `exec`, `attach`, `logs -f`, or `port-forward` stream at expiry; strict profiles must use an expiry-aware proxy or controller-owned workload termination where that distinction matters. Every new request, including these pod subresources, is denied at the boundary.
 - Automatic expiry routines re-check live state before writing terminal status, so a concurrent withdraw, rejection, drop, or cancellation keeps its original terminal audit reason.
 - Scheduled sessions whose `expiresAt` is already in the past when cleanup reaches their `scheduledStartTime` are marked `Expired` instead of being activated
 - Scheduled activation re-reads the live session before granting access and skips the object if it has already left `WaitingForScheduledTime`.
@@ -79,7 +79,7 @@ Timestamps are preserved across state transitions to maintain audit history:
 | `approvedAt` | When session was approved | Transition to Approved | Never |
 | `rejectedAt` | When session was rejected | Transition to Rejected ONLY | Never |
 | `withdrawnAt` | When session was withdrawn | Transition to Withdrawn ONLY | Never |
-| `expiresAt` | When session expires or expired | Approval; terminal drop/cleanup may shorten it | Never cleared; never extended |
+| `expiresAt` | When session expires or expired | Approval; terminal drop/cleanup may shorten a still-live lease | Never cleared; never extended or moved forward after expiry |
 | `timeoutAt` | When pending session timed out | After timeout threshold | Never |
 | `retainedUntil` | When session object will be deleted | Terminal state entry | Never |
 | `lastActivity` | Most recent authorized webhook request | Each activity flush cycle via status merge patch | Never |

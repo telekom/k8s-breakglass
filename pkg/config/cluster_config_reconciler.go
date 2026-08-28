@@ -227,7 +227,7 @@ func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx cont
 
 		// Update the session status to Expired
 		session.Status.State = breakglassv1alpha1.SessionStateExpired
-		session.Status.ExpiresAt = now
+		session.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(session.Status.ExpiresAt, now.Time)
 		session.Status.ReasonEnded = "clusterDeleted"
 		session.SetCondition(metav1.Condition{
 			Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),

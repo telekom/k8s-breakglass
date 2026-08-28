@@ -8,9 +8,12 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -62,7 +65,7 @@ func duplicateKeyForSession(session breakglassv1alpha1.BreakglassSession) duplic
 // conditions in session creation (the in-flight guard is per-process).
 // Running this during the periodic cleanup makes the system eventually
 // consistent without hammering the API server.
-func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *SessionManager) {
+func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *SessionManager, auditEmitters ...AuditEmitter) {
 	if mgr == nil {
 		return
 	}
@@ -157,7 +160,7 @@ func CleanupDuplicateSessions(ctx context.Context, log *zap.SugaredLogger, mgr *
 				"created", dup.CreationTimestamp.Time,
 			)
 
-			if _, err := terminateDuplicateSession(ctx, log, mgr, key, dup); err != nil {
+			if _, err := terminateDuplicateSession(ctx, log, mgr, key, dup, auditEmitters...); err != nil {
 				log.Warnw("Failed to update duplicate session status", "session", dup.Name, "error", err)
 			}
 		}
@@ -230,6 +233,7 @@ func terminateDuplicateSession(
 	mgr *SessionManager,
 	key duplicateSessionKey,
 	session breakglassv1alpha1.BreakglassSession,
+	auditEmitters ...AuditEmitter,
 ) (bool, error) {
 	updated := false
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -251,6 +255,9 @@ func terminateDuplicateSession(
 		base := live.DeepCopy()
 		prepareDuplicateSessionTermination(&live, log)
 		live.Status.ObservedGeneration = live.Generation
+		if err := emitDuplicateCleanupAudit(ctx, &live, firstAuditEmitter(auditEmitters)); err != nil {
+			return fmt.Errorf("emit duplicate cleanup audit for %s/%s: %w", live.Namespace, live.Name, err)
+		}
 		if err := mgr.Client.Status().Patch(ctx, &live, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
 			if apierrors.IsNotFound(err) {
 				return nil
@@ -264,6 +271,58 @@ func terminateDuplicateSession(
 		return false, fmt.Errorf("patch duplicate session status %s/%s: %w", session.Namespace, session.Name, err)
 	}
 	return updated, nil
+}
+
+func firstAuditEmitter(emitters []AuditEmitter) AuditEmitter {
+	if len(emitters) == 0 {
+		return nil
+	}
+	return emitters[0]
+}
+
+// emitDuplicateCleanupAudit records the terminalization before the status
+// patch. Production uses AuditService.EmitSync, so a sink failure prevents the
+// terminal status from being written and the cleanup retry can safely retry
+// the same deterministic event ID. Emitters that only support asynchronous
+// delivery retain the existing non-blocking behavior.
+func emitDuplicateCleanupAudit(ctx context.Context, session *breakglassv1alpha1.BreakglassSession, emitter AuditEmitter) error {
+	if emitter == nil || !emitter.IsEnabled() {
+		return nil
+	}
+	eventType := audit.EventSessionExpired
+	if session.Status.State == breakglassv1alpha1.SessionStateWithdrawn {
+		eventType = audit.EventSessionWithdrawn
+	}
+	eventID := fmt.Sprintf("duplicate-cleanup/%s/%s", session.Namespace, session.Name)
+	if session.UID != "" {
+		eventID = "duplicate-cleanup/" + string(session.UID)
+	}
+	event := &audit.Event{
+		ID:        eventID,
+		Type:      eventType,
+		Severity:  audit.SeverityInfo,
+		Timestamp: time.Now().UTC(),
+		Actor:     audit.Actor{User: "system"},
+		Target: audit.Target{
+			Kind:      "BreakglassSession",
+			Name:      session.Name,
+			Namespace: session.Namespace,
+			Cluster:   session.Spec.Cluster,
+		},
+		RequestContext: &audit.RequestContext{SessionName: session.Name},
+		Details: map[string]interface{}{
+			"reason":        "duplicateCleanup",
+			"terminalState": string(session.Status.State),
+			"grantedGroup":  session.Spec.GrantedGroup,
+		},
+	}
+	if syncEmitter, ok := emitter.(interface {
+		EmitSync(context.Context, *audit.Event) error
+	}); ok {
+		return syncEmitter.EmitSync(ctx, event)
+	}
+	emitter.Emit(ctx, event)
+	return nil
 }
 
 func prepareDuplicateSessionTermination(session *breakglassv1alpha1.BreakglassSession, log *zap.SugaredLogger) {
@@ -302,9 +361,10 @@ func prepareDuplicateSessionTermination(session *breakglassv1alpha1.BreakglassSe
 	if targetState == breakglassv1alpha1.SessionStateWithdrawn && session.Status.WithdrawnAt.IsZero() {
 		session.Status.WithdrawnAt = now
 	}
-	if targetState == breakglassv1alpha1.SessionStateExpired {
-		session.Status.ExpiresAt = now
-	}
+	// Terminal metadata must never move a malformed or elapsed lease beyond
+	// its natural boundary, regardless of whether cleanup withdraws or expires
+	// the duplicate.
+	session.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(session.Status.ExpiresAt, now.Time)
 	// Set RetainedUntil so the cleanup routine can later garbage-collect the session.
 	if session.Status.RetainedUntil.IsZero() {
 		retainFor := ParseRetainFor(session.Spec, log)

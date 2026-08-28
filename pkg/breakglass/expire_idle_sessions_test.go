@@ -73,7 +73,9 @@ func TestExpireIdleSessions(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 
 	t.Run("expires idle session with lastActivity in past", func(t *testing.T) {
-		past := metav1.NewTime(time.Now().UTC().Add(-20 * time.Minute))
+		now := time.Now().UTC().Truncate(time.Second)
+		past := metav1.NewTime(now.Add(-20 * time.Minute))
+		naturalExpiry := metav1.NewTime(now.Add(-time.Minute))
 		ses := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "idle-session", Namespace: "default"},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -85,6 +87,7 @@ func TestExpireIdleSessions(t *testing.T) {
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:        breakglassv1alpha1.SessionStateApproved,
 				LastActivity: &past,
+				ExpiresAt:    naturalExpiry,
 			},
 		}
 
@@ -98,6 +101,7 @@ func TestExpireIdleSessions(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, breakglassv1alpha1.SessionStateIdleExpired, got.Status.State)
 		assert.Equal(t, "idleTimeout", got.Status.ReasonEnded)
+		assert.True(t, got.Status.ExpiresAt.Time.Equal(naturalExpiry.Time), "idle cleanup must preserve an elapsed expiry: got %v, want %v", got.Status.ExpiresAt.Time, naturalExpiry.Time)
 		require.False(t, got.Status.RetainedUntil.IsZero(), "idle-expired sessions must get terminal retention")
 		assert.True(t, got.Status.RetainedUntil.After(time.Now()))
 	})
