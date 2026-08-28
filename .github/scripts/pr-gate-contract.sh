@@ -77,7 +77,10 @@ normalize_branch_protection_http() {
     body = blocks[(header_index + 1)..].join("\n\n")
     case code
     when "200"
-      parsed = JSON.parse(body, object_class: UniqueHash)
+      # Recent json gem versions optimize duplicate-key insertion and bypass a
+      # Hash subclass []= hook. Keep the hook for older runtimes, while the
+      # parser option makes the rejection portable across supported Rubies.
+      parsed = JSON.parse(body, object_class: UniqueHash, allow_duplicate_key: false)
       abort "branch-protection response is not an object" unless parsed.is_a?(Hash)
       File.write(ARGV.fetch(1), JSON.generate(parsed) + "\n")
     when "404"
@@ -90,7 +93,7 @@ normalize_branch_protection_http() {
       content_types = headers.fetch("content-type", [])
       abort "404 missing/ambiguous JSON content type" unless content_types.length == 1 &&
         content_types.fetch(0).match?(/\Aapplication\/json(?:\s*;.*)?\z/i)
-      parsed = JSON.parse(body, object_class: UniqueHash)
+      parsed = JSON.parse(body, object_class: UniqueHash, allow_duplicate_key: false)
       abort "404 error is not an object" unless parsed.is_a?(Hash)
       abort "unexpected 404 message" unless parsed["message"] == "Branch not protected"
       abort "missing 404 documentation URL" unless parsed["documentation_url"].is_a?(String) &&
@@ -166,7 +169,7 @@ manifest_evidence() {
         content_types.fetch(0).match?(%r{\Aapplication/(?:[A-Za-z0-9.+-]+\+)?json(?:\s*;.*)?\z}i)
       canonical_body = if json_body
         begin
-          {"json" => JSON.parse(body, object_class: UniqueHash)}
+          {"json" => JSON.parse(body, object_class: UniqueHash, allow_duplicate_key: false)}
         rescue JSON::ParserError, DuplicateJSONKeyError
           abort "invalid JSON HTTP body"
         end
@@ -196,7 +199,7 @@ manifest_evidence() {
         relative = path.delete_prefix(root + File::SEPARATOR)
         evidence = if File.extname(path) == ".json"
           begin
-            canonical_json(JSON.parse(File.binread(path), object_class: UniqueHash))
+            canonical_json(JSON.parse(File.binread(path), object_class: UniqueHash, allow_duplicate_key: false))
           rescue JSON::ParserError, DuplicateJSONKeyError
             abort "invalid JSON evidence: #{relative}"
           end
@@ -255,7 +258,7 @@ validate_json() {
         super
       end
     end
-    JSON.parse(File.binread(ARGV.fetch(0)), object_class: UniqueHash)
+    JSON.parse(File.binread(ARGV.fetch(0)), object_class: UniqueHash, allow_duplicate_key: false)
   ' "$1" >/dev/null || fail "JSON evidence is malformed or contains duplicate object keys: $1"
 }
 
