@@ -25,10 +25,10 @@ checks:
     bounds: {durationSeconds: [1, 300], packets: [1, 10000], snaplenBytes: [64, 256], filterCharacters: 256}
   - id: selected-pod-capture
     operation: approved-target-ephemeral-container-bounded-capture
-    tools: [tcpdump]
+    tools: [net-debug, tcpdump]
     requirements: [linux-kernel, target-container-network-namespace, non-hostNetwork, CAP_NET_RAW, disposable-kind-cluster, owner-only-emptyDir]
     prohibited: [caller-pid, caller-pod-name, caller-node-name, shell-argv, hostPath, CRI-socket, privileged, hostPID, hostNetwork]
-    bounds: {durationSeconds: [1, 300], packets: [1, 10000], snaplenBytes: [64, 256], filterBytes: 256, outputFilenameBytes: 64}
+    bounds: {durationSeconds: [1, 300], packets: [1, 10000], snaplenBytes: [64, 256], filterCharacters: 256, outputFilenameBytes: 64}
   - id: kernel-packet-tracing
     operation: bounded-image-owned-host-netns-trace
     tools: [net-debug, pwru]

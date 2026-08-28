@@ -62,6 +62,7 @@ image:
     - BPF
     - PERFMON
     - SYS_RESOURCE
+    - SYS_PTRACE
   operationCapabilities:
     selectedPodCapture: [NET_RAW]
     hostNamespaceTrace: [BPF, PERFMON, NET_ADMIN, SYS_RESOURCE, SYS_PTRACE]

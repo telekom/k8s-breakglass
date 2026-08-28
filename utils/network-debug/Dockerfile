@@ -64,7 +64,7 @@ LABEL org.opencontainers.image.title="Network Debug Utility" \
 	org.opencontainers.image.vendor="Deutsche Telekom AG" \
 	io.telekom.breakglass.intent="network-diagnostics" \
 	io.telekom.breakglass.image.role="debug-network" \
-	io.telekom.breakglass.security.capabilities="NET_RAW,NET_ADMIN,BPF,PERFMON,SYS_RESOURCE"
+	io.telekom.breakglass.security.capabilities="NET_RAW,NET_ADMIN,BPF,PERFMON,SYS_RESOURCE,SYS_PTRACE"
 
 COPY --from=tools /go/bin/pwru /usr/local/bin/pwru
 COPY scripts/net-debug /usr/local/bin/net-debug
