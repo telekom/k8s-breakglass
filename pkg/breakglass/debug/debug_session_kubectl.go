@@ -555,6 +555,23 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	copyPod.ResourceVersion = ""
 	copyPod.UID = ""
 
+	// Target reads above are only a candidate window. Re-read the hub session
+	// immediately before the privileged target create, then fence the source
+	// Pod identity as well. A revoked/expired session or replaced source Pod
+	// must never result in a copy being created.
+	live, err := h.liveSessionForMutation(ctx, ds, user)
+	if err != nil {
+		return nil, err
+	}
+	ds = live
+	freshOriginalPod := &corev1.Pod{}
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: originalNamespace, Name: originalPodName}, freshOriginalPod); err != nil {
+		return nil, fmt.Errorf("failed to re-read pod %s/%s before copy: %w", originalNamespace, originalPodName, err)
+	}
+	if freshOriginalPod.UID == "" || originalPod.UID == "" || freshOriginalPod.UID != originalPod.UID {
+		return nil, kubectlDebugPolicyErrorf("source pod %s/%s changed during copy authorization", originalNamespace, originalPodName)
+	}
+
 	// Create the copy pod using Create (not SSA) because each pod copy must be unique
 	if err := targetClient.Create(ctx, copyPod); err != nil {
 		return nil, fmt.Errorf("failed to create pod copy: %w", err)
@@ -629,20 +646,20 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 		return nil, kubectlDebugRequestErrorf("node debug is not enabled for this template")
 	}
 
+	// Get the target cluster client and node before evaluating the selector. The
+	// node UID is retained for the final identity fence immediately before Pod
+	// creation, including when no selector is configured.
+	targetClient, err := h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for cluster %s: %w", ds.Spec.Cluster, err)
+	}
+	node := &corev1.Node{}
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: nodeName}, node); err != nil {
+		return nil, fmt.Errorf("failed to get node %s: %w", nodeName, err)
+	}
+
 	// Validate node selector if configured
 	if len(nd.NodeSelector) > 0 {
-		// Get target cluster client
-		targetClient, err := h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get client for cluster %s: %w", ds.Spec.Cluster, err)
-		}
-
-		// Get the node
-		node := &corev1.Node{}
-		if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: nodeName}, node); err != nil {
-			return nil, fmt.Errorf("failed to get node %s: %w", nodeName, err)
-		}
-
 		// Check node selector
 		for k, v := range nd.NodeSelector {
 			if nodeVal, exists := node.Labels[k]; !exists || nodeVal != v {
@@ -665,12 +682,6 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 		hostNetwork = nd.HostNamespaces.HostNetwork
 		hostPID = nd.HostNamespaces.HostPID
 		hostIPC = nd.HostNamespaces.HostIPC
-	}
-
-	// Get target cluster client
-	targetClient, err := h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for cluster %s: %w", ds.Spec.Cluster, err)
 	}
 
 	// Create the debug pod
@@ -740,6 +751,23 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 				},
 			},
 		},
+	}
+
+	// All target reads and pod construction above are only a candidate window.
+	// Re-read the hub session and target Node immediately before creating the
+	// privileged hostPath Pod. This prevents expiry, revocation, participant
+	// removal, or Node replacement during the read window from becoming access.
+	live, err := h.liveSessionForMutation(ctx, ds, user)
+	if err != nil {
+		return nil, err
+	}
+	ds = live
+	freshNode := &corev1.Node{}
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: nodeName}, freshNode); err != nil {
+		return nil, fmt.Errorf("failed to re-read node %s before debug pod creation: %w", nodeName, err)
+	}
+	if node.UID == "" || freshNode.UID == "" || node.UID != freshNode.UID {
+		return nil, kubectlDebugPolicyErrorf("node %s changed during debug pod authorization", nodeName)
 	}
 
 	// Create the pod using Create (not SSA) because each debug pod must be unique
