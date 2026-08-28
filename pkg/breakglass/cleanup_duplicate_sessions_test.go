@@ -552,7 +552,7 @@ func (r *duplicateCleanupAuditRecorder) EmitSync(_ context.Context, event *audit
 	return nil
 }
 
-func TestDuplicateCleanupAuditIsDurableAndIdempotent(t *testing.T) {
+func TestDuplicateCleanupAuditIsDurableAndAtLeastOnce(t *testing.T) {
 	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "duplicate", Namespace: "breakglass", UID: "stable-uid"},
 		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "prod", GrantedGroup: "admin"},
@@ -565,8 +565,8 @@ func TestDuplicateCleanupAuditIsDurableAndIdempotent(t *testing.T) {
 	assert.Equal(t, audit.EventSessionExpired, recorder.events[0].Type)
 	assert.Equal(t, "duplicateCleanup", recorder.events[0].Details["reason"])
 
-	// Retries use the same ID, allowing durable sinks to deduplicate a
-	// successful event if the status patch races or is retried.
+	// Retries use the same ID as a correlation key. Delivery is explicitly
+	// at-least-once because sinks are not required to deduplicate event IDs.
 	require.NoError(t, emitDuplicateCleanupAudit(context.Background(), session, recorder))
 	assert.Equal(t, recorder.events[0].ID, recorder.events[1].ID)
 
@@ -586,6 +586,31 @@ func TestDuplicateCleanupAuditIsDurableAndIdempotent(t *testing.T) {
 	var unchanged breakglassv1alpha1.BreakglassSession
 	require.NoError(t, fc.Get(context.Background(), client.ObjectKeyFromObject(stored), &unchanged))
 	assert.Equal(t, breakglassv1alpha1.SessionStatePending, unchanged.Status.State)
+}
+
+func TestDuplicateCleanupAuditRetriesAfterStatusConflict(t *testing.T) {
+	now := metav1.NewTime(time.Now().Add(time.Hour))
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "conflict-duplicate", Namespace: "breakglass", UID: "conflict-uid"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "prod", User: "user", GrantedGroup: "admin"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStatePending, TimeoutAt: now},
+	}
+	var attempts int
+	fc := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+		WithInterceptorFuncs(interceptor.Funcs{SubResourcePatch: func(_ context.Context, _ client.Client, subResource string, _ client.Object, _ client.Patch, _ ...client.SubResourcePatchOption) error {
+			if subResource == "status" && attempts == 0 {
+				attempts++
+				return apierrors.NewConflict(schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "breakglasssessions"}, session.Name, assert.AnError)
+			}
+			return nil
+		}}).Build()
+	recorder := &duplicateCleanupAuditRecorder{}
+	updated, err := terminateDuplicateSession(context.Background(), zaptest.NewLogger(t).Sugar(), NewSessionManagerWithClient(fc), duplicateKeyForSession(*session), *session, recorder)
+	require.NoError(t, err)
+	assert.True(t, updated)
+	assert.GreaterOrEqual(t, len(recorder.events), 2, "conflict retry is at-least-once")
+	assert.Equal(t, recorder.events[0].ID, recorder.events[1].ID)
 }
 
 func TestGetLiveDuplicateSessionRequiresNamespace(t *testing.T) {

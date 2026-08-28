@@ -282,9 +282,9 @@ func firstAuditEmitter(emitters []AuditEmitter) AuditEmitter {
 
 // emitDuplicateCleanupAudit records the terminalization before the status
 // patch. Production uses AuditService.EmitSync, so a sink failure prevents the
-// terminal status from being written and the cleanup retry can safely retry
-// the same deterministic event ID. Emitters that only support asynchronous
-// delivery retain the existing non-blocking behavior.
+// terminal status from being written. Retries are deliberately at-least-once:
+// the deterministic event ID is a correlation key, not an idempotency claim,
+// because configured sinks are not required to deduplicate IDs.
 func emitDuplicateCleanupAudit(ctx context.Context, session *breakglassv1alpha1.BreakglassSession, emitter AuditEmitter) error {
 	if emitter == nil || !emitter.IsEnabled() {
 		return nil
@@ -321,8 +321,7 @@ func emitDuplicateCleanupAudit(ctx context.Context, session *breakglassv1alpha1.
 	}); ok {
 		return syncEmitter.EmitSync(ctx, event)
 	}
-	emitter.Emit(ctx, event)
-	return nil
+	return fmt.Errorf("duplicate cleanup audit emitter does not support synchronous delivery")
 }
 
 func prepareDuplicateSessionTermination(session *breakglassv1alpha1.BreakglassSession, log *zap.SugaredLogger) {
