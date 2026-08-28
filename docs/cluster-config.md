@@ -947,6 +947,7 @@ authorizers:
       timeout: 3s
       authorizedTTL: 5m
       cacheAuthorizedRequests: false
+      cacheUnauthorizedRequests: false
       unauthorizedTTL: 30s
       subjectAccessReviewVersion: v1
       matchConditionSubjectAccessReviewVersion: v1
@@ -1163,6 +1164,7 @@ authorizers:
       timeout: 3s
       authorizedTTL: 5m
       cacheAuthorizedRequests: false
+      cacheUnauthorizedRequests: false
       unauthorizedTTL: 30s
       subjectAccessReviewVersion: v1
       matchConditionSubjectAccessReviewVersion: v1

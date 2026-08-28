@@ -33,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   node-level operation lock, and cleanup/expiry integration define the
   supported operational boundary.
 
+### Fixed
+
+- **Hard expiry and authorization caching**: Authorization now fails closed
+  at the exact `expiresAt` boundary, cannot be resurrected by stale writes or
+  cached decisions, and shipped Kubernetes 1.34+ examples disable both
+  positive and negative webhook decision caches.
+
 ### Removed
 
 - **Broad `flush-neighbors` network action (breaking)**: Removed the prior

@@ -71,6 +71,7 @@ authorizers:
       # Required for exact BreakglassSession expiry; do not cache allows.
       authorizedTTL: 5m
       cacheAuthorizedRequests: false
+      cacheUnauthorizedRequests: false
       
       # Webhook endpoint configuration
       connectionInfo:

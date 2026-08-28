@@ -165,6 +165,7 @@ webhook:
   # Kubernetes 1.34+ structured authorization configuration:
   authorizedTTL: 5m
   cacheAuthorizedRequests: false
+  cacheUnauthorizedRequests: false
   unauthorizedTTL: 30s
 ```
 

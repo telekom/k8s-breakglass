@@ -357,6 +357,7 @@ authorizers:
       # Required for exact BreakglassSession expiry; do not cache allows.
       authorizedTTL: 5m
       cacheAuthorizedRequests: false
+      cacheUnauthorizedRequests: false
       unauthorizedTTL: 30s
       subjectAccessReviewVersion: v1
       matchConditionSubjectAccessReviewVersion: v1
