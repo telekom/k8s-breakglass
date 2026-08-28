@@ -113,9 +113,25 @@ jobs:
             fi
           done
           test -n "${api_port:-}"
-          kubectl --kubeconfig "$E2E_HUB_KUBECONFIG" \
-            -n breakglass-system port-forward svc/breakglass-breakglass "${api_port}:8080" \
-            > hard-expiry-api-port-forward.log 2>&1 &
+          # The focused expiry proof deliberately rolls the controller
+          # Deployment while pausing cleanup. A one-shot port-forward exits
+          # when that rollout replaces the selected Pod, making later tests
+          # fail with EOF even though the service is healthy. Keep the
+          # forwarding endpoint alive across expected Pod restarts, just like
+          # the normal E2E CI lanes do.
+          (
+            set +e
+            pf_pid=""
+            trap 'kill "$pf_pid" 2>/dev/null; exit 0' EXIT TERM INT
+            while true; do
+              kubectl --kubeconfig "$E2E_HUB_KUBECONFIG" \
+                -n breakglass-system port-forward svc/breakglass-breakglass "${api_port}:8080" &
+              pf_pid=$!
+              wait "$pf_pid"
+              echo "[keepalive] API port-forward exited, restarting in 2s..."
+              sleep 2
+            done
+          ) > hard-expiry-api-port-forward.log 2>&1 &
           echo "HARD_EXPIRY_API_FORWARD_PID=$!" >> "$GITHUB_ENV"
           for _ in $(seq 1 30); do
             if curl --fail --silent "http://127.0.0.1:${api_port}/healthz" >/dev/null; then
