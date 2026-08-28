@@ -87,13 +87,13 @@ spec:
 
 ## Session State and Validation
 
-The breakglass API implements a **state-first validation architecture**:
+The breakglass API implements a **state-and-lease validation architecture**:
 
-### State Priority Rules
+### State and Lease Priority Rules
 
-1. **State is ultimate authority** - A session's `state` field determines validity, not timestamps
-2. **Terminal states override timestamps** - Sessions in Rejected, Withdrawn, Expired, IdleExpired, or ApprovalTimeout states can NEVER be valid, regardless of timestamp values
-3. **Timestamp preservation** - Timestamps are never cleared, only added/updated, creating a complete audit history
+1. **Terminal state takes precedence** - Sessions in Rejected, Withdrawn, Expired, IdleExpired, or ApprovalTimeout states can NEVER be valid, regardless of timestamp values
+2. **Approved requires a live lease** - An `Approved` session is valid only when `expiresAt` is present and strictly later than the authorization decision time; a missing, zero, or equal/past expiry fails closed
+3. **Timestamp preservation** - Timestamps are never cleared, and regular sessions have no renewal operation; terminal cleanup may shorten a still-live lease but never move an elapsed expiry forward
 
 ### Session Validity Rules
 

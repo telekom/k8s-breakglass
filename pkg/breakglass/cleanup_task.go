@@ -155,7 +155,11 @@ func (cr CleanupRoutine) clean(ctx context.Context) {
 	if cr.Manager != nil {
 		// Remove duplicate active sessions (same cluster/user/grantedGroup triple).
 		// Duplicates can arise from TOCTOU races in multi-replica deployments.
-		CleanupDuplicateSessions(opCtx, cr.Log, cr.Manager)
+		if cr.AuditService != nil {
+			CleanupDuplicateSessions(opCtx, cr.Log, cr.Manager, cr.AuditService)
+		} else {
+			CleanupDuplicateSessions(opCtx, cr.Log, cr.Manager)
+		}
 	}
 
 	// Expire approved sessions that have been idle longer than their idleTimeout.

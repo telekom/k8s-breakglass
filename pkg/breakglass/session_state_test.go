@@ -1148,15 +1148,15 @@ func TestIsSessionActive_ExcludesAllTerminalStates(t *testing.T) {
 	}
 }
 
-// TestStateIsUltimateAuthority verifies that session STATE is the primary determinant
-// of session validity, not timestamps. A session in a terminal state is never valid,
-// even if timestamps suggest it should be active.
+// TestStateAndLeaseAuthority verifies that terminal STATE takes precedence over
+// timestamps and that an Approved session still requires a live lease. A session
+// in a terminal state is never valid, even if timestamps suggest it should be active.
 //
 // This test covers the requirement: "All filters and checks should primarily look at state
 // and then at the relevant timestamps. An already rejected session should never show up as
 // a valid one as the state mismatches, even if the approved date and duration would still
 // make it valid"
-func TestStateIsUltimateAuthority(t *testing.T) {
+func TestStateAndLeaseAuthority(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {

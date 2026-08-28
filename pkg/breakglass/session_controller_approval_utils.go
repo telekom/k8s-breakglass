@@ -519,15 +519,17 @@ func matchesAuthIdentifier(value string, identifiers []string) bool {
 	return false
 }
 
-// IsSessionRejected returns true if session is in Rejected state (state-first validation)
+// IsSessionRejected returns true if session is in Rejected state. Terminal
+// state is checked before lease timestamps by the access predicates.
 func IsSessionRejected(session breakglassv1alpha1.BreakglassSession) bool {
-	// CRITICAL: Check STATE FIRST - state is the ultimate truth
+	// CRITICAL: Check terminal state first; timestamps cannot revive it.
 	return session.Status.State == breakglassv1alpha1.SessionStateRejected
 }
 
-// IsSessionWithdrawn returns true if session is in Withdrawn state (state-first validation)
+// IsSessionWithdrawn returns true if session is in Withdrawn state. Terminal
+// state is checked before lease timestamps by the access predicates.
 func IsSessionWithdrawn(session breakglassv1alpha1.BreakglassSession) bool {
-	// CRITICAL: Check STATE FIRST - state is the ultimate truth
+	// CRITICAL: Check terminal state first; timestamps cannot revive it.
 	return session.Status.State == breakglassv1alpha1.SessionStateWithdrawn
 }
 
@@ -583,8 +585,8 @@ func isSessionValidAt(session breakglassv1alpha1.BreakglassSession, now time.Tim
 	if session.Status.State == "" {
 		return false
 	}
-	// CRITICAL: Check terminal states FIRST. State is the ultimate truth.
-	// Even if timestamps suggest validity, terminal states are never valid.
+	// CRITICAL: Check terminal states FIRST. Even if timestamps suggest validity,
+	// terminal states are never valid.
 	if IsSessionTerminalState(session.Status.State) {
 		return false
 	}
@@ -611,11 +613,11 @@ func isSessionValidAt(session breakglassv1alpha1.BreakglassSession, now time.Tim
 	return true
 }
 
-// IsSessionActive returns if session can be approved or was already approved
-// A session is active if it's valid and not in a terminal state.
-// State is the primary determinant; timestamps are secondary validators.
+// IsSessionActive returns whether the session can be approved or was already
+// approved. An Approved session is active only while its non-zero lease is
+// strictly in the future; terminal state always takes precedence.
 func IsSessionActive(session breakglassv1alpha1.BreakglassSession) bool {
-	// CRITICAL: Check terminal states FIRST. State is the ultimate truth.
+	// CRITICAL: Check terminal states FIRST; timestamps cannot revive a terminal state.
 	if IsSessionTerminalState(session.Status.State) {
 		return false
 	}

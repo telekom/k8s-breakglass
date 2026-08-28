@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"go.uber.org/zap/zaptest"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -109,7 +110,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 	})
 
 	t.Run("duplicate pending sessions — oldest kept, newest withdrawn", func(t *testing.T) {
-		now := time.Now()
+		now := time.Now().UTC().Truncate(time.Second)
 		oldest := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "oldest",
@@ -149,7 +150,8 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 	})
 
 	t.Run("duplicate approved sessions — oldest kept, newest expired with metadata", func(t *testing.T) {
-		now := time.Now()
+		now := time.Now().UTC().Truncate(time.Second)
+		naturalExpiry := metav1.NewTime(now.Add(-time.Minute))
 		oldest := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "approved-old",
@@ -166,7 +168,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 				CreationTimestamp: metav1.NewTime(now.Add(-5 * time.Minute)),
 			},
 			Spec:   breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1", GrantedGroup: "g1"},
-			Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: naturalExpiry},
 		}
 		fc := newFakeClientWithSessions(oldest, newest)
 		mgr := NewSessionManagerWithClient(fc)
@@ -181,6 +183,7 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, gotNew.Status.State, "newest approved expired")
 		assert.Equal(t, "duplicateCleanup", gotNew.Status.ReasonEnded, "ReasonEnded must be documented value")
 		assert.False(t, gotNew.Status.ExpiresAt.IsZero(), "ExpiresAt must be set when forcing Expired")
+		assert.True(t, gotNew.Status.ExpiresAt.Time.Equal(naturalExpiry.Time), "duplicate cleanup must preserve an elapsed expiry: got %v, want %v", gotNew.Status.ExpiresAt.Time, naturalExpiry.Time)
 
 		// Verify condition was added
 		require.NotEmpty(t, gotNew.Status.Conditions)
@@ -530,6 +533,59 @@ func TestCleanupDuplicateSessions(t *testing.T) {
 		// Duplicate should NOT have been withdrawn because context was cancelled
 		assert.Equal(t, breakglassv1alpha1.SessionStatePending, got2.Status.State, "cancelled context prevents duplicate processing")
 	})
+}
+
+type duplicateCleanupAuditRecorder struct {
+	events []*audit.Event
+	err    error
+}
+
+func (r *duplicateCleanupAuditRecorder) IsEnabled() bool { return true }
+func (r *duplicateCleanupAuditRecorder) Emit(_ context.Context, event *audit.Event) {
+	r.events = append(r.events, event)
+}
+func (r *duplicateCleanupAuditRecorder) EmitSync(_ context.Context, event *audit.Event) error {
+	if r.err != nil {
+		return r.err
+	}
+	r.events = append(r.events, event)
+	return nil
+}
+
+func TestDuplicateCleanupAuditIsDurableAndIdempotent(t *testing.T) {
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "duplicate", Namespace: "breakglass", UID: "stable-uid"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "prod", GrantedGroup: "admin"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateExpired},
+	}
+	recorder := &duplicateCleanupAuditRecorder{}
+	require.NoError(t, emitDuplicateCleanupAudit(context.Background(), session, recorder))
+	require.Len(t, recorder.events, 1)
+	assert.Equal(t, "duplicate-cleanup/stable-uid", recorder.events[0].ID)
+	assert.Equal(t, audit.EventSessionExpired, recorder.events[0].Type)
+	assert.Equal(t, "duplicateCleanup", recorder.events[0].Details["reason"])
+
+	// Retries use the same ID, allowing durable sinks to deduplicate a
+	// successful event if the status patch races or is retried.
+	require.NoError(t, emitDuplicateCleanupAudit(context.Background(), session, recorder))
+	assert.Equal(t, recorder.events[0].ID, recorder.events[1].ID)
+
+	recorder.err = assert.AnError
+	assert.Error(t, emitDuplicateCleanupAudit(context.Background(), session, recorder), "sink failure must be returned before terminal status is written")
+
+	// The terminal status update is gated on synchronous audit success.
+	stored := session.DeepCopy()
+	stored.Status.State = breakglassv1alpha1.SessionStatePending
+	stored.Status.TimeoutAt = metav1.NewTime(time.Now().Add(time.Hour))
+	fc := newFakeClientWithSessions(stored)
+	mgr := NewSessionManagerWithClient(fc)
+	key := duplicateKeyForSession(*stored)
+	updated, err := terminateDuplicateSession(context.Background(), zaptest.NewLogger(t).Sugar(), mgr, key, *stored, recorder)
+	assert.Error(t, err)
+	assert.False(t, updated)
+	var unchanged breakglassv1alpha1.BreakglassSession
+	require.NoError(t, fc.Get(context.Background(), client.ObjectKeyFromObject(stored), &unchanged))
+	assert.Equal(t, breakglassv1alpha1.SessionStatePending, unchanged.Status.State)
 }
 
 func TestGetLiveDuplicateSessionRequiresNamespace(t *testing.T) {

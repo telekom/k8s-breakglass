@@ -354,12 +354,13 @@ func validateExpiryUpdate(oldObj, newObj *BreakglassSession) field.ErrorList {
 	}
 
 	// A non-zero lease can never be extended, regardless of its current state.
-	// The one exception is entering a terminal state: a controller may record
-	// the revocation at the current time even when the lease already elapsed.
-	// Pending sessions normally have no expiry until approval, so assigning their
-	// initial expiry remains valid.
+	// The one exception is entering a terminal state while the old lease is
+	// still live: a controller may shorten that lease to the current time.
+	// Once the old boundary has elapsed, even terminal metadata must retain the
+	// old timestamp. Pending sessions normally have no expiry until approval, so
+	// assigning their initial expiry remains valid.
 	if !oldExpiry.IsZero() && newExpiry.Time.After(oldExpiry.Time) &&
-		!(terminal(newState) && !terminal(oldState) && !newExpiry.Time.After(decisionNow)) {
+		!(terminal(newState) && !terminal(oldState) && oldExpiry.Time.After(decisionNow) && !newExpiry.Time.After(decisionNow)) {
 		return invalid("expiry cannot be extended; regular session renewal is not supported")
 	}
 	if terminal(oldState) && oldExpiry.IsZero() && !newExpiry.IsZero() {
@@ -379,13 +380,24 @@ func validateExpiryUpdate(oldObj, newObj *BreakglassSession) field.ErrorList {
 		(newExpiry.IsZero() || !decisionNow.Before(newExpiry.Time)) {
 		return invalid("an active or scheduled session must have an expiry in the future when activated")
 	}
+	// A Pending session may only be promoted while its approval window is
+	// provably open. Missing TimeoutAt is fail-closed: a writer cannot prove
+	// that the request has not already timed out. The same inclusive boundary
+	// applies to a deadline reached at exactly decisionNow.
+	if oldState == SessionStatePending && oldState != newState && activeOrScheduled(newState) &&
+		(oldObj.Status.TimeoutAt.IsZero() || !decisionNow.Before(oldObj.Status.TimeoutAt.Time)) {
+		return field.ErrorList{field.Invalid(field.NewPath("status").Child("timeoutAt"), oldObj.Status.TimeoutAt,
+			"a pending session cannot be activated or scheduled without a live approval timeout")}
+	}
 	if oldState == SessionStateWaitingForScheduledTime && newState == SessionStateApproved && oldExpiry.IsZero() {
 		return invalid("a scheduled session with a missing expiry cannot be activated")
 	}
 
-	// Once the old lease has reached its boundary, no update may move it back to
-	// an access-bearing state, even if the new timestamp is equal or shorter.
-	if activeOrScheduled(oldState) && !oldExpiry.IsZero() && !decisionNow.Before(oldExpiry.Time) && activeOrScheduled(newState) && oldState != newState {
+	// Once an existing lease has reached its boundary, no update may move the
+	// object into an access-bearing state, even if the old state was malformed
+	// Pending or the new timestamp is equal or shorter. A status writer must not
+	// turn an elapsed lease into a fresh approval/scheduled activation.
+	if !oldExpiry.IsZero() && !decisionNow.Before(oldExpiry.Time) && activeOrScheduled(newState) && oldState != newState {
 		return invalid("an expired session cannot be activated or rescheduled")
 	}
 	return nil

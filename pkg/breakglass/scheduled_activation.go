@@ -26,6 +26,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -233,6 +234,17 @@ func (ssa *ScheduledSessionActivator) updateWaitingScheduledSessionStatus(
 		if current.Status.State != breakglassv1alpha1.SessionStateWaitingForScheduledTime {
 			return &scheduledSessionStateChangedError{name: current.Name, state: current.Status.State}
 		}
+		// The list and the activation decision may have crossed the lease
+		// boundary while the live object was being read. Re-check with a fresh
+		// clock immediately before the status patch; equality is expired. This
+		// prevents a late WaitingForScheduledTime -> Approved write from
+		// resurrecting a session even when cleanup has not yet terminalized it.
+		if session.Status.State == breakglassv1alpha1.SessionStateApproved {
+			decisionNow := ssa.currentTime()
+			if current.Status.ExpiresAt.IsZero() || !decisionNow.Before(current.Status.ExpiresAt.Time) {
+				return &scheduledSessionStateChangedError{name: current.Name, state: current.Status.State}
+			}
+		}
 
 		base := current.DeepCopy()
 		applyScheduledSessionStatusTransition(&current, session)
@@ -274,9 +286,7 @@ func applyScheduledSessionStatusTransition(current *breakglassv1alpha1.Breakglas
 func (ssa *ScheduledSessionActivator) expireScheduledSession(ctx context.Context, session breakglassv1alpha1.BreakglassSession, now time.Time, reasonEnded, conditionReason, message string) {
 	session.Status.State = breakglassv1alpha1.SessionStateExpired
 	session.Status.ReasonEnded = reasonEnded
-	if session.Status.ExpiresAt.IsZero() || now.Before(session.Status.ExpiresAt.Time) {
-		session.Status.ExpiresAt = metav1.NewTime(now)
-	}
+	session.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(session.Status.ExpiresAt, now)
 	retainFor := ParseRetainFor(session.Spec, ssa.log)
 	session.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
 	session.SetCondition(metav1.Condition{

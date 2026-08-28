@@ -118,6 +118,18 @@ test: vet ## Run all unit tests (controller + CLI) without mutating generated or
 test-controller: vet ## Run controller unit tests (excludes bgctl and e2e) without mutating generated or formatted files.
 	go test $(GO_TEST_FLAGS) $$(go list ./... | $(E2E_EXCLUDE) | grep -v bgctl) -coverprofile cover-controller.out
 
+.PHONY: test-hard-expiry-unit
+test-hard-expiry-unit: vet ## Run the focused unit boundary tests for regular-session hard expiry.
+	go test $(GO_TEST_FLAGS) ./pkg/utils -run 'TestClampBreakglassSessionExpiry'
+	go test $(GO_TEST_FLAGS) ./api/v1alpha1 -run 'TestValidateUpdate_ExpiryCannotResurrectApprovedSession'
+	go test $(GO_TEST_FLAGS) ./pkg/breakglass -run 'Test(DropApprovedSessionExpires|DropScheduledApprovedSessionExpiresAndPreservesApprovalHistory|ApproverCancelRunningSession|OwnerActionsMatchAlternateAuthIdentifiers|GetBreakglassSessionByNameExpiredApprovalMetadata|ExpireApprovedSessionsDetailed|ExpirePendingSessions|ExpireIdleSessions|CleanupDuplicateSessions)'
+	go test $(GO_TEST_FLAGS) ./pkg/webhook -run 'Test(GetSessionsWithIDPMismatchInfoRequiresActiveExpiry|PerformRBACCheckAttributes|SendAuthorizationResponse)'
+	go test $(GO_TEST_FLAGS) ./pkg/config -run 'Test(ShippedAuthorizationConfigurationsParseAndValidate|AuthorizationConfigurationDefaultingDoesNotDisablePositiveCache)'
+
+.PHONY: test-hard-expiry-e2e
+test-hard-expiry-e2e: ## Run the focused multicluster hard-expiry behavior lane against an existing Kubernetes setup.
+	go test -v -count=1 -tags=multicluster ./e2e/api -run 'TestSpokeHubAuthorizationSuite/(TestExpiredSessionDenied|TestHardExpiryMultipleIndependentSessions)' -timeout 18m
+
 .PHONY: validate-samples
 validate-samples: manifests ## Validate all YAML samples in config/samples against CRD schemas.
 	@echo "Validating sample YAML files..."

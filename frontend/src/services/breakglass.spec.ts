@@ -376,6 +376,9 @@ describe("BreakglassService", () => {
     });
 
     const sessions = await service.fetchActiveSessions();
+    expect(mockClient.get).toHaveBeenCalledWith("/breakglassSessions", {
+      params: { state: "approved", mine: true, approver: false, activeOnly: true },
+    });
     expect(sessions[0]).toEqual(
       expect.objectContaining({
         name: "sess",
@@ -498,7 +501,7 @@ describe("BreakglassService", () => {
     );
     expect(new Set(names).size).toBe(names.length);
     expect(mockClient.get).toHaveBeenNthCalledWith(1, "/breakglassSessions", {
-      params: { mine: true, approver: false, state: "approved" },
+      params: { mine: true, approver: false, state: "approved", activeOnly: true },
     });
     expect(mockClient.get).toHaveBeenNthCalledWith(2, "/breakglassSessions", {
       params: { mine: true, approver: false, state: "timeout" },

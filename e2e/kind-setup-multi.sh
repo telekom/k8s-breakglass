@@ -1610,7 +1610,7 @@ metadata:
   name: breakglass-pods-admin
 rules:
 - apiGroups: [""]
-  resources: ["pods", "pods/log", "pods/exec", "pods/portforward"]
+  resources: ["pods", "pods/log", "pods/exec", "pods/attach", "pods/portforward"]
   verbs: ["*"]
 - apiGroups: [""]
   resources: ["namespaces", "services", "configmaps", "secrets"]
