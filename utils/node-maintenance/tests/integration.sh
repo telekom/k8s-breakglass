@@ -317,11 +317,32 @@ assert_container_security() {
 
 bundle_from_output() {
 	output_file=$1
-	bundle=$(sed -n 's|.*[Ee]vidence: \(/evidence/[A-Za-z0-9_./-]*\).*|\1|p' "$output_file" | tail -n 1)
+	bundle=$(sed -n \
+		-e 's|.*Evidence: \(/evidence/[^[:space:])]*\)$|\1|p' \
+		-e 's|.*(evidence: \(/evidence/[^[:space:])]*\))$|\1|p' \
+		"$output_file" | tail -n 1)
 	case "$bundle" in
 		/evidence/*) ;;
 		*) fail "output did not contain a safe evidence bundle path: '$bundle'" ;;
 	esac
+	bundle_suffix=${bundle#/evidence/}
+	case "$bundle_suffix" in
+		''|/*|*/|*//*|*/*/*|*[!A-Za-z0-9_./-]*)
+			fail "output did not contain a canonical evidence bundle path: '$bundle'"
+			;;
+	esac
+	bundle_ifs=$IFS
+	IFS=/
+	# shellcheck disable=SC2086
+	set -- $bundle_suffix
+	IFS=$bundle_ifs
+	for bundle_component do
+		case "$bundle_component" in
+			''|.|..|*[!A-Za-z0-9_.-]*)
+				fail "output did not contain a canonical evidence bundle path: '$bundle'"
+				;;
+		esac
+	done
 	printf '%s\n' "$bundle"
 }
 
@@ -336,7 +357,14 @@ assert_bundle_from_output_formats() {
 		|| fail 'bundle parser did not accept the success Evidence format'
 	[ "$(bundle_from_output "$failure_output")" = "$expected_bundle" ] \
 		|| fail 'bundle parser did not strip punctuation from parenthesized evidence'
-	pass 'bundle parser accepts success and parenthesized failure evidence formats'
+	for invalid_suffix in ../etc a/../../etc '' ./bundle a//bundle a/b/c 'bundle?'; do
+		invalid_output="$tmp_dir/invalid-evidence-output"
+		printf 'node-maintenance: failed (evidence: /evidence/%s)\n' "$invalid_suffix" >"$invalid_output"
+		if (bundle_from_output "$invalid_output" >/dev/null 2>&1); then
+			fail "bundle parser accepted noncanonical evidence path '/evidence/$invalid_suffix'"
+		fi
+	done
+	pass 'bundle parser accepts valid formats and rejects noncanonical evidence paths'
 }
 
 assert_bundle_from_output_formats
