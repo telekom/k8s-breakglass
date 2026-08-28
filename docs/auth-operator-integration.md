@@ -74,6 +74,7 @@ authorizers:
       timeout: 3s
       authorizedTTL: 5m
       cacheAuthorizedRequests: false
+      cacheUnauthorizedRequests: false
       subjectAccessReviewVersion: v1
       failurePolicy: Deny  # Deny on webhook failure (recommended for security)
       connectionInfo:

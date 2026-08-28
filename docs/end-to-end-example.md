@@ -290,6 +290,7 @@ authorizers:
       timeout: 5s
       authorizedTTL: 5m
       cacheAuthorizedRequests: false
+      cacheUnauthorizedRequests: false
       failurePolicy: Deny
       subjectAccessReviewVersion: v1
       matchConditionSubjectAccessReviewVersion: v1
