@@ -438,6 +438,110 @@ run_trace_fixture() {
 			--duration 1 --events "$trace_fixture_events" --output trace.log
 }
 
+run_trace_mountinfo_fixture() {
+	mountinfo_debugfs=$1
+	mountinfo_tracefs=$2
+	mountinfo_securityfs=$3
+	NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" \
+		NETWORK_DEBUG_BTF_PATH="$trace_fixture/status" NETWORK_DEBUG_DEBUGFS_PATH="$mountinfo_debugfs" \
+		NETWORK_DEBUG_TRACEFS_PATH="$mountinfo_tracefs" NETWORK_DEBUG_SECURITYFS_PATH="$mountinfo_securityfs" \
+		NETWORK_DEBUG_MOUNTINFO_PATH="$trace_fixture/mountinfo" NETWORK_DEBUG_CAPABILITY_FILE="$trace_fixture/status" \
+		PATH="$trace_fixture/bin:/usr/bin:/bin" sh "$root/scripts/net-debug" trace \
+			--duration 1 --events 1 --output trace.log
+}
+
+# The mountpoint check must compare mountinfo field 5, not find a substring in
+# an arbitrary field. Keep this fixture independent of the actual host mounts.
+cat >"$trace_fixture/bin/pwru" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80'
+EOF
+chmod +x "$trace_fixture/bin/pwru"
+printf 'CapEff: c001081000\n' >"$trace_fixture/status"
+test_context='trace-mountinfo-exact-field'
+rm -f "$trace_fixture/work/trace.log"
+run_trace_mountinfo_fixture "$trace_fixture/debug" "$trace_fixture/trace" "$trace_fixture/security" >/dev/null
+test -f "$trace_fixture/work/trace.log"
+test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
+
+# An extra suffix in field 5 must not satisfy the required debugfs mountpoint.
+# The old substring check accepted this as a false positive.
+mkdir -p "$trace_fixture/debugfs"
+{
+	printf '1 1 0:1 / %s rw - tmpfs tmpfs rw\n' "$trace_fixture/debugfs"
+	printf '2 2 0:2 / %s rw - tmpfs tmpfs rw\n' "$trace_fixture/trace"
+	printf '3 3 0:3 / %s rw - tmpfs tmpfs rw\n' "$trace_fixture/security"
+} >"$trace_fixture/mountinfo"
+test_context='trace-mountinfo-suffix-rejected'
+rm -f "$trace_fixture/work/trace.log"
+if run_trace_mountinfo_fixture "$trace_fixture/debug" "$trace_fixture/trace" "$trace_fixture/security" >/dev/null 2>&1; then
+	printf '%s\n' 'trace accepted a mountpoint with an extra suffix' >&2
+	exit 1
+fi
+test ! -e "$trace_fixture/work/trace.log"
+test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
+
+# A matching path in mountinfo field 4 or a later field is not field 5. This
+# prevents prefix/suffix-looking and source/root fields from bypassing the
+# exact mountpoint requirement.
+{
+	printf '1 1 0:1 %s /not-the-mountpoint rw - tmpfs %s rw\n' "$trace_fixture/debug" "$trace_fixture/debug"
+	printf '2 2 0:2 / %s rw - tmpfs tmpfs rw\n' "$trace_fixture/trace"
+	printf '3 3 0:3 / %s rw - tmpfs tmpfs rw\n' "$trace_fixture/security"
+} >"$trace_fixture/mountinfo"
+test_context='trace-mountinfo-misleading-fields-rejected'
+rm -f "$trace_fixture/work/trace.log"
+if run_trace_mountinfo_fixture "$trace_fixture/debug" "$trace_fixture/trace" "$trace_fixture/security" >/dev/null 2>&1; then
+	printf '%s\n' 'trace accepted a path outside mountinfo field 5' >&2
+	exit 1
+fi
+test ! -e "$trace_fixture/work/trace.log"
+test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
+
+# Mountinfo escapes spaces as \040. An exact escaped field must pass, while an
+# escaped field with a suffix must fail. This exercises the same comparison
+# for paths that are not representable as one unescaped mountinfo field.
+escaped_mount_root="$trace_fixture/escaped"
+escaped_debugfs="$escaped_mount_root/debug space"
+escaped_tracefs="$escaped_mount_root/trace space"
+escaped_securityfs="$escaped_mount_root/security space"
+mkdir -p "$escaped_debugfs" "$escaped_tracefs" "$escaped_securityfs"
+: >"$escaped_securityfs/lsm"
+escaped_debugfs_mount=$(printf '%s' "$escaped_debugfs" | sed 's/[\\]/\\134/g; s/ /\\040/g; s/\t/\\011/g')
+escaped_tracefs_mount=$(printf '%s' "$escaped_tracefs" | sed 's/[\\]/\\134/g; s/ /\\040/g; s/\t/\\011/g')
+escaped_securityfs_mount=$(printf '%s' "$escaped_securityfs" | sed 's/[\\]/\\134/g; s/ /\\040/g; s/\t/\\011/g')
+{
+	printf '1 1 0:1 / %s rw - tmpfs tmpfs rw\n' "$escaped_debugfs_mount"
+	printf '2 2 0:2 / %s rw - tmpfs tmpfs rw\n' "$escaped_tracefs_mount"
+	printf '3 3 0:3 / %s rw - tmpfs tmpfs rw\n' "$escaped_securityfs_mount"
+} >"$trace_fixture/mountinfo"
+test_context='trace-mountinfo-escaped-exact-field'
+rm -f "$trace_fixture/work/trace.log"
+run_trace_mountinfo_fixture "$escaped_debugfs" "$escaped_tracefs" "$escaped_securityfs" >/dev/null
+test -f "$trace_fixture/work/trace.log"
+test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
+{
+	printf '1 1 0:1 / %s-extra rw - tmpfs tmpfs rw\n' "$escaped_debugfs_mount"
+	printf '2 2 0:2 / %s rw - tmpfs tmpfs rw\n' "$escaped_tracefs_mount"
+	printf '3 3 0:3 / %s rw - tmpfs tmpfs rw\n' "$escaped_securityfs_mount"
+} >"$trace_fixture/mountinfo"
+test_context='trace-mountinfo-escaped-suffix-rejected'
+rm -f "$trace_fixture/work/trace.log"
+if run_trace_mountinfo_fixture "$escaped_debugfs" "$escaped_tracefs" "$escaped_securityfs" >/dev/null 2>&1; then
+	printf '%s\n' 'trace accepted an escaped mountpoint with an extra suffix' >&2
+	exit 1
+fi
+test ! -e "$trace_fixture/work/trace.log"
+test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
+
+# Restore the ordinary exact fixture before the lifecycle cases below.
+{
+	printf '1 1 0:1 / %s rw - tmpfs tmpfs rw\n' "$trace_fixture/debug"
+	printf '2 2 0:2 / %s rw - tmpfs tmpfs rw\n' "$trace_fixture/trace"
+	printf '3 3 0:3 / %s rw - tmpfs tmpfs rw\n' "$trace_fixture/security"
+} >"$trace_fixture/mountinfo"
+
 # A real duration stop may require KILL when pwru does not exit after INT.
 # Accept that path only with the wrapper-owned marker, pwru's complete
 # attach/signal/detach lifecycle, and non-empty bounded tuple evidence.

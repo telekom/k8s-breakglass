@@ -267,7 +267,16 @@ trace_prerequisites() {
 	[ -r "$securityfs/lsm" ] || usage_error 'LSM policy information is unavailable'
 	[ -r "$mounts" ] || usage_error 'mount information is unavailable'
 	for mountpoint in "$debugfs" "$tracefs" "$securityfs"; do
-		grep -F " $mountpoint" "$mounts" >/dev/null 2>&1 || usage_error "$mountpoint is not mounted"
+		# mountinfo field 5 stores spaces, tabs, and backslashes as octal
+		# escapes. Keep the escaped value in the environment because awk -v
+		# interprets backslash escapes in assignment values.
+		escaped_mountpoint=$(printf '%s' "$mountpoint" | sed 's/[\\]/\\134/g; s/ /\\040/g; s/	/\\011/g')
+		if ! NETWORK_DEBUG_MOUNTPOINT="$escaped_mountpoint" awk '
+			$5 == ENVIRON["NETWORK_DEBUG_MOUNTPOINT"] { found=1 }
+			END { exit(found ? 0 : 1) }
+		' "$mounts"; then
+			usage_error "$mountpoint is not mounted"
+		fi
 	done
 	# Reading /proc/1/ns/net is the kernel-enforced host-PID identity check.
 	# Yama and other ptrace policies require CAP_SYS_PTRACE for that read even
