@@ -1,6 +1,16 @@
 # Debug Sessions
 
-Debug Sessions provide temporary, controlled access to debug pods deployed on target clusters. Unlike breakglass escalations which grant RBAC privileges, debug sessions deploy actual workloads (DaemonSets/Deployments) or enable `kubectl debug` operations with fine-grained controls.
+Debug Sessions provide temporary, controlled access to debug pods deployed on target clusters. Unlike breakglass escalations which grant RBAC privileges, debug sessions deploy actual workloads (DaemonSets/Deployments) or enable authenticated API-mediated `kubectl debug` operations with fine-grained controls.
+
+Ephemeral-container injection is available only through the authenticated
+DebugSession API operation. The manager validates the approved image and
+security policy, rechecks the live session lease and target Pod UID around the
+target update, and records bounded evidence for a successful manager-owned
+operation. Independent writes to
+`pods/ephemeralcontainers` through a target cluster API server are governed by
+that cluster's RBAC and are outside Breakglass. Kubernetes cannot remove an
+ephemeral container from a live Pod, so retained containers remain only as
+inaccessible target-Pod state after the session ends.
 
 **Type Definitions:**
 - [`DebugSession`](../api/v1alpha1/debug_session_types.go)
@@ -45,7 +55,8 @@ workloadType: DaemonSet  # or Deployment
 
 ### Kubectl Debug Mode
 
-Enables ephemeral container injection and pod copying via `kubectl debug`:
+Enables authenticated API-mediated ephemeral-container injection and pod
+copying with `kubectl debug`-style controls:
 
 ```yaml
 mode: kubectl-debug

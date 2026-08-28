@@ -445,7 +445,7 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	}
 
 	// Create kubectl debug handler
-	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), &clusterClientAdapter{ccProvider: c.ccProvider})
 
 	// Validate the request
 	capabilities := extractCapabilities(req.SecurityContext)

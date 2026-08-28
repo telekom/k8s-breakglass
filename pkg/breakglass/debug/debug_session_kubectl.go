@@ -26,13 +26,13 @@ import (
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/pkg/indexer"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
 
@@ -213,104 +213,58 @@ func addDeployedResourceIfMissing(status *breakglassv1alpha1.DebugSessionStatus,
 	status.DeployedResources = append(status.DeployedResources, ref)
 }
 
-// FindActiveSession finds an active debug session for the user/cluster
-func (h *KubectlDebugHandler) FindActiveSession(ctx context.Context, user, cluster string) (*breakglassv1alpha1.DebugSession, error) {
-	var list breakglassv1alpha1.DebugSessionList
-	listOpts := make([]ctrlclient.ListOption, 0, 3)
-	if cluster != "" && indexer.IsIndexRegistered("DebugSession", "spec.cluster") {
-		listOpts = append(listOpts, ctrlclient.MatchingFields{"spec.cluster": cluster})
-	}
-	if indexer.IsIndexRegistered("DebugSession", "status.state") {
-		listOpts = append(listOpts, ctrlclient.MatchingFields{"status.state": string(breakglassv1alpha1.DebugSessionStateActive)})
-	}
-	if user != "" && indexer.IsIndexRegistered("DebugSession", "status.participants.user") {
-		listOpts = append(listOpts, ctrlclient.MatchingFields{"status.participants.user": user})
-	}
-
-	if err := h.client.List(ctx, &list, listOpts...); err != nil {
-		return nil, err
-	}
-
-	for _, ds := range list.Items {
-		// If cluster is specified, filter by it
-		if cluster != "" && ds.Spec.Cluster != cluster {
-			continue
-		}
-		if ds.Status.State != breakglassv1alpha1.DebugSessionStateActive {
-			continue
-		}
-		// Cached discovery is only a candidate hint. Require an identity before
-		// the exact-UID live read below; an empty UID cannot fence a replacement.
-		if ds.UID == "" {
-			continue
-		}
-
-		// Check if user is a participant
-		for _, p := range ds.Status.Participants {
-			if p.User == user && p.LeftAt == nil {
-				live, err := h.readLiveActiveSession(ctx, user, cluster, &ds)
-				if err != nil {
-					return nil, err
-				}
-				return live, nil
-			}
-		}
-	}
-	return nil, nil
-}
-
-// RevalidateActiveSession performs the final live authorization fence for an
-// ephemeral-container admission. The candidate came from cached discovery,
-// so its identity and all authorization state are checked again immediately
-// before allowing the request.
-func (h *KubectlDebugHandler) RevalidateActiveSession(
+// liveSessionForMutation re-reads the session through the uncached API reader
+// immediately before a target-cluster mutation. The API controller performs
+// the initial authenticated lookup, but validation and target reads can race
+// lifecycle changes. The candidate's UID, namespace, cluster, resolved plan,
+// participant membership, and strict future expiry therefore form one
+// fail-closed mutation fence.
+func (h *KubectlDebugHandler) liveSessionForMutation(
 	ctx context.Context,
-	user, cluster string,
 	candidate *breakglassv1alpha1.DebugSession,
+	user string,
 ) (*breakglassv1alpha1.DebugSession, error) {
-	if candidate == nil || candidate.UID == "" {
-		return nil, nil
-	}
-	return h.readLiveActiveSession(ctx, user, cluster, candidate)
-}
-
-func (h *KubectlDebugHandler) readLiveActiveSession(
-	ctx context.Context,
-	user, cluster string,
-	candidate *breakglassv1alpha1.DebugSession,
-) (*breakglassv1alpha1.DebugSession, error) {
-	if candidate == nil || candidate.UID == "" || candidate.Namespace == "" || candidate.Name == "" {
-		return nil, nil
+	if candidate == nil || candidate.Namespace == "" || candidate.Name == "" || candidate.UID == "" {
+		return nil, kubectlDebugPolicyErrorf("debug session identity is incomplete")
 	}
 	reader := h.reader
 	if reader == nil {
 		reader = h.client
 	}
 	if reader == nil {
-		return nil, errors.New("debug session live reader is not configured")
+		return nil, kubectlDebugInternalErrorf("debug session live reader is not configured")
 	}
 
 	live := &breakglassv1alpha1.DebugSession{}
 	if err := reader.Get(ctx, ctrlclient.ObjectKey{Namespace: candidate.Namespace, Name: candidate.Name}, live); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, nil
+			return nil, kubectlDebugPolicyErrorf("debug session no longer exists")
 		}
-		return nil, fmt.Errorf("read live debug session %s/%s: %w", candidate.Namespace, candidate.Name, err)
+		return nil, kubectlDebugInternalErrorf("read live debug session %s/%s: %w", candidate.Namespace, candidate.Name, err)
 	}
-
-	now := time.Now()
-	if live.UID == "" || live.UID != candidate.UID ||
-		(cluster != "" && live.Spec.Cluster != cluster) ||
-		live.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
-		live.Status.ExpiresAt == nil || !now.Before(live.Status.ExpiresAt.Time) {
-		return nil, nil
+	if live.UID == "" || live.UID != candidate.UID || live.Namespace != candidate.Namespace ||
+		live.Spec.Cluster == "" || live.Spec.Cluster != candidate.Spec.Cluster ||
+		!apiequality.Semantic.DeepEqual(live.Status.ResolvedTemplate, candidate.Status.ResolvedTemplate) {
+		return nil, kubectlDebugPolicyErrorf("debug session changed during mutation authorization")
 	}
-	for _, participant := range live.Status.Participants {
-		if participant.User == user && participant.LeftAt == nil {
-			return live, nil
+	if !live.DeletionTimestamp.IsZero() || live.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
+		live.Status.ExpiresAt == nil || !time.Now().UTC().Before(live.Status.ExpiresAt.Time) {
+		return nil, kubectlDebugPolicyErrorf("debug session is no longer active")
+	}
+	if live.Spec.RequestedBy != user {
+		allowed := false
+		for _, participant := range live.Status.Participants {
+			if participant.User == user && participant.LeftAt == nil &&
+				(participant.Role == breakglassv1alpha1.ParticipantRoleOwner || participant.Role == breakglassv1alpha1.ParticipantRoleParticipant) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return nil, kubectlDebugPolicyErrorf("user is not an active debug-session participant")
 		}
 	}
-	return nil, nil
+	return live, nil
 }
 
 // ValidateEphemeralContainerRequest validates an ephemeral container injection request
@@ -384,10 +338,25 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	securityContext *corev1.SecurityContext,
 	user string,
 ) error {
+	// The API handler's initial read is only a candidate. Fence again before
+	// reading or mutating the target cluster, then use the live object for both
+	// validation state and status merge.
+	live, err := h.liveSessionForMutation(ctx, ds, user)
+	if err != nil {
+		return err
+	}
+	ds = live
+
 	// Get target cluster client
+	if h.ccProvider == nil {
+		return kubectlDebugInternalErrorf("target cluster client provider is not configured")
+	}
 	targetClient, err := h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
 	if err != nil {
 		return fmt.Errorf("failed to get client for cluster %s: %w", ds.Spec.Cluster, err)
+	}
+	if targetClient == nil {
+		return kubectlDebugInternalErrorf("target client for cluster %s is not configured", ds.Spec.Cluster)
 	}
 
 	// Get the target pod
@@ -395,9 +364,33 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: namespace, Name: podName}, pod); err != nil {
 		return fmt.Errorf("failed to get pod %s/%s: %w", namespace, podName, err)
 	}
+	if pod.UID == "" {
+		return kubectlDebugPolicyErrorf("target pod %s/%s has no UID", namespace, podName)
+	}
 
 	// Check if container name already exists
 	for _, ec := range pod.Spec.EphemeralContainers {
+		if ec.Name == containerName {
+			return fmt.Errorf("ephemeral container %s already exists in pod", containerName)
+		}
+	}
+
+	// Re-read both authorization state and the target Pod immediately before
+	// constructing the subresource update. A replacement Pod must never receive
+	// a mutation based on the old object's identity.
+	live, err = h.liveSessionForMutation(ctx, ds, user)
+	if err != nil {
+		return err
+	}
+	ds = live
+	freshPod := &corev1.Pod{}
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: namespace, Name: podName}, freshPod); err != nil {
+		return fmt.Errorf("failed to re-read pod %s/%s before injection: %w", namespace, podName, err)
+	}
+	if freshPod.UID == "" || freshPod.UID != pod.UID {
+		return kubectlDebugPolicyErrorf("target pod %s/%s changed during injection authorization", namespace, podName)
+	}
+	for _, ec := range freshPod.Spec.EphemeralContainers {
 		if ec.Name == containerName {
 			return fmt.Errorf("ephemeral container %s already exists in pod", containerName)
 		}
@@ -420,10 +413,10 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	}
 
 	// Add the ephemeral container
-	pod.Spec.EphemeralContainers = append(pod.Spec.EphemeralContainers, ephemeralContainer)
+	freshPod.Spec.EphemeralContainers = append(freshPod.Spec.EphemeralContainers, ephemeralContainer)
 
 	// Update the pod using SubResource for ephemeral containers
-	if err := targetClient.SubResource("ephemeralcontainers").Update(ctx, pod); err != nil {
+	if err := targetClient.SubResource("ephemeralcontainers").Update(ctx, freshPod); err != nil {
 		return fmt.Errorf("failed to inject ephemeral container: %w", err)
 	}
 

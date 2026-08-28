@@ -1401,7 +1401,14 @@ These endpoints provide kubectl-debug style operations for sessions in `kubectl-
 POST /api/debugSessions/:name/injectEphemeralContainer
 ```
 
-Injects an ephemeral container into a running pod for live debugging without restarting the pod.
+Injects an ephemeral container into a running pod for live debugging without
+restarting the pod. This is the only Breakglass-mediated ephemeral-container
+path: the manager validates the authenticated session and policy, fences the
+live session and target Pod UID immediately before the target update, and
+records bounded evidence for the successful operation. Direct writes to
+`pods/ephemeralcontainers` through
+the target cluster API are governed by target-cluster RBAC and are outside
+Breakglass.
 
 **Request Body:**
 

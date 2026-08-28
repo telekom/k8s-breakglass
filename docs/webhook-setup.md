@@ -13,6 +13,15 @@ The breakglass authorization webhook integrates with the Kubernetes API server t
 - Enforce `DenyPolicy` restrictions
 - Provide real-time access control without modifying cluster RBAC
 
+The authorization webhook covers SubjectAccessReview requests for supported
+Breakglass operations. It does not intercept direct `pods/ephemeralcontainers`
+updates: no target-cluster validating webhook is deployed for that subresource,
+and such writes are governed solely by the target cluster's RBAC. Use the
+authenticated DebugSession API injection operation for Breakglass-mediated
+ephemeral-container debugging; it performs the session, policy, and target-Pod
+identity checks before updating the target Pod and records the resulting
+operation in the session status.
+
 ## Architecture
 
 ```text

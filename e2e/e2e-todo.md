@@ -351,7 +351,7 @@ The following tests in `e2e/api/use_cases_test.go` cover real-world scenarios do
 - Priority: Medium
 
 [D-012] DebugSession kubectl-debug mode (ephemeral containers)
-- Steps: Create a DebugSessionTemplate with mode=kubectl-debug and ephemeralContainers.enabled=true. Create a DebugSession. Verify webhook allows ephemeral container injection.
+- Steps: Create a DebugSessionTemplate with mode=kubectl-debug and ephemeralContainers.enabled=true. Create a DebugSession. Invoke the authenticated DebugSession API injection operation with an allowed image and target Pod.
 - Expected: Session is active and kubectl debug commands are permitted.
 - Priority: Medium
 
