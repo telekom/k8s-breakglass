@@ -1386,6 +1386,79 @@ run_kexec_validation() {
 	fi
 }
 
+assert_metadata_value() {
+	metadata_file=$1
+	metadata_key=$2
+	expected_value=$3
+	actual_value=$(awk -v wanted_key="$metadata_key" '
+		{
+			separator = index($0, "=")
+			if (separator == 0) next
+			key = substr($0, 1, separator - 1)
+			if (key != wanted_key) next
+			if (++matches != 1) invalid = 1
+			value = substr($0, separator + 1)
+		}
+		END {
+			if (invalid || matches != 1) exit 1
+			print value
+		}
+	' "$metadata_file") || fail "metadata key '$metadata_key' was not recorded exactly once"
+	[ "$actual_value" = "$expected_value" ] \
+		|| fail "metadata key '$metadata_key' was '$actual_value', expected '$expected_value'"
+}
+
+assert_metadata_key_absent() {
+	metadata_file=$1
+	metadata_key=$2
+	if awk -v wanted_key="$metadata_key" '
+		{
+			separator = index($0, "=")
+			if (separator > 0 && substr($0, 1, separator - 1) == wanted_key) exit 1
+		}
+	' "$metadata_file"; then
+		return
+	fi
+	fail "metadata unexpectedly recorded '$metadata_key'"
+}
+
+assert_kexec_outcome() {
+	result_file=$1
+	expected_result=$2
+	expected_execution=$3
+	expected_executor=$4
+	actual_outcome=$(awk '
+		{
+			separator = index($0, "=")
+			if (separator == 0) {
+				invalid = 1
+				next
+			}
+			key = substr($0, 1, separator - 1)
+			value = substr($0, separator + 1)
+			if (key == "validation_result") {
+				if (++result_count != 1) invalid = 1
+				result = value
+			}
+			if (key == "execution_performed") {
+				if (++execution_count != 1) invalid = 1
+				execution = value
+			}
+			if (key == "provider_executor_required") {
+				if (++executor_count != 1) invalid = 1
+				executor = value
+			}
+		}
+		END {
+			if (invalid || result_count != 1 || execution_count != 1) exit 1
+			if (executor_count == 0) executor = "absent"
+			print result "|" execution "|" executor
+		}
+	' "$result_file") || fail 'kexec validation result is not a well-formed single outcome'
+	[ "$actual_outcome" = "$expected_result|$expected_execution|$expected_executor" ] \
+		|| fail "kexec outcome was '$actual_outcome', expected '$expected_result|$expected_execution|$expected_executor'"
+}
+
 run_kexec_duplicate_option() {
 	label=$1
 	expected_message=$2
@@ -1439,32 +1512,106 @@ run_kexec_validation kexec-validation 0 readonly kexec-recovery-validate rescue-
 kexec_bundle=$(bundle_from_output "$fixture_dir/output")
 kexec_host_bundle=$(copy_bundle "$fixture_dir/output" "$kexec_bundle")
 assert_capture_statuses "$kexec_host_bundle" kernel.sha256.txt initrd.sha256.txt cmdline.sha256.txt
-grep -q '^validation_result=provider-inputs-verified$' "$kexec_host_bundle/validation-result.txt" \
-	|| fail 'kexec validation did not record provider input verification'
-grep -q '^execution_performed=false$' "$kexec_host_bundle/validation-result.txt" \
-	|| fail 'kexec validation evidence did not explicitly deny execution'
-grep -q '^provider_executor_required=true$' "$kexec_host_bundle/validation-result.txt" \
-	|| fail 'kexec validation did not retain the provider executor dependency'
+assert_kexec_outcome "$kexec_host_bundle/validation-result.txt" provider-inputs-verified false true
+assert_metadata_value "$kexec_host_bundle/metadata" kernel_digest_status verified
+assert_metadata_value "$kexec_host_bundle/metadata" initrd_digest_status verified
+assert_metadata_value "$kexec_host_bundle/metadata" cmdline_digest_status verified
 assert_volume_path_absent kexec-executed
 assert_volume_path_absent fake-kexec-executed
 destroy_fixture
 pass 'fixed provider recovery inputs are validated without evaluating cmdline or invoking an executable'
 
 bad_kernel_digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-run_kexec_validation guard-kexec-digest-mismatch nonzero readonly kexec-recovery-validate rescue-a \
+run_kexec_validation guard-kexec-digest-mismatch 1 readonly kexec-recovery-validate rescue-a \
 	"$bad_kernel_digest" "$initrd_digest" "$cmdline_digest" \
 	kexec-recovery-validate --target-node node-a --recovery-profile rescue-a \
 	--evidence-dir /evidence --confirm KEXEC-RECOVERY-VALIDATE
-grep -q 'kexec was not executed' "$fixture_dir/output" || fail 'digest mismatch did not explicitly deny kexec execution'
 mismatch_bundle=$(bundle_from_output "$fixture_dir/output")
 mismatch_host_bundle=$(copy_bundle "$fixture_dir/output" "$mismatch_bundle")
-grep -q '^validation_result=digest-mismatch$' "$mismatch_host_bundle/validation-result.txt" \
-	|| fail 'digest mismatch was not retained as evidence'
-grep -q '^execution_performed=false$' "$mismatch_host_bundle/validation-result.txt" \
-	|| fail 'digest mismatch evidence did not explicitly deny execution'
+assert_kexec_outcome "$mismatch_host_bundle/validation-result.txt" digest-mismatch false absent
+assert_metadata_value "$mismatch_host_bundle/metadata" kernel_digest_status mismatch
+assert_metadata_key_absent "$mismatch_host_bundle/metadata" kernel_verification_error
 assert_volume_path_absent fake-kexec-executed
 destroy_fixture
 pass 'recovery digest mismatch fails closed with no execution'
+
+sha256sum_wrapper_dir="$tmp_dir/sha256sum-wrapper"
+mkdir -p "$sha256sum_wrapper_dir"
+# The single-quoted lines are the literal, disposable in-container wrapper.
+# shellcheck disable=SC2016
+printf '%s\n' \
+	'#!/bin/sh' \
+	'set -eu' \
+	'state=/evidence/.sha256sum-wrapper-calls' \
+	'calls=0' \
+	'if [ -f "$state" ]; then calls=$(cat "$state"); fi' \
+	'case "$calls" in ""|*[!0-9]*) exit 125 ;; esac' \
+	'calls=$((calls + 1))' \
+	'printf "%s\\n" "$calls" >"$state"' \
+	'if [ "$calls" -le 2 ]; then' \
+	'  exec /bin/busybox sha256sum "$@"' \
+	'fi' \
+	'printf "%s\\n" "deliberate sha256sum verification fixture failure" >&2' \
+	'exit 77' \
+	>"$sha256sum_wrapper_dir/sha256sum"
+chmod 0555 "$sha256sum_wrapper_dir/sha256sum"
+# The single-quoted command must run inside the disposable image unchanged.
+# shellcheck disable=SC2016
+sha256sum_path=$("$docker_bin" run --rm --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--entrypoint /bin/sh "$image" -c '
+		set -eu
+		sha256sum_path=$(command -v sha256sum)
+		case "$sha256sum_path" in
+			/bin/sha256sum|/usr/bin/sha256sum) ;;
+			*) exit 1 ;;
+		esac
+		test -x "$sha256sum_path"
+		printf "%s\\n" "$sha256sum_path"
+	') || fail 'could not resolve the image-owned sha256sum executable for the verification-failure fixture'
+case "$sha256sum_path" in
+	/usr/bin/sha256sum|/bin/sha256sum) ;;
+	*) fail "unexpected image-owned sha256sum executable '$sha256sum_path'" ;;
+esac
+# Alpine's image-owned sha256sum is a BusyBox symlink, so replacing that file
+# would also replace the shell interpreter. The immutable common helper resets
+# PATH with /usr/local/sbin first; mount only this disposable test directory
+# there to exercise the same fixed command lookup without caller PATH input.
+sha256sum_wrapper_mount=/usr/local/sbin
+new_fixture guard-kexec-verification-failure
+set +e
+"$docker_bin" run \
+	--name "$container_name" --user 0 --env BREAKGLASS_NODE_NAME=node-a \
+	--env BREAKGLASS_OPERATION_ID=operation-guard-kexec-verification-failure \
+	--env BREAKGLASS_RECORDING_ID=recording-guard-kexec-verification-failure \
+	--env BREAKGLASS_APPROVAL_ID=approval-guard-kexec-verification-failure \
+	--env BREAKGLASS_APPROVED_ACTION=kexec-recovery-validate \
+	--env BREAKGLASS_KEXEC_PROFILE=rescue-a \
+	--env BREAKGLASS_KEXEC_KERNEL_SHA256="$kernel_digest" \
+	--env BREAKGLASS_KEXEC_INITRD_SHA256="$initrd_digest" \
+	--env BREAKGLASS_KEXEC_CMDLINE_SHA256="$cmdline_digest" \
+	--network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" \
+	--mount "type=bind,source=$recovery_dir,destination=/recovery,readonly" \
+	--mount "type=bind,source=$sha256sum_wrapper_dir,destination=$sha256sum_wrapper_mount,readonly" \
+	"$image" kexec-recovery-validate --target-node node-a --recovery-profile rescue-a \
+	--evidence-dir /evidence --confirm KEXEC-RECOVERY-VALIDATE \
+	>"$fixture_dir/output" 2>&1
+verification_failure_exit=$?
+set -e
+cat "$fixture_dir/output"
+assert_container_security "$container_name" none
+[ "$verification_failure_exit" -eq 1 ] \
+	|| fail "verification failure returned $verification_failure_exit, expected 1"
+verification_failure_bundle=$(bundle_from_output "$fixture_dir/output")
+verification_failure_host_bundle=$(copy_bundle "$fixture_dir/output" "$verification_failure_bundle")
+assert_kexec_outcome "$verification_failure_host_bundle/validation-result.txt" verification-failed false absent
+assert_metadata_value "$verification_failure_host_bundle/metadata" kernel_digest_status verification-failed
+assert_metadata_value "$verification_failure_host_bundle/metadata" kernel_verification_error capture-failed
+assert_volume_path_absent fake-kexec-executed
+destroy_fixture
+pass 'recovery verification failure is distinct from a digest mismatch and fails closed'
 
 run_kexec_validation guard-kexec-missing-digest 2 readonly kexec-recovery-validate rescue-a \
 	'' "$initrd_digest" "$cmdline_digest" \

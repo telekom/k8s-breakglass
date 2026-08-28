@@ -48,6 +48,13 @@ bounded digest captures, and `validation-result.txt`. The latter always says
 `execution_performed=false` and `provider_executor_required=true` on a valid
 bundle. Do not interpret exit zero as a successful recovery.
 
+On a non-zero result, inspect `validation-result.txt` and `metadata` before
+handling the incident. `validation_result=digest-mismatch` means a digest was
+successfully calculated but differs from its controller-provided value.
+`validation_result=verification-failed` means the digest could not be
+captured, read, or parsed. Both outcomes preserve
+`execution_performed=false`; neither authorizes a recovery execution.
+
 Any eventual executor is an unresolved provider responsibility. It needs its
 own separately approved immutable workload, kernel/platform compatibility and
 signature policy, boot-health and rollback contract, node exclusivity, bounded

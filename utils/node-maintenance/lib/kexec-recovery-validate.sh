@@ -61,12 +61,33 @@ verify_digest() {
 	expected=$3
 	output_file="$bundle/$label.sha256.txt"
 	if ! capture "$output_file" sha256sum "$path"; then
-		printf '%s_digest_status=capture-failed\n' "$label" | append_evidence "$bundle/metadata"
-		return 1
+		printf '%s_digest_status=verification-failed\n%s_verification_error=capture-failed\n' \
+			"$label" "$label" | append_evidence "$bundle/metadata"
+		return 2
 	fi
-	actual=$(awk 'NR == 1 { print $1 }' "$output_file")
+	if ! actual=$(awk 'NR == 1 { print $1; exit }' "$output_file"); then
+		printf '%s_digest_status=verification-failed\n%s_verification_error=read-failed\n' \
+			"$label" "$label" | append_evidence "$bundle/metadata"
+		return 2
+	fi
+	case "$actual" in ''|*[!0-9A-Fa-f]*)
+		printf '%s_digest_status=verification-failed\n%s_verification_error=invalid-sha256-output\n' \
+			"$label" "$label" | append_evidence "$bundle/metadata"
+		return 2
+		;;
+	esac
+	if [ "${#actual}" -ne 64 ]; then
+		printf '%s_digest_status=verification-failed\n%s_verification_error=invalid-sha256-output\n' \
+			"$label" "$label" | append_evidence "$bundle/metadata"
+		return 2
+	fi
 	printf '%s_expected_sha256=%s\n%s_actual_sha256=%s\n' "$label" "$expected" "$label" "$actual" | append_evidence "$bundle/metadata"
-	[ "$actual" = "$expected" ]
+	if [ "$actual" = "$expected" ]; then
+		printf '%s_digest_status=verified\n' "$label" | append_evidence "$bundle/metadata"
+		return 0
+	fi
+	printf '%s_digest_status=mismatch\n' "$label" | append_evidence "$bundle/metadata"
+	return 1
 }
 
 target_node=
@@ -152,12 +173,35 @@ write_metadata "$bundle/metadata" kexec-recovery-validate "$target_node" not-app
 } | append_evidence "$bundle/metadata"
 record_event operation-started accepted
 
-validation_status=0
-verify_digest kernel "$kernel_path" "$kernel_sha256" || validation_status=1
-verify_digest initrd "$initrd_path" "$initrd_sha256" || validation_status=1
-verify_digest cmdline "$cmdline_path" "$cmdline_sha256" || validation_status=1
+digest_mismatch=false
+verification_failed=false
+for digest_label in kernel initrd cmdline; do
+	case "$digest_label" in
+		kernel) digest_path=$kernel_path; digest_expected=$kernel_sha256 ;;
+		initrd) digest_path=$initrd_path; digest_expected=$initrd_sha256 ;;
+		cmdline) digest_path=$cmdline_path; digest_expected=$cmdline_sha256 ;;
+	esac
+	if verify_digest "$digest_label" "$digest_path" "$digest_expected"; then
+		continue
+	else
+		verification_exit=$?
+	fi
+	case "$verification_exit" in
+		1) digest_mismatch=true ;;
+		2) verification_failed=true ;;
+		*) verification_failed=true ;;
+	esac
+done
 
-if [ "$validation_status" -ne 0 ]; then
+if [ "$verification_failed" = true ]; then
+	printf 'validation_result=verification-failed\ncompleted_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | append_evidence "$bundle/metadata"
+	printf 'validation_result=verification-failed\nexecution_performed=false\n' | write_evidence "$bundle/validation-result.txt"
+	record_event operation-completed verification-failed
+	printf 'Recovery input verification failed; kexec was not executed. Evidence: %s\n' "$bundle" >&2
+	exit 1
+fi
+
+if [ "$digest_mismatch" = true ]; then
 	printf 'validation_result=digest-mismatch\ncompleted_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | append_evidence "$bundle/metadata"
 	printf 'validation_result=digest-mismatch\nexecution_performed=false\n' | write_evidence "$bundle/validation-result.txt"
 	record_event operation-completed validation-failed
