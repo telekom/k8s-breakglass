@@ -131,7 +131,7 @@ func openRouteNetlink() (*routeNetlink, error) {
 		return nil, fmt.Errorf("open rtnetlink socket: %w", err)
 	}
 	if err := syscall.Bind(fd, &syscall.SockaddrNetlink{Family: syscall.AF_NETLINK}); err != nil {
-		syscall.Close(fd)
+		_ = syscall.Close(fd)
 		return nil, fmt.Errorf("bind rtnetlink socket: %w", err)
 	}
 	return &routeNetlink{fd: fd}, nil
@@ -323,7 +323,9 @@ func restartAutonegotiation(interfaceName string) error {
 	if err != nil {
 		return fmt.Errorf("open ethtool ioctl socket: %w", err)
 	}
-	defer syscall.Close(socket)
+	defer func() {
+		_ = syscall.Close(socket)
+	}()
 	value := ethtoolValue{command: ethtoolNwayReset}
 	request := ifreqData{data: uintptr(unsafe.Pointer(&value))}
 	copy(request.name[:], interfaceName)
