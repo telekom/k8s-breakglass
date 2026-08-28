@@ -33,7 +33,7 @@ jobs:
       - name: ShellCheck image helpers
         run: shellcheck utils/node-maintenance/bin/* utils/node-maintenance/lib/*.sh utils/node-maintenance/tests/*.sh
       - name: Lint Dockerfile
-        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: utils/node-maintenance/Dockerfile
 
