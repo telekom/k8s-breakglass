@@ -446,7 +446,9 @@ run_network_fixture() {
 				'exit 0' \
 			'fi' \
 			'if [ -x /usr/sbin/bridge ]; then exec /usr/sbin/bridge "$@"; fi' \
-			'exec /usr/bin/bridge "$@"' >"$bridge_wrapper"
+			'if [ -x /usr/bin/bridge ]; then exec /usr/bin/bridge "$@"; fi' \
+			'if [ -x /sbin/bridge ]; then exec /sbin/bridge "$@"; fi' \
+			'exit 127' >"$bridge_wrapper"
 		chmod 0555 "$bridge_wrapper"
 		bridge_mount_arg="--mount=type=bind,source=$bridge_wrapper,destination=/usr/local/bin/bridge,readonly"
 	fi
@@ -815,34 +817,51 @@ run_kexec_validation() {
 	fi
 }
 
-new_fixture guard-kexec-duplicate-option
-set +e
-"$docker_bin" run --name "$container_name" --user 0 \
-	--env BREAKGLASS_NODE_NAME=node-a \
-	--network none --read-only --cap-drop ALL \
-	--security-opt no-new-privileges --security-opt seccomp=builtin \
-	--mount "source=$volume_name,destination=/evidence" \
-	"$image" kexec-recovery-validate \
-	--target-node node-a --target-node node-a --recovery-profile rescue-a \
-	--evidence-dir /evidence --confirm KEXEC-RECOVERY-VALIDATE \
-	>"$fixture_dir/output" 2>&1
-duplicate_kexec_exit=$?
-set -e
-cat "$fixture_dir/output"
-assert_container_security "$container_name" none
-[ "$duplicate_kexec_exit" -eq 2 ] || fail "duplicate kexec option returned $duplicate_kexec_exit, expected 2"
-grep -q -- '--target-node may be supplied only once' "$fixture_dir/output" \
-	|| fail 'duplicate kexec option did not fail during argument parsing'
-if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
-	--security-opt no-new-privileges --security-opt seccomp=builtin \
-	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" \
-	-c '! find /evidence -mindepth 1 -maxdepth 1 -print | grep -q .'; then
-	:
-else
-	fail 'duplicate kexec option created evidence before argument validation'
-fi
-destroy_fixture
-pass 'duplicate kexec options are rejected before provider validation and evidence creation'
+run_kexec_duplicate_option() {
+	label=$1
+	expected_message=$2
+	shift 2
+	new_fixture "$label"
+	set +e
+	"$docker_bin" run --name "$container_name" --user 0 \
+		--env BREAKGLASS_NODE_NAME=node-a \
+		--network none --read-only --cap-drop ALL \
+		--security-opt no-new-privileges --security-opt seccomp=builtin \
+		--mount "source=$volume_name,destination=/evidence" \
+		"$image" kexec-recovery-validate "$@" \
+		--evidence-dir /evidence --confirm KEXEC-RECOVERY-VALIDATE \
+		>"$fixture_dir/output" 2>&1
+	duplicate_kexec_exit=$?
+	set -e
+	cat "$fixture_dir/output"
+	assert_container_security "$container_name" none
+	[ "$duplicate_kexec_exit" -eq 2 ] || fail "duplicate kexec option returned $duplicate_kexec_exit, expected 2"
+	grep -q -- "$expected_message" "$fixture_dir/output" \
+		|| fail 'duplicate kexec option did not fail during argument parsing'
+	if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
+		--security-opt no-new-privileges --security-opt seccomp=builtin \
+		--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" \
+		-c '! find /evidence -mindepth 1 -maxdepth 1 -print | grep -q .'; then
+		:
+	else
+		fail 'duplicate kexec option created evidence before argument validation'
+	fi
+	destroy_fixture
+	pass "$label is rejected before provider validation and evidence creation"
+}
+
+run_kexec_duplicate_option guard-kexec-duplicate-target-node \
+	'--target-node may be supplied only once' \
+	--target-node node-a --target-node node-a --recovery-profile rescue-a
+run_kexec_duplicate_option guard-kexec-duplicate-recovery-profile \
+	'--recovery-profile may be supplied only once' \
+	--target-node node-a --recovery-profile rescue-a --recovery-profile rescue-a
+run_kexec_duplicate_option guard-kexec-duplicate-evidence-dir \
+	'--evidence-dir may be supplied only once' \
+	--target-node node-a --recovery-profile rescue-a --evidence-dir /evidence --evidence-dir /evidence
+run_kexec_duplicate_option guard-kexec-duplicate-confirm \
+	'--confirm may be supplied only once' \
+	--target-node node-a --recovery-profile rescue-a --confirm KEXEC-RECOVERY-VALIDATE --confirm KEXEC-RECOVERY-VALIDATE
 
 run_kexec_validation kexec-validation 0 readonly kexec-recovery-validate rescue-a \
 	"$kernel_digest" "$initrd_digest" "$cmdline_digest" \
