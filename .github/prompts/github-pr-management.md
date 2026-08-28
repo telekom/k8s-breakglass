@@ -406,8 +406,13 @@ green.
 ```bash
 collect_policy_inventory() {
   gate_dir="$1"
+  # Branch refs are one REST path segment. Encode every byte outside the URI
+  # unreserved set so refs such as `feature/review` cannot change the endpoint
+  # path (and spaces, `%`, or `+` cannot be interpreted by a proxy).
+  encoded_base_ref="$(jq -nr --arg ref "$base_ref" '$ref | @uri')"
+  test -n "$encoded_base_ref" || fail "could not URL-encode base ref"
   gh_api --paginate --slurp \
-    "repos/$base_repo/rules/branches/$base_ref" \
+    "repos/$base_repo/rules/branches/$encoded_base_ref" \
     >"$gate_dir/effective-rules.json"
   # `--slurp` yields an array of arrays, one per pagination page. Empty
   # ruleset pages are valid; the contract combines them with classic branch
@@ -424,7 +429,7 @@ collect_policy_inventory() {
   # empty, non-JSON, malformed, 401/403, 5xx, and every other response remain
   # fatal.
   protection_http="$gate_dir/branch-protection.http"
-  if gh_api --include "repos/$base_repo/branches/$base_ref/protection" \
+  if gh_api --include "repos/$base_repo/branches/$encoded_base_ref/protection" \
     >"$protection_http"; then
     :
   else

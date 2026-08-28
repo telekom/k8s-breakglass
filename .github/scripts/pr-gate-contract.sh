@@ -28,6 +28,8 @@ parse_pr_url() {
     raw = ARGV.fetch(0)
     uri = URI.parse(raw)
     abort "PR URL must use HTTPS" unless uri.is_a?(URI::HTTPS)
+    abort "PR URL must not contain credentials, a port, query, or fragment" unless
+      uri.userinfo.nil?
     authority = raw[/\Ahttps:\/\/([^\/]+)/i, 1]
     # URI#port normalizes an explicit :443 to the HTTPS default. The gate
     # promises a host-only HTTPS endpoint, so inspect the original authority
@@ -35,7 +37,7 @@ parse_pr_url() {
     abort "PR URL must not contain an explicit port" unless authority &&
       authority.casecmp?(uri.host.to_s)
     abort "PR URL must not contain credentials, a port, query, or fragment" unless
-      uri.userinfo.nil? && uri.port == 443 && uri.query.nil? && uri.fragment.nil?
+      uri.port == 443 && uri.query.nil? && uri.fragment.nil?
     segments = uri.path.split("/").reject(&:empty?)
     abort "PR URL must be /OWNER/REPOSITORY/pull/NUMBER" unless
       segments.length == 4 && segments[2] == "pull" && segments[3].match?(/\A[1-9][0-9]*\z/)

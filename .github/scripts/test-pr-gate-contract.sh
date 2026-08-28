@@ -22,6 +22,19 @@ expect_failure() {
   fi
 }
 
+expect_failure_message() {
+  local expected="$1"
+  shift
+  local output
+  if output="$({ "$@" >/dev/null; } 2>&1)"; then
+    fail "command unexpectedly succeeded: $*"
+  fi
+  case "$output" in
+    *"$expected"*) ;;
+    *) fail "failure for $* did not contain '$expected': $output" ;;
+  esac
+}
+
 write_fixture() {
   local path="$1"
   shift
@@ -32,8 +45,12 @@ valid_pr_url="https://github.com/telekom/k8s-breakglass/pull/1268"
 parsed="$($contract parse-pr-url "$valid_pr_url")"
 test "$parsed" = $'github.com\ttelekom/k8s-breakglass\t1268' || fail "valid HTTPS PR URL was not parsed"
 expect_failure "$contract" parse-pr-url 'http://github.com/telekom/k8s-breakglass/pull/1268'
-expect_failure "$contract" parse-pr-url 'https://token@github.com/telekom/k8s-breakglass/pull/1268'
+expect_failure_message credentials "$contract" parse-pr-url 'https://token@github.com/telekom/k8s-breakglass/pull/1268'
 expect_failure "$contract" parse-pr-url 'https://github.com:443/telekom/k8s-breakglass/pull/1268'
+
+encoded_ref="$(jq -nr --arg ref 'feature/review refs+checks' '$ref | @uri')"
+test "$encoded_ref" = 'feature%2Freview%20refs%2Bchecks' ||
+  fail "branch refs were not URL encoded as one path segment"
 
 write_fixture "$fixture_root/review-request.http" $'HTTP/2 201 Created\r\nDate: Fri, 28 Aug 2026 07:14:18 GMT\r\nContent-Type: application/json\r\n\r\n{}'
 expect_failure "$contract" verify-review-freshness "$fixture_root/review-request.http" '2026-08-28T07:14:18.999Z'
