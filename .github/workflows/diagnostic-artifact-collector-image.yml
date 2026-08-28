@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: CC0-1.0
+
+name: Diagnostic artifact collector image
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - "utils/images/diagnostic-artifact-collector/**"
+      - ".github/workflows/diagnostic-artifact-collector-image.yml"
+  push:
+    branches: [main, deployment-testing]
+    paths:
+      - "utils/images/diagnostic-artifact-collector/**"
+      - ".github/workflows/diagnostic-artifact-collector-image.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostic-artifact-collection:
+    name: Utility image checks (diagnostic-artifact-collection)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Run copier and uploader tests
+        run: make -C utils/images/diagnostic-artifact-collector test
+      - name: Lint image helper shell
+        run: make -C utils/images/diagnostic-artifact-collector shellcheck
+      - name: Lint image Dockerfile
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: utils/images/diagnostic-artifact-collector/Dockerfile
+      - name: Install Kind
+        env:
+          KIND_VERSION: v0.32.0
+          KIND_SHA256: 50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54
+        run: |
+          curl -Lo ./kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          printf '%s  %s\n' "${KIND_SHA256}" kind | sha256sum --check --status -
+          chmod 0755 ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+      - name: Prove non-root emptyDir fsGroup hand-off
+        run: make -C utils/images/diagnostic-artifact-collector kind-test

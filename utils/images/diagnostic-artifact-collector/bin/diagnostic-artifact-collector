@@ -1,0 +1,740 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+# This executable deliberately has no command-dispatch or shell-evaluation
+# escape hatch. The controller supplies one immutable recipe identifier and
+# (for crash dumps) a node name as metadata. All executable behaviour below is
+# part of the image and is therefore reviewable and signable with the image.
+
+# Every pipeline below is part of the publication boundary.  Refuse to run
+# if the runtime shell cannot fail a pipeline when an upstream producer fails.
+# BusyBox ash supports this option; the probe keeps that dependency explicit
+# rather than silently relying on a shell-specific extension.
+# shellcheck disable=SC3040
+if ! (set -o pipefail) 2>/dev/null; then
+	echo "diagnostic-artifact-collector: a pipefail-capable shell is required" >&2
+	exit 2
+fi
+set -eu
+# shellcheck disable=SC3040
+set -o pipefail
+# The image is intentionally self-contained. Do not inherit a caller-provided
+# PATH: every utility below must resolve to one of the reviewed BusyBox image
+# locations, and the readonly export prevents a later assignment from
+# changing that trust boundary.
+PATH=/usr/local/bin:/usr/bin:/bin
+export PATH
+readonly PATH
+umask 077
+
+OUTPUT_DIR=/output
+OUTPUT_FILE=$OUTPUT_DIR/artifact.tar.gz
+MANIFEST_FILE=$OUTPUT_DIR/artifact.manifest.json
+READY_FILE=$OUTPUT_DIR/artifact.ready
+COREDUMP_DIR=/host-coredumps
+# Source limits intentionally leave room below the 512 MiB archive/output
+# limit for tar headers, manifests, and hand-off files.
+CRASH_MAX_TOTAL_BYTES=503316480
+CRASH_MAX_FILE_BYTES=503316480
+CRASH_MAX_FILES=4096
+CRASH_MAX_DURATION_SECONDS=900
+# Enumeration is deliberately much shorter than the recipe lease.  A hostile
+# or pathological host filesystem must not spend the whole crashdump operation
+# walking entries before any source-size or archive bound can apply.
+CRASH_ENUMERATION_MAX_DURATION_SECONDS=30
+# Leave room for archive metadata below the 16 MiB output ceiling.
+SUMMARY_MAX_TOTAL_BYTES=14680064
+SUMMARY_MAX_FILE_BYTES=14680064
+SUMMARY_MAX_FILES=64
+SUMMARY_MAX_DURATION_SECONDS=120
+SUMMARY_MAX_ARCHIVE_BYTES=16777216
+MAX_ARCHIVE_BYTES=536870912
+# These bounds are checked before candidate paths are sorted.  Keeping the
+# path and candidate limits immutable bounds both traversal metadata and the
+# memory/disk consumed by the newline-delimited sort input.
+MAX_SOURCE_PATH_BYTES=512
+MAX_SOURCE_CANDIDATES=4096
+MAX_SOURCE_ENTRIES=8192
+# Each NUL-delimited traversal spool is capped just above the largest accepted
+# entry set (8192 paths of 512 bytes plus delimiters). ulimit -f uses 512-byte
+# blocks on BusyBox; keep the immutable cap in those units for the isolated
+# finder process only, never the archive-producing collector shell.
+MAX_SOURCE_LIST_BLOCKS=8320
+MAX_AGE_MINUTES=1440
+DETAIL_LEVEL=basic
+artifact_id=
+session_namespace=
+session_name=
+session_uid=
+redaction_profile=
+redaction_version=
+max_total_bytes=
+max_file_bytes=
+max_files=
+max_duration_seconds=
+max_archive_bytes=$MAX_ARCHIVE_BYTES
+
+stage=
+watchdog=
+finder_watchdog=
+archive_tmp=
+manifest_tmp=
+ready_tmp=
+finder_pid=
+finder_pgid=
+finder_deadline_file=
+completed_finder_group_was_live=
+file_count=0
+total_bytes=0
+node=
+recipe=
+
+fail() {
+	echo "diagnostic-artifact-collector: $*" >&2
+	exit 2
+}
+
+# shellcheck disable=SC2317,SC2329
+cleanup() {
+	if [ -n "$finder_watchdog" ]; then
+		kill "$finder_watchdog" 2>/dev/null || true
+		wait "$finder_watchdog" 2>/dev/null || true
+		finder_watchdog=
+	fi
+	if [ -n "$watchdog" ]; then
+		kill "$watchdog" 2>/dev/null || true
+		wait "$watchdog" 2>/dev/null || true
+		watchdog=
+	fi
+	stop_finder
+	if [ -n "$stage" ] && [ -d "$stage" ]; then
+		rm -rf "$stage"
+	fi
+}
+
+# shellcheck disable=SC2317,SC2329
+on_signal() {
+	exit 124
+}
+
+trap cleanup EXIT
+trap on_signal HUP INT TERM
+
+help() {
+	cat <<'EOF'
+diagnostic-artifact-collector: bounded, immutable diagnostic recipes
+
+Usage:
+  diagnostic-artifact-collector collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
+  diagnostic-artifact-collector collect --recipe system-summary.v1 --output /output/artifact.tar.gz
+  diagnostic-artifact-collector upload --archive /output/artifact.tar.gz
+  diagnostic-artifact-collector --help
+
+The collector writes /output/artifact.tar.gz, its manifest sidecar, and an
+artifact.ready marker. The output directory is the uploader hand-off. The
+crashdump recipe reads only the read-only /host-coredumps mount and records the
+DIAGNOSTIC_NODE value as metadata; it never uses that value as a path.
+EOF
+}
+
+validate_node() {
+	node=$(printenv DIAGNOSTIC_NODE 2>/dev/null || true)
+	[ -n "$node" ] || fail "DIAGNOSTIC_NODE is required"
+	# Kubernetes DNS-subdomain syntax, bounded to one label-safe metadata value.
+	case "$node" in
+		*[!A-Za-z0-9.-]*) fail "DIAGNOSTIC_NODE is not a valid node name" ;;
+	esac
+	printf '%s\n' "$node" | awk -F. '{
+		for (i = 1; i <= NF; i++)
+			if (length($i) > 63 || $i !~ /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/) exit 1
+	}' || fail "DIAGNOSTIC_NODE is not a valid node name"
+	node_len=$(printf '%s' "$node" | wc -c)
+	[ "$node_len" -le 253 ] || fail "DIAGNOSTIC_NODE is too long"
+}
+
+validate_recipe_inputs() {
+	if [ "$recipe" = crashdump-collection.v1 ]; then
+		MAX_AGE_MINUTES=$(printenv DIAGNOSTIC_MAX_AGE_MINUTES 2>/dev/null || true)
+		[ -n "$MAX_AGE_MINUTES" ] || MAX_AGE_MINUTES=1440
+		case "$MAX_AGE_MINUTES" in
+			''|*[!0-9]*) fail "DIAGNOSTIC_MAX_AGE_MINUTES must be an integer" ;;
+		esac
+		if [ "$MAX_AGE_MINUTES" -lt 1 ] || [ "$MAX_AGE_MINUTES" -gt 10080 ]; then
+			fail "DIAGNOSTIC_MAX_AGE_MINUTES must be between 1 and 10080"
+		fi
+	else
+		DETAIL_LEVEL=$(printenv DIAGNOSTIC_DETAIL_LEVEL 2>/dev/null || true)
+		[ -n "$DETAIL_LEVEL" ] || DETAIL_LEVEL=basic
+		case "$DETAIL_LEVEL" in
+			basic|extended) ;;
+			*) fail "DIAGNOSTIC_DETAIL_LEVEL must be basic or extended" ;;
+		esac
+	fi
+}
+
+validate_identity() {
+	artifact_id=$(printenv BREAKGLASS_ARTIFACT_ID 2>/dev/null || true)
+	session_namespace=$(printenv BREAKGLASS_ARTIFACT_SESSION_NAMESPACE 2>/dev/null || true)
+	session_name=$(printenv BREAKGLASS_ARTIFACT_SESSION_NAME 2>/dev/null || true)
+	session_uid=$(printenv BREAKGLASS_ARTIFACT_SESSION_UID 2>/dev/null || true)
+	redaction_profile=$(printenv BREAKGLASS_ARTIFACT_REDACTION_PROFILE 2>/dev/null || true)
+	redaction_version=$(printenv BREAKGLASS_ARTIFACT_REDACTION_VERSION 2>/dev/null || true)
+	printf '%s\n' "$artifact_id" | awk 'length($0) == 28 && $0 ~ /^dsa-[0-9a-f]{24}$/ { exit 0 } { exit 1 }' ||
+		fail "BREAKGLASS_ARTIFACT_ID is not a valid controller artifact ID"
+	printf '%s\n' "$session_namespace" | awk 'length($0) > 0 && length($0) <= 63 && $0 ~ /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/ { exit 0 } { exit 1 }' ||
+		fail "BREAKGLASS_ARTIFACT_SESSION_NAMESPACE is not a valid namespace"
+	printf '%s\n' "$session_name" | awk -F. 'length($0) > 0 && length($0) <= 253 { for (i = 1; i <= NF; i++) if (length($i) == 0 || length($i) > 63 || $i !~ /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/) exit 1; exit 0 } { exit 1 }' ||
+		fail "BREAKGLASS_ARTIFACT_SESSION_NAME is not a valid session name"
+	printf '%s\n' "$session_uid" | awk 'length($0) > 0 && length($0) <= 128 && $0 ~ /^[A-Za-z0-9._:-]+$/ { exit 0 } { exit 1 }' ||
+		fail "BREAKGLASS_ARTIFACT_SESSION_UID is not a valid session UID"
+	printf '%s\n' "$redaction_profile" | awk 'length($0) > 0 && length($0) <= 128 && $0 ~ /^[A-Za-z0-9._-]+$/ { exit 0 } { exit 1 }' ||
+		fail "BREAKGLASS_ARTIFACT_REDACTION_PROFILE is invalid"
+	printf '%s\n' "$redaction_version" | awk 'length($0) <= 4 && $0 ~ /^[1-9][0-9]{0,3}$/ { exit 0 } { exit 1 }' ||
+		fail "BREAKGLASS_ARTIFACT_REDACTION_VERSION is invalid"
+}
+
+validate_environment() {
+	# These names are never read. Rejecting them makes accidental attempts to
+	# smuggle a command, path, or arguments into a Job fail closed.
+	for name in ARTIFACT_COMMAND ARTIFACT_ARGS ARTIFACT_PATH ARTIFACT_IMAGE \
+		ARTIFACT_MOUNT ARTIFACT_OUTPUT ARTIFACT_FILES ARTIFACT_SCRIPT; do
+		value=$(printenv "$name" 2>/dev/null || true)
+		[ -z "$value" ] || fail "$name is not an accepted collector input"
+	done
+}
+
+validate_max_archive_bytes() {
+	# The controller may narrow the immutable image ceiling for one session.
+	# Distinguish an unset value from an explicitly empty value and avoid shell
+	# arithmetic until the decimal input has been reduced to at most nine digits.
+	if [ "${BREAKGLASS_ARTIFACT_MAX_BYTES+x}" != x ]; then
+		max_archive_bytes=$MAX_ARCHIVE_BYTES
+		return
+	fi
+	raw=$BREAKGLASS_ARTIFACT_MAX_BYTES
+	case "$raw" in
+		''|*[!0-9]*) fail "BREAKGLASS_ARTIFACT_MAX_BYTES must be a positive decimal integer" ;;
+	esac
+	normalized=$(printf '%s' "$raw" | sed 's/^0*//')
+	[ -n "$normalized" ] || fail "BREAKGLASS_ARTIFACT_MAX_BYTES must be greater than zero"
+	[ "${#normalized}" -le 9 ] || fail "BREAKGLASS_ARTIFACT_MAX_BYTES exceeds the static archive limit"
+	max_archive_bytes=$((normalized + 0))
+	[ "$max_archive_bytes" -le "$MAX_ARCHIVE_BYTES" ] || fail "BREAKGLASS_ARTIFACT_MAX_BYTES exceeds the static archive limit"
+}
+
+assert_output_boundary() {
+	[ -d "$OUTPUT_DIR" ] || fail "/output is not available"
+	[ ! -L "$OUTPUT_DIR" ] || fail "/output must not be a symbolic link"
+	if [ -e "$OUTPUT_FILE" ] || [ -L "$OUTPUT_FILE" ]; then
+		fail "output already exists"
+	fi
+	if [ -e "$MANIFEST_FILE" ] || [ -L "$MANIFEST_FILE" ]; then
+		fail "manifest already exists"
+	fi
+	if [ -e "$READY_FILE" ] || [ -L "$READY_FILE" ]; then
+		fail "ready marker already exists"
+	fi
+}
+
+validate_fixed_output() {
+	[ "$1" = "$OUTPUT_FILE" ] || fail "output must be exactly /output/artifact.tar.gz"
+}
+
+start_watchdog() {
+	(
+		sleep "$max_duration_seconds"
+		kill -TERM "$$" 2>/dev/null || true
+	) &
+	watchdog=$!
+}
+
+# Run the finder in an isolated session so expiry can stop the traversal rather
+# than only the immediate find PID. The image's BusyBox base provides setsid;
+# refuse an image variant without it instead of silently weakening cleanup.
+# shellcheck disable=SC2317,SC2329
+stop_finder() {
+	pgid=$finder_pgid
+	if [ -z "$pgid" ]; then
+		pgid=$finder_pid
+	fi
+	[ -n "$pgid" ] || return 0
+	# A negative PID targets the session/process group created by setsid.  Do
+	# not use a plain PID here: it can leave a traversal descendant alive.
+	kill -TERM "-$pgid" 2>/dev/null || true
+	sleep 1
+	kill -KILL "-$pgid" 2>/dev/null || true
+	if [ -n "$finder_pid" ]; then
+		wait "$finder_pid" 2>/dev/null || true
+	fi
+	finder_pid=
+	finder_pgid=
+}
+
+# The direct setsid wrapper can exit while a forked descendant still belongs to
+# its process group and holds a private spool descriptor. Reap the wrapper
+# first, then verify that its former process group no longer exists before any
+# spool is consumed. wait cannot reap a non-child descendant, so verify the
+# process-group target after TERM/KILL instead of assuming wrapper exit closed
+# every inherited descriptor.
+# shellcheck disable=SC2317,SC2329
+stop_completed_finder_group() {
+	completed_finder_group_was_live=
+	pgid=$finder_pgid
+	[ -n "$pgid" ] || return 0
+	if ! kill -0 "-$pgid" 2>/dev/null; then
+		finder_pgid=
+		return 0
+	fi
+	completed_finder_group_was_live=1
+	kill -TERM "-$pgid" 2>/dev/null || true
+	sleep 1
+	if kill -0 "-$pgid" 2>/dev/null; then
+		kill -KILL "-$pgid" 2>/dev/null || true
+		sleep 1
+	fi
+	if kill -0 "-$pgid" 2>/dev/null; then
+		return 1
+	fi
+	finder_pgid=
+}
+
+start_finder_watchdog() {
+	pgid=$finder_pgid
+	(
+		sleep "$CRASH_ENUMERATION_MAX_DURATION_SECONDS"
+		if kill -0 "-$pgid" 2>/dev/null; then
+			# Keep deadline state separate from the final diagnostic: wrapper exit
+			# and descendant cleanup can race this watchdog, but a recorded expiry
+			# always takes precedence once the watchdog has been joined.
+			printf '%s\n' deadline >"$finder_deadline_file"
+			kill -TERM "-$pgid" 2>/dev/null || true
+			sleep 1
+			kill -KILL "-$pgid" 2>/dev/null || true
+		fi
+	) &
+	finder_watchdog=$!
+}
+
+redact_text() {
+	# Only text generated by this image enters these streams. Redact common
+	# credential-shaped values before they become part of a downloadable file.
+	# Redact through the end of the line: values may contain spaces, paths, or
+	# punctuation and must not leak a suffix after the first token.
+	sed -E 's/([Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Aa][Pp][Ii][-_][Kk][Ee][Yy])([[:space:]]*[:=][[:space:]]*).*/\1\2[REDACTED]/g'
+}
+
+safe_stat_size() {
+	stat -c '%s' "$1" 2>/dev/null || fail "cannot inspect source file"
+}
+
+safe_stat_inode() {
+	stat -c '%d:%i' "$1" 2>/dev/null || fail "cannot inspect source inode"
+}
+
+safe_stat_link_count() {
+	stat -c '%h' "$1" 2>/dev/null || fail "cannot inspect source link count"
+}
+
+seen_inodes=
+check_source_file() {
+	path=$1
+	[ -f "$path" ] || fail "source is not a regular file"
+	[ ! -L "$path" ] || fail "symbolic links are not accepted"
+	inode=$(safe_stat_inode "$path")
+	link_count=$(safe_stat_link_count "$path")
+	[ "$link_count" = 1 ] || fail "hard-linked source files are not accepted"
+	case "\n$seen_inodes\n" in
+		*"\n$inode\n"*) fail "hard-linked source files are not accepted" ;;
+	esac
+	seen_inodes=$seen_inodes$inode'\n'
+	size=$(safe_stat_size "$path")
+	case "$size" in
+		''|*[!0-9]*) fail "source size is invalid" ;;
+	esac
+	[ "$size" -le "$max_file_bytes" ] || fail "source file exceeds per-file limit"
+	[ "$file_count" -lt "$max_files" ] || fail "source file count limit exceeded"
+	[ $((total_bytes + size)) -le "$max_total_bytes" ] || fail "source byte limit exceeded"
+	file_count=$((file_count + 1))
+	total_bytes=$((total_bytes + size))
+}
+
+copy_coredumps() {
+	[ -d "$COREDUMP_DIR" ] || fail "the read-only /host-coredumps mount is unavailable"
+	[ ! -L "$COREDUMP_DIR" ] || fail "the coredump mount must not be a symbolic link"
+	[ -r /proc/self/mountinfo ] || fail "mount-boundary information is unavailable"
+	if awk '$5 ~ "^/host-coredumps/" { nested = 1 } END { exit nested ? 0 : 1 }' /proc/self/mountinfo; then
+		fail "nested mounts beneath the coredump source are not accepted"
+	fi
+
+	# The finder writes NUL-delimited paths into file-size-limited private spools.
+	# Paths never pass through a line-delimited stream before their control
+	# characters and length are validated. The isolated find process has a fixed
+	# 4 MiB-class file limit, so traversal cannot consume unbounded staging disk.
+	# A distinct 30-second enumeration watchdog bounds pathological filesystem
+	# walks independently of the 15-minute recipe lease and kills the whole finder
+	# process group.
+	candidate_list=$stage/source-candidates
+	list=$stage/source-list
+	now=$(date +%s)
+	minimum_mtime=$((now - MAX_AGE_MINUTES * 60))
+	overflow_file=$stage/source-overflow
+	finder_deadline_file=$stage/source-deadline
+	source_list=$stage/source-paths
+	directory_list=$stage/source-directories
+	unsupported_source_file=$stage/unsupported-source
+	: >"$candidate_list"
+	: >"$overflow_file"
+	: >"$finder_deadline_file"
+	: >"$unsupported_source_file"
+	command -v setsid >/dev/null 2>&1 || fail "setsid-capable runtime is required for bounded traversal cleanup"
+	# shellcheck disable=SC2016
+	setsid sh -c '
+		ulimit -f "$1"
+		unsupported_source_file=$2
+		coredump_dir=$3
+		# Reject symlinks, devices, FIFOs, sockets, and any other non-file/
+		# non-directory entry before it can become a candidate. Keep this in
+		# find rather than issuing several shell stat calls for every regular
+		# entry; check_source_file revalidates no-follow regularity at copy time.
+		find -P "$coredump_dir" -xdev ! \( -type f -o -type d \) -print -quit >"$unsupported_source_file"
+		[ ! -s "$unsupported_source_file" ] || exit 3
+		# The candidate stream contains regular files only. Directories need not
+		# reach the shell loop, which avoids a separate stat for every entry on
+		# large coredump trees. A file can still be replaced after discovery, so
+		# check_source_file repeats the no-follow regular-file validation before
+		# each copy.
+		find -P "$coredump_dir" -xdev -type d -print0 >"$4"
+		exec find -P "$coredump_dir" -xdev -type f -print0
+	' sh "$MAX_SOURCE_LIST_BLOCKS" "$unsupported_source_file" "$COREDUMP_DIR" "$directory_list" >"$source_list" &
+	finder_pid=$!
+	finder_pgid=$finder_pid
+	start_finder_watchdog
+	if wait "$finder_pid"; then
+		finder_status=0
+	else
+		finder_status=$?
+	fi
+	finder_pid=
+	if ! stop_completed_finder_group; then
+		finder_group_cleanup_failed=1
+	else
+		finder_group_cleanup_failed=
+	fi
+	if [ -n "$finder_watchdog" ]; then
+		kill "$finder_watchdog" 2>/dev/null || true
+		wait "$finder_watchdog" 2>/dev/null || true
+		finder_watchdog=
+	fi
+	# Decide only after joining the watchdog. This gives a real 30-second
+	# expiry deterministic precedence over an escaped wrapper descendant even
+	# when the wrapper exits while the watchdog is writing its outcome marker.
+	if [ -s "$finder_deadline_file" ]; then
+		printf '%s\n' 'coredump enumeration deadline exceeded' >"$overflow_file"
+	elif [ -n "$finder_group_cleanup_failed" ]; then
+		printf '%s\n' 'coredump enumeration process group could not be terminated' >"$overflow_file"
+	elif [ -n "$completed_finder_group_was_live" ]; then
+		printf '%s\n' 'coredump enumeration descendant survived wrapper exit' >"$overflow_file"
+	fi
+	if [ -s "$overflow_file" ]; then
+		cat "$overflow_file" >&2
+		return 2
+	fi
+	if [ -s "$unsupported_source_file" ]; then
+		printf '%s\n' 'unsupported filesystem entry in coredump mount' >&2
+		return 2
+	fi
+	if [ "$finder_status" -ne 0 ]; then
+		printf '%s\n' 'cannot enumerate coredump files' >&2
+		return 2
+	fi
+	entry_count=0
+	candidate_count=0
+	# BusyBox ash's -d '' is an explicit NUL delimiter. Keep these loops in the
+	# collector shell so the combined entry count is exact. Fixed finder filters
+	# classify directories and regular files without a shell stat per entry.
+	# shellcheck disable=SC3045
+	while IFS= read -r -d '' source; do
+		entry_count=$((entry_count + 1))
+		if [ "$entry_count" -gt "$MAX_SOURCE_ENTRIES" ]; then
+			printf '%s\n' 'coredump entry limit exceeded' >"$overflow_file"
+			break
+		fi
+		# Coredump filenames are operational identifiers, not arbitrary user text.
+		# Restrict them to printable ASCII before they enter the newline-delimited
+		# sorted candidate list below.
+		case "$source" in
+		*[!\ -~]*)
+			printf '%s\n' 'source filename contains an unsafe character' >"$overflow_file"
+			break
+		esac
+		path_bytes=${#source}
+		if [ "$path_bytes" -gt "$MAX_SOURCE_PATH_BYTES" ]; then
+			printf '%s\n' 'source path length limit exceeded' >"$overflow_file"
+			break
+		fi
+	done <"$directory_list"
+	# shellcheck disable=SC3045
+	while IFS= read -r -d '' source; do
+		entry_count=$((entry_count + 1))
+		if [ "$entry_count" -gt "$MAX_SOURCE_ENTRIES" ]; then
+			printf '%s\n' 'coredump entry limit exceeded' >"$overflow_file"
+			break
+		fi
+		case "$source" in
+		*[!\ -~]*)
+			printf '%s\n' 'source filename contains an unsafe character' >"$overflow_file"
+			break
+		esac
+		path_bytes=${#source}
+		if [ "$path_bytes" -gt "$MAX_SOURCE_PATH_BYTES" ]; then
+			printf '%s\n' 'source path length limit exceeded' >"$overflow_file"
+			break
+		fi
+		candidate_count=$((candidate_count + 1))
+		if [ "$candidate_count" -gt "$MAX_SOURCE_CANDIDATES" ]; then
+			printf '%s\n' 'coredump candidate limit exceeded' >"$overflow_file"
+			break
+		fi
+	done <"$source_list"
+	if [ -s "$overflow_file" ]; then
+		# This function's caller captures and redacts stderr before returning the
+		# exact exit-2 diagnostic to the Job. Do not use fail here: it exits the
+		# shell before collect can expose the bounded reason.
+		cat "$overflow_file" >&2
+		return 2
+	fi
+	if [ "$finder_status" -ne 0 ]; then
+		printf '%s\n' 'cannot enumerate coredump files' >&2
+		return 2
+	fi
+	# All accepted source paths are printable ASCII and therefore cannot contain
+	# newlines. Convert the validated NUL stream in one bounded image-owned
+	# operation, rather than opening the candidate file once per source path.
+	if ! tr '\000' '\n' <"$source_list" >"$candidate_list"; then
+		fail "cannot record coredump candidates"
+	fi
+	if ! LC_ALL=C sort "$candidate_list" >"$list"; then
+		fail "cannot sort coredump candidates"
+	fi
+	while IFS= read -r source; do
+		[ -n "$source" ] || continue
+		mtime=$(stat -c '%Y' "$source" 2>/dev/null || fail "cannot inspect source age")
+		[ "$mtime" -ge "$minimum_mtime" ] || continue
+		check_source_file "$source"
+		rel=$(printf '%s' "$source" | sed "s#^$COREDUMP_DIR/##")
+		destination=$stage/files/coredumps/$rel
+		/usr/local/bin/diagnostic-artifact-safe-copy "$rel" || fail "cannot safely copy coredump"
+		copied_size=$(safe_stat_size "$destination")
+		[ "$copied_size" = "$size" ] || fail "source changed while it was copied"
+		printf 'included=%s size_bytes=%s\n' "$rel" "$size"
+	done <"$list" >"$stage/stdout.raw"
+	[ "$file_count" -gt 0 ] || printf '%s\n' 'included=none' >"$stage/stdout.raw"
+}
+
+write_system_summary() {
+	# Deliberately excludes hostname, command lines, environment, timestamps,
+	# mounted secrets, and arbitrary paths. This is a harmless smoke recipe.
+	[ -r /proc/sys/kernel/osrelease ] || fail "/proc kernel information is unavailable"
+	{
+		printf '{\n'
+		printf '  "schema_version": "system-summary/v1",\n'
+		printf '  "detail_level": "%s",\n' "$DETAIL_LEVEL"
+		printf '  "kernel": "%s",\n' "$(cat /proc/sys/kernel/osrelease)"
+		printf '  "architecture": "%s"' "$(uname -m)"
+		if [ "$DETAIL_LEVEL" = extended ]; then
+			printf ',\n  "memory_kib": '
+			awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo
+			printf ',\n  "cpu_count": %s' "$(awk '/^processor[[:space:]]*:/ {count++} END {print count + 0}' /proc/cpuinfo)"
+		fi
+		printf ',\n  "collector_status": "complete"\n}\n'
+	} >"$stage/files/system-summary.json"
+	file_count=1
+	total_bytes=$(safe_stat_size "$stage/files/system-summary.json")
+	[ "$total_bytes" -le "$max_file_bytes" ] || fail "system summary exceeds per-file limit"
+	cat "$stage/files/system-summary.json"
+}
+
+write_manifest() {
+	# BusyBox tar records mtimes. Normalize every payload entry before hashing
+	# and packaging so equal inputs produce equal bytes on every invocation.
+	find "$stage" -type f -exec touch -d @0 {} \;
+	find "$stage" -type d -exec touch -d @0 {} \;
+	payload_list=$stage/payload-list
+	(
+		cd "$stage"
+		find stdout.log stderr.log files -print | LC_ALL=C sort
+	) >"$payload_list"
+	# The sorted list already contains every directory and descendant exactly
+	# once. Disable tar's implicit recursion so its byte stream (and the final
+	# archive) cannot acquire duplicate members through both the directory and
+	# its explicitly listed children.
+	payload_sha256=$(tar --no-recursion -C "$stage" -cf - -T "$payload_list" | sha256sum | awk '{print $1}')
+	[ -n "$payload_sha256" ] || fail "cannot calculate payload checksum"
+	{
+		printf '{\n'
+		printf '  "schema_version": "diagnostic-artifact/v1",\n'
+		printf '  "recipe": "%s",\n' "$recipe"
+		printf '  "recipe_version": 1,\n'
+		printf '  "artifact_id": "%s",\n' "$artifact_id"
+		printf '  "session": {"namespace": "%s", "name": "%s", "uid": "%s"},\n' \
+			"$session_namespace" "$session_name" "$session_uid"
+		printf '  "redaction": {"profile": "%s", "version": %s},\n' \
+			"$redaction_profile" "$redaction_version"
+		if [ "$recipe" = crashdump-collection.v1 ]; then
+			printf '  "node": "%s",\n' "$node"
+		else
+			printf '  "node": null,\n'
+		fi
+		printf '  "archive_format": "tar.gz",\n'
+		printf '  "inputs": {'
+		if [ "$recipe" = crashdump-collection.v1 ]; then
+			printf '\n    "maxAgeMinutes": %s,\n    "node": "%s",\n    "maxArchiveBytes": %s\n' "$MAX_AGE_MINUTES" "$node" "$max_archive_bytes"
+		else
+			printf '\n    "detailLevel": "%s",\n    "maxArchiveBytes": %s\n' "$DETAIL_LEVEL" "$max_archive_bytes"
+		fi
+		printf '  },\n'
+		printf '  "declared_outputs": ['
+		if [ "$recipe" = crashdump-collection.v1 ]; then
+			printf '"files/coredumps/", "manifest.json", "stderr.log", "stdout.log"'
+		else
+			printf '"files/system-summary.json", "manifest.json", "stderr.log", "stdout.log"'
+		fi
+		printf '],\n'
+		printf '  "payload_sha256": "%s",\n' "$payload_sha256"
+		printf '  "file_count": %s,\n' "$file_count"
+		printf '  "bytes": %s,\n' "$total_bytes"
+		printf '  "exit_code": 0,\n'
+		printf '  "exit_semantics": "0=complete; non-zero=not published"\n'
+		printf '}\n'
+	} >"$stage/manifest.json"
+}
+
+publish_outputs() {
+	# Build every temporary beneath the private staging directory. Cleanup never
+	# unlinks a public output path: once a hard-link is published, a concurrent
+	# writer cannot turn failure cleanup into deletion of an inode it owns. Any
+	# incomplete publication is pod-scoped and disappears with the output
+	# emptyDir/PVC operation directory; the ready marker is always linked last.
+	archive_tmp=$stage/.artifact.tar.gz
+	manifest_tmp=$stage/.artifact.manifest.json
+	ready_tmp=$stage/.artifact.ready
+	: >"$archive_tmp"
+	: >"$manifest_tmp"
+	: >"$ready_tmp"
+	# The portable summary runs as UID/GID 65532 and keeps all hand-off files
+	# owner-only. A host-mounted crashdump collector runs as UID 0:GID 65532;
+	# it cannot use CAP_CHOWN, so its group-readable hand-off is created with
+	# the effective group and accepted by the uploader as root:65532 mode 0640.
+	handoff_mode=600
+	if [ "$(id -u)" -eq 0 ]; then
+		handoff_mode=640
+	fi
+	chmod "$handoff_mode" "$archive_tmp" "$manifest_tmp" "$ready_tmp"
+	(
+		cd "$stage"
+		find . -type f -exec touch -d @0 {} \;
+		find . -type d -exec touch -d @0 {} \;
+		find stdout.log stderr.log files manifest.json -print | LC_ALL=C sort >archive-list
+		tar --no-recursion -cf - -T archive-list | gzip -n >"$archive_tmp"
+	)
+	archive_size=$(safe_stat_size "$archive_tmp")
+	if [ "$archive_size" -lt 1 ] || [ "$archive_size" -gt "$max_archive_bytes" ]; then
+		fail "archive exceeds the bounded output limit"
+	fi
+	cp -P "$stage/manifest.json" "$manifest_tmp"
+	chmod "$handoff_mode" "$manifest_tmp"
+	printf 'ready\n' >"$ready_tmp"
+	chmod "$handoff_mode" "$ready_tmp"
+	# Hard-link publication is atomic and fails rather than overwriting a path
+	# that appeared after the initial boundary check.
+	ln "$archive_tmp" "$OUTPUT_FILE" || fail "cannot publish archive without overwrite"
+	ln "$manifest_tmp" "$MANIFEST_FILE" || fail "cannot publish manifest without overwrite"
+	ln "$ready_tmp" "$READY_FILE" || fail "cannot publish ready marker without overwrite"
+}
+
+collect() {
+	recipe=$1
+	case "$recipe" in
+		crashdump-collection.v1)
+			max_total_bytes=$CRASH_MAX_TOTAL_BYTES
+			max_file_bytes=$CRASH_MAX_FILE_BYTES
+			max_files=$CRASH_MAX_FILES
+			max_duration_seconds=$CRASH_MAX_DURATION_SECONDS
+			recipe_archive_max=$MAX_ARCHIVE_BYTES
+			;;
+		system-summary.v1)
+			max_total_bytes=$SUMMARY_MAX_TOTAL_BYTES
+			max_file_bytes=$SUMMARY_MAX_FILE_BYTES
+			max_files=$SUMMARY_MAX_FILES
+			max_duration_seconds=$SUMMARY_MAX_DURATION_SECONDS
+			recipe_archive_max=$SUMMARY_MAX_ARCHIVE_BYTES
+			;;
+		*) fail "unknown immutable recipe: $recipe" ;;
+	esac
+	# A deployment cap may narrow a recipe ceiling, never expand it.  This is
+	# intentionally applied after the recipe is selected so system summaries
+	# cannot inherit the crashdump-sized 512 MiB archive allowance.
+	if [ "$max_archive_bytes" -gt "$recipe_archive_max" ]; then
+		max_archive_bytes=$recipe_archive_max
+	fi
+	validate_recipe_inputs
+	start_watchdog
+	case "$recipe" in
+		crashdump-collection.v1)
+			validate_node
+			mkdir -p "$stage/files/coredumps"
+			if copy_coredumps >"$stage/stdout.raw" 2>"$stage/stderr.raw"; then
+				:
+			else
+				collection_status=$?
+				# Failure diagnostics remain redacted even though no archive is
+				# published. This makes bounded traversal failures observable to
+				# the Job without exposing an unredacted staging file.
+				redact_text <"$stage/stderr.raw" >&2
+				return "$collection_status"
+			fi
+			;;
+		system-summary.v1)
+			write_system_summary >"$stage/stdout.raw" 2>"$stage/stderr.raw"
+			;;
+		*) fail "unknown immutable recipe: $recipe" ;;
+	esac
+	redact_text <"$stage/stdout.raw" >"$stage/stdout.log"
+	redact_text <"$stage/stderr.raw" >"$stage/stderr.log"
+	chmod 600 "$stage/stdout.log" "$stage/stderr.log"
+	write_manifest
+	publish_outputs
+}
+
+upload() {
+	[ "$1" = "$OUTPUT_FILE" ] || fail "archive must be exactly /output/artifact.tar.gz"
+	[ -f "$READY_FILE" ] || fail "artifact.ready is required before upload"
+	exec /usr/local/bin/diagnostic-artifact-upload --archive "$OUTPUT_FILE"
+}
+
+if [ "$#" -eq 1 ] && [ "$1" = --help ]; then
+	help
+	exit 0
+fi
+if [ "$#" -eq 5 ] && [ "$1" = collect ] && [ "$2" = --recipe ] && [ "$4" = --output ]; then
+	validate_fixed_output "$5"
+	validate_environment
+	validate_identity
+	validate_max_archive_bytes
+	assert_output_boundary
+	stage=$(mktemp -d "$OUTPUT_DIR/.staging.XXXXXX")
+	chmod 700 "$stage"
+	mkdir -p "$stage/files"
+	collect "$3"
+	exit 0
+fi
+if [ "$#" -eq 3 ] && [ "$1" = upload ] && [ "$2" = --archive ]; then
+	validate_fixed_output "$3"
+	validate_environment
+	validate_identity
+	validate_max_archive_bytes
+	upload "$3"
+	exit 0
+fi
+fail "only the fixed collect or upload contract is supported"
