@@ -651,6 +651,12 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	if pod.UID == "" {
 		return kubectlDebugPolicyErrorf("target pod %s/%s has no UID", namespace, podName)
 	}
+	// Recovery above may have completed an operation whose target mutation
+	// succeeded but whose outcome write was interrupted. Treat that exact
+	// operation as an idempotent retry before the normal duplicate-name check.
+	if recovered := findMatchingEphemeralOperation(&ds.Status, namespace, podName, pod.UID, containerName, image, command, securityContext); recovered != nil && recovered.State == breakglassv1alpha1.KubectlDebugOperationCompleted {
+		return nil
+	}
 
 	// Check if container name already exists
 	for _, ec := range pod.Spec.EphemeralContainers {
@@ -692,10 +698,6 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	if securityContext != nil {
 		ephemeralContainer.SecurityContext = securityContext
 	}
-	if recovered := findMatchingEphemeralOperation(&ds.Status, namespace, podName, pod.UID, containerName, image, command, securityContext); recovered != nil && recovered.State == breakglassv1alpha1.KubectlDebugOperationCompleted {
-		return nil
-	}
-
 	// Add the ephemeral container to the request object. The target API has not
 	// been mutated yet; the durable operation intent below is persisted first.
 	freshPod.Spec.EphemeralContainers = append(freshPod.Spec.EphemeralContainers, ephemeralContainer)

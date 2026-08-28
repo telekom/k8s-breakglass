@@ -967,6 +967,7 @@ func TestKubectlDebugHandler_EphemeralOperationIntentPrecedesTargetMutation(t *t
 func TestKubectlDebugHandler_EphemeralOperationRecoversAfterOutcomeWriteFailure(t *testing.T) {
 	scheme := newKubectlTestScheme()
 	statusPatches := 0
+	targetUpdates := 0
 	statusErr := errors.New("simulated outcome write failure")
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
@@ -976,6 +977,7 @@ func TestKubectlDebugHandler_EphemeralOperationRecoversAfterOutcomeWriteFailure(
 		WithInterceptorFuncs(interceptor.Funcs{
 			SubResourceUpdate: func(ctx context.Context, cl ctrlclient.Client, name string, obj ctrlclient.Object, opts ...ctrlclient.SubResourceUpdateOption) error {
 				if name == "ephemeralcontainers" {
+					targetUpdates++
 					return cl.Update(ctx, obj)
 				}
 				return cl.SubResource(name).Update(ctx, obj, opts...)
@@ -1025,6 +1027,13 @@ func TestKubectlDebugHandler_EphemeralOperationRecoversAfterOutcomeWriteFailure(
 	require.Len(t, recovered.Status.KubectlDebugStatus.EphemeralContainersInjected, 1)
 	assert.Equal(t, "debugger", recovered.Status.KubectlDebugStatus.EphemeralContainersInjected[0].ContainerName)
 	assert.Len(t, changedPod.Spec.EphemeralContainers, 1, "recovery must not duplicate the target mutation")
+
+	// Retrying the original API operation after recovery must be an idempotent
+	// success, not an "already exists" error or a second subresource update.
+	require.NoError(t, restarted.InjectEphemeralContainer(context.Background(), &recovered,
+		"default", "target", "debugger", "busybox:latest", []string{"sh"}, nil,
+		"test-user@example.com"))
+	assert.Equal(t, 1, targetUpdates, "an idempotent retry must not update the target twice")
 }
 
 func TestKubectlDebugHandler_EphemeralOperationAmbiguousTargetIsNotGuessed(t *testing.T) {
