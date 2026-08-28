@@ -16,7 +16,12 @@ import (
 
 // DebugSessionHandler defines the interface for debug session operations
 type DebugSessionHandler interface {
-	FindActiveSessionForIssuer(ctx context.Context, user, cluster, issuer string) (*breakglassv1alpha1.DebugSession, error)
+	FindActiveSession(ctx context.Context, user, cluster string) (*breakglassv1alpha1.DebugSession, error)
+	RevalidateActiveSession(
+		ctx context.Context,
+		user, cluster string,
+		candidate *breakglassv1alpha1.DebugSession,
+	) (*breakglassv1alpha1.DebugSession, error)
 	ValidateEphemeralContainerRequest(
 		ctx context.Context,
 		ds *breakglassv1alpha1.DebugSession,
@@ -76,12 +81,7 @@ func (w *EphemeralContainerWebhook) Handle(ctx context.Context, req admission.Re
 		return admission.Denied("cluster identity cannot be determined for ephemeral container validation")
 	}
 
-	issuers := req.UserInfo.Extra["identity.t-caas.telekom.com/issuer"]
-	if len(issuers) != 1 || issuers[0] == "" {
-		return admission.Denied("exactly one nonempty issuer is required for ephemeral container validation")
-	}
-	issuer := issuers[0]
-	session, err := w.DebugHandler.FindActiveSessionForIssuer(ctx, user, cluster, issuer)
+	session, err := w.DebugHandler.FindActiveSession(ctx, user, cluster)
 	if err != nil {
 		w.Log.Errorw("Failed to find active session", "error", err)
 		return admission.Errored(http.StatusInternalServerError, err)
@@ -109,6 +109,18 @@ func (w *EphemeralContainerWebhook) Handle(ctx context.Context, req admission.Re
 			caps, nonRoot, privileged); err != nil {
 			return admission.Denied(fmt.Sprintf("ephemeral container denied: %v", err))
 		}
+	}
+
+	// Discovery is not the final authorization decision. A session can be
+	// revoked, replaced, or expire while validating the pod. Deny if the
+	// production handler's exact-UID API re-read no longer approves it.
+	live, err := w.DebugHandler.RevalidateActiveSession(ctx, user, cluster, session)
+	if err != nil {
+		w.Log.Errorw("Failed to revalidate active debug session", "error", err)
+		return admission.Errored(http.StatusInternalServerError, err)
+	}
+	if live == nil {
+		return admission.Denied("debug session is no longer active")
 	}
 
 	return admission.Allowed("allowed by debug session")

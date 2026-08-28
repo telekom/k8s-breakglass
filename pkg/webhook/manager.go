@@ -13,7 +13,6 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
 	"github.com/telekom/k8s-breakglass/pkg/cert"
 	"github.com/telekom/k8s-breakglass/pkg/cli"
-	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
@@ -44,7 +43,6 @@ func Setup(
 	log *zap.SugaredLogger,
 	scheme *runtime.Scheme,
 	wc *cli.WebhookConfig,
-	ccProvider *cluster.ClientProvider,
 	enableValidatingWebhooks bool,
 	enableHTTP2 bool,
 	enableCertGeneration bool,
@@ -155,7 +153,7 @@ func Setup(
 				Client:       mgr.GetClient(),
 				Log:          log,
 				Decoder:      admission.NewDecoder(mgr.GetScheme()),
-				DebugHandler: debug.NewKubectlDebugHandler(mgr.GetClient(), debug.AdaptClusterClientProvider(ccProvider)),
+				DebugHandler: debug.NewKubectlDebugHandlerWithReader(mgr.GetClient(), mgr.GetAPIReader(), nil),
 			},
 		}
 

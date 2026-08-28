@@ -18,13 +18,16 @@ package v1alpha1
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"testing"
 	"time"
 
+	admissionv1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 func TestValidateCreate_MissingFields(t *testing.T) {
@@ -329,6 +332,51 @@ func TestBreakglassSessionValidateDeleteBlocksPendingDuplicateAudit(t *testing.T
 	})
 	if _, err := bs.ValidateDelete(context.Background(), bs); err != nil {
 		t.Fatalf("expected acknowledged audit to permit deletion: %v", err)
+	}
+}
+
+func TestBreakglassSessionDeleteAdmissionBlocksPendingDuplicateAudit(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := AddToScheme(scheme); err != nil {
+		t.Fatalf("register scheme: %v", err)
+	}
+	obj := &BreakglassSession{
+		TypeMeta:   metav1.TypeMeta{APIVersion: GroupVersion.String(), Kind: "BreakglassSession"},
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-audit", Namespace: "default"},
+	}
+	obj.SetCondition(metav1.Condition{
+		Type:   string(SessionConditionTypeDuplicateCleanupAuditComplete),
+		Status: metav1.ConditionFalse,
+		Reason: "PendingDelivery",
+	})
+	raw, err := json.Marshal(obj)
+	if err != nil {
+		t.Fatalf("marshal delete object: %v", err)
+	}
+
+	validator := admission.WithValidator[*BreakglassSession](scheme, &BreakglassSession{})
+	request := admission.Request{AdmissionRequest: admissionv1.AdmissionRequest{
+		Operation: admissionv1.Delete,
+		OldObject: runtime.RawExtension{Raw: raw},
+	}}
+	response := validator.Handle(context.Background(), request)
+	if response.Allowed {
+		t.Fatal("expected the actual custom-validator delete admission path to deny pending audit deletion")
+	}
+
+	obj.SetCondition(metav1.Condition{
+		Type:   string(SessionConditionTypeDuplicateCleanupAuditComplete),
+		Status: metav1.ConditionTrue,
+		Reason: "EmissionAccepted",
+	})
+	raw, err = json.Marshal(obj)
+	if err != nil {
+		t.Fatalf("marshal acknowledged delete object: %v", err)
+	}
+	request.OldObject = runtime.RawExtension{Raw: raw}
+	response = validator.Handle(context.Background(), request)
+	if !response.Allowed {
+		t.Fatalf("expected acknowledged audit deletion to be allowed, response=%+v", response.Result)
 	}
 }
 

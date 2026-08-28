@@ -23,9 +23,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -38,6 +37,7 @@ func TestFindActiveSession(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "active-session",
 			Namespace: "default",
+			UID:       types.UID("active-session-uid"),
 		},
 		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "test-cluster",
@@ -45,8 +45,12 @@ func TestFindActiveSession(t *testing.T) {
 		},
 		Status: breakglassv1alpha1.DebugSessionStatus{
 			State: breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: func() *metav1.Time {
+				t := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+				return &t
+			}(),
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{
-				{User: "user@example.com", Role: breakglassv1alpha1.ParticipantRoleParticipant, IdentityProviderIssuer: "https://test-idp.example"},
+				{User: "user@example.com"},
 			},
 		},
 	}
@@ -64,7 +68,7 @@ func TestFindActiveSession(t *testing.T) {
 			State:     breakglassv1alpha1.DebugSessionStateActive,
 			ExpiresAt: &metav1.Time{Time: time.Now().Add(-1 * time.Hour)},
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{
-				{User: "user@example.com", Role: breakglassv1alpha1.ParticipantRoleParticipant, IdentityProviderIssuer: "https://test-idp.example"},
+				{User: "user@example.com"},
 			},
 		},
 	}
@@ -75,27 +79,27 @@ func TestFindActiveSession(t *testing.T) {
 		Status: breakglassv1alpha1.DebugSessionStatus{
 			State: breakglassv1alpha1.DebugSessionStateActive,
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{
-				{User: "user@example.com", Role: breakglassv1alpha1.ParticipantRoleParticipant, IdentityProviderIssuer: "https://test-idp.example", LeftAt: &leftAt},
+				{User: "user@example.com", LeftAt: &leftAt},
 			},
 		},
 	}
 
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(activeSession, otherSession, expiredSession).Build()
-	handler := NewKubectlDebugHandler(client, &mockClientProvider{}).withIdentity(debugSessionReadIdentity{legacyAllowed: true})
+	handler := NewKubectlDebugHandler(client, &mockClientProvider{})
 
 	// Test finding the session (specific cluster)
-	found, err := handler.FindActiveSessionForIssuer(context.Background(), "user@example.com", "test-cluster", "https://test-idp.example")
+	found, err := handler.FindActiveSession(context.Background(), "user@example.com", "test-cluster")
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.Equal(t, "active-session", found.Name)
 
 	// Test wrong cluster
-	found, err = handler.FindActiveSessionForIssuer(context.Background(), "user@example.com", "wrong-cluster", "https://test-idp.example")
+	found, err = handler.FindActiveSession(context.Background(), "user@example.com", "wrong-cluster")
 	require.NoError(t, err)
 	assert.Nil(t, found)
 
 	// Test wildcard cluster
-	found, err = handler.FindActiveSessionForIssuer(context.Background(), "user@example.com", "", "https://test-idp.example")
+	found, err = handler.FindActiveSession(context.Background(), "user@example.com", "")
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	// Theoretically matches active-session or expired-session? No, expired should be ignored.
@@ -103,7 +107,7 @@ func TestFindActiveSession(t *testing.T) {
 	assert.Equal(t, "active-session", found.Name)
 
 	// Test wrong user
-	found, err = handler.FindActiveSessionForIssuer(context.Background(), "other@example.com", "test-cluster", "https://test-idp.example")
+	found, err = handler.FindActiveSession(context.Background(), "other@example.com", "test-cluster")
 	require.NoError(t, err)
 	assert.Nil(t, found)
 
@@ -112,75 +116,172 @@ func TestFindActiveSession(t *testing.T) {
 	// FindActiveSession should filter it out
 	// Create a client with ONLY expired session to valid
 	clientExpired := fake.NewClientBuilder().WithScheme(scheme).WithObjects(expiredSession).Build()
-	handlerExpired := NewKubectlDebugHandler(clientExpired, &mockClientProvider{}).withIdentity(debugSessionReadIdentity{legacyAllowed: true})
-	found, err = handlerExpired.FindActiveSessionForIssuer(context.Background(), "user@example.com", "test-cluster", "https://test-idp.example")
+	handlerExpired := NewKubectlDebugHandler(clientExpired, &mockClientProvider{})
+	found, err = handlerExpired.FindActiveSession(context.Background(), "user@example.com", "test-cluster")
 	require.NoError(t, err)
 	assert.Nil(t, found)
 
 	clientLeft := fake.NewClientBuilder().WithScheme(scheme).WithObjects(leftParticipantSession).Build()
-	handlerLeft := NewKubectlDebugHandler(clientLeft, &mockClientProvider{}).withIdentity(debugSessionReadIdentity{legacyAllowed: true})
-	found, err = handlerLeft.FindActiveSessionForIssuer(context.Background(), "user@example.com", "test-cluster", "https://test-idp.example")
+	handlerLeft := NewKubectlDebugHandler(clientLeft, &mockClientProvider{})
+	found, err = handlerLeft.FindActiveSession(context.Background(), "user@example.com", "test-cluster")
 	require.NoError(t, err)
 	assert.Nil(t, found)
 }
 
-func TestFindActiveSessionRejectsViewer(t *testing.T) {
-	scheme := newKubectlTestScheme()
-	session := &breakglassv1alpha1.DebugSession{
-		ObjectMeta: metav1.ObjectMeta{Name: "viewer-session", Namespace: "default"},
+func newActiveSessionForFence(name string, uid types.UID, expiresAt *metav1.Time) *breakglassv1alpha1.DebugSession {
+	return &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", UID: uid},
 		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
 		Status: breakglassv1alpha1.DebugSessionStatus{
-			State:        breakglassv1alpha1.DebugSessionStateActive,
-			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "viewer@example.com", Role: breakglassv1alpha1.ParticipantRoleViewer, IdentityProviderIssuer: "https://trusted.example"}},
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: expiresAt,
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
+				{User: "user@example.com"},
+			},
 		},
 	}
-	handler := NewKubectlDebugHandler(fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).Build(), nil)
-	found, err := handler.FindActiveSessionForIssuer(context.Background(), "viewer@example.com", "test-cluster", "https://trusted.example")
-	require.NoError(t, err)
-	assert.Nil(t, found)
 }
 
-func TestEphemeralNamespaceLabelsUseSelectedSpoke(t *testing.T) {
+func TestFindActiveSessionRequiresStrictFutureExpiryAndUID(t *testing.T) {
 	scheme := newKubectlTestScheme()
-	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "target", Labels: map[string]string{"access": "yes"}}}).Build()
-	spoke := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "target", Labels: map[string]string{"access": "no"}}}).Build()
-	handler := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"spoke": spoke, "other": hub}})
-	filter := &breakglassv1alpha1.NamespaceFilter{SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{{MatchLabels: map[string]string{"access": "yes"}}}}
-	for _, tc := range []struct {
-		cluster string
-		want    bool
-	}{{"spoke", false}, {"other", true}} {
-		ds := &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: tc.cluster}}
-		got, err := handler.isNamespaceAllowedForEphemeral(context.Background(), ds, "target", filter, nil)
-		require.NoError(t, err)
-		assert.Equal(t, tc.want, got)
+	future := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	equal := metav1.NewTime(time.Now().UTC())
+	past := metav1.NewTime(time.Now().UTC().Add(-time.Hour))
+
+	tests := []struct {
+		name      string
+		expiresAt *metav1.Time
+		uid       types.UID
+		wantFound bool
+	}{
+		{name: "missing expiry", uid: types.UID("missing-expiry"), wantFound: false},
+		{name: "equal expiry", expiresAt: &equal, uid: types.UID("equal-expiry"), wantFound: false},
+		{name: "past expiry", expiresAt: &past, uid: types.UID("past-expiry"), wantFound: false},
+		{name: "future expiry", expiresAt: &future, uid: types.UID("future-expiry"), wantFound: true},
+		{name: "missing uid", expiresAt: &future, wantFound: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cached := newActiveSessionForFence("fenced-session", tt.uid, tt.expiresAt)
+			live := cached.DeepCopy()
+			cachedClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cached).Build()
+			liveClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(live).Build()
+			handler := NewKubectlDebugHandlerWithReader(cachedClient, liveClient, &mockClientProvider{})
+
+			found, err := handler.FindActiveSession(context.Background(), "user@example.com", "test-cluster")
+			require.NoError(t, err)
+			if tt.wantFound {
+				require.NotNil(t, found)
+				assert.Equal(t, tt.uid, found.UID)
+			} else {
+				assert.Nil(t, found)
+			}
+		})
 	}
 }
 
-func TestAdmissionClusterAdapterMissingProviderFailsClosed(t *testing.T) {
-	client, err := AdaptClusterClientProvider(nil).GetClient(context.Background(), "spoke")
-	require.Error(t, err)
-	assert.Nil(t, client)
+func TestFindActiveSessionRejectsStaleCachedCandidates(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	future := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	cached := newActiveSessionForFence("fenced-session", types.UID("cached-uid"), &future)
+
+	tests := []struct {
+		name   string
+		mutate func(*breakglassv1alpha1.DebugSession)
+	}{
+		{name: "live terminated", mutate: func(ds *breakglassv1alpha1.DebugSession) {
+			ds.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+		}},
+		{name: "live replaced uid", mutate: func(ds *breakglassv1alpha1.DebugSession) {
+			ds.UID = types.UID("replacement-uid")
+		}},
+		{name: "live expired", mutate: func(ds *breakglassv1alpha1.DebugSession) {
+			expired := metav1.NewTime(time.Now().UTC().Add(-time.Hour))
+			ds.Status.ExpiresAt = &expired
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			live := cached.DeepCopy()
+			tt.mutate(live)
+			cachedClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cached.DeepCopy()).Build()
+			liveClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(live).Build()
+			handler := NewKubectlDebugHandlerWithReader(cachedClient, liveClient, &mockClientProvider{})
+
+			found, err := handler.FindActiveSession(context.Background(), "user@example.com", "test-cluster")
+			require.NoError(t, err)
+			assert.Nil(t, found)
+		})
+	}
 }
 
-func TestFindActiveSessionPreservesIssuerAndRoleTogether(t *testing.T) {
-	for _, tc := range []struct {
-		name, issuer string
-		role         breakglassv1alpha1.ParticipantRole
-		want         bool
+func TestRevalidateActiveSessionRequiresExactUIDAndStrictFutureExpiry(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	future := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	live := newActiveSessionForFence("fenced-session", types.UID("live-uid"), &future)
+	liveClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(live).Build()
+	handler := NewKubectlDebugHandlerWithReader(nil, liveClient, &mockClientProvider{})
+
+	mismatched := live.DeepCopy()
+	mismatched.UID = types.UID("different-uid")
+	missing := live.DeepCopy()
+	missing.UID = ""
+	tests := []struct {
+		name      string
+		candidate *breakglassv1alpha1.DebugSession
+		wantFound bool
 	}{
-		{name: "same issuer participant", issuer: "https://trusted.example", role: breakglassv1alpha1.ParticipantRoleParticipant, want: true},
-		{name: "same issuer owner", issuer: "https://trusted.example/", role: breakglassv1alpha1.ParticipantRoleOwner, want: true},
-		{name: "wrong issuer participant", issuer: "https://other.example", role: breakglassv1alpha1.ParticipantRoleParticipant},
-		{name: "missing issuer participant", role: breakglassv1alpha1.ParticipantRoleParticipant},
-		{name: "same issuer viewer", issuer: "https://trusted.example", role: breakglassv1alpha1.ParticipantRoleViewer},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "shared@example.com", Role: tc.role, IdentityProviderIssuer: "https://trusted.example"}}}}
-			handler := NewKubectlDebugHandler(fake.NewClientBuilder().WithScheme(newKubectlTestScheme()).WithObjects(session).Build(), nil)
-			found, err := handler.FindActiveSessionForIssuer(context.Background(), "shared@example.com", "spoke", tc.issuer)
+		{name: "missing candidate uid", candidate: missing, wantFound: false},
+		{name: "mismatched candidate uid", candidate: mismatched, wantFound: false},
+		{name: "exact candidate uid", candidate: live.DeepCopy(), wantFound: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			found, err := handler.RevalidateActiveSession(context.Background(), "user@example.com", "test-cluster", tt.candidate)
 			require.NoError(t, err)
-			assert.Equal(t, tc.want, found != nil)
+			if tt.wantFound {
+				require.NotNil(t, found)
+				assert.Equal(t, live.UID, found.UID)
+			} else {
+				assert.Nil(t, found)
+			}
+		})
+	}
+}
+
+func TestRevalidateActiveSessionRejectsMissingOrReachedExpiry(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	future := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	equal := metav1.NewTime(time.Now().UTC())
+	past := metav1.NewTime(time.Now().UTC().Add(-time.Hour))
+	tests := []struct {
+		name      string
+		expiresAt *metav1.Time
+		wantFound bool
+	}{
+		{name: "missing expiry", wantFound: false},
+		{name: "equal expiry", expiresAt: &equal, wantFound: false},
+		{name: "past expiry", expiresAt: &past, wantFound: false},
+		{name: "future expiry", expiresAt: &future, wantFound: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			live := newActiveSessionForFence("fenced-session", types.UID("live-uid"), tt.expiresAt)
+			reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(live).Build()
+			handler := NewKubectlDebugHandlerWithReader(nil, reader, &mockClientProvider{})
+
+			found, err := handler.RevalidateActiveSession(context.Background(), "user@example.com", "test-cluster", live.DeepCopy())
+			require.NoError(t, err)
+			if tt.wantFound {
+				require.NotNil(t, found)
+				assert.Equal(t, live.UID, found.UID)
+			} else {
+				assert.Nil(t, found)
+			}
 		})
 	}
 }
