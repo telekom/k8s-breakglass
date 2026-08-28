@@ -32,8 +32,8 @@ Use this read-only procedure before changing a node network interface.
    missing interface is a hard stop; an unsupported probe is recorded.
 5. Review `interface.txt`, `addresses.txt`, `routes.txt`, `neighbors.txt`,
    `ethtool.txt`, `resolver.txt`, `kernel.txt`, `metadata`, and `events.jsonl`
-   recording hook with the
-   incident responder. Timeout and quota status are explicit in the files.
+   with the incident responder. `events.jsonl` records the operation lifecycle.
+   Timeout and quota status are explicit in the files.
    The helper does not decide whether repair is safe.
 
 The image does not provide an interactive shell. If this preflight is
