@@ -28,7 +28,8 @@ name or similarly named account. The selected review must be the newest review
 from that exact login with all of these properties:
 
 - `state` is `COMMENTED`, not dismissed;
-- `submittedAt` is non-null and later than the recorded review-request time;
+- `submittedAt` is non-null and provably later than the recorded
+  high-resolution review-request completion time;
 - `commit.oid` equals the captured PR `headRefOid`.
 
 Copilot does not re-review every push unless the repository explicitly
@@ -36,9 +37,9 @@ configures it. A head or base OID change restarts the gate and requires a fresh
 formal Copilot request/review. Its `COMMENTED` review is not a human approval:
 the captured `reviewDecision` and the actual branch ruleset/code-owner policy
 must independently show the current human and code-owner approvals required for
-that same head/base pair. A review commit OID does not bind the base: the review
-request timestamp is recorded after observing the pair, and final identity
-comparison provides the required base binding.
+that same head/base pair. A review commit OID does not bind the base: the
+request-completion timestamp is recorded after observing the pair, and final
+identity comparison provides the required base binding.
 
 ## Fail-closed exact-head/base gate
 
@@ -67,8 +68,18 @@ case "$pr" in ''|*[!0-9]*) fail "invalid PR number";; esac
 gate_root="$(mktemp -d)"
 trap 'rm -rf "$gate_root"' EXIT
 observed="$gate_root/observed.json"
+expected_inventory="${expected_inventory-}"
+ruleset_evidence="${ruleset_evidence-}"
+expected_inventory_validator="${expected_inventory_validator-}"
+copilot_reviewer_login="${copilot_reviewer_login-}"
+: "${copilot_reviewer_login:?set the repository-configured Copilot reviewer login}"
+case "$copilot_reviewer_login" in *[!A-Za-z0-9-]*)
+  fail "invalid Copilot reviewer login";;
+esac
 
 capture_identity() {
+  # shellcheck disable=SC2016
+  # GraphQL variables must reach gh unchanged.
   gh api graphql -f query='
     query($owner:String!, $repo:String!, $pr:Int!) {
       repository(owner:$owner, name:$repo) {
@@ -86,15 +97,24 @@ capture_identity() {
 
 # Observe the source/base before requesting a fresh review.
 capture_identity >"$observed"
-jq -e '.data.repository.pullRequest.headRefOid and
+jq -e '((.errors // []) | length) == 0 and .data != null and
+       .data.repository.pullRequest != null and
+       .data.repository.pullRequest.headRefOid and
        .data.repository.pullRequest.baseRefOid and
        .data.repository.pullRequest.headRepository.nameWithOwner' \
   "$observed" >/dev/null || fail "incomplete PR identity"
 
-request_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-jq -n --arg requestAt "$request_at" '{requestAt: $requestAt}' \
-  >"$gate_root/review-request.json"
 gh pr edit "$pr" --repo "$base_repo" --add-reviewer @copilot
+request_after_ns="$(date -u +%s%N 2>/dev/null || true)"
+case "$request_after_ns" in *N*|*[!0-9]*)
+  command -v ruby >/dev/null ||
+    fail "no high-resolution UTC clock; re-request/wait rather than guessing freshness"
+  request_after_ns="$(ruby -e \
+    'puts Process.clock_gettime(Process::CLOCK_REALTIME, :nanosecond)')";;
+esac
+jq -n --arg requestAfterUnixNanoseconds "$request_after_ns" \
+  '{requestAfterUnixNanoseconds: $requestAfterUnixNanoseconds}' \
+  >"$gate_root/review-request.json"
 ```
 
 Do not infer a merge-queue commit SHA from `mergeQueueEntry.id`. This workflow
@@ -119,20 +139,6 @@ evidence capture in `$gate_root/verified`. Its `identity.json` must byte-match
 collection into `$gate_root/final` immediately before ready/merge. Both captures
 must use the same filenames and include a fresh `identity.json`.
 
-```bash
-gate_dir="$gate_root/verified"
-mkdir -p "$gate_dir"
-cp "$gate_root/review-request.json" "$gate_dir/review-request.json"
-capture_identity >"$gate_dir/identity.json"
-cmp -s "$observed" "$gate_dir/identity.json" || \
-  fail "PR head/base or candidate changed; restart the complete gate"
-head_oid="$(jq -r '.data.repository.pullRequest.headRefOid' "$gate_dir/identity.json")"
-base_oid="$(jq -r '.data.repository.pullRequest.baseRefOid' "$gate_dir/identity.json")"
-candidate_oid="$(jq -r \
-  '.data.repository.pullRequest.potentialMergeCommit.oid // .data.repository.pullRequest.headRefOid' \
-  "$gate_dir/identity.json")"
-```
-
 ### Evidence that one gate snapshot must contain
 
 Capture every page of each connection. A complete snapshot contains:
@@ -140,10 +146,11 @@ Capture every page of each connection. A complete snapshot contains:
 | Evidence | Required fields and decision |
 | --- | --- |
 | PR identity | `headRefOid`, `baseRefOid`, head repository/ref, base ref, test-merge SHA, `reviewDecision` |
-| Formal reviews | reviewer `author.login`, state, `submittedAt`, `commit.oid`; select the newest configured Copilot review after `request_at` |
+| Formal reviews | review ID, configured reviewer `author.login`, state, `submittedAt`, `commit.oid`; select the newest configured Copilot review provably after `request_after_ns` |
 | Human approval | `reviewDecision` and current branch-ruleset/code-owner evidence for the pair; Copilot does not satisfy this row |
 | Threads and comments | every thread ID/resolution/outdated state and every comment ID, minimized state/reason, author, path, line, and timestamp |
 | Checks | complete expected inventory, result, `head_sha`, check-suite ID, and `CheckRun.app.owner.login`, `CheckRun.app.slug`, and `CheckRun.app.id` |
+| Legacy statuses | every context, state, target URL, and `creator.login`/`creator.id`; compare to the expected status provider inventory |
 | Check suites | suite ID, `head_sha`, app/provider identity, and each associated PR's repository, head SHA/ref, and base SHA/ref |
 
 Use repository rules/required-workflow configuration as the source of the full
@@ -158,34 +165,54 @@ Save each response under the gate directory and normalize it with sorted JSON
 before comparing snapshots.
 
 ```bash
-# Formal reviews; evaluate the exact-login/latest/COMMENTED/time/head predicate.
-gh api graphql --paginate --slurp -f query='
+require_graphql_pages() {
+  jq -e 'type == "array" and length > 0 and
+    all(.[]; ((.errors // []) | length) == 0 and .data != null)' "$1" >/dev/null ||
+    fail "GraphQL error, missing data, or incomplete page collection: $1"
+}
+
+collect_reviews_and_threads() {
+  gate_dir="$1"
+  # Formal reviews; evaluate the exact-login/latest/COMMENTED/time/head predicate.
+  # shellcheck disable=SC2016
+  # GraphQL variables must reach gh unchanged.
+  gh api graphql --paginate --slurp -f query='
   query($owner:String!, $repo:String!, $pr:Int!, $endCursor:String) {
     repository(owner:$owner, name:$repo) {
       pullRequest(number:$pr) {
         reviews(first:100, after:$endCursor) {
           pageInfo { hasNextPage endCursor }
-          nodes { author { login } state submittedAt commit { oid } }
+          nodes { id author { login } state submittedAt commit { oid } }
         }
       }
     }
   }
 ' -f owner="${base_repo%/*}" -f repo="${base_repo#*/}" -F pr="$pr" \
   -F endCursor=null >"$gate_dir/reviews.json"
+require_graphql_pages "$gate_dir/reviews.json"
+jq -e 'all(.[]; .data.repository.pullRequest != null and
+  .data.repository.pullRequest.reviews.pageInfo != null) and
+  .[-1].data.repository.pullRequest.reviews.pageInfo.hasNextPage == false' \
+  "$gate_dir/reviews.json" >/dev/null || fail "missing review pageInfo"
 
-copilot_reviewer_login=REPOSITORY_CONFIGURED_COPILOT_LOGIN
-jq -e --arg login "$copilot_reviewer_login" --arg head "$head_oid" \
-  --arg requested "$request_at" '
+jq -e --arg login "$copilot_reviewer_login" --arg head "$head_oid" '
   [ .[] | .data.repository.pullRequest.reviews.nodes[] |
     select(.author.login == $login) ] |
   if length == 0 then false else max_by(.submittedAt) |
-    (.state == "COMMENTED" and .submittedAt != null and
-     .submittedAt >= $requested and .commit.oid == $head)
+    (.id != null and .state == "COMMENTED" and .submittedAt != null and
+     .commit.oid == $head)
   end
 ' "$gate_dir/reviews.json" >/dev/null || fail "missing current formal Copilot review"
 
-# All review threads. Paginate every returned thread's comments separately.
-gh api graphql --paginate --slurp -f query='
+# GitHub review timestamps are normally second-resolution. The gate verifier
+# must parse submittedAt to UTC nanoseconds and prove it is strictly greater
+# than request_after_ns. Same-second, missing, rounded, or ambiguous data fails:
+# re-request and wait for an unambiguous fresh review.
+
+  # All review threads. Paginate every returned thread's comments separately.
+  # shellcheck disable=SC2016
+  # GraphQL variables must reach gh unchanged.
+  gh api graphql --paginate --slurp -f query='
   query($owner:String!, $repo:String!, $pr:Int!, $endCursor:String) {
     repository(owner:$owner, name:$repo) {
       pullRequest(number:$pr) {
@@ -204,11 +231,18 @@ gh api graphql --paginate --slurp -f query='
   }
 ' -f owner="${base_repo%/*}" -f repo="${base_repo#*/}" -F pr="$pr" \
   -F endCursor=null >"$gate_dir/threads.json"
+require_graphql_pages "$gate_dir/threads.json"
+jq -e 'all(.[]; .data.repository.pullRequest != null and
+  .data.repository.pullRequest.reviewThreads.pageInfo != null) and
+  .[-1].data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage == false' \
+  "$gate_dir/threads.json" >/dev/null || fail "missing thread pageInfo"
 
 thread_number=0
-jq -r '.[].data.repository.pullRequest.reviewThreads.nodes[].id' \
+  jq -r '.[].data.repository.pullRequest.reviewThreads.nodes[].id' \
   "$gate_dir/threads.json" | while IFS= read -r thread_id; do
     thread_number=$((thread_number + 1))
+    # shellcheck disable=SC2016
+    # GraphQL variables must reach gh unchanged.
     gh api graphql --paginate --slurp -f query='
       query($thread:ID!, $endCursor:String) {
         node(id:$thread) {
@@ -222,29 +256,121 @@ jq -r '.[].data.repository.pullRequest.reviewThreads.nodes[].id' \
       }
     ' -F thread="$thread_id" -F endCursor=null \
       >"$gate_dir/thread-comments-$thread_number.json"
+    require_graphql_pages "$gate_dir/thread-comments-$thread_number.json"
+    jq -e 'all(.[]; .data.node != null and .data.node.comments.pageInfo != null) and
+      .[-1].data.node.comments.pageInfo.hasNextPage == false' \
+      "$gate_dir/thread-comments-$thread_number.json" >/dev/null ||
+      fail "missing comment pageInfo"
   done
+}
 ```
 
-Every unresolved thread blocks the gate, including an outdated thread, unless
-the current ruleset expressly permits that precise exception. Minimized is not
-resolved. Resolve a thread only after its fix is present in the current head.
+Every unresolved thread blocks this task's gate, including an outdated thread.
+Minimized is not resolved. A future ruleset exception must be machine-validated
+with its exact rule source; a “documented disposition” is never an exception.
+Resolve a thread only after its fix is present in the current head.
 
 ```bash
-# REST carries check runs and suites; its full path scopes gh api explicitly.
-for oid in "$head_oid" "$candidate_oid"; do
+collect_ci_and_statuses() {
+  gate_dir="$1"
+  # REST carries check runs, suites, and legacy statuses; its full path scopes gh api.
+  for oid in "$head_oid" "$candidate_oid"; do
   gh api --paginate --slurp \
     "repos/$base_repo/commits/$oid/check-runs?per_page=100" \
     >"$gate_dir/check-runs-$oid.json"
   gh api --paginate --slurp \
     "repos/$base_repo/commits/$oid/check-suites?per_page=100" \
     >"$gate_dir/check-suites-$oid.json"
-done
+    gh api --paginate --slurp \
+      "repos/$base_repo/commits/$oid/status?per_page=100" \
+      >"$gate_dir/status-contexts-$oid.json"
+
+    # A successful HTTP response is not enough: reject incomplete, malformed,
+    # or unexpectedly unpaginated payloads before the inventory validator sees
+    # them. Provider and result matching remains the validator's fail-closed job.
+    jq -e 'type == "array" and length > 0 and
+      all(.[]; (.check_runs | type) == "array")' \
+      "$gate_dir/check-runs-$oid.json" >/dev/null ||
+      fail "invalid check-run response for $oid"
+    jq -e 'type == "array" and length > 0 and
+      all(.[]; (.check_suites | type) == "array")' \
+      "$gate_dir/check-suites-$oid.json" >/dev/null ||
+      fail "invalid check-suite response for $oid"
+    jq -e 'type == "array" and length > 0 and
+      all(.[]; (.state | type) == "string" and (.statuses | type) == "array")' \
+      "$gate_dir/status-contexts-$oid.json" >/dev/null ||
+      fail "invalid legacy-status response for $oid"
+  done
+}
 ```
 
 Join each expected check run to its suite. The suite's associated PR must name
 the captured repository, `head_oid`/head ref, and `base_oid`/base ref. A run on
 `candidate_oid` is valid only with that exact association; an unrelated green
-run, a run for an earlier head, or one for a different base fails.
+run, a run for an earlier head, or one for a different base fails. Validate
+legacy status contexts with the same strict expected inventory: each context's
+creator login/ID and allowed state must match its configured provider; an
+unknown, missing, or non-success required context fails.
+
+The caller must provide a reviewed expected-inventory validator. It receives
+the complete raw snapshot, the actual branch-ruleset/required-workflow evidence,
+and the high-resolution review completion timestamp; it must enforce every row
+in the table rather than treating an unrecognized result as optional.
+
+```bash
+capture_snapshot() {
+  gate_dir="$1"
+  mkdir -p "$gate_dir"
+  cp "$gate_root/review-request.json" "$gate_dir/review-request.json"
+  cp "$expected_inventory" "$gate_dir/expected-inventory.json"
+  cp "$ruleset_evidence" "$gate_dir/ruleset-evidence.json"
+  capture_identity >"$gate_dir/identity.json"
+  jq -e '((.errors // []) | length) == 0 and
+    .data != null and .data.repository.pullRequest != null and
+    .data.repository.pullRequest.headRefOid != null and
+    .data.repository.pullRequest.baseRefOid != null and
+    .data.repository.pullRequest.headRepository.nameWithOwner != null and
+    .data.repository.pullRequest.mergeQueueEntry == null' \
+    "$gate_dir/identity.json" >/dev/null || fail "invalid final PR identity"
+  cmp -s "$observed" "$gate_dir/identity.json" ||
+    fail "PR head/base/candidate changed; restart and re-request Copilot"
+  head_oid="$(jq -r '.data.repository.pullRequest.headRefOid' "$gate_dir/identity.json")"
+  base_oid="$(jq -r '.data.repository.pullRequest.baseRefOid' "$gate_dir/identity.json")"
+  candidate_oid="$(jq -r \
+    '.data.repository.pullRequest.potentialMergeCommit.oid // .data.repository.pullRequest.headRefOid' \
+    "$gate_dir/identity.json")"
+  collect_reviews_and_threads "$gate_dir"
+  collect_ci_and_statuses "$gate_dir"
+}
+
+validate_snapshot() {
+  snapshot="$1"
+  jq -e '.data.repository.pullRequest.reviewDecision == "APPROVED"' \
+    "$snapshot/identity.json" >/dev/null || fail "missing current human approval"
+  jq -e '[.[] | .data.repository.pullRequest.reviewThreads.nodes[] |
+    select(.isResolved != true)] | length == 0' \
+    "$snapshot/threads.json" >/dev/null || fail "unresolved review thread"
+  test -x "$expected_inventory_validator" ||
+    fail "missing reviewed expected-inventory validator"
+  "$expected_inventory_validator" \
+    --snapshot "$snapshot" \
+    --expected "$snapshot/expected-inventory.json" \
+    --rules "$snapshot/ruleset-evidence.json" \
+    --review-after-ns "$request_after_ns"
+}
+
+: "${expected_inventory:?capture the current expected check/status provider inventory}"
+: "${ruleset_evidence:?capture current ruleset/code-owner evidence}"
+: "${expected_inventory_validator:?set the reviewed gate validator path}"
+test -s "$expected_inventory" && test -s "$ruleset_evidence" ||
+  fail "missing expected inventory or ruleset evidence"
+
+# First complete collection and validation, followed by the complete final rerun.
+capture_snapshot "$gate_root/verified"
+validate_snapshot "$gate_root/verified"
+capture_snapshot "$gate_root/final"
+validate_snapshot "$gate_root/final"
+```
 
 Before marking ready or merging, create a normalized, sorted manifest from all
 the files above plus the expected-check inventory and ruleset evidence. Validate
@@ -263,13 +389,16 @@ manifest_snapshot() {
     done >"$snapshot/gate.jsonl"
 }
 
-# After validating verified/, run every identity/review/thread/check collector
-# above again with gate_dir="$gate_root/final". Include expected inventory and
-# ruleset evidence JSON in both directories, then reject any change.
+# Both snapshots were collected and validated above. Reject any changed raw or
+# normalized evidence immediately before the ready mutation.
 manifest_snapshot "$gate_root/verified"
 manifest_snapshot "$gate_root/final"
 cmp -s "$gate_root/verified/gate.jsonl" "$gate_root/final/gate.jsonl" || \
   fail "gate evidence changed; restart from identity and request a new review"
+
+# This is the only mutation in this block. Do not launch a browser or inspect
+# additional mutable state between the final manifest comparison and ready.
+gh pr ready "$pr" --repo "$base_repo"
 ```
 
 The final capture must still have the observed head/base pair. A changed head or
@@ -293,6 +422,13 @@ head_oid="$(jq -r .headRefOid <<<"$pr_data")"
 head_repo="$(jq -r .headRepository.nameWithOwner <<<"$pr_data")"
 test "$head_repo" = "$base_repo" || { echo "refusing fork push" >&2; exit 1; }
 
+# A URL rewrite can make the configured spelling differ from the actual target.
+# Reject it rather than attempting to reason about insteadOf/pushInsteadOf.
+if git config --get-regexp '^url\..*\.(insteadOf|pushInsteadOf)$' >/dev/null; then
+  echo "URL rewrite configuration is present; refusing to select a push endpoint" >&2
+  exit 1
+fi
+
 # A selected remote must have exactly one push URL, and both its fetch and push
 # targets must resolve to the current PR head repository.
 push_remote=""
@@ -301,12 +437,17 @@ for candidate in $(git remote); do
     --json nameWithOwner --jq .nameWithOwner 2>/dev/null || :)"
   push_urls="$(git remote get-url --push --all "$candidate")"
   push_count="$(printf '%s\n' "$push_urls" | awk 'NF { count++ } END { print count + 0 }')"
-  test "$push_count" = 1 || continue
+  if test "$push_count" != 1; then
+    printf 'rejecting remote %s: expected exactly one push URL\n' "$candidate" >&2
+    continue
+  fi
   push_url="$(printf '%s\n' "$push_urls" | sed -n '1p')"
   push_repo="$(gh repo view "$push_url" --json nameWithOwner --jq .nameWithOwner \
     2>/dev/null || :)"
-  test "$fetch_repo" = "$head_repo" || continue
-  test "$push_repo" = "$head_repo" || continue
+  if test "$fetch_repo" != "$head_repo" || test "$push_repo" != "$head_repo"; then
+    printf 'rejecting remote %s: endpoint is not the PR head repository\n' "$candidate" >&2
+    continue
+  fi
   test -z "$push_remote" || { echo "ambiguous verified remotes" >&2; exit 1; }
   push_remote="$candidate"
 done
@@ -351,6 +492,28 @@ continue; otherwise run `git rebase --abort`. After either path, rerun every
 post-rebase guard before a push. Never use broad `--force`, reset-based squash,
 unsigned amend, or `git add -A`.
 
+## Stacked child PRs
+
+Discover the open stack from actual base/head branch relationships; do not rely
+on PR number order or a manually remembered stack. Rebase in dependency order
+from parent to child, then run a fresh review and complete gate for **each** PR.
+
+```bash
+gh pr list --repo "$base_repo" --state open --limit 100 \
+  --json number,headRefName,baseRefName,url >"$gate_root/open-prs.json"
+
+# A child has baseRefName equal to its parent's headRefName. Build the directed
+# graph from this data, topologically order it parent -> child, and stop on a
+# cycle, missing parent, duplicate source branch, fork, or truncated listing.
+jq -r '.[] | [.number, .baseRefName, .headRefName, .url] | @tsv' \
+  "$gate_root/open-prs.json"
+```
+
+After a parent moves, re-fetch each child, verify its live head/base and one
+push endpoint using the rebase protocol above, rebase it onto the moved parent,
+and re-gate it. A parent review, approval, check, or manifest never approves a
+child; a child may not be pushed before its parent dependency is current.
+
 ## PR descriptions and draft lifecycle
 
 Prepare Markdown in a real file. Do not interpolate Markdown, backticks, or
@@ -363,21 +526,49 @@ body_file="$(mktemp -t breakglass-pr-description.XXXXXX.md)"
 vi "$body_file"                         # a known executable, not an EDITOR shell fragment
 test -s "$body_file"
 
-# Use the actual intended base, not a hardcoded main. Resolve the default only
-# when that is the intended target; otherwise set and validate the release base.
+# The caller supplies the actual intended base; do not silently substitute a
+# repository default. A workflow that explicitly targets the default may derive
+# it first, record that decision, then assign it here.
 base_repo=BASE_OWNER/BASE_REPOSITORY
-base_ref="$(gh repo view "$base_repo" --json defaultBranchRef --jq .defaultBranchRef.name)"
+base_ref=INTENDED_BASE_REF
+git check-ref-format --branch "$base_ref" >/dev/null
 head_ref="$(git branch --show-current)"
+git check-ref-format --branch "$head_ref" >/dev/null
 
-# The branch must already be pushed to one preverified same-repository target.
-push_remote=REMOTE_VERIFIED_FOR_THIS_BRANCH
-push_urls="$(git remote get-url --push --all "$push_remote")"
-test "$(printf '%s\n' "$push_urls" | awk 'NF { count++ } END { print count + 0 }')" = 1
-push_url="$(printf '%s\n' "$push_urls" | sed -n '1p')"
-test "$(gh repo view "$(git remote get-url "$push_remote")" \
-  --json nameWithOwner --jq .nameWithOwner)" = "$base_repo"
-test "$(gh repo view "$push_url" --json nameWithOwner --jq .nameWithOwner)" = "$base_repo"
-git fetch "$push_remote" "refs/heads/$head_ref:refs/remotes/$push_remote/$head_ref"
+# Enumerate every remote and its push URLs immediately before draft creation.
+# There must be exactly one verified same-repository endpoint for this branch;
+# do not trust a remembered remote name or let Git choose a default.
+if git config --get-regexp '^url\..*\.(insteadOf|pushInsteadOf)$' >/dev/null; then
+  echo "URL rewrite configuration is present; refusing draft creation" >&2
+  exit 1
+fi
+push_remote=""
+for candidate in $(git remote); do
+  fetch_repo="$(gh repo view "$(git remote get-url "$candidate")" \
+    --json nameWithOwner --jq .nameWithOwner 2>/dev/null || :)"
+  push_urls="$(git remote get-url --push --all "$candidate")"
+  push_count="$(printf '%s\n' "$push_urls" | awk 'NF { count++ } END { print count + 0 }')"
+  if test "$push_count" != 1; then
+    printf 'rejecting remote %s: expected exactly one push URL\n' "$candidate" >&2
+    continue
+  fi
+  push_url="$(printf '%s\n' "$push_urls" | sed -n '1p')"
+  push_repo="$(gh repo view "$push_url" --json nameWithOwner --jq .nameWithOwner \
+    2>/dev/null || :)"
+  if test "$fetch_repo" != "$base_repo" || test "$push_repo" != "$base_repo"; then
+    printf 'rejecting remote %s: endpoint is not the target repository\n' "$candidate" >&2
+    continue
+  fi
+  test -z "$push_remote" || { echo "ambiguous verified remotes" >&2; exit 1; }
+  push_remote="$candidate"
+done
+test -n "$push_remote" || { echo "no single verified push target" >&2; exit 1; }
+
+# Re-fetch the actual source/base refs immediately before the draft mutation.
+git fetch "$push_remote" \
+  "refs/heads/$base_ref:refs/remotes/$push_remote/$base_ref" \
+  "refs/heads/$head_ref:refs/remotes/$push_remote/$head_ref"
+git rev-parse --verify "$push_remote/$base_ref^{commit}" >/dev/null
 test "$(git rev-parse "$push_remote/$head_ref")" = "$(git rev-parse HEAD)"
 
 pr_url="$(gh pr create --repo "$base_repo" --draft \
@@ -395,6 +586,8 @@ evidence. Mark a draft ready only after the complete gate passes.
 
 ```bash
 gh pr view PR_NUMBER --repo "$base_repo" --json body --jq .body
+# shellcheck disable=SC2016
+# GraphQL variables must reach gh unchanged.
 gh api graphql -f query='
   query($owner:String!, $repo:String!, $pr:Int!) {
     repository(owner:$owner, name:$repo) { pullRequest(number:$pr) { bodyHTML } }
@@ -402,9 +595,8 @@ gh api graphql -f query='
 ' -f owner="${base_repo%/*}" -f repo="${base_repo#*/}" -F pr=PR_NUMBER \
   --jq .data.repository.pullRequest.bodyHTML
 gh pr view PR_NUMBER --repo "$base_repo" --web
-gh pr ready PR_NUMBER --repo "$base_repo"
 ```
 
-Do not run the final `gh pr ready` command until the full gate snapshot has
-passed unchanged. No successful check, review, or absence of new comments from
-an earlier head/base pair is reusable evidence.
+The browser check is description-only. The separate fail-closed gate block is
+the only place that marks a PR ready. No successful check, review, or absence
+of new comments from an earlier head/base pair is reusable evidence.
