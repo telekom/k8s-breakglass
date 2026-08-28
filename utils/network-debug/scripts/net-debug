@@ -43,12 +43,12 @@ newline='
 validate_output() {
 	output=$1
 	case "$output" in
-		''|.|..|*/*|*\\*) usage_error 'output must be a filename under /work' ;;
+		''|.|..|*/*|*\\*) usage_error 'output must be a filename in the work directory' ;;
 		*[!A-Za-z0-9._-]*) usage_error 'output contains unsupported characters' ;;
 		?????????????????????????????????????????????????????????????????*) usage_error 'output filename is too long' ;;
 	esac
 	if [ ! -d "$WORK_DIR" ] || [ -L "$WORK_DIR" ]; then
-		usage_error "/work is not available"
+		usage_error 'work directory is not available'
 	fi
 	destination=$WORK_DIR/$output
 	if [ -e "$destination" ] || [ -L "$destination" ]; then

@@ -87,6 +87,11 @@ cat >"$capture_fixture/bin/tcpdump" <<'EOF'
 #!/bin/sh
 set -eu
 printf '%s\n' "$*" >>"$FAKE_TCPDUMP_ARGS"
+if [ -n "${FAKE_TCPDUMP_ARGV:-}" ]; then
+    for argument in "$@"; do
+        printf '<%s>\n' "$argument" >>"$FAKE_TCPDUMP_ARGV"
+    done
+fi
 output=''
 previous=''
 for argument in "$@"; do
@@ -115,12 +120,17 @@ cat >"$capture_fixture/bin/sha256sum" <<EOF
 exec "$system_sha256sum" "\$@"
 EOF
 chmod +x "$capture_fixture/bin/sha256sum"
-capture_report=$(FAKE_TCPDUMP_ARGS="$capture_fixture/args" NETWORK_DEBUG_WORK_DIR="$capture_fixture/work" \
+capture_report=$(FAKE_TCPDUMP_ARGS="$capture_fixture/args" FAKE_TCPDUMP_ARGV="$capture_fixture/argv" NETWORK_DEBUG_WORK_DIR="$capture_fixture/work" \
     PATH="$capture_fixture/bin:/usr/bin:/bin" sh "$root/scripts/net-debug" capture \
     --interface eth0 --duration 1 --packets 2 --snaplen 64 --filter 'tcp port 443' --output capture.pcap)
 printf '%s\n' "$capture_report" | grep -F 'packet_count 2' >/dev/null
 printf '%s\n' "$capture_report" | grep -F 'sha256 ' >/dev/null
 grep -F -- '-p -i eth0 -s 64 -c 2' "$capture_fixture/args" >/dev/null
+grep -Fx '<tcp port 443>' "$capture_fixture/argv" >/dev/null
+if grep -Fx '<"tcp port 443">' "$capture_fixture/argv" >/dev/null; then
+    printf '%s\n' 'capture passed literal quotes around its filter argument' >&2
+    exit 1
+fi
 [ -f "$capture_fixture/work/capture.pcap" ]
 test -z "$(find "$capture_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
 if NETWORK_DEBUG_WORK_DIR="$capture_fixture/work" PATH="$capture_fixture/bin:/usr/bin:/bin" \
@@ -143,6 +153,19 @@ if NETWORK_DEBUG_WORK_DIR="$capture_fixture/work" PATH="$capture_fixture/bin:/us
     printf '%s\n' 'capture overwrote an existing output' >&2
     exit 1
 fi
+rm -rf "$capture_fixture"
+
+# Validation diagnostics describe the configured work directory without
+# assuming the default /work mount used by the image.
+test_context='capture-work-directory-diagnostic'
+capture_fixture=$(mktemp -d)
+mkdir -p "$capture_fixture/work"
+invalid_output_error=$(NETWORK_DEBUG_WORK_DIR="$capture_fixture/work" \
+    sh "$root/scripts/net-debug" capture --output ../escape 2>&1 >/dev/null || true)
+test "$invalid_output_error" = 'net-debug: output must be a filename in the work directory'
+missing_work_error=$(NETWORK_DEBUG_WORK_DIR="$capture_fixture/missing" \
+    sh "$root/scripts/net-debug" capture --output capture.pcap 2>&1 >/dev/null || true)
+test "$missing_work_error" = 'net-debug: work directory is not available'
 rm -rf "$capture_fixture"
 
 # A destination appearing while tcpdump is running must never be replaced.
