@@ -745,6 +745,42 @@ func TestArchiveRejectsCompressedExtensionMetadataAccumulation(t *testing.T) {
 	}
 }
 
+func TestArchiveMemberEnvelopeAllowsCollectorLongNames(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		extra   bool
+		wantErr bool
+	}{
+		{name: "bounded source and long-name envelope", wantErr: false},
+		{name: "one member above envelope", extra: true, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			archive, sidecar, contract := boundedCollectorArchive(t, test.extra)
+			path := filepath.Join(t.TempDir(), "bounded.tar.gz")
+			if err := os.WriteFile(path, archive, 0600); err != nil {
+				t.Fatal(err)
+			}
+			file, err := os.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer file.Close()
+			info, err := file.Stat()
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = verifyArchiveContract(context.Background(), file, info.Size(), contract, sidecar)
+			if test.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "too many members") {
+					t.Fatalf("verifyArchiveContract() error = %v, want member-bound rejection", err)
+				}
+			} else if err != nil {
+				t.Fatalf("verifyArchiveContract() rejected bounded collector-shaped archive: %v", err)
+			}
+		})
+	}
+}
+
 func TestUploadStopsBeforePreflightWhenContextIsCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -1117,6 +1153,40 @@ func rawTarHeader(name string, typeflag byte, size int64) []byte {
 	copy(header[257:265], []byte("ustar\x0000"))
 	setTarChecksum(header)
 	return header
+}
+
+func appendRawTarMember(raw *bytes.Buffer, name string, typeflag byte, body []byte) {
+	raw.Write(rawTarHeader(name, typeflag, int64(len(body))))
+	raw.Write(body)
+	raw.Write(make([]byte, int(paddedTarSizeForTest(int64(len(body)))-int64(len(body)))))
+}
+
+func boundedCollectorArchive(t *testing.T, extra bool) ([]byte, []byte, artifactManifest) {
+	t.Helper()
+	var raw bytes.Buffer
+	appendRawTarMember(&raw, "files", tar.TypeDir, nil)
+	appendRawTarMember(&raw, "files/coredumps", tar.TypeDir, nil)
+	for index := 0; index < int(maxCrashdumpSourceEntries); index++ {
+		name := fmt.Sprintf("files/coredumps/%s%04d", strings.Repeat("x", 260), index)
+		longName := append([]byte(name), 0)
+		appendRawTarMember(&raw, "././@LongLink", 'L', longName)
+		appendRawTarMember(&raw, "ignored", tar.TypeDir, nil)
+	}
+	appendRawTarMember(&raw, "stderr.log", tar.TypeReg, nil)
+	appendRawTarMember(&raw, "stdout.log", tar.TypeReg, nil)
+	if extra {
+		appendRawTarMember(&raw, "files/coredumps/one-too-many", tar.TypeDir, nil)
+	}
+	trailer := make([]byte, int(tarBlockSize*2))
+	payload := append(append([]byte(nil), raw.Bytes()...), trailer...)
+	payloadSHA := sha256.Sum256(payload)
+	sidecar := validCrashdumpManifest(maxArchiveBytes, hex.EncodeToString(payloadSHA[:]), 0, 0)
+	appendRawTarMember(&raw, "manifest.json", tar.TypeReg, sidecar)
+	raw.Write(trailer)
+	return gzipBytes(t, raw.Bytes()), sidecar, artifactManifest{
+		Recipe:        "crashdump-collection.v1",
+		PayloadSHA256: hex.EncodeToString(payloadSHA[:]),
+	}
 }
 
 func setTarChecksum(header []byte) {

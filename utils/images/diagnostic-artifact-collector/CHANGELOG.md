@@ -23,6 +23,8 @@ All notable changes to this image are documented here.
   tokens, URL queries, and archive mutations during transfer.
 - Rejected oversized signed PAX extension lengths before native-index
   conversion and retained the active no-follow archive-opening path.
+- Raised the uploader tar-member envelope to cover all bounded collector source
+  entries, fixed archive members, and one long-name extension per source path.
 - Added the pinned builder CA bundle for verified HTTPS uploads and documented
   the mixed runtime identity/network boundary.
 - Added source inode/size and copied-size checks, normalized bounded inputs in

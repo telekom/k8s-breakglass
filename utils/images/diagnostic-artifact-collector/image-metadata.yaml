@@ -50,6 +50,8 @@ runtime:
     crashdump_enumeration_spool_max_bytes_per_stream: 4259840
     crashdump_enumeration_wrapper_descendants: terminate-and-verify-before-spool-read
     crashdump_max_archive_bytes: 536870912
+    uploader_max_tar_members: 16389
+    uploader_max_path_extensions_per_source_member: 1
     system_summary_max_source_total_bytes: 14680064
     system_summary_max_source_file_bytes: 14680064
     system_summary_max_files: 64

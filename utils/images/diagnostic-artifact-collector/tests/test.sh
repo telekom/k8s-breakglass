@@ -142,9 +142,12 @@ copy_root_owned_fixture_marker() {
 	fixture_name=$2
 	fixture_destination=$3
 	# This is intentionally not the ordinary hand-off reader: the fixture
-	# verifies a root-owned mode-0600 collector marker. Bind precisely that file
-	# and retain the image's restricted runtime shape while reading it as root.
-	docker run --rm --read-only --cap-drop=ALL --network none \
+	# verifies a root-owned mode-0600 collector marker. Some Linux CI Docker
+	# daemons translate bind-source ownership to the runner UID, so root needs
+	# only DAC read/search for this one fixture read. Bind precisely that file
+	# and retain the image's restricted runtime shape; no production hand-off
+	# reader gains this capability.
+	docker run --rm --read-only --cap-drop=ALL --cap-add=CAP_DAC_READ_SEARCH --network none \
 		--user 0:65532 \
 		--mount "type=bind,src=$fixture_directory/$fixture_name,dst=/fixture-marker,readonly" \
 		--entrypoint /bin/cat "$image" /fixture-marker >"$fixture_destination"

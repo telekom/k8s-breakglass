@@ -30,17 +30,26 @@ import (
 )
 
 const (
-	archivePath           = "/output/artifact.tar.gz"
-	readyMarker           = "ready\n"
-	maxArchiveBytes       = int64(536870912)
-	maxTokenBytes         = 4096
-	uploadTimeout         = 10 * time.Minute
-	maxAttempts           = 3
-	maxManifestBytes      = int64(32768)
-	retryDelay            = 250 * time.Millisecond
-	pinnedCABundle        = "/etc/ssl/certs/ca-certificates.crt"
-	tarBlockSize          = int64(512)
-	maxTarMembers         = int64(8192)
+	archivePath                 = "/output/artifact.tar.gz"
+	readyMarker                 = "ready\n"
+	maxArchiveBytes             = int64(536870912)
+	maxTokenBytes               = 4096
+	uploadTimeout               = 10 * time.Minute
+	maxAttempts                 = 3
+	maxManifestBytes            = int64(32768)
+	retryDelay                  = 250 * time.Millisecond
+	pinnedCABundle              = "/etc/ssl/certs/ca-certificates.crt"
+	tarBlockSize                = int64(512)
+	maxCrashdumpSourceEntries   = int64(8192)
+	maxTarFixedMembers          = int64(5) // files, files/coredumps, manifest, stdout, stderr
+	maxTarPathExtensionsPerFile = int64(1) // one GNU long-name or PAX path record
+	// The collector's source-entry bound includes directories and the source
+	// root. Its archive adds the five fixed members above, and a path at the
+	// 512-byte source limit can add one GNU/PAX long-name member. Keep the
+	// conservative envelope explicit so a valid maximum collector archive is
+	// not rejected while the byte and metadata bounds remain independent.
+	maxTarMembers = maxCrashdumpSourceEntries + maxTarFixedMembers +
+		maxCrashdumpSourceEntries*maxTarPathExtensionsPerFile
 	maxTarMetadata        = int64(1 << 20)
 	maxPendingTarMetadata = int64(1 << 20)
 )
@@ -812,6 +821,9 @@ func verifyArchiveContract(ctx context.Context, file *os.File, size int64, contr
 				foundFiles = true
 			} else if name == "files/coredumps" {
 				foundCrashDir = true
+			} else if contract.Recipe == "crashdump-collection.v1" && strings.HasPrefix(name, "files/coredumps/") {
+				// Preserve nested source directories from the collector's fixed
+				// /host-coredumps mount; their members are part of the payload tree.
 			} else {
 				return errors.New("archive contains an unexpected directory")
 			}
@@ -1182,13 +1194,10 @@ func parseTarExtension(typeflag byte, content []byte) (string, error) {
 					return "", errors.New("tar PAX extension length is invalid")
 				}
 			}
-			length64, err := strconv.ParseInt(string(content[:space]), 10, 64)
-			// Compare against len(content) while the value is still int64. This
-			// establishes the host-int range before the slice length is narrowed.
-			if err != nil || length64 < int64(space+3) || length64 > int64(len(content)) {
+			length, err := strconv.Atoi(string(content[:space]))
+			if err != nil || length < space+3 || length > len(content) {
 				return "", errors.New("tar PAX extension length is invalid")
 			}
-			length := int(length64)
 			record := content[:length]
 			if record[length-1] != '\n' {
 				return "", errors.New("tar PAX extension record is invalid")

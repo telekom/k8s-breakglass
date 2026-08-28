@@ -116,6 +116,10 @@ identity remain unchanged across transfer.
 PAX extension lengths are checked against the already buffered extension before
 they are converted to a native slice index, so an oversized signed length is
 rejected on every supported image architecture.
+The uploader accepts at most 16,389 tar members: a conservative envelope of
+8,192 bounded source entries, five fixed members (`files`,
+`files/coredumps`, `manifest.json`, `stdout.log`, and `stderr.log`), and one
+GNU/PAX long-name member per bounded source path.
 The traversal runs in its own process group with fixed directory and regular-file
 filters; each private NUL path spool is file-size limited. Enumeration expiry
 and collector cleanup send TERM followed by KILL to that group, so a stuck finder
