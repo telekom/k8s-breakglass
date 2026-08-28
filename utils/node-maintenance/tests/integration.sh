@@ -419,6 +419,93 @@ grep -q '^capture_result=output-quota-exceeded$' "$fixture_dir/quota-output" \
 destroy_fixture
 pass 'oversized command output is bounded while it is produced'
 
+new_fixture final-event-quota
+set +e
+# Exercise the image-owned atomic event writer against an actual mounted volume
+# already at its fixed quota. The seed event occupies one filesystem block; the
+# completion event would require a second block, so a failure must leave the
+# original JSON record byte-for-byte intact and no candidate behind.
+# shellcheck disable=SC2016
+"$docker_bin" run \
+	--name "$container_name" --user 0 --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" \
+	--entrypoint /bin/sh "$image" -c '
+		. /usr/local/libexec/node-maintenance/common.sh
+		EVIDENCE_DIR=/evidence
+		bundle=/evidence/quota
+		mkdir -m 0700 "$bundle"
+		operation_id=quota-operation
+		recording_id=quota-recording
+		target_node=node-a
+		printf "{\"event\":\"seed\",\"padding\":\"" >"$bundle/events.jsonl"
+		head -c 3900 /dev/zero | tr "\000" p >>"$bundle/events.jsonl"
+		printf "\"}\n" >>"$bundle/events.jsonl"
+		: >"$bundle/fill"
+		maximum_kib=$((evidence_max_bytes / 1024))
+		while [ "$(du -sk "$bundle" | awk "NR == 1 { print \$1 }")" -lt "$maximum_kib" ]; do
+			dd if=/dev/zero of="$bundle/fill" bs=1024 count=1 oflag=append conv=notrunc status=none
+		done
+		[ "$(du -sk "$bundle" | awk "NR == 1 { print \$1 }")" -eq "$maximum_kib" ]
+		before=$(sha256sum "$bundle/events.jsonl")
+		set +e
+		(record_event operation-completed succeeded)
+		status=$?
+		set -e
+		[ "$status" -eq 2 ]
+		after=$(sha256sum "$bundle/events.jsonl")
+		[ "$before" = "$after" ]
+		[ "$(wc -l <"$bundle/events.jsonl" | tr -d " ")" -eq 1 ]
+		[ "$(du -sk "$bundle" | awk "NR == 1 { print \$1 }")" -eq "$maximum_kib" ]
+		test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture.*" \) -print)"
+	' >"$fixture_dir/output" 2>&1
+quota_event_status=$?
+set -e
+cat "$fixture_dir/output"
+assert_container_security "$container_name" none
+[ "$quota_event_status" -eq 0 ] || fail 'full evidence bundle permitted a partial completion event or left a candidate behind'
+destroy_fixture
+pass 'full evidence bundle rejects final event atomically without corruption or temporary-file leakage'
+
+new_fixture near-quota-event-append
+set +e
+# A retained one-block headroom must permit the same atomic replacement path:
+# the completed event remains in the initial events.jsonl allocation and the
+# final bundle remains within the documented 384 KiB quota.
+# shellcheck disable=SC2016
+"$docker_bin" run \
+	--name "$container_name" --user 0 --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" \
+	--entrypoint /bin/sh "$image" -c '
+		. /usr/local/libexec/node-maintenance/common.sh
+		EVIDENCE_DIR=/evidence
+		bundle=/evidence/quota
+		mkdir -m 0700 "$bundle"
+		operation_id=quota-operation
+		recording_id=quota-recording
+		target_node=node-a
+		printf "{\"event\":\"seed\"}\n" >"$bundle/events.jsonl"
+		: >"$bundle/fill"
+		maximum_kib=$((evidence_max_bytes / 1024))
+		target_kib=$((maximum_kib - 4))
+		while [ "$(du -sk "$bundle" | awk "NR == 1 { print \$1 }")" -lt "$target_kib" ]; do
+			dd if=/dev/zero of="$bundle/fill" bs=1024 count=1 oflag=append conv=notrunc status=none
+		done
+		[ "$(du -sk "$bundle" | awk "NR == 1 { print \$1 }")" -eq "$target_kib" ]
+		record_event operation-completed succeeded
+		[ "$(wc -l <"$bundle/events.jsonl" | tr -d " ")" -eq 2 ]
+		[ "$(du -sk "$bundle" | awk "NR == 1 { print \$1 }")" -le "$maximum_kib" ]
+		test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture.*" \) -print)"
+	' >"$fixture_dir/output" 2>&1
+near_quota_status=$?
+set -e
+cat "$fixture_dir/output"
+assert_container_security "$container_name" none
+[ "$near_quota_status" -eq 0 ] || fail 'near-quota event append did not atomically preserve the evidence budget'
+destroy_fixture
+pass 'near-quota event append succeeds through the atomic quota-checked path'
+
 run_command preflight 0 none read-only node-recovery --target-node node-a --interface lo \
 	--evidence-dir /evidence --confirm NODE-RECOVERY-PREFLIGHT
 preflight_bundle=$(bundle_from_output "$fixture_dir/output")
@@ -564,6 +651,50 @@ printf '%s\n' "$lock_record" | grep -Fqx 'approval_id=approval-repair-neighbor-r
 	|| fail 'operation lock record omitted the exact approval identity'
 destroy_fixture
 pass 'neighbor-replace changes only the exact requested entry and binds its lock record to the approval tuple'
+
+# 63 + 1 + 63 + 1 + 63 + 1 + 61 = a real 253-byte RFC 1123 subdomain.
+max_node=$(awk 'BEGIN { for (label = 1; label <= 4; label++) { limit = (label == 4 ? 61 : 63); for (i = 0; i < limit; i++) printf "n"; if (label < 4) printf "." } }')
+[ "${#max_node}" -eq 253 ] || fail 'maximum Kubernetes node fixture is not 253 bytes'
+max_interface=repairport12345
+max_neighbor=2001:0db8:0000:0000:ffff:ffff:ffff:ffff
+max_tuple="target_node=$max_node&interface=$max_interface&action=neighbor-replace&neighbor_address=$max_neighbor&bridge=&entry_mac=02:00:00:00:00:02&vlan=&confirmation=NETWORK-REPAIR"
+[ "${#max_interface}" -eq 15 ] || fail 'maximum-interface fixture is not 15 bytes'
+[ "${#max_neighbor}" -eq 39 ] || fail 'maximum-IPv6 fixture is not 39 bytes'
+[ "${#max_tuple}" -eq 442 ] || fail 'maximum public network tuple did not match its derived bound'
+new_fixture maximum-public-network-tuple
+output_file="$fixture_dir/output"
+set +e
+"$docker_bin" run \
+	--name "$container_name" --user 0 --env BREAKGLASS_NODE_NAME="$max_node" \
+	--env BREAKGLASS_OPERATION_ID=operation-maximum-public-network-tuple \
+	--env BREAKGLASS_RECORDING_ID=recording-maximum-public-network-tuple \
+	--env BREAKGLASS_APPROVAL_ID=approval-maximum-public-network-tuple \
+	--env BREAKGLASS_APPROVED_ACTION=neighbor-replace \
+	--env BREAKGLASS_APPROVED_NETWORK_REQUEST="$max_tuple" \
+	--network none --read-only --cap-drop ALL --cap-add NET_ADMIN \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" \
+	--entrypoint /bin/sh "$image" -c '
+		set -eu
+		ip link add repairport12345 type veth peer name repairpeer1234
+		ip -6 address add 2001:db8::1/64 dev repairport12345
+		ip link set repairport12345 up
+		ip link set repairpeer1234 up
+		exec /usr/local/bin/node-maintenance "$@"
+	' fixture network-repair --target-node "$max_node" --interface "$max_interface" --action neighbor-replace \
+	--neighbor-address "$max_neighbor" --entry-mac 02:00:00:00:00:02 \
+	--evidence-dir /evidence --confirm NETWORK-REPAIR >"$output_file" 2>&1
+max_tuple_status=$?
+set -e
+cat "$output_file"
+assert_container_security "$container_name" NET_ADMIN
+[ "$max_tuple_status" -eq 0 ] || fail "maximum public network tuple returned $max_tuple_status"
+max_tuple_bundle=$(bundle_from_output "$output_file")
+max_tuple_host_bundle=$(copy_bundle "$output_file" "$max_tuple_bundle")
+grep -Eq 'lladdr +02:00:00:00:00:02 +REACHABLE' "$max_tuple_host_bundle/after-neighbor-entry.txt" \
+	|| fail 'maximum public network tuple did not create its exact IPv6 neighbor entry'
+destroy_fixture
+pass 'maximum valid node, interface, and action-specific network tuple runs through the public helper'
 
 run_network_fixture repair-bridge-fdb-replace 0 bridge-fdb-replace network-repair \
 	--target-node node-a --interface fdb0 --bridge br0 --action bridge-fdb-replace \

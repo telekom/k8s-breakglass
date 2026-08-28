@@ -61,11 +61,11 @@ verify_digest() {
 	expected=$3
 	output_file="$bundle/$label.sha256.txt"
 	if ! capture "$output_file" sha256sum "$path"; then
-		printf '%s_digest_status=capture-failed\n' "$label" >>"$bundle/metadata"
+		printf '%s_digest_status=capture-failed\n' "$label" | append_evidence "$bundle/metadata"
 		return 1
 	fi
 	actual=$(awk 'NR == 1 { print $1 }' "$output_file")
-	printf '%s_expected_sha256=%s\n%s_actual_sha256=%s\n' "$label" "$expected" "$label" "$actual" >>"$bundle/metadata"
+	printf '%s_expected_sha256=%s\n%s_actual_sha256=%s\n' "$label" "$expected" "$label" "$actual" | append_evidence "$bundle/metadata"
 	[ "$actual" = "$expected" ]
 }
 
@@ -147,7 +147,7 @@ write_metadata "$bundle/metadata" kexec-recovery-validate "$target_node" not-app
 	printf 'initrd_path=%s\ninitrd_bytes=%s\n' "$initrd_path" "$initrd_bytes"
 	printf 'cmdline_path=%s\ncmdline_bytes=%s\n' "$cmdline_path" "$cmdline_bytes"
 	printf 'execution_performed=false\n'
-} >>"$bundle/metadata"
+} | append_evidence "$bundle/metadata"
 record_event operation-started accepted
 
 validation_status=0
@@ -156,14 +156,14 @@ verify_digest initrd "$initrd_path" "$initrd_sha256" || validation_status=1
 verify_digest cmdline "$cmdline_path" "$cmdline_sha256" || validation_status=1
 
 if [ "$validation_status" -ne 0 ]; then
-	printf 'validation_result=digest-mismatch\ncompleted_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$bundle/metadata"
-	printf 'validation_result=digest-mismatch\nexecution_performed=false\n' >"$bundle/validation-result.txt"
+	printf 'validation_result=digest-mismatch\ncompleted_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | append_evidence "$bundle/metadata"
+	printf 'validation_result=digest-mismatch\nexecution_performed=false\n' | write_evidence "$bundle/validation-result.txt"
 	record_event operation-completed validation-failed
 	printf 'Recovery inputs were rejected; kexec was not executed. Evidence: %s\n' "$bundle" >&2
 	exit 1
 fi
 
-printf 'validation_result=provider-inputs-verified\ncompleted_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$bundle/metadata"
-printf 'validation_result=provider-inputs-verified\nexecution_performed=false\nprovider_executor_required=true\n' >"$bundle/validation-result.txt"
+	printf 'validation_result=provider-inputs-verified\ncompleted_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | append_evidence "$bundle/metadata"
+	printf 'validation_result=provider-inputs-verified\nexecution_performed=false\nprovider_executor_required=true\n' | write_evidence "$bundle/validation-result.txt"
 record_event operation-completed validated-not-executed
 printf 'Provider-owned recovery inputs matched their immutable digests; kexec was NOT executed. Evidence: %s\n' "$bundle"

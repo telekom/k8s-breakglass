@@ -128,4 +128,71 @@ BREAKGLASS_NODE_NAME="$long_node" assert_rejected 'oversized controller value is
 	--target-node "$long_node" --interface eth0 --evidence-dir /evidence \
 	--confirm NODE-RECOVERY-PREFLIGHT
 
+# 63 + 1 + 63 + 1 + 63 + 1 + 61 = the RFC 1123/Kubernetes maximum of 253.
+max_node=$(awk 'BEGIN { for (label = 1; label <= 4; label++) { limit = (label == 4 ? 61 : 63); for (i = 0; i < limit; i++) printf "n"; if (label < 4) printf "." } }')
+[ "${#max_node}" -eq 253 ] || fail 'maximum Kubernetes node fixture is not 253 bytes'
+if ! BREAKGLASS_NODE_NAME="$max_node" sh -c '. "$1"; validate_target "$2"' sh \
+	"$root_dir/lib/common.sh" "$max_node" >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"; then
+	fail 'maximum Kubernetes node name was rejected'
+fi
+pass 'maximum Kubernetes node name is accepted'
+too_long_node="${max_node}n"
+[ "${#too_long_node}" -eq 254 ] || fail 'above-limit Kubernetes node fixture is not 254 bytes'
+BREAKGLASS_NODE_NAME="$too_long_node" assert_rejected_with_message \
+	'valid-looking 254-byte Kubernetes node name is rejected by the public helper' \
+	'target node exceeds the Kubernetes 253-byte limit' "$preflight" \
+	--target-node "$too_long_node" --interface eth0 --evidence-dir /evidence \
+	--confirm NODE-RECOVERY-PREFLIGHT
+
+invalid_node_label=$(awk 'BEGIN { for (i = 0; i < 64; i++) printf "n" }')
+if BREAKGLASS_NODE_NAME="$invalid_node_label" sh -c '. "$1"; validate_target "$2"' sh \
+	"$root_dir/lib/common.sh" "$invalid_node_label" >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"; then
+	fail 'Kubernetes node name with a 64-byte DNS label was accepted'
+fi
+pass 'Kubernetes node name with a 64-byte DNS label is rejected'
+
+max_interface=$(awk 'BEGIN { for (i = 0; i < 15; i++) printf "i" }')
+if ! sh -c '. "$1"; validate_interface "$2"' sh "$root_dir/lib/common.sh" "$max_interface" >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"; then
+	fail 'maximum Linux interface name was rejected'
+fi
+pass 'maximum Linux interface name is accepted'
+too_long_interface=$(awk 'BEGIN { for (i = 0; i < 16; i++) printf "i" }')
+if sh -c '. "$1"; validate_interface "$2"' sh "$root_dir/lib/common.sh" "$too_long_interface" >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"; then
+	fail 'Linux interface name above 15 bytes was accepted'
+fi
+pass 'Linux interface name above 15 bytes is rejected'
+
+# This probes the serialization guard itself, not public request validation:
+# 88 fixed bytes + 253-byte node + 256-byte serializer field + 413-byte field
+# + 14-byte confirmation is exactly the 1024-byte fixed controller-data cap.
+serializer_interface=$(awk 'BEGIN { for (i = 0; i < 256; i++) printf "i" }')
+serializer_action=$(awk 'BEGIN { for (i = 0; i < 413; i++) printf "a" }')
+max_approved_tuple="target_node=$max_node&interface=$serializer_interface&action=$serializer_action&neighbor_address=&bridge=&entry_mac=&vlan=&confirmation=NETWORK-REPAIR"
+if ! BREAKGLASS_APPROVED_NETWORK_REQUEST="$max_approved_tuple" sh -c '
+	. "$1"
+	validate_approved_network_request "$2" "$3" "$4" "" "" "" "" NETWORK-REPAIR
+' sh "$root_dir/lib/common.sh" "$max_node" "$serializer_interface" "$serializer_action" >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"; then
+	fail '1024-byte controller-approved tuple serialization was rejected'
+fi
+pass '1024-byte controller-approved tuple serialization is accepted'
+
+oversized_serializer_action=$(awk 'BEGIN { for (i = 0; i < 414; i++) printf "a" }')
+oversized_approved_tuple="target_node=$max_node&interface=$serializer_interface&action=$oversized_serializer_action&neighbor_address=&bridge=&entry_mac=&vlan=&confirmation=NETWORK-REPAIR"
+if BREAKGLASS_APPROVED_NETWORK_REQUEST="$oversized_approved_tuple" sh -c '
+	. "$1"
+	validate_approved_network_request "$2" "$3" "$4" "" "" "" "" NETWORK-REPAIR
+' sh "$root_dir/lib/common.sh" "$max_node" "$serializer_interface" "$oversized_serializer_action" >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"; then
+	fail 'above-bound controller-approved network tuple was accepted'
+fi
+pass 'above-bound controller-approved network tuple is rejected'
+
+invalid_approved_tuple="${max_approved_tuple%NETWORK-REPAIR}NETWORK-REPAIX"
+if BREAKGLASS_APPROVED_NETWORK_REQUEST="$invalid_approved_tuple" sh -c '
+	. "$1"
+	validate_approved_network_request "$2" "$3" "$4" "" "" "" "" NETWORK-REPAIR
+' sh "$root_dir/lib/common.sh" "$max_node" "$serializer_interface" "$serializer_action" >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"; then
+	fail 'forged controller-approved network tuple was accepted'
+fi
+pass 'forged controller-approved network tuple is rejected'
+
 printf 'PASS: node-maintenance fast behavioral guards completed\n'

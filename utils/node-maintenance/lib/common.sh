@@ -15,9 +15,18 @@ export PATH
 # a request. They keep a failed driver, command, or mounted evidence volume
 # from turning a bounded maintenance request into unbounded work or storage.
 value_max_bytes=256
+# Kubernetes Node names are DNS subdomains and therefore at most 253 bytes.
+node_name_max_bytes=253
 capture_timeout_seconds=10
 capture_max_bytes=32768
 evidence_max_bytes=393216
+# The canonical network approval has 88 literal delimiter/key bytes. Its
+# largest public request is 442 bytes: a 253-byte Node name, a 15-byte Linux
+# interface, neighbor-replace, a 39-byte IPv6 literal, a 17-byte MAC, and the
+# fixed confirmation. Keep a fixed, explicit 1 KiB serialized-input ceiling as
+# a separate malformed-controller-data guard rather than applying the generic
+# per-value limit to the canonical tuple itself.
+approved_network_request_max_bytes=1024
 operation_lock_name=.node-maintenance-operation.lock
 
 die() {
@@ -38,14 +47,42 @@ validate_value() {
 
 validate_target() {
 	target=$1
-	validate_value "target node" "$target"
+	validate_kubernetes_node_name "target node" "$target"
 	actual_node=${BREAKGLASS_NODE_NAME:-}
-	validate_value "BREAKGLASS_NODE_NAME" "$actual_node"
+	validate_kubernetes_node_name "BREAKGLASS_NODE_NAME" "$actual_node"
 	[ "$target" = "$actual_node" ] || die "target node '$target' does not match controller-provided node '$actual_node'"
 }
 
+validate_kubernetes_node_name() {
+	label=$1
+	node_name=$2
+	validate_value "$label" "$node_name"
+	[ "${#node_name}" -le "$node_name_max_bytes" ] || die "$label exceeds the Kubernetes ${node_name_max_bytes}-byte limit"
+	# Kubernetes Node names use RFC 1123 DNS-subdomain syntax: lowercase
+	# alphanumeric labels, hyphens only within labels, and no label over 63 bytes.
+	if ! printf '%s\n' "$node_name" | awk '
+		{
+			label_count = split($0, label, ".")
+			for (i = 1; i <= label_count; i++) {
+				if (length(label[i]) < 1 || length(label[i]) > 63 || label[i] !~ /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/) exit 1
+			}
+			exit 0
+		}
+	'; then
+		die "$label must be a Kubernetes DNS subdomain"
+	fi
+}
+
 validate_interface() {
-	validate_value "interface" "$1"
+	validate_linux_interface "interface" "$1"
+}
+
+validate_linux_interface() {
+	label=$1
+	interface_name=$2
+	validate_value "$label" "$interface_name"
+	# Linux IFNAMSIZ is 16 including its terminating NUL byte.
+	[ "${#interface_name}" -le 15 ] || die "$label exceeds the Linux 15-byte interface-name limit"
 }
 
 validate_mac_address() {
@@ -163,7 +200,7 @@ validate_approved_network_request() {
 	requested_confirmation=$8
 	approved_request=${BREAKGLASS_APPROVED_NETWORK_REQUEST:-}
 	[ -n "$approved_request" ] || die "BREAKGLASS_APPROVED_NETWORK_REQUEST is required"
-	[ "${#approved_request}" -le "$value_max_bytes" ] || die "BREAKGLASS_APPROVED_NETWORK_REQUEST exceeds the fixed ${value_max_bytes}-byte limit"
+	[ "${#approved_request}" -le "$approved_network_request_max_bytes" ] || die "BREAKGLASS_APPROVED_NETWORK_REQUEST exceeds the fixed ${approved_network_request_max_bytes}-byte limit"
 	expected_request="target_node=$requested_target&interface=$requested_interface&action=$requested_action&neighbor_address=$requested_neighbor&bridge=$requested_bridge&entry_mac=$requested_mac&vlan=$requested_vlan&confirmation=$requested_confirmation"
 	[ "$approved_request" = "$expected_request" ] || die "controller-approved network request does not exactly match the requested tuple"
 	# Consumed by the network-repair caller after this file is sourced.
@@ -304,15 +341,84 @@ new_bundle() {
 	printf '%s\n' "$bundle"
 }
 
+evidence_disk_kib() {
+	evidence_path=$1
+	evidence_kib=$(du -sk "$evidence_path" | awk 'NR == 1 { print $1 }') || die "cannot determine evidence disk usage"
+	case "$evidence_kib" in ''|*[!0-9]*) die "cannot determine evidence disk usage" ;; esac
+	printf '%s\n' "$evidence_kib"
+}
+
+assert_safe_evidence_output() {
+	evidence_output=$1
+	case "$evidence_output" in "${bundle:?bundle is not initialized}"/*) ;; *) die "unsafe evidence output path" ;; esac
+	assert_safe_bundle "$bundle"
+	if [ -e "$evidence_output" ] || [ -L "$evidence_output" ]; then
+		[ -f "$evidence_output" ] && [ ! -L "$evidence_output" ] || die "evidence output is not a regular file"
+	fi
+}
+
+commit_evidence_file() {
+	evidence_candidate=$1
+	evidence_output=$2
+	assert_safe_evidence_output "$evidence_output"
+	[ -f "$evidence_candidate" ] && [ ! -L "$evidence_candidate" ] || die "evidence candidate is not a regular file"
+	case "$evidence_candidate" in "${EVIDENCE_DIR:?evidence directory is not initialized}"/.evidence-*|"$EVIDENCE_DIR"/.capture.*|"$EVIDENCE_DIR"/.capture-*) ;; *) die "unsafe evidence candidate" ;; esac
+
+	current_kib=$(evidence_disk_kib "$bundle")
+	output_kib=0
+	if [ -e "$evidence_output" ]; then
+		output_kib=$(evidence_disk_kib "$evidence_output")
+	fi
+	candidate_kib=$(evidence_disk_kib "$evidence_candidate")
+	maximum_kib=$((evidence_max_bytes / 1024))
+	final_kib=$((current_kib - output_kib + candidate_kib))
+	if [ "$final_kib" -gt "$maximum_kib" ]; then
+		rm -f "$evidence_candidate"
+		die "evidence quota exceeded"
+	fi
+
+	# The process-held evidence-volume flock serializes all bundle writers. The
+	# candidate lives beside the bundle on the same controller-owned volume;
+	# rename replaces the output atomically only after the final quota is known.
+	mv -f "$evidence_candidate" "$evidence_output" || {
+		rm -f "$evidence_candidate"
+		die "cannot commit bounded evidence output"
+	}
+}
+
+write_evidence() {
+	evidence_output=$1
+	evidence_candidate=$(mktemp "${EVIDENCE_DIR:?evidence directory is not initialized}/.evidence-write.XXXXXX") || die "cannot create bounded evidence candidate"
+	if ! cat >"$evidence_candidate"; then
+		rm -f "$evidence_candidate"
+		die "cannot write bounded evidence candidate"
+	fi
+	commit_evidence_file "$evidence_candidate" "$evidence_output"
+}
+
+append_evidence() {
+	evidence_output=$1
+	assert_safe_evidence_output "$evidence_output"
+	evidence_candidate=$(mktemp "${EVIDENCE_DIR:?evidence directory is not initialized}/.evidence-append.XXXXXX") || die "cannot create bounded evidence candidate"
+	if [ -e "$evidence_output" ] && ! cat "$evidence_output" >"$evidence_candidate"; then
+		rm -f "$evidence_candidate"
+		die "cannot read existing evidence output"
+	fi
+	if ! cat >>"$evidence_candidate"; then
+		rm -f "$evidence_candidate"
+		die "cannot append bounded evidence candidate"
+	fi
+	commit_evidence_file "$evidence_candidate" "$evidence_output"
+}
+
 capture() {
 	output_file=$1
 	shift
-	case "$output_file" in "${bundle:?bundle is not initialized}"/*) ;; *) die "unsafe evidence output path" ;; esac
-	assert_safe_bundle "$bundle"
+	assert_safe_evidence_output "$output_file"
 	command -v timeout >/dev/null 2>&1 || die "timeout utility is required for bounded evidence capture"
-	temporary_file=$(mktemp "$bundle/.capture.XXXXXX") || die "cannot create bounded capture temporary file"
-	status_file=$(mktemp "$bundle/.capture-status.XXXXXX") || die "cannot create capture status file"
-	fifo=$(mktemp "$bundle/.capture-fifo.XXXXXX") || die "cannot reserve capture pipe"
+	temporary_file=$(mktemp "${EVIDENCE_DIR:?evidence directory is not initialized}/.capture.XXXXXX") || die "cannot create bounded capture temporary file"
+	status_file=$(mktemp "$EVIDENCE_DIR/.capture-status.XXXXXX") || die "cannot create capture status file"
+	fifo=$(mktemp "$EVIDENCE_DIR/.capture-fifo.XXXXXX") || die "cannot reserve capture pipe"
 	rm -f "$fifo"
 	mkfifo -m 0600 "$fifo" || die "cannot create capture pipe"
 	(
@@ -338,15 +444,22 @@ capture() {
 	rm -f "$status_file"
 	bytes=$(wc -c <"$temporary_file" | tr -d ' ')
 	if [ "$bytes" -gt "$capture_max_bytes" ]; then
-		head -c "$capture_max_bytes" "$temporary_file" >"$output_file"
-		printf '\ncapture_result=output-quota-exceeded\nexit_status=75\n' >>"$output_file"
+		quota_file=$(mktemp "$EVIDENCE_DIR/.capture-quota.XXXXXX") || {
+			rm -f "$temporary_file"
+			die "cannot create bounded capture candidate"
+		}
+		head -c "$capture_max_bytes" "$temporary_file" >"$quota_file" || {
+			rm -f "$temporary_file" "$quota_file"
+			die "cannot trim bounded capture candidate"
+		}
 		rm -f "$temporary_file"
+		temporary_file=$quota_file
+		printf '\ncapture_result=output-quota-exceeded\nexit_status=75\n' >>"$temporary_file"
+		commit_evidence_file "$temporary_file" "$output_file"
 		return 75
 	fi
-	mv "$temporary_file" "$output_file"
-	printf '\nexit_status=%s\n' "$status" >>"$output_file"
-	used_kib=$(du -sk "$bundle" | awk '{print $1}')
-	[ "$used_kib" -le $((evidence_max_bytes / 1024)) ] || die "evidence quota exceeded"
+	printf '\nexit_status=%s\n' "$status" >>"$temporary_file"
+	commit_evidence_file "$temporary_file" "$output_file"
 	return "$status"
 }
 
@@ -368,7 +481,7 @@ write_metadata() {
 			printf 'approval_id=%s\n' "$approval_id"
 		fi
 		printf 'started_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-	} >"$metadata_file"
+	} | write_evidence "$metadata_file"
 }
 
 record_event() {
@@ -379,5 +492,5 @@ record_event() {
 	validate_value "recording result" "$result"
 	printf '{"time":"%s","event":"%s","result":"%s","operation_id":"%s","recording_id":"%s","target_node":"%s"}\n' \
 		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$event_name" "$result" "$operation_id" "$recording_id" "$target_node" \
-		>>"$bundle/events.jsonl"
+		| append_evidence "$bundle/events.jsonl"
 }

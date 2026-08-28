@@ -83,7 +83,7 @@ case "$action" in
 		[ "$entry_mac_seen" = true ] || die "entry MAC is required"
 		[ "$vlan_seen" = true ] || die "VLAN is required"
 		[ "$neighbor_address_seen" = false ] || die "bridge-fdb-replace does not accept a neighbor address"
-		validate_value "bridge" "$bridge_name"
+		validate_linux_interface "bridge" "$bridge_name"
 		[ "$bridge_name" != "$interface" ] || die "bridge and port interface must be different"
 		validate_mac_address "FDB MAC" "$entry_mac"
 		validate_vlan "$vlan"
@@ -105,7 +105,7 @@ write_metadata "$bundle/metadata" network-repair "$target_node" "$interface" "$a
 	[ -z "$bridge_name" ] || printf 'bridge=%s\n' "$bridge_name"
 	[ -z "$entry_mac" ] || printf 'entry_mac=%s\n' "$entry_mac"
 	[ -z "$vlan" ] || printf 'vlan=%s\n' "$vlan"
-} >>"$bundle/metadata"
+} | append_evidence "$bundle/metadata"
 record_event operation-started accepted
 
 if ! capture "$bundle/before-link.txt" ip -details link show dev "$interface"; then
@@ -211,7 +211,7 @@ case "$action" in
 		;;
 esac
 assert_safe_bundle "$bundle"
-printf 'action_exit_status=%s\ncompleted_at_utc=%s\n' "$action_status" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$bundle/metadata"
+printf 'action_exit_status=%s\ncompleted_at_utc=%s\n' "$action_status" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | append_evidence "$bundle/metadata"
 
 if [ "$action_status" -ne 0 ]; then
 	record_event operation-completed failed

@@ -61,6 +61,11 @@ also holds a kernel `flock` on the shared evidence volume for its process
 lifetime, but that cannot coordinate distinct volumes. No timestamp reclaims a
 live holder. Container death releases the lock immediately; its regular lock
 file persists and must not be deleted or replaced while operations can run.
+The tuple is separately bounded at 1 KiB so Kubernetes-valid 253-byte node
+names remain usable; this bound is not a caller input. Linux interface and
+bridge names are limited to 15 bytes, so the largest public network-repair
+tuple is 442 bytes; the 1 KiB serialized-input limit is defense in depth for
+controller-provided data, not a caller choice.
 
 Run with `hostNetwork: true`, a read-only root, RuntimeDefault seccomp,
 `allowPrivilegeEscalation: false`, all capabilities dropped except
@@ -74,10 +79,12 @@ during the FDB request.
 
 Preserve `metadata`, `events.jsonl`, and all before/action/after captures even
 on non-zero exit. Each command and capture has a fixed timeout and quota. A
-link cycle makes one bounded attempt to bring the interface up after bringing
-it down. Verify node and application health through normal platform controls,
-then allow the controller to clean up the workload, evidence volume, and
-node-scoped lease within their configured deadlines.
+full evidence bundle rejects the final metadata or event update before rename,
+leaving the previous complete file intact rather than emitting a partial audit
+record. A link cycle makes one bounded attempt to bring the interface up after
+bringing it down. Verify node and application health through normal platform
+controls, then allow the controller to clean up the workload, evidence volume,
+and node-scoped lease within their configured deadlines.
 
 This helper cannot run caller commands or arguments, select paths or images,
 replace routes, mutate sysctls, capture traffic, reboot, or execute kexec.

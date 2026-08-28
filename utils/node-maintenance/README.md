@@ -41,7 +41,14 @@ Network repair also requires the controller-owned
 interface, action, every action-specific target, and confirmation. The image
 compares it byte-for-byte before evidence or mutation; it is not a substitute
 for controller/admission protection of the environment. The command
-confirmation string is an operator error guard, not authorization.
+confirmation string is an operator error guard, not authorization. Node names
+are checked as Kubernetes RFC 1123 DNS subdomains, including the 253-byte
+total and 63-byte per-label limits; the complete canonical tuple has its own
+fixed 1 KiB bound so a valid maximum-length Node name is not rejected by a
+per-value limit. Linux interface and bridge names are
+independently limited to 15 bytes, so the largest accepted public
+network-repair tuple is 442 bytes; the 1 KiB ceiling is defense in depth for
+controller-provided serialized data.
 Preflight, each network action, kexec validation, and any future provider
 executor need independent approval decisions; approval for one must never be
 reused as approval for another.
@@ -51,8 +58,13 @@ by operation and recording IDs. Repair captures before/action/after evidence;
 kexec validation records fixed-file digests and an explicit
 `execution_performed=false`. Validated request values and captures have fixed
 limits: values are at most 256 bytes, captures have fixed 10-second, 32 KiB per-file,
-and 384 KiB per-bundle bounds. A process-held Linux `flock` on the persistent
-evidence-volume lock file permits one operation at a time. The owner record
+and 384 KiB per-bundle bounds. Captures, metadata, and JSONL event updates are
+prepared outside the bundle and atomically renamed only after their final
+disk-usage quota is accepted; a full bundle fails without a partial event or
+metadata write. A process-held Linux `flock` on the persistent
+evidence-volume lock file serializes those quota calculations and commits and
+permits one operation at a time; the controller must not share that evidence
+volume with an uncoordinated writer. The owner record
 contains the operation, recording, approval, and SHA-256 digest of the exact
 approved tuple. Its timestamp and PID are audit context only, never liveness
 signals. The kernel releases exclusivity when the holder exits, is killed, or
