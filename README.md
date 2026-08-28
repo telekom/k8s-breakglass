@@ -247,6 +247,7 @@ authorizers:
       cacheAuthorizedRequests: false
       unauthorizedTTL: 30s
       timeout: 3s
+      subjectAccessReviewVersion: v1
       failurePolicy: Deny
       connectionInfo:
         type: KubeConfigFile

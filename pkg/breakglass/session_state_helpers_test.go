@@ -247,6 +247,22 @@ func TestSessionExpiryAndTokenValidityBoundaries(t *testing.T) {
 			expired: true, tokenValid: false, accessValid: false,
 		},
 		{
+			name: "approved session one nanosecond before expiry is expired",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: metav1.NewTime(now.Add(-time.Nanosecond)),
+			}},
+			expired: true, tokenValid: false, accessValid: false,
+		},
+		{
+			name: "approved session one nanosecond after expiry is active",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: metav1.NewTime(now.Add(time.Nanosecond)),
+			}},
+			expired: false, tokenValid: true, accessValid: true,
+		},
+		{
 			name: "approved session with future expiry remains valid",
 			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:     breakglassv1alpha1.SessionStateApproved,

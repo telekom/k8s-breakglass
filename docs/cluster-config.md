@@ -947,6 +947,10 @@ authorizers:
       timeout: 3s
       authorizedTTL: 5m
       cacheAuthorizedRequests: false
+      unauthorizedTTL: 30s
+      subjectAccessReviewVersion: v1
+      matchConditionSubjectAccessReviewVersion: v1
+      failurePolicy: Deny
       connectionInfo:
         type: KubeConfigFile
         kubeConfigFile: /etc/kubernetes/breakglass-webhook-kubeconfig.yaml
@@ -1163,6 +1167,9 @@ authorizers:
       timeout: 3s
       authorizedTTL: 5m
       cacheAuthorizedRequests: false
+      unauthorizedTTL: 30s
+      subjectAccessReviewVersion: v1
+      matchConditionSubjectAccessReviewVersion: v1
       failurePolicy: NoOpinion
       connectionInfo:
         type: KubeConfigFile

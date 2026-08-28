@@ -64,6 +64,7 @@ Once a session enters a terminal state (**Rejected**, **Withdrawn**, **Expired**
 - An `Approved` session with a missing or zero `expiresAt` fails closed and is revoked by cleanup; approval never grants unbounded access.
 - Expiry always revokes access at the exact boundary. Regular sessions have no renewal or extension operation; a future timestamp written after expiry cannot resurrect a terminal session.
 - While a session is `Approved` or `WaitingForScheduledTime`, `status.expiresAt` cannot be extended. The validating webhook also covers `breakglasssessions/status`, so controller or administrative status writes cannot move a reached expiry into the future; terminal revocation may shorten it to the current time.
+- The authorization webhook governs new Kubernetes authorization requests. Kubernetes cannot terminate an already-established native `exec`, `attach`, or `port-forward` stream at expiry; strict profiles must use an expiry-aware proxy or controller-owned workload termination where that distinction matters.
 - Automatic expiry routines re-check live state before writing terminal status, so a concurrent withdraw, rejection, drop, or cancellation keeps its original terminal audit reason.
 - Scheduled sessions whose `expiresAt` is already in the past when cleanup reaches their `scheduledStartTime` are marked `Expired` instead of being activated
 - Scheduled activation re-reads the live session before granting access and skips the object if it has already left `WaitingForScheduledTime`.

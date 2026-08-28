@@ -49,6 +49,21 @@ MAILHOG_UI_PORT=${MAILHOG_UI_PORT:-8025}
 # --- Kind node image ---
 KIND_NODE_IMAGE=${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}
 
+# The authorization configuration below uses cacheAuthorizedRequests, which is
+# available only in Kubernetes 1.34+. Refuse older images rather than starting
+# an apiserver that silently falls back to positive webhook caching.
+if [[ "$KIND_NODE_IMAGE" =~ :v([0-9]+)\.([0-9]+) ]]; then
+  KIND_K8S_MAJOR="${BASH_REMATCH[1]}"
+  KIND_K8S_MINOR="${BASH_REMATCH[2]}"
+  if (( KIND_K8S_MAJOR != 1 || KIND_K8S_MINOR < 34 )); then
+    log "ERROR: KIND_NODE_IMAGE=$KIND_NODE_IMAGE requires Kubernetes 1.34+ for cacheAuthorizedRequests=false"
+    exit 1
+  fi
+else
+  log "ERROR: cannot determine Kubernetes version from KIND_NODE_IMAGE=$KIND_NODE_IMAGE"
+  exit 1
+fi
+
 # --- Constrained impersonation (KEP-5284) feature gate ---
 # The ConstrainedImpersonation gate is beta and ON BY DEFAULT from Kubernetes 1.36,
 # which is the version of the node image above, so the default here matches what a
@@ -807,6 +822,7 @@ authorizers:
   name: breakglass
   webhook:
     timeout: 3s
+    authorizedTTL: 5m
     subjectAccessReviewVersion: v1
     matchConditionSubjectAccessReviewVersion: v1
     cacheAuthorizedRequests: false

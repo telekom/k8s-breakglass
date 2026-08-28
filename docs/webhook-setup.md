@@ -86,6 +86,12 @@ authorizers:
         - expression: "request.user != 'breakglass-group-sync@service.local'"
 ```
 
+Disabling positive authorization caching adds a webhook round trip to each
+authorization request, but it is required for exact session expiry. Keep the
+webhook path low-latency and size its capacity for that request rate; the
+ordinary in-flight native stream limitation is documented in the session
+lifecycle guide.
+
 On Kubernetes versions older than 1.34, use the legacy webhook mode and
 disable both decision caches:
 
