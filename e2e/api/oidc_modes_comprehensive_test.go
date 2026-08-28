@@ -658,17 +658,22 @@ func TestOIDC_RecoveryAfterFixingConfig(t *testing.T) {
 	goodSecretName := helpers.GenerateUniqueName("comp010-good")
 	createClientSecret(t, ctx, cli, cleanup, goodSecretName, namespace, oc.saSecret)
 
-	// Re-fetch and update
+	// The controller records the failed OIDC probe in status after Step 1. That
+	// status write can race a spec update, so apply the desired reference through
+	// the shared conflict-aware helper. The helper re-reads before every retry;
+	// the final Ready assertion below proves the desired configuration—not merely
+	// that an update request happened—was accepted and reconciled.
 	var current breakglassv1alpha1.ClusterConfig
-	err = cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &current)
-	require.NoError(t, err)
-
-	current.Spec.OIDCAuth.ClientSecretRef = &breakglassv1alpha1.SecretKeyReference{
-		Name:      goodSecretName,
-		Namespace: namespace,
-		Key:       "client-secret",
-	}
-	err = cli.Update(ctx, &current)
+	current.Name = ccName
+	current.Namespace = namespace
+	err = helpers.UpdateWithRetry(ctx, cli, &current, func(updated *breakglassv1alpha1.ClusterConfig) error {
+		updated.Spec.OIDCAuth.ClientSecretRef = &breakglassv1alpha1.SecretKeyReference{
+			Name:      goodSecretName,
+			Namespace: namespace,
+			Key:       "client-secret",
+		}
+		return nil
+	})
 	require.NoError(t, err)
 	t.Log("Step 2: Updated CC to use correct secret")
 
