@@ -11,8 +11,10 @@ ARG VERSION=0.1.0
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 
-# pwru is fetched from an immutable release in the tool stage. Storage tooling
-# is intentionally excluded; kubestr belongs to storage-debug.
+# pwru is fetched from an immutable release in the tool stage. The transient
+# download packages come from the pinned builder's configured repositories and
+# are removed before the checksum-verified binary is copied into runtime.
+# Storage tooling is intentionally excluded; kubestr belongs to storage-debug.
 FROM golang:1.27@sha256:c5b07c17f54c5f22230c4b4da6e90249165cf55368e01a52808cb92064e18836 AS tools
 ARG TARGETARCH
 ARG PWRU_VERSION=v1.0.12
@@ -21,9 +23,12 @@ ARG PWRU_SHA256_ARM64=997516721a58b4f8ffe3504994cada472c9bcd78f1e819862bf61f1081
 
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} GOPROXY=https://proxy.golang.org
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# The build-only package revisions follow the builder's current repositories;
+# pinning them would couple rebuilds to rotating APT snapshots.
+# hadolint ignore=DL3008
 RUN set -eux; \
 	apt-get update; \
-	apt-get install --no-install-recommends --yes ca-certificates=20250419 curl=8.14.1-2+deb13u4; \
+	apt-get install --no-install-recommends --yes ca-certificates curl; \
 	curl --fail --silent --show-error --location \
 		"https://github.com/cilium/pwru/releases/download/${PWRU_VERSION}/pwru-linux-${TARGETARCH:-amd64}.tar.gz" \
 		--output "/tmp/pwru-linux-${TARGETARCH:-amd64}.tar.gz"; \

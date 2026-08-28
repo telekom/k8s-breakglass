@@ -101,6 +101,12 @@ Kubernetes distributions and admission policies.
 The netshoot runtime and Go build image are pinned by immutable OCI manifest
 digests. The netshoot v0.16 release is the source of the inherited runtime
 packages; `pwru` is downloaded for each architecture with a checksum.
+The build stage temporarily installs `ca-certificates` and `curl` from the
+pinned builder's configured APT repositories to perform that download, then
+removes them; they are not copied into the runtime image or included in the
+lock record. Their revisions intentionally follow the current repository
+indexes rather than a rotating snapshot. The checksum-verified `pwru` archive
+is the only build-stage payload copied into runtime.
 `versions.env` is the
 human-readable lock record and the image carries OCI version, revision,
 creation, source, license, and base-digest labels. The multi-architecture Make
