@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	authorizationv1 "k8s.io/api/authorization/v1"
+	"k8s.io/client-go/rest"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
@@ -568,6 +569,7 @@ func (wc *WebhookController) performRBACCheck(c *gin.Context, s *authorizeState)
 	s.phases.StartPhase() // Start rbac_check phase
 	var can bool
 	var rbacErr error
+	var rbacConfig *rest.Config
 	// Log input to RBAC check for easier debugging
 	s.reqLog.Debugw("Invoking RBAC canDoFn",
 		"groupCount", len(s.groups), "resourceAttributes", s.sar.Spec.ResourceAttributes,
@@ -575,6 +577,7 @@ func (wc *WebhookController) performRBACCheck(c *gin.Context, s *authorizeState)
 
 	if wc.ccProvider != nil {
 		if rc, rerr := wc.ccProvider.GetRESTConfig(s.ctx, s.clusterName); rerr == nil {
+			rbacConfig = rc
 			can, rbacErr = wc.canDoFn(s.ctx, rc, s.groups, s.sar, s.clusterName)
 		} else {
 			// downgrade to info; this will commonly happen if RBAC does not yet allow clusterconfig get
@@ -620,6 +623,28 @@ func (wc *WebhookController) performRBACCheck(c *gin.Context, s *authorizeState)
 		// pass the final live fence. Ordinary user/OIDC RBAC is evaluated by the
 		// apiserver before this webhook and does not enter this path.
 		s.sessionDerivedRBAC = len(s.sessions) > 0
+		if s.sessionDerivedRBAC {
+			// The aggregate probe may combine groups from several sessions. Attribute
+			// the positive result to a session before the final fence so an unrelated
+			// expired session does not revoke a still-valid grant. If no individual
+			// session group reproduces the result (for example, a role requires a
+			// combination of groups), leave the candidate unset and conservatively
+			// require every contributing session to remain live.
+			for i := range s.sessions {
+				session := &s.sessions[i]
+				if session.Spec.GrantedGroup == "" {
+					continue
+				}
+				individual, individualErr := wc.canDoFn(s.ctx, rbacConfig, []string{session.Spec.GrantedGroup}, s.sar, s.clusterName)
+				if individualErr == nil && individual {
+					s.allowedSession = &sessionAuthorizationCandidate{
+						namespace: session.Namespace, name: session.Name, uid: string(session.UID),
+						user: session.Spec.User, cluster: session.Spec.Cluster, grantedGroup: session.Spec.GrantedGroup,
+					}
+					break
+				}
+			}
+		}
 		s.reqLog.Info("User authorized through regular RBAC permissions")
 		s.allowed = true
 		s.allowSource = "rbac"

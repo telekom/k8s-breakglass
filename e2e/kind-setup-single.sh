@@ -796,7 +796,7 @@ fi
 # Authorization config (webhook authorizer) for single apiserver
 # Aligned with production config but using NoOpinion for e2e bootstrap
 cat > "$AUTHZ_FILE" <<'EOF'
-apiVersion: apiserver.config.k8s.io/v1beta1
+apiVersion: apiserver.config.k8s.io/v1
 kind: AuthorizationConfiguration
 authorizers:
 - type: Node

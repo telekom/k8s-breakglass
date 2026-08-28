@@ -162,8 +162,15 @@ Error: context deadline exceeded
 ```yaml
 webhook:
   timeout: 5s
+  # Kubernetes 1.34+ structured authorization configuration:
+  authorizedTTL: 5m
+  cacheAuthorizedRequests: false
   unauthorizedTTL: 30s
 ```
+
+This structured setting applies to Kubernetes 1.34+. On older clusters use
+legacy webhook mode with `--authorization-webhook-cache-authorized-ttl=0s`
+and `--authorization-webhook-cache-unauthorized-ttl=0s`.
 
 2. Check network latency
 

@@ -383,6 +383,43 @@ func TestPerformRBACCheckAttributesSessionGroups(t *testing.T) {
 	assert.Equal(t, []string{"session-group"}, probedGroups)
 }
 
+func TestPerformRBACCheckAttributesWinningSessionForAggregateGroups(t *testing.T) {
+	now := time.Now()
+	valid := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "valid-session", Namespace: "breakglass", UID: "valid-uid"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user", Cluster: "cluster", GrantedGroup: "valid-group"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(now.Add(time.Hour))},
+	}
+	expired := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "expired-session", Namespace: "breakglass", UID: "expired-uid"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user", Cluster: "cluster", GrantedGroup: "expired-group"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(now.Add(-time.Minute))},
+	}
+	base := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(&valid, &expired).Build()
+	wc := &WebhookController{
+		sesManager: breakglass.NewSessionManagerWithClient(base),
+		canDoFn: func(_ context.Context, _ *rest.Config, groups []string, _ authorization.SubjectAccessReview, _ string) (bool, error) {
+			for _, group := range groups {
+				if group == "valid-group" {
+					return true, nil
+				}
+			}
+			return false, nil
+		},
+	}
+	s := &authorizeState{
+		ctx: context.Background(), clusterName: "cluster", groups: []string{"valid-group", "expired-group"},
+		sessions: []breakglassv1alpha1.BreakglassSession{valid},
+		sar:      sar, reqLog: zap.NewNop().Sugar(), phases: NewSARPhaseTracker("cluster", zap.NewNop().Sugar()),
+	}
+	require.True(t, wc.performRBACCheck(nil, s))
+	require.True(t, s.allowed)
+	require.True(t, s.sessionDerivedRBAC)
+	require.NotNil(t, s.allowedSession)
+	assert.Equal(t, "valid-session", s.allowedSession.name)
+	assert.True(t, wc.isSessionAccessStillActive(context.Background(), []breakglassv1alpha1.BreakglassSession{valid, expired}, s.allowedSession), "unrelated expired session must not revoke the winning grant")
+}
+
 func TestHandleAuthorize(t *testing.T) {
 	controller := SetupController(nil)
 	engine := gin.New()

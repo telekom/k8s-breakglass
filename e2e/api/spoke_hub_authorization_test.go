@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/suite"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
@@ -370,13 +371,14 @@ func (s *SpokeHubAuthorizationSuite) TestDenyPolicyEnforcedOnSpoke() {
 // Uses: SchedulingTestRequester with breakglass-read-only group
 //
 // User Flow:
-// 1. User requests access and session is approved
+// 1. User requests a 60-second session and it is approved
 // 2. User CAN access resources initially
-// 3. Session is manually expired (simulating time passage)
+// 3. The test reads the persisted expiresAt and waits for that boundary
 // 4. User CANNOT access resources anymore
 //
-// Note: We cannot create sessions with <60s duration via API (validation enforces minimum).
-// Instead, we manually update the session status to simulate expiry.
+// This is deliberately a real-time expiry proof: it does not rewrite status to
+// manufacture an expired object, and the spoke apiserver has positive webhook
+// authorization caching disabled by kind-setup-multi.sh.
 func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 	t := s.T()
 	spokeCluster := s.mcCtx.Config.SpokeAClusterName
@@ -387,33 +389,25 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 
 	// Create API client for this specific user
 	userAPI := s.createAPIClientForUser(testUser)
+	token := s.mcCtx.GetTokenForTestUser(t, s.ctx, testUser)
+	kubeconfig := s.mcCtx.GetSpokeOIDCKubeconfig(spokeCluster)
+	s.Require().NotEmpty(kubeconfig, "hard-expiry proof requires the OIDC-only spoke kubeconfig")
 
-	// First, expire ALL existing sessions for this user on this cluster
-	// to ensure we're testing with a clean slate (other tests may have created sessions)
-	t.Log("Step 0: Expiring any existing sessions for this user")
-	sessionList := &breakglassv1alpha1.BreakglassSessionList{}
-	err := s.hubClient.List(s.ctx, sessionList, client.InNamespace(s.namespace))
-	s.Require().NoError(err, "Failed to list sessions")
-
-	for i := range sessionList.Items {
-		session := &sessionList.Items[i]
-		if session.Spec.User == testUser.Email &&
-			session.Spec.Cluster == spokeCluster &&
-			session.Status.State == breakglassv1alpha1.SessionStateApproved {
-			t.Logf("Expiring pre-existing session: %s", session.Name)
-			session.Status.State = breakglassv1alpha1.SessionStateExpired
-			session.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Minute))
-			_ = s.hubClient.Status().Update(s.ctx, session)
-		}
-	}
+	// Establish the denied baseline using the exact request and identity that
+	// will be used after approval. The OIDC-only kubeconfig prevents an admin
+	// client certificate from bypassing the webhook under test.
+	baselineOutput, baselineErr := s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
+	s.Require().Error(baselineErr, "access must be denied before the session exists: %s", baselineOutput)
+	s.Require().Contains(strings.ToLower(baselineOutput), "forbidden", "baseline denial must come from Kubernetes authorization: %s", baselineOutput)
 
 	// Create a normal session via API
 	t.Log("Step 1: Creating session via API")
 	session, err := userAPI.CreateSessionAndWaitForPending(s.ctx, t, helpers.SessionRequest{
-		Cluster: spokeCluster,
-		User:    testUser.Email,
-		Group:   "breakglass-read-only",
-		Reason:  "E2E Test - Session expiry verification",
+		Cluster:  spokeCluster,
+		User:     testUser.Email,
+		Group:    "breakglass-read-only",
+		Reason:   "E2E Test - Session expiry verification",
+		Duration: 60,
 	}, helpers.WaitForStateTimeout)
 	s.Require().NoError(err, "Failed to create session via API")
 	s.cleanup.Add(session)
@@ -428,58 +422,91 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 		breakglassv1alpha1.SessionStateApproved, 30*time.Second)
 	t.Log("✓ Session approved and active")
 
+	// Read the server-persisted lease after approval. Never infer the deadline
+	// from the request duration: controller/API processing consumes part of it.
+	persisted := &breakglassv1alpha1.BreakglassSession{}
+	s.Require().Eventually(func() bool {
+		if err := s.hubClient.Get(s.ctx, client.ObjectKeyFromObject(session), persisted); err != nil {
+			return false
+		}
+		return persisted.Status.State == breakglassv1alpha1.SessionStateApproved && !persisted.Status.ExpiresAt.IsZero()
+	}, 30*time.Second, 500*time.Millisecond, "approved session must persist a non-zero expiresAt")
+	expiresAt := persisted.Status.ExpiresAt.Time
+	s.Require().True(expiresAt.After(time.Now()), "persisted expiresAt must initially be in the future")
+
 	// Quick check - should be allowed initially
 	t.Log("Step 3: User accesses cluster immediately - should succeed")
-	token := s.mcCtx.GetTokenForTestUser(t, s.ctx, testUser)
-	kubeconfig := s.getOIDCKubeconfig(spokeCluster)
-
 	output1, err1 := s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
-	if err1 == nil {
-		t.Log("✓ Initial access: ALLOWED")
-	} else {
-		t.Logf("Note: Initial access may have been denied if session processing was slow: %s", output1)
-	}
+	s.Require().NoError(err1, "Initial access must be allowed before expiresAt: %s", output1)
+	t.Log("✓ Initial access: ALLOWED")
 
-	// Manually expire the session by updating status directly
-	// This simulates time passage without waiting for the actual duration
-	// Also expire any other sessions that may have been created by parallel tests
-	t.Log("Step 4: Expiring ALL sessions for this user (simulating time passage)...")
-
-	// Re-list and expire ALL sessions for this user on this cluster
-	// This handles sessions created by parallel tests after our initial cleanup
-	sessionList = &breakglassv1alpha1.BreakglassSessionList{}
-	err = s.hubClient.List(s.ctx, sessionList, client.InNamespace(s.namespace))
-	s.Require().NoError(err, "Failed to list sessions for expiry")
-
-	expiredCount := 0
-	for i := range sessionList.Items {
-		sess := &sessionList.Items[i]
-		if sess.Spec.User == testUser.Email &&
-			sess.Spec.Cluster == spokeCluster &&
-			sess.Status.State == breakglassv1alpha1.SessionStateApproved {
-			t.Logf("Expiring session: %s", sess.Name)
-			sess.Status.State = breakglassv1alpha1.SessionStateExpired
-			sess.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Minute))
-			if err := s.hubClient.Status().Update(s.ctx, sess); err != nil {
-				t.Logf("Warning: failed to expire session %s: %v", sess.Name, err)
-			} else {
-				expiredCount++
-			}
+	// Exercise the same request just before expiry. This proves the session is
+	// still live and makes the subsequent deny transition a real boundary test.
+	t.Logf("Step 4: Waiting for the persisted expiresAt boundary (%s)", expiresAt.UTC().Format(time.RFC3339))
+	for time.Until(expiresAt) > 10*time.Second {
+		select {
+		case <-s.ctx.Done():
+			s.Require().FailNow("test context cancelled while waiting for pre-expiry access")
+		case <-time.After(time.Second):
 		}
 	}
-	t.Logf("✓ Expired %d session(s)", expiredCount)
+	nearStart := time.Now()
+	outputNear, errNear := s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
+	nearComplete := time.Now()
+	s.Require().NoError(errNear, "access must remain allowed before persisted expiresAt: %s", outputNear)
+	s.Require().True(nearComplete.Before(expiresAt), "near-expiry request must complete before expiresAt (started %s, completed %s, expires %s)", nearStart, nearComplete, expiresAt)
 
-	// Brief wait for controller cache to propagate the status update
-	time.Sleep(helpers.CachePropagationDelay)
+	// Wait for the actual persisted boundary. A bounded context keeps a broken
+	// controller from making the suite hang indefinitely.
+	for time.Now().Before(expiresAt) {
+		remaining := time.Until(expiresAt)
+		if remaining > time.Second {
+			remaining = time.Second
+		}
+		select {
+		case <-s.ctx.Done():
+			s.Require().FailNow("test context cancelled while waiting for session expiry")
+		case <-time.After(remaining):
+		}
+	}
 
-	// Should now be denied
+	// Cross the persisted boundary by a small margin before the first request.
+	// This avoids relying on local clock scheduling jitter while still proving
+	// that no post-expiry allow is returned.
 	t.Log("Step 5: Employee attempts access after expiry - should be denied")
+	time.Sleep(2 * time.Second)
 	output2, err2 := s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
-	s.Require().Error(err2, "Should be denied after session expires")
-	s.Assert().True(
-		strings.Contains(output2, "forbidden") || strings.Contains(output2, "Forbidden"),
-		"Error should indicate forbidden after expiry, got: %s", output2,
-	)
+	s.Require().Error(err2, "post-expiry Kubernetes request must be denied: %s", output2)
+	s.Assert().True(strings.Contains(output2, "forbidden") || strings.Contains(output2, "Forbidden") || strings.Contains(output2, "denied"),
+		"Error should indicate forbidden after expiry, got: %s", output2)
+
+	// The status webhook is part of the hard-expiry boundary: a caller cannot
+	// write a future expiry after the lease elapsed and resurrect access.
+	// Let the controller record its normal terminal state before attempting the
+	// forbidden future-expiry status write, avoiding a controller-update race.
+	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
+		breakglassv1alpha1.SessionStateExpired, 30*time.Second)
+	var current breakglassv1alpha1.BreakglassSession
+	s.Require().NoError(s.hubClient.Get(s.ctx, client.ObjectKeyFromObject(session), &current))
+	beforeResurrectionUID := current.UID
+	beforeResurrectionState := current.Status.State
+	beforeResurrectionExpiry := current.Status.ExpiresAt.Time
+	resurrection := current.DeepCopy()
+	resurrection.Status.ExpiresAt = metav1.NewTime(time.Now().Add(time.Hour))
+	resurrectionErr := s.hubClient.Status().Update(s.ctx, resurrection)
+	s.Require().Error(resurrectionErr, "status future-expiry write after the boundary must be rejected")
+	s.Require().True(apierrors.IsInvalid(resurrectionErr), "future-expiry status write must be an admission validation error: %v", resurrectionErr)
+
+	var afterRejectedWrite breakglassv1alpha1.BreakglassSession
+	s.Require().NoError(s.hubClient.Get(s.ctx, client.ObjectKeyFromObject(session), &afterRejectedWrite))
+	s.Require().Equal(beforeResurrectionUID, afterRejectedWrite.UID, "rejected status write must not replace the session object")
+	s.Require().Equal(beforeResurrectionState, afterRejectedWrite.Status.State, "rejected status write must not change terminal state")
+	s.Require().Equal(beforeResurrectionExpiry, afterRejectedWrite.Status.ExpiresAt.Time,
+		"rejected status write must leave the persisted expiry unchanged")
+	output3, err3 := s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
+	s.Require().Error(err3, "access must remain denied after rejected resurrection write: %s", output3)
+	s.Require().True(strings.Contains(output3, "forbidden") || strings.Contains(output3, "Forbidden") || strings.Contains(output3, "denied"),
+		"continued denial should be reported as forbidden after rejected resurrection write, got: %s", output3)
 	t.Log("✓ Access after expiry: DENIED")
 
 	t.Log("=== Expired Session Test Passed! ===")
@@ -581,6 +608,7 @@ func (s *SpokeHubAuthorizationSuite) runKubectlWithToken(kubeconfig, token strin
 	fullArgs := append([]string{
 		"--kubeconfig", kubeconfig,
 		"--token", token,
+		"--request-timeout=5s",
 	}, args...)
 
 	cmd := exec.CommandContext(s.ctx, "kubectl", fullArgs...)

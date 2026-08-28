@@ -244,6 +244,41 @@ func TestActivateScheduledSessions(t *testing.T) {
 		assert.False(t, updated.Status.ExpiresAt.IsZero())
 	})
 
+	t.Run("refreshes the clock before activating each live lease", func(t *testing.T) {
+		boundary := time.Now().Add(100 * time.Millisecond)
+		session := &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "scheduled-clock-boundary", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				User: "test@example.com", Cluster: "test-cluster", GrantedGroup: "admin",
+				ScheduledStartTime: &metav1.Time{Time: boundary.Add(-time.Minute)},
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+				ExpiresAt: metav1.NewTime(boundary),
+			},
+		}
+		fakeClient := newFakeActivationClient(session)
+		clockValues := []time.Time{boundary.Add(-time.Second), boundary.Add(-time.Second), boundary.Add(-time.Second), boundary.Add(time.Second)}
+		clockIndex := 0
+		activator := NewScheduledSessionActivator(logger, NewSessionManagerWithClient(fakeClient)).
+			WithMailService(nil, "TestBranding", true)
+		activator.now = func() time.Time {
+			if clockIndex >= len(clockValues) {
+				return clockValues[len(clockValues)-1]
+			}
+			value := clockValues[clockIndex]
+			clockIndex++
+			return value
+		}
+
+		activator.ActivateScheduledSessions()
+
+		var updated breakglassv1alpha1.BreakglassSession
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "breakglass", Name: session.Name}, &updated))
+		assert.Equal(t, breakglassv1alpha1.SessionStateExpired, updated.Status.State)
+		assert.Equal(t, "scheduledSessionExpiredBeforeActivation", updated.Status.ReasonEnded)
+	})
+
 	t.Run("canceled context skips scheduled activation", func(t *testing.T) {
 		scheduledTime := time.Now().Add(-5 * time.Minute)
 		session := &breakglassv1alpha1.BreakglassSession{

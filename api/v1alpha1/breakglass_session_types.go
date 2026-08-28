@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -324,28 +325,61 @@ func (bs *BreakglassSession) ValidateUpdate(ctx context.Context, oldObj, newObj 
 	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassSession"}, newObj.Name, allErrs)
 }
 
-// validateExpiryUpdate keeps an active regular session's expiry immutable. A
+// validateExpiryUpdate keeps active and scheduled session leases monotonic. A
 // terminal transition may shorten the timestamp (for example, an explicit drop
-// or cleanup expiry), while an Approved-to-Approved update may only preserve or
-// shorten it. In particular, a status writer cannot move an already-reached
-// expiry into the future and resurrect access. This is enforced for both the
-// main resource and its status subresource by the webhook marker above.
+// or cleanup expiry), but no update may extend a lease. In particular, a status
+// writer cannot move an already-reached expiry into the future and resurrect
+// access, or activate an already-expired scheduled session. This is enforced
+// for both the main resource and its status subresource by the webhook marker
+// above.
 func validateExpiryUpdate(oldObj, newObj *BreakglassSession) field.ErrorList {
-	if oldObj.Status.State != SessionStateApproved || newObj.Status.State != SessionStateApproved {
-		return nil
-	}
+	decisionNow := time.Now()
 	oldExpiry := oldObj.Status.ExpiresAt
 	newExpiry := newObj.Status.ExpiresAt
-	if oldExpiry.IsZero() {
-		if !newExpiry.IsZero() {
-			return field.ErrorList{field.Invalid(field.NewPath("status").Child("expiresAt"), newExpiry,
-				"an Approved session with a missing expiry cannot be extended; transition it to a terminal state")}
-		}
-		return nil
+	oldState := oldObj.Status.State
+	newState := newObj.Status.State
+	activeOrScheduled := func(state BreakglassSessionState) bool {
+		return state == SessionStateApproved || state == SessionStateWaitingForScheduledTime
 	}
-	if newExpiry.Time.After(oldExpiry.Time) {
-		return field.ErrorList{field.Invalid(field.NewPath("status").Child("expiresAt"), newExpiry,
-			"expiry cannot be extended while a session is Approved; extensions are not supported")}
+	terminal := func(state BreakglassSessionState) bool {
+		switch state {
+		case SessionStateRejected, SessionStateWithdrawn, SessionStateExpired, SessionStateIdleExpired, SessionStateTimeout:
+			return true
+		default:
+			return false
+		}
+	}
+	invalid := func(message string) field.ErrorList {
+		return field.ErrorList{field.Invalid(field.NewPath("status").Child("expiresAt"), newExpiry, message)}
+	}
+
+	// A non-zero lease can never be extended, regardless of its current state.
+	// The one exception is entering a terminal state: a controller may record
+	// the revocation at the current time even when the lease already elapsed.
+	// Pending sessions normally have no expiry until approval, so assigning their
+	// initial expiry remains valid.
+	if !oldExpiry.IsZero() && newExpiry.Time.After(oldExpiry.Time) &&
+		!(terminal(newState) && !terminal(oldState) && !newExpiry.Time.After(decisionNow)) {
+		return invalid("expiry cannot be extended; regular session renewal is not supported")
+	}
+	if terminal(oldState) && oldExpiry.IsZero() && !newExpiry.IsZero() {
+		return invalid("terminal session expiry cannot be set after terminal transition")
+	}
+
+	// WaitingForScheduledTime and Approved are lease-bearing states. A malformed
+	// zero-expiry lease may remain non-active, but it must not be changed into an
+	// active/scheduled lease by a later status write.
+	if activeOrScheduled(oldState) && oldExpiry.IsZero() && activeOrScheduled(newState) && !newExpiry.IsZero() {
+		return invalid("an active or scheduled session with a missing expiry cannot be assigned a future expiry")
+	}
+	if oldState == SessionStateWaitingForScheduledTime && newState == SessionStateApproved && oldExpiry.IsZero() {
+		return invalid("a scheduled session with a missing expiry cannot be activated")
+	}
+
+	// Once the old lease has reached its boundary, no update may move it back to
+	// an access-bearing state, even if the new timestamp is equal or shorter.
+	if activeOrScheduled(oldState) && !oldExpiry.IsZero() && !decisionNow.Before(oldExpiry.Time) && activeOrScheduled(newState) && oldState != newState {
+		return invalid("an expired session cannot be activated or rescheduled")
 	}
 	return nil
 }
