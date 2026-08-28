@@ -95,8 +95,9 @@ validate_recording_context
 validate_approved_action "$action"
 validate_approved_network_request "$target_node" "$interface" "$action" "$neighbor_address" "$bridge_name" "$entry_mac" "$vlan" "$confirmation"
 prepare_evidence_dir "$evidence_dir"
-trap 'release_operation_lock || true' EXIT
 acquire_operation_lock "$evidence_dir" "$APPROVED_NETWORK_REQUEST_DIGEST"
+trap 'cleanup_evidence_temporary_candidates || true; release_operation_lock || true' EXIT
+cleanup_evidence_temporary_candidates || die "cannot clean stale evidence temporary files"
 
 bundle=$(new_bundle "$evidence_dir" network-repair)
 write_metadata "$bundle/metadata" network-repair "$target_node" "$interface" "$action"

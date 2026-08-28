@@ -244,9 +244,14 @@ acquire_operation_lock() {
 	directory=$1
 	tuple_digest=$2
 	assert_safe_evidence_dir "$directory"
+	# The lock belongs to the mounted evidence volume, not to an optional
+	# one-level evidence child.  This keeps all allowed EVIDENCE_DIR values in
+	# one serialization domain.
+	lock_directory=/evidence
+	assert_safe_evidence_dir "$lock_directory"
 	validate_sha256 "operation tuple digest" "$tuple_digest"
 	command -v flock >/dev/null 2>&1 || die "flock utility is required for crash-safe operation exclusivity"
-	lock_candidate="$directory/$operation_lock_name"
+	lock_candidate="$lock_directory/$operation_lock_name"
 	[ ! -L "$lock_candidate" ] || die "operation lock may not be a symlink"
 	if [ ! -e "$lock_candidate" ]; then
 		(umask 077; : >"$lock_candidate") || die "cannot create operation lock"
@@ -276,10 +281,23 @@ acquire_operation_lock() {
 		>&9 || die "cannot record operation lock owner"
 }
 
+cleanup_evidence_temporary_candidates() {
+	# This function is called only while the root evidence-volume flock is held.
+	# A killed operation cannot run its EXIT trap, so the next lock holder removes
+	# only image-created temporary names owned by the helper.  Candidates live at
+	# the volume root or in one allowed child, never inside a committed bundle.
+	[ -d /evidence ] && [ ! -L /evidence ] || return 1
+	owner_uid=$(id -u) || return 1
+	find /evidence -xdev -mindepth 1 -maxdepth 2 -uid "$owner_uid" \
+		\( -name '.capture.*' -o -name '.capture-status.*' -o -name '.capture-fifo.*' -o -name '.capture-quota.*' \
+		-o -name '.evidence-write.*' -o -name '.evidence-append.*' \) \
+		\( -type f -o -type p \) -exec rm -f -- {} \;
+}
+
 release_operation_lock() {
 	if [ -n "${operation_lock:-}" ]; then
 		[ -n "${EVIDENCE_DIR:-}" ] && [ -d "$EVIDENCE_DIR" ] && [ ! -L "$EVIDENCE_DIR" ] || return 1
-		case "$operation_lock" in "$EVIDENCE_DIR/$operation_lock_name") ;; *) return 1 ;; esac
+		case "$operation_lock" in "/evidence/$operation_lock_name") ;; *) return 1 ;; esac
 		grep -Fqx "operation_id=$operation_id" /proc/self/fd/9 || return 1
 		grep -Fqx "recording_id=$recording_id" /proc/self/fd/9 || return 1
 		grep -Fqx "tuple_sha256=$operation_lock_tuple_digest" /proc/self/fd/9 || return 1
@@ -362,7 +380,10 @@ commit_evidence_file() {
 	evidence_output=$2
 	assert_safe_evidence_output "$evidence_output"
 	[ -f "$evidence_candidate" ] && [ ! -L "$evidence_candidate" ] || die "evidence candidate is not a regular file"
-	case "$evidence_candidate" in "${EVIDENCE_DIR:?evidence directory is not initialized}"/.evidence-*|"$EVIDENCE_DIR"/.capture.*|"$EVIDENCE_DIR"/.capture-*) ;; *) die "unsafe evidence candidate" ;; esac
+	case "$evidence_candidate" in
+		"${EVIDENCE_DIR:?evidence directory is not initialized}"/.evidence-write.*|"$EVIDENCE_DIR"/.evidence-append.*|"$EVIDENCE_DIR"/.capture.*|"$EVIDENCE_DIR"/.capture-status.*|"$EVIDENCE_DIR"/.capture-fifo.*|"$EVIDENCE_DIR"/.capture-quota.*) ;;
+		*) die "unsafe evidence candidate" ;;
+	esac
 
 	current_kib=$(evidence_disk_kib "$bundle")
 	output_kib=0

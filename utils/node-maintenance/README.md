@@ -62,9 +62,12 @@ and 384 KiB per-bundle bounds. Captures, metadata, and JSONL event updates are
 prepared outside the bundle and atomically renamed only after their final
 disk-usage quota is accepted; a full bundle fails without a partial event or
 metadata write. A process-held Linux `flock` on the persistent
-evidence-volume lock file serializes those quota calculations and commits and
-permits one operation at a time; the controller must not share that evidence
-volume with an uncoordinated writer. The owner record
+evidence-volume-root lock file serializes those quota calculations and commits,
+including operations using different safe child directories, and permits one
+operation at a time; the controller must not share that evidence volume with
+an uncoordinated writer. After acquiring the root lock, the helper removes only
+its owned stale `.capture-*`/`.evidence-*` candidates from the root or one safe
+child, recovering files left by a killed container. The owner record
 contains the operation, recording, approval, and SHA-256 digest of the exact
 approved tuple. Its timestamp and PID are audit context only, never liveness
 signals. The kernel releases exclusivity when the holder exits, is killed, or

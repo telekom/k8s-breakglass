@@ -57,10 +57,13 @@ of target node, interface, action, neighbor, bridge, MAC, VLAN, and
 confirmation; the helper compares it before any evidence or mutation and binds
 the evidence lock record to its SHA-256 digest. It must
 pin the image by digest and enforce one active operation per node. The helper
-also holds a kernel `flock` on the shared evidence volume for its process
-lifetime, but that cannot coordinate distinct volumes. No timestamp reclaims a
-live holder. Container death releases the lock immediately; its regular lock
-file persists and must not be deleted or replaced while operations can run.
+also holds a kernel `flock` on the shared evidence-volume-root lock for its
+process lifetime, including when a safe child evidence directory is selected;
+that cannot coordinate distinct volumes. No timestamp reclaims a live holder.
+Container death releases the lock immediately; its regular lock file persists
+and must not be deleted or replaced while operations can run. After taking that
+lock, the helper recovers only its owned stale temporary candidate files from
+the volume root or selected safe child.
 The tuple is separately bounded at 1 KiB so Kubernetes-valid 253-byte node
 names remain usable; this bound is not a caller input. Linux interface and
 bridge names are limited to 15 bytes, so the largest public network-repair

@@ -24,8 +24,9 @@ operation, recording, approval, and approved-action bindings. The node comes
 from Downward API `spec.nodeName`; hostname is not a trust input. Confirmation
 is not authorization, and approval for one operation cannot authorize another.
 Network repair binds the complete approved tuple to a SHA-256 digest in a
-process-held evidence-volume `flock` record. Kernel release on process death,
-not a timestamp or PID, controls liveness.
+process-held evidence-volume-root `flock` record. Kernel release on process
+death, not a timestamp or PID, controls liveness. The lock holder also recovers
+owned stale evidence candidates left by a killed operation.
 
 Built-in runbooks remain under
 `/usr/share/breakglass/runbooks/upstream/node-maintenance/`. A downstream

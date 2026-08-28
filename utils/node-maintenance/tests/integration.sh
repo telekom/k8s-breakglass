@@ -506,6 +506,260 @@ assert_container_security "$container_name" none
 destroy_fixture
 pass 'near-quota event append succeeds through the atomic quota-checked path'
 
+new_fixture stale-temporary-recovery
+set +e
+# Seed only helper-shaped files, including a FIFO, in both allowed evidence
+# locations. A fresh operation must acquire the volume-root lock first and then
+# recover those stale candidates without touching the committed lock record.
+# shellcheck disable=SC2016
+"$docker_bin" run \
+	--name "$container_name" --user 0 --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" \
+	--entrypoint /bin/sh "$image" -c '
+		set -eu
+		. /usr/local/libexec/node-maintenance/common.sh
+		mkdir -m 0700 /evidence/child
+		printf orphan >/evidence/.capture.orphan
+		printf orphan >/evidence/child/.evidence-write.orphan
+		mkfifo -m 0600 /evidence/child/.capture-fifo.orphan
+		EVIDENCE_DIR=/evidence/child
+		operation_id=stale-operation
+		recording_id=stale-recording
+		operation_digest=$(sha256_text stale-operation)
+		prepare_evidence_dir "$EVIDENCE_DIR"
+		acquire_operation_lock "$EVIDENCE_DIR" "$operation_digest"
+		cleanup_evidence_temporary_candidates
+		test ! -e /evidence/.capture.orphan
+		test ! -e /evidence/child/.evidence-write.orphan
+		test ! -e /evidence/child/.capture-fifo.orphan
+		test -f /evidence/.node-maintenance-operation.lock
+		release_operation_lock
+	' >"$fixture_dir/output" 2>&1
+stale_status=$?
+set -e
+cat "$fixture_dir/output"
+assert_container_security "$container_name" none
+[ "$stale_status" -eq 0 ] || fail 'stale helper candidates were not recovered under the volume-root lock'
+destroy_fixture
+pass 'stale evidence candidates are recovered across safe child directories without deleting the lock record'
+
+new_fixture final-metadata-quota
+set +e
+# Metadata replacement must use the same final-size check as events: a full
+# bundle keeps the prior complete metadata file and removes its candidate.
+# shellcheck disable=SC2016
+"$docker_bin" run \
+	--name "$container_name" --user 0 --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" \
+	--entrypoint /bin/sh "$image" -c '
+		set -eu
+		. /usr/local/libexec/node-maintenance/common.sh
+		EVIDENCE_DIR=/evidence
+		bundle=/evidence/quota
+		mkdir -m 0700 "$bundle"
+		operation_id=quota-operation
+		recording_id=quota-recording
+		tuple_digest=$(sha256_text quota-operation)
+		acquire_operation_lock /evidence "$tuple_digest"
+		trap '\''cleanup_evidence_temporary_candidates || true; release_operation_lock || true'\'' EXIT
+		printf seed >"$bundle/metadata"
+		head -c 4050 /dev/zero | tr "\\000" p >>"$bundle/metadata"
+		maximum_kib=$((evidence_max_bytes / 1024))
+		: >"$bundle/fill"
+		while [ "$(du -sk "$bundle" | awk "NR == 1 { print \\$1 }")" -lt "$maximum_kib" ]; do
+			dd if=/dev/zero of="$bundle/fill" bs=1024 count=1 oflag=append conv=notrunc status=none
+		done
+		before=$(sha256sum "$bundle/metadata")
+		set +e
+		(printf "final=true\\n" | append_evidence "$bundle/metadata")
+		status=$?
+		set -e
+		[ "$status" -eq 2 ]
+		after=$(sha256sum "$bundle/metadata")
+		[ "$before" = "$after" ]
+		[ "$(du -sk "$bundle" | awk "NR == 1 { print \\$1 }")" -eq "$maximum_kib" ]
+		test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)"
+	' >"$fixture_dir/output" 2>&1
+metadata_quota_status=$?
+set -e
+cat "$fixture_dir/output"
+assert_container_security "$container_name" none
+[ "$metadata_quota_status" -eq 0 ] || fail 'full bundle corrupted metadata or leaked its replacement candidate'
+destroy_fixture
+pass 'full bundle rejects metadata replacement atomically without corruption or leakage'
+
+new_fixture capture-existing-destination
+set +e
+# A full bundle must reject a large replacement while preserving the existing
+# destination; the capture path is intentionally exercised, not just its file
+# existence.
+# shellcheck disable=SC2016
+"$docker_bin" run \
+	--name "$container_name" --user 0 --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" \
+	--entrypoint /bin/sh "$image" -c '
+		set -eu
+		. /usr/local/libexec/node-maintenance/common.sh
+		EVIDENCE_DIR=/evidence
+		bundle=/evidence/quota
+		mkdir -m 0700 "$bundle"
+		operation_id=quota-operation
+		recording_id=quota-recording
+		tuple_digest=$(sha256_text quota-operation)
+		acquire_operation_lock /evidence "$tuple_digest"
+		trap '\''cleanup_evidence_temporary_candidates || true; release_operation_lock || true'\'' EXIT
+		printf old-destination >"$bundle/output"
+		maximum_kib=$((evidence_max_bytes / 1024))
+		: >"$bundle/fill"
+		while [ "$(du -sk "$bundle" | awk "NR == 1 { print \\$1 }")" -lt "$maximum_kib" ]; do
+			dd if=/dev/zero of="$bundle/fill" bs=1024 count=1 oflag=append conv=notrunc status=none
+		done
+		before=$(sha256sum "$bundle/output")
+		set +e
+		(capture "$bundle/output" awk '\''BEGIN { for (i = 0; i < 40000; i++) printf "x" }'\'')
+		status=$?
+		set -e
+		[ "$status" -eq 2 ]
+		after=$(sha256sum "$bundle/output")
+		[ "$before" = "$after" ]
+		test "$(cat "$bundle/output")" = old-destination
+		test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)"
+	' >"$fixture_dir/output" 2>&1
+capture_full_status=$?
+set -e
+cat "$fixture_dir/output"
+assert_container_security "$container_name" none
+[ "$capture_full_status" -eq 0 ] || fail 'full bundle corrupted an existing capture destination or leaked a candidate'
+destroy_fixture
+pass 'full bundle preserves an existing capture destination after atomic rejection'
+
+new_fixture capture-near-destination
+set +e
+# With one filesystem-block of logical headroom, replacing an existing capture
+# succeeds and the committed content is the new bounded result.
+# shellcheck disable=SC2016
+"$docker_bin" run \
+	--name "$container_name" --user 0 --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" \
+	--entrypoint /bin/sh "$image" -c '
+		set -eu
+		. /usr/local/libexec/node-maintenance/common.sh
+		EVIDENCE_DIR=/evidence
+		bundle=/evidence/quota
+		mkdir -m 0700 "$bundle"
+		operation_id=quota-operation
+		recording_id=quota-recording
+		tuple_digest=$(sha256_text quota-operation)
+		acquire_operation_lock /evidence "$tuple_digest"
+		trap '\''cleanup_evidence_temporary_candidates || true; release_operation_lock || true'\'' EXIT
+		printf old-destination >"$bundle/output"
+		maximum_kib=$((evidence_max_bytes / 1024))
+		target_kib=$((maximum_kib - 4))
+		: >"$bundle/fill"
+		while [ "$(du -sk "$bundle" | awk "NR == 1 { print \\$1 }")" -lt "$target_kib" ]; do
+			dd if=/dev/zero of="$bundle/fill" bs=1024 count=1 oflag=append conv=notrunc status=none
+		done
+		capture "$bundle/output" awk '\''BEGIN { print "replacement" }'\''
+		grep -q "^replacement" "$bundle/output"
+		grep -q "exit_status=0" "$bundle/output"
+		[ "$(du -sk "$bundle" | awk "NR == 1 { print \\$1 }")" -le "$maximum_kib" ]
+		test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)"
+	' >"$fixture_dir/output" 2>&1
+capture_near_status=$?
+set -e
+cat "$fixture_dir/output"
+assert_container_security "$container_name" none
+[ "$capture_near_status" -eq 0 ] || fail 'near-quota capture replacement did not commit within the final quota'
+destroy_fixture
+pass 'near-quota capture replacement commits atomically within the evidence quota'
+
+new_fixture injected-evidence-failures
+set +e
+# Inject setup and trailer failures after lock acquisition. The production EXIT
+# trap must remove the partially-created candidates before the container exits.
+# shellcheck disable=SC2016
+"$docker_bin" run \
+	--name "$container_name" --user 0 --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" \
+	--entrypoint /bin/sh "$image" -c '
+		set -eu
+		. /usr/local/libexec/node-maintenance/common.sh
+		EVIDENCE_DIR=/evidence
+		operation_id=quota-operation
+		recording_id=quota-recording
+		bundle=/evidence/quota
+		mkdir -m 0700 "$bundle"
+		tuple_digest=$(sha256_text quota-operation)
+		acquire_operation_lock /evidence "$tuple_digest"
+		trap '\''cleanup_evidence_temporary_candidates || true; release_operation_lock || true'\'' EXIT
+		mktemp() {
+			case "$1" in *capture-status*) return 1 ;; esac
+			command mktemp "$@"
+		}
+		capture "$bundle/setup" awk '\''BEGIN { print "setup" }'\''
+	' >"$fixture_dir/setup-output" 2>&1
+setup_status=$?
+set -e
+cat "$fixture_dir/setup-output"
+assert_container_security "$container_name" none
+[ "$setup_status" -eq 2 ] || fail 'injected capture setup failure returned an unexpected status'
+# shellcheck disable=SC2016
+if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" -c \
+	'test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)' ; then
+	:
+else
+	fail 'injected capture setup failure leaked a temporary candidate'
+fi
+"$docker_bin" rm "$container_name" >/dev/null || fail 'could not remove setup-failure fixture container'
+container_name=
+set +e
+# shellcheck disable=SC2016
+"$docker_bin" run \
+	--name "${prefix}-injected-trailer" --user 0 --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" \
+	--entrypoint /bin/sh "$image" -c '
+		set -eu
+		. /usr/local/libexec/node-maintenance/common.sh
+		EVIDENCE_DIR=/evidence
+		operation_id=quota-operation
+		recording_id=quota-recording
+		bundle=/evidence/quota
+		mkdir -m 0700 "$bundle"
+		tuple_digest=$(sha256_text quota-operation)
+		acquire_operation_lock /evidence "$tuple_digest"
+		trap '\''cleanup_evidence_temporary_candidates || true; release_operation_lock || true'\'' EXIT
+		printf() {
+			case "$1" in *exit_status=*) return 1 ;; esac
+			command printf "$@"
+		}
+		capture "$bundle/trailer" awk '\''BEGIN { print "trailer" }'\''
+	' >"$fixture_dir/trailer-output" 2>&1
+trailer_status=$?
+set -e
+cat "$fixture_dir/trailer-output"
+container_name="${prefix}-injected-trailer"
+assert_container_security "$container_name" none
+[ "$trailer_status" -eq 2 ] || fail 'injected capture trailer failure returned an unexpected status'
+# shellcheck disable=SC2016
+if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" -c \
+	'test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)' ; then
+	:
+else
+	fail 'injected capture trailer failure leaked a temporary candidate'
+fi
+destroy_fixture
+pass 'injected capture setup and trailer failures clean partial candidates'
+
 run_command preflight 0 none read-only node-recovery --target-node node-a --interface lo \
 	--evidence-dir /evidence --confirm NODE-RECOVERY-PREFLIGHT
 preflight_bundle=$(bundle_from_output "$fixture_dir/output")
@@ -834,7 +1088,7 @@ holder_digest=$(printf '%s' "$holder_tuple" | sha256sum | awk '{print $1}')
 	--network none --read-only --cap-drop ALL \
 	--security-opt no-new-privileges --security-opt seccomp=builtin \
 	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" \
-	-c '. /usr/local/libexec/node-maintenance/common.sh; EVIDENCE_DIR=/evidence; operation_id=$BREAKGLASS_OPERATION_ID; recording_id=$BREAKGLASS_RECORDING_ID; approval_id=$BREAKGLASS_APPROVAL_ID; acquire_operation_lock /evidence "$BREAKGLASS_TUPLE_DIGEST"; : >/evidence/holder-ready; while :; do sleep 60; done' \
+	-c '. /usr/local/libexec/node-maintenance/common.sh; mkdir -m 0700 /evidence/holder; EVIDENCE_DIR=/evidence/holder; operation_id=$BREAKGLASS_OPERATION_ID; recording_id=$BREAKGLASS_RECORDING_ID; approval_id=$BREAKGLASS_APPROVAL_ID; acquire_operation_lock /evidence/holder "$BREAKGLASS_TUPLE_DIGEST"; : >/evidence/holder-ready; while :; do sleep 60; done' \
 	>/dev/null || fail 'could not start flock holder'
 holder_ready=false
 attempt=0
