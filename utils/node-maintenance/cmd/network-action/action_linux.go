@@ -327,9 +327,9 @@ func restartAutonegotiation(interfaceName string) error {
 		_ = syscall.Close(socket)
 	}()
 	value := ethtoolValue{command: ethtoolNwayReset}
-	request := ifreqData{data: uintptr(unsafe.Pointer(&value))}
+	request := ifreqData{data: uintptr(unsafe.Pointer(&value))} // #nosec G103 -- the ethtool ifreq ABI requires a pointer to the command payload, which remains live through the ioctl.
 	copy(request.name[:], interfaceName)
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(socket), siocEthtool, uintptr(unsafe.Pointer(&request)))
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(socket), siocEthtool, uintptr(unsafe.Pointer(&request))) // #nosec G103 -- SYS_IOCTL requires the address of the ABI-shaped ifreq structure.
 	runtime.KeepAlive(value)
 	if errno != 0 {
 		return errno
