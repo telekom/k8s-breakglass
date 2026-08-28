@@ -105,7 +105,8 @@ write_fixture "$mock_bin/vi" $'#!/usr/bin/env bash\nprintf "%s\\n" "test body" >
 # shellcheck disable=SC2016
 write_fixture "$mock_bin/gh" $'#!/usr/bin/env bash\nset -euo pipefail\ncase "${1-} ${2-}" in\n  "auth status") exit 0 ;;\n  "pr create")\n    printf "%s\\n" create >>"$DRAFT_LOG"\n    printf "%s\\n" "https://github.com/telekom/k8s-breakglass/pull/999"\n    exit 0\n    ;;\n  "pr view")\n    printf "%s\\n" "{\\"isDraft\\":true,\\"headRefName\\":\\"codex/network-debug\\",\\"headRefOid\\":\\"source-head\\",\\"headRepository\\":{\\"nameWithOwner\\":\\"telekom/k8s-breakglass\\"},\\"baseRefName\\":\\"main\\",\\"baseRefOid\\":\\"base-head\\",\\"baseRepository\\":{\\"nameWithOwner\\":\\"telekom/k8s-breakglass\\"}}"\n    exit 0\n    ;;\n  "pr edit")\n    printf "%s\\n" edit >>"$DRAFT_LOG"\n    exit 0\n    ;;\nesac\nexit 2\n'
 write_fixture "$mock_bin/git" $'#!/usr/bin/env bash\nset -euo pipefail\ncase "${1-}" in\n  check-ref-format) exit 0 ;;\n  branch) printf "%s\\n" codex/network-debug ; exit 0 ;;\n  config) exit 1 ;;\n  remote)\n    if [ "$#" = 1 ]; then printf "%s\\n" origin; exit 0; fi\n    if [ "${2-}" = get-url ]; then\n      printf "%s\\n" https://github.com/telekom/k8s-breakglass.git\n      exit 0\n    fi\n    ;;\n  fetch) exit 0 ;;\n  rev-parse)\n    for arg in "$@"; do\n      case "$arg" in\n        *origin/main*) printf "%s\\n" base-head; exit 0 ;;\n        *origin/codex/network-debug*|HEAD) printf "%s\\n" source-head; exit 0 ;;\n      esac\n    done\n    ;;\nesac\nexit 2\n'
-chmod +x "$mock_bin/vi" "$mock_bin/gh" "$mock_bin/git"
+write_fixture "$mock_bin/mktemp" $'#!/usr/bin/env bash\nset -euo pipefail\nresult="$(/usr/bin/mktemp "$@")"\nprintf "%s\\n" "$result"\nif [ -n "${MKTEMP_LOG-}" ]; then\n  printf "%s\\n" "$result" >>"$MKTEMP_LOG"\nfi\n'
+chmod +x "$mock_bin/vi" "$mock_bin/gh" "$mock_bin/git" "$mock_bin/mktemp"
 draft_snippet="$fixture_root/draft-snippet.sh"
 awk '
   /^```bash$/ { in_block = 1; block = ""; next }
@@ -122,11 +123,40 @@ sed -e 's|^base_repo=.*$|base_repo=telekom/k8s-breakglass|' \
   "$draft_snippet" >"$draft_snippet.rendered"
 mv "$draft_snippet.rendered" "$draft_snippet"
 draft_log="$fixture_root/draft-lifecycle.log"
-DRAFT_LOG="$draft_log" PATH="$mock_bin:$PATH" /bin/bash "$draft_snippet" ||
+success_mktemp_log="$fixture_root/success-mktemp.log"
+DRAFT_LOG="$draft_log" MKTEMP_LOG="$success_mktemp_log" PATH="$mock_bin:$PATH" /bin/bash "$draft_snippet" ||
   fail "actual draft lifecycle prompt block failed under its mocked API contract"
 test "$(sed -n '1p' "$draft_log")" = create || fail "draft lifecycle did not create the draft"
 test "$(sed -n '2p' "$draft_log")" = edit ||
   fail "draft lifecycle did not verify before editing the body"
+success_body_file="$(sed -n '1p' "$success_mktemp_log")"
+success_gate_root="$(sed -n '2p' "$success_mktemp_log")"
+test ! -e "$success_body_file" || fail "successful draft lifecycle did not clean up its body file"
+test ! -e "$success_gate_root" || fail "successful draft lifecycle did not clean up its gate directory"
+
+# A create response must not authorize editing when the subsequent view is
+# bound to a different head/base. This runs the same extracted prompt block,
+# and verifies both fail-closed behavior and EXIT-trap cleanup.
+wrong_bin="$fixture_root/wrong-bin"
+mkdir -p "$wrong_bin"
+# The generated mock intentionally contains literal shell variables.
+# shellcheck disable=SC2016
+write_fixture "$wrong_bin/gh" $'#!/usr/bin/env bash\nset -euo pipefail\ncase "${1-} ${2-}" in\n  "auth status") exit 0 ;;\n  "pr create")\n    printf "%s\\n" create >>"$DRAFT_LOG"\n    printf "%s\\n" "https://github.com/telekom/k8s-breakglass/pull/999"\n    exit 0\n    ;;\n  "pr view")\n    printf "%s\\n" "{\\"isDraft\\":true,\\"headRefName\\":\\"codex/network-debug\\",\\"headRefOid\\":\\"attacker-head\\",\\"headRepository\\":{\\"nameWithOwner\\":\\"telekom/k8s-breakglass\\"},\\"baseRefName\\":\\"main\\",\\"baseRefOid\\":\\"attacker-base\\",\\"baseRepository\\":{\\"nameWithOwner\\":\\"telekom/k8s-breakglass\\"}}"\n    exit 0\n    ;;\n  "pr edit")\n    printf "%s\\n" edit >>"$DRAFT_LOG"\n    exit 0\n    ;;\nesac\nexit 2\n'
+chmod +x "$wrong_bin/gh"
+wrong_draft_log="$fixture_root/wrong-draft-lifecycle.log"
+wrong_mktemp_log="$fixture_root/wrong-mktemp.log"
+if DRAFT_LOG="$wrong_draft_log" MKTEMP_LOG="$wrong_mktemp_log" \
+  PATH="$wrong_bin:$mock_bin:$PATH" /bin/bash "$draft_snippet"; then
+  fail "actual draft lifecycle accepted a mismatched created PR"
+fi
+test "$(sed -n '1p' "$wrong_draft_log")" = create ||
+  fail "mismatched draft lifecycle did not create the draft before checking it"
+test "$(wc -l <"$wrong_draft_log" | tr -d ' ')" = 1 ||
+  fail "mismatched draft lifecycle attempted an edit after failed verification"
+wrong_body_file="$(sed -n '1p' "$wrong_mktemp_log")"
+wrong_gate_root="$(sed -n '2p' "$wrong_mktemp_log")"
+test ! -e "$wrong_body_file" || fail "failed draft lifecycle did not clean up its body file"
+test ! -e "$wrong_gate_root" || fail "failed draft lifecycle did not clean up its gate directory"
 
 # The evidence manifest validates raw HTTP responses but projects away only
 # response-specific transport metadata. Equivalent GitHub responses must
