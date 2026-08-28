@@ -55,6 +55,12 @@ validate_recovery_file() {
 	[ "$asset_bytes" -le "$max_bytes" ] || die "$label exceeds its fixed size limit"
 }
 
+canonical_sha256() {
+	LC_ALL=C tr '[:upper:]' '[:lower:]' <<EOF
+$1
+EOF
+}
+
 verify_digest() {
 	label=$1
 	path=$2
@@ -78,6 +84,11 @@ verify_digest() {
 	esac
 	if [ "${#actual}" -ne 64 ]; then
 		printf '%s_digest_status=verification-failed\n%s_verification_error=invalid-sha256-output\n' \
+			"$label" "$label" | append_evidence "$bundle/metadata"
+		return 2
+	fi
+	if ! actual=$(canonical_sha256 "$actual"); then
+		printf '%s_digest_status=verification-failed\n%s_verification_error=normalization-failed\n' \
 			"$label" "$label" | append_evidence "$bundle/metadata"
 		return 2
 	fi
@@ -148,6 +159,9 @@ validate_value "BREAKGLASS_KEXEC_PROFILE" "$provider_profile"
 validate_sha256 "BREAKGLASS_KEXEC_KERNEL_SHA256" "$kernel_sha256"
 validate_sha256 "BREAKGLASS_KEXEC_INITRD_SHA256" "$initrd_sha256"
 validate_sha256 "BREAKGLASS_KEXEC_CMDLINE_SHA256" "$cmdline_sha256"
+kernel_sha256=$(canonical_sha256 "$kernel_sha256") || die "cannot normalize BREAKGLASS_KEXEC_KERNEL_SHA256"
+initrd_sha256=$(canonical_sha256 "$initrd_sha256") || die "cannot normalize BREAKGLASS_KEXEC_INITRD_SHA256"
+cmdline_sha256=$(canonical_sha256 "$cmdline_sha256") || die "cannot normalize BREAKGLASS_KEXEC_CMDLINE_SHA256"
 validate_recovery_mount
 validate_recovery_file kernel "$kernel_path" "$kernel_max_bytes"
 kernel_bytes=$asset_bytes

@@ -24,6 +24,11 @@ immutable workload must provide all of these values, not user input:
   `BREAKGLASS_KEXEC_KERNEL_SHA256`, `BREAKGLASS_KEXEC_INITRD_SHA256`, and
   `BREAKGLASS_KEXEC_CMDLINE_SHA256`.
 
+Each digest must contain exactly 64 hexadecimal characters. Uppercase and
+lowercase hexadecimal values are equivalent: the helper canonicalizes them to
+lowercase before it binds the recovery-validation operation and records the
+evidence.
+
 Mount the provider-owned bundle as a distinct read-only mount at `/recovery`.
 Its only consumed paths are `/recovery/kernel`, `/recovery/initrd`, and
 `/recovery/cmdline`; symlinks, empty files, writable mounts, caller-selected

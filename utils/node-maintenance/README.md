@@ -27,6 +27,11 @@ caller-selected shell, command, command argument,
 path, recovery image, route, or sysctl interface. The image has no kexec
 executable, package manager, compiler, packet capture tool, or port scanner.
 
+The former `flush-neighbors` operation is intentionally unavailable. Use the
+intent-specific `network-repair --action neighbor-replace` for one approved
+neighbor tuple, `network-repair --action bridge-fdb-replace` for one approved
+FDB tuple, and `node-recovery` when evidence is required without mutation.
+
 ## Controller and approval contract
 
 Every invocation requires `BREAKGLASS_NODE_NAME`, `BREAKGLASS_OPERATION_ID`,

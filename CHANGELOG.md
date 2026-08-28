@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   node-level operation lock, and cleanup/expiry integration define the
   supported operational boundary.
 
+### Removed
+
+- **Broad `flush-neighbors` network action (breaking)**: Removed the prior
+  broad neighbor-flush interface. It is superseded by independently approved,
+  intent-specific `neighbor-replace` for one exact neighbor tuple,
+  `bridge-fdb-replace` for one exact FDB tuple, and read-only `node-recovery`
+  evidence when mutation is not required.
+
 ### Fixed
 
 - **Diagnostic collector traversal bound**: Crashdump enumeration now uses

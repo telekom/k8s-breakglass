@@ -1521,6 +1521,29 @@ assert_volume_path_absent fake-kexec-executed
 destroy_fixture
 pass 'fixed provider recovery inputs are validated without evaluating cmdline or invoking an executable'
 
+uppercase_kernel_digest=$(printf '%s' "$kernel_digest" | LC_ALL=C tr '[:lower:]' '[:upper:]')
+uppercase_initrd_digest=$(printf '%s' "$initrd_digest" | LC_ALL=C tr '[:lower:]' '[:upper:]')
+uppercase_cmdline_digest=$(printf '%s' "$cmdline_digest" | LC_ALL=C tr '[:lower:]' '[:upper:]')
+[ "$uppercase_kernel_digest$uppercase_initrd_digest$uppercase_cmdline_digest" \
+	!= "$kernel_digest$initrd_digest$cmdline_digest" ] \
+	|| fail 'uppercase digest fixture did not exercise hexadecimal case normalization'
+run_kexec_validation kexec-uppercase-digests 0 readonly kexec-recovery-validate rescue-a \
+	"$uppercase_kernel_digest" "$uppercase_initrd_digest" "$uppercase_cmdline_digest" \
+	kexec-recovery-validate --target-node node-a --recovery-profile rescue-a \
+	--evidence-dir /evidence --confirm KEXEC-RECOVERY-VALIDATE
+uppercase_bundle=$(bundle_from_output "$fixture_dir/output")
+uppercase_host_bundle=$(copy_bundle "$fixture_dir/output" "$uppercase_bundle")
+assert_kexec_outcome "$uppercase_host_bundle/validation-result.txt" provider-inputs-verified false true
+assert_metadata_value "$uppercase_host_bundle/metadata" kernel_expected_sha256 "$kernel_digest"
+assert_metadata_value "$uppercase_host_bundle/metadata" initrd_expected_sha256 "$initrd_digest"
+assert_metadata_value "$uppercase_host_bundle/metadata" cmdline_expected_sha256 "$cmdline_digest"
+assert_metadata_value "$uppercase_host_bundle/metadata" kernel_digest_status verified
+assert_metadata_value "$uppercase_host_bundle/metadata" initrd_digest_status verified
+assert_metadata_value "$uppercase_host_bundle/metadata" cmdline_digest_status verified
+assert_volume_path_absent fake-kexec-executed
+destroy_fixture
+pass 'uppercase controller digests canonicalize to the verified recovery inputs'
+
 bad_kernel_digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 run_kexec_validation guard-kexec-digest-mismatch 1 readonly kexec-recovery-validate rescue-a \
 	"$bad_kernel_digest" "$initrd_digest" "$cmdline_digest" \
