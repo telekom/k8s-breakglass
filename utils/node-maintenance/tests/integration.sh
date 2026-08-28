@@ -586,30 +586,52 @@ set +e
 		# the current metadata, avoiding a filesystem-block-size assumption.
 		payload_file=/evidence/append-payload
 		: >"$payload_file"
-		output_kib=$(du -sk "$bundle/metadata" | awk "NR == 1 { print \\$1 }")
+		output_kib=$(du -sk "$bundle/metadata" | awk "NR == 1 { print \$1 }")
 		measure_candidate="$EVIDENCE_DIR/.evidence-$operation_artifact_id-append.measure"
 		while :; do
 			rm -f "$measure_candidate"
 			cat "$bundle/metadata" "$payload_file" >"$measure_candidate"
-			candidate_kib=$(du -sk "$measure_candidate" | awk "NR == 1 { print \\$1 }")
+			candidate_kib=$(du -sk "$measure_candidate" | awk "NR == 1 { print \$1 }")
 			[ "$candidate_kib" -gt "$output_kib" ] && break
 			printf x >>"$payload_file"
 		done
 		rm -f "$measure_candidate"
 		maximum_kib=$((evidence_max_bytes / 1024))
 		: >"$bundle/fill"
-		while [ "$(du -sk "$bundle" | awk "NR == 1 { print \\$1 }")" -lt "$maximum_kib" ]; do
+		while [ "$(du -sk "$bundle" | awk "NR == 1 { print \$1 }")" -lt "$maximum_kib" ]; do
 			dd if=/dev/zero of="$bundle/fill" bs=1024 count=1 oflag=append conv=notrunc status=none
 		done
 		before=$(sha256sum "$bundle/metadata")
+		# append_evidence is deliberately run as the terminal stage of a pipeline.
+		# Use an exec shell for the expected fatal error: a shell function on the
+		# right side can run in the calling shell and invoke its EXIT trap. The
+		# external shell has no caller trap, while the assertion below proves the
+		# parent still holds its flock after the failed atomic replacement.
 		set +e
-		cat "$payload_file" | append_evidence "$bundle/metadata"
+		helper=/evidence/append-from-pipe
+		cat >"$helper" <<EOF
+#!/bin/sh
+set -eu
+. /usr/local/libexec/node-maintenance/common.sh
+EVIDENCE_DIR=/evidence
+bundle=/evidence/quota
+operation_id=quota-operation
+recording_id=quota-recording
+operation_artifact_id=$(sha256_text "$operation_id")
+append_evidence "\$1"
+EOF
+		chmod 0700 "$helper"
+		cat "$payload_file" | "$helper" "$bundle/metadata"
 		status=$?
-		set -e
 		[ "$status" -eq 2 ]
+		rm -f "$helper"
+		flock -n /evidence/.node-maintenance-operation.lock true
+		lock_status=$?
+		set -e
+		[ "$lock_status" -ne 0 ]
 		after=$(sha256sum "$bundle/metadata")
 		[ "$before" = "$after" ]
-		[ "$(du -sk "$bundle" | awk "NR == 1 { print \\$1 }")" -eq "$maximum_kib" ]
+		[ "$(du -sk "$bundle" | awk "NR == 1 { print \$1 }")" -eq "$maximum_kib" ]
 		rm -f "$payload_file"
 		test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)"
 	' >"$fixture_dir/output" 2>&1
@@ -645,7 +667,7 @@ set +e
 		printf old-destination >"$bundle/output"
 		maximum_kib=$((evidence_max_bytes / 1024))
 		: >"$bundle/fill"
-		while [ "$(du -sk "$bundle" | awk "NR == 1 { print \\$1 }")" -lt "$maximum_kib" ]; do
+		while [ "$(du -sk "$bundle" | awk "NR == 1 { print \$1 }")" -lt "$maximum_kib" ]; do
 			dd if=/dev/zero of="$bundle/fill" bs=1024 count=1 oflag=append conv=notrunc status=none
 		done
 		before=$(sha256sum "$bundle/output")
@@ -691,13 +713,13 @@ set +e
 		maximum_kib=$((evidence_max_bytes / 1024))
 		target_kib=$((maximum_kib - 4))
 		: >"$bundle/fill"
-		while [ "$(du -sk "$bundle" | awk "NR == 1 { print \\$1 }")" -lt "$target_kib" ]; do
+		while [ "$(du -sk "$bundle" | awk "NR == 1 { print \$1 }")" -lt "$target_kib" ]; do
 			dd if=/dev/zero of="$bundle/fill" bs=1024 count=1 oflag=append conv=notrunc status=none
 		done
 		capture "$bundle/output" awk '\''BEGIN { print "replacement" }'\''
 		grep -q "^replacement" "$bundle/output"
 		grep -q "exit_status=0" "$bundle/output"
-		[ "$(du -sk "$bundle" | awk "NR == 1 { print \\$1 }")" -le "$maximum_kib" ]
+		[ "$(du -sk "$bundle" | awk "NR == 1 { print \$1 }")" -le "$maximum_kib" ]
 		test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)"
 	' >"$fixture_dir/output" 2>&1
 capture_near_status=$?
@@ -744,7 +766,7 @@ assert_container_security "$container_name" none
 if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
 	--security-opt no-new-privileges --security-opt seccomp=builtin \
 	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" -c \
-	'test ! -e /evidence/quota/setup && test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)' ; then
+	'test ! -e /evidence/quota/setup && test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)"' ; then
 	:
 else
 	fail 'injected capture setup failure leaked a temporary candidate'
@@ -764,7 +786,7 @@ set +e
 		operation_id=quota-operation
 		recording_id=quota-recording
 		bundle=/evidence/quota
-		mkdir -m 0700 "$bundle"
+		mkdir -m 0700 "$bundle" 2>/dev/null || [ -d "$bundle" ]
 		tuple_digest=$(sha256_text quota-operation)
 		acquire_operation_lock /evidence "$tuple_digest"
 		trap '\''cleanup_evidence_temporary_candidates || true; release_operation_lock || true'\'' EXIT
@@ -784,7 +806,7 @@ assert_container_security "$container_name" none
 if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
 	--security-opt no-new-privileges --security-opt seccomp=builtin \
 	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" -c \
-	'test ! -e /evidence/quota/trailer && test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)' ; then
+	'test ! -e /evidence/quota/trailer && test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)"' ; then
 	:
 else
 	fail 'injected capture trailer failure leaked a temporary candidate'
@@ -804,7 +826,7 @@ set +e
 		operation_id=quota-operation
 		recording_id=quota-recording
 		bundle=/evidence/quota
-		mkdir -m 0700 "$bundle"
+		mkdir -m 0700 "$bundle" 2>/dev/null || [ -d "$bundle" ]
 		tuple_digest=$(sha256_text quota-operation)
 		acquire_operation_lock /evidence "$tuple_digest"
 		trap '\''cleanup_evidence_temporary_candidates || true; release_operation_lock || true'\'' EXIT
@@ -821,7 +843,7 @@ assert_container_security "$container_name" none
 if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
 	--security-opt no-new-privileges --security-opt seccomp=builtin \
 	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" -c \
-	'test ! -e /evidence/quota/sync && test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)' ; then
+	'test ! -e /evidence/quota/sync && test -z "$(find /evidence -maxdepth 1 \( -name ".evidence-*" -o -name ".capture-*" -o -name ".capture.*" \) -print)"' ; then
 	:
 else
 	fail 'injected evidence sync failure leaked a temporary candidate'
