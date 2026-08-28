@@ -590,6 +590,10 @@ type KubectlDebugEphemeralContainerIntent struct {
 	// +optional
 	Command []string `json:"command,omitempty"`
 
+	// containerDigest identifies the exact canonical ephemeral-container request.
+	// +required
+	ContainerDigest string `json:"containerDigest"`
+
 	// securityContextDigest identifies the complete requested security context.
 	// +required
 	SecurityContextDigest string `json:"securityContextDigest"`

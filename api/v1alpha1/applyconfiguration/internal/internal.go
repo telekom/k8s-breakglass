@@ -2453,6 +2453,9 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             scalar: string
           elementRelationship: atomic
+    - name: containerDigest
+      type:
+        scalar: string
     - name: image
       type:
         scalar: string

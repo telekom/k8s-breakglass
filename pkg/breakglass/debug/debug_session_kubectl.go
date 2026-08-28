@@ -249,12 +249,14 @@ func findMatchingEphemeralOperation(
 	if status == nil || status.KubectlDebugStatus == nil {
 		return nil
 	}
+	request := desiredEphemeralContainerForIntent(containerName, image, command, securityContext)
+	requestDigest := ephemeralContainerDigest(&request)
 	for index := range status.KubectlDebugStatus.Operations {
 		operation := &status.KubectlDebugStatus.Operations[index]
 		if operation.Kind != kubectlDebugOperationKindEphemeralContainer ||
 			(operation.State != breakglassv1alpha1.KubectlDebugOperationPrepared && operation.State != breakglassv1alpha1.KubectlDebugOperationCompleted) ||
 			operation.TargetPod.Namespace != targetNamespace || operation.TargetPod.Name != targetPodName || operation.TargetPod.UID != targetPodUID ||
-			!ephemeralContainerIntentEqual(&operation.EphemeralContainer, containerName, image, command, true, true, securityContext) {
+			!ephemeralContainerIntentEqual(&operation.EphemeralContainer, containerName, image, command, true, true, securityContext, requestDigest) {
 			continue
 		}
 		return operation
@@ -271,6 +273,29 @@ func securityContextDigest(securityContext *corev1.SecurityContext) string {
 	return hex.EncodeToString(digest[:])
 }
 
+func ephemeralContainerDigest(ephemeralContainer *corev1.EphemeralContainer) string {
+	encoded, err := json.Marshal(ephemeralContainer)
+	if err != nil {
+		return ""
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
+}
+
+func desiredEphemeralContainerForIntent(name, image string, command []string, securityContext *corev1.SecurityContext) corev1.EphemeralContainer {
+	return corev1.EphemeralContainer{
+		EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+			Name:            name,
+			Image:           image,
+			Command:         command,
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			TTY:             true,
+			Stdin:           true,
+			SecurityContext: securityContext,
+		},
+	}
+}
+
 func ephemeralContainerIntentEqual(
 	intent *breakglassv1alpha1.KubectlDebugEphemeralContainerIntent,
 	name, image string,
@@ -278,9 +303,13 @@ func ephemeralContainerIntentEqual(
 	tty bool,
 	stdin bool,
 	securityContext *corev1.SecurityContext,
+	containerDigest string,
 ) bool {
 	if intent == nil {
 		return false
+	}
+	if intent.ContainerDigest != "" {
+		return intent.ContainerDigest == containerDigest
 	}
 	return intent.Name == name && intent.Image == image &&
 		apiequality.Semantic.DeepEqual(intent.Command, command) &&
@@ -306,6 +335,7 @@ func newEphemeralContainerOperation(
 			Name:                  ephemeralContainer.Name,
 			Image:                 ephemeralContainer.Image,
 			Command:               ephemeralContainer.Command,
+			ContainerDigest:       ephemeralContainerDigest(&ephemeralContainer),
 			SecurityContextDigest: securityContextDigest(ephemeralContainer.SecurityContext),
 			TTY:                   ephemeralContainer.TTY,
 			Stdin:                 ephemeralContainer.Stdin,
@@ -361,10 +391,12 @@ func (h *KubectlDebugHandler) completeEphemeralContainerOperation(
 			if operation.ID != operationID {
 				continue
 			}
-			if operation.State == breakglassv1alpha1.KubectlDebugOperationCompleted && state == breakglassv1alpha1.KubectlDebugOperationCompleted {
-				if ref != nil {
-					addEphemeralContainerRefIfMissing(status, *ref)
-					addAllowedPodIfMissing(status, breakglassv1alpha1.AllowedPodRef{Namespace: ref.Namespace, Name: ref.PodName, Ready: true})
+			if operation.State != breakglassv1alpha1.KubectlDebugOperationPrepared {
+				if operation.State == breakglassv1alpha1.KubectlDebugOperationCompleted && state == breakglassv1alpha1.KubectlDebugOperationCompleted {
+					if ref != nil {
+						addEphemeralContainerRefIfMissing(status, *ref)
+						addAllowedPodIfMissing(status, breakglassv1alpha1.AllowedPodRef{Namespace: ref.Namespace, Name: ref.PodName, Ready: true})
+					}
 				}
 				return
 			}
@@ -447,6 +479,7 @@ func (h *KubectlDebugHandler) RecoverPendingKubectlDebugOperations(ctx context.C
 				container.TTY,
 				container.Stdin,
 				container.SecurityContext,
+				ephemeralContainerDigest(container),
 			)
 			break
 		}
@@ -497,6 +530,34 @@ func addDeployedResourceIfMissing(status *breakglassv1alpha1.DebugSessionStatus,
 		}
 	}
 	status.DeployedResources = append(status.DeployedResources, ref)
+}
+
+func terminalKubectlDebugOperations(operations []breakglassv1alpha1.KubectlDebugOperation) []breakglassv1alpha1.KubectlDebugOperation {
+	terminal := make([]breakglassv1alpha1.KubectlDebugOperation, 0, len(operations))
+	for _, operation := range operations {
+		if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared {
+			continue
+		}
+		terminal = append(terminal, operation)
+	}
+	return terminal
+}
+
+func cleanupRetainedKubectlDebugStatus(kubectlStatus *breakglassv1alpha1.KubectlDebugStatus) *breakglassv1alpha1.KubectlDebugStatus {
+	if kubectlStatus == nil {
+		return nil
+	}
+	operations := terminalKubectlDebugOperations(kubectlStatus.Operations)
+	if len(operations) == 0 && len(kubectlStatus.EphemeralContainersInjected) == 0 {
+		return nil
+	}
+	retained := &breakglassv1alpha1.KubectlDebugStatus{
+		Operations: operations,
+	}
+	if len(kubectlStatus.EphemeralContainersInjected) > 0 {
+		retained.EphemeralContainersInjected = append([]breakglassv1alpha1.EphemeralContainerRef(nil), kubectlStatus.EphemeralContainersInjected...)
+	}
+	return retained
 }
 
 // liveSessionForMutation re-reads the session through the uncached API reader
@@ -674,20 +735,7 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 		return kubectlDebugPolicyErrorf("target pod %s/%s changed during injection authorization", namespace, podName)
 	}
 	// Create ephemeral container spec
-	ephemeralContainer := corev1.EphemeralContainer{
-		EphemeralContainerCommon: corev1.EphemeralContainerCommon{
-			Name:            containerName,
-			Image:           image,
-			Command:         command,
-			ImagePullPolicy: corev1.PullIfNotPresent,
-			TTY:             true,
-			Stdin:           true,
-		},
-	}
-
-	if securityContext != nil {
-		ephemeralContainer.SecurityContext = securityContext
-	}
+	ephemeralContainer := desiredEphemeralContainerForIntent(containerName, image, command, securityContext)
 	if recovered := findMatchingEphemeralOperation(
 		&ds.Status,
 		namespace,
@@ -1196,7 +1244,7 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 		// Ephemeral containers cannot be removed; without copied pods there is
 		// no spoke-cluster cleanup to perform.
 		return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
-			status.KubectlDebugStatus = nil
+			status.KubectlDebugStatus = cleanupRetainedKubectlDebugStatus(status.KubectlDebugStatus)
 		})
 	}
 
@@ -1237,7 +1285,7 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 	}
 
 	return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
-		status.KubectlDebugStatus = nil
+		status.KubectlDebugStatus = cleanupRetainedKubectlDebugStatus(status.KubectlDebugStatus)
 	})
 }
 

@@ -5,11 +5,14 @@ Debug Sessions provide temporary, controlled access to debug pods deployed on ta
 Ephemeral-container injection is available only through the authenticated
 DebugSession API operation. The manager validates the approved image and
 security policy, rechecks the live session lease and target Pod UID, and
-persists a `Prepared` operation containing the exact target Pod UID and
-container request before changing the target. It records a terminal
+persists a `Prepared` operation containing the exact target Pod UID plus a
+canonical digest of the full submitted container request before changing the
+target. It records a terminal
 `Completed`, `Failed`, or `Unknown` outcome idempotently. A controller restart
 recovers prepared operations by comparing the exact Pod UID and container
-request; identity mismatches are never guessed or mutated. Independent writes to
+request; identity mismatches are never guessed or mutated. Session cleanup
+removes copied Pods while retaining terminal kubectl-debug operation evidence
+for operator handling. Independent writes to
 `pods/ephemeralcontainers` through a target cluster API server are governed by
 that cluster's RBAC and are outside Breakglass. Kubernetes cannot remove an
 ephemeral container from a live Pod, so retained containers remain only as
