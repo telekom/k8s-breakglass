@@ -118,6 +118,61 @@ func waitForClusterConfigNotReady(t *testing.T, ctx context.Context, cli client.
 	return nil //nolint:govet // unreachable
 }
 
+// waitForClusterConfigGenerationCondition proves that the controller reconciled
+// one particular ClusterConfig generation. A plain Ready/NotReady check is not
+// sufficient for recovery tests: a condition from an older generation can make
+// a newly committed spec update look successful (or broken) before the
+// reconciler has seen it.
+func waitForClusterConfigGenerationCondition(
+	t *testing.T,
+	ctx context.Context,
+	cli client.Client,
+	name, namespace string,
+	expectedGeneration int64,
+	expectedReady metav1.ConditionStatus,
+	timeout time.Duration,
+) *breakglassv1alpha1.ClusterConfig {
+	t.Helper()
+
+	var latest breakglassv1alpha1.ClusterConfig
+	var lastGetErr error
+	found := false
+	err := helpers.WaitForCondition(ctx, func() (bool, error) {
+		var observed breakglassv1alpha1.ClusterConfig
+		if err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &observed); err != nil {
+			lastGetErr = err
+			return false, nil
+		}
+
+		found = true
+		lastGetErr = nil
+		latest = observed
+		if observed.Generation != expectedGeneration || observed.Status.ObservedGeneration != expectedGeneration {
+			return false, nil
+		}
+
+		for _, condition := range observed.Status.Conditions {
+			if condition.Type == string(breakglassv1alpha1.ClusterConfigConditionReady) &&
+				condition.Status == expectedReady &&
+				condition.ObservedGeneration == expectedGeneration {
+				return true, nil
+			}
+		}
+		return false, nil
+	}, timeout, 200*time.Millisecond)
+	if err != nil {
+		if found {
+			logClusterConfigConditions(t, &latest)
+		} else if lastGetErr != nil {
+			t.Logf("never observed ClusterConfig %s/%s: %v", namespace, name, lastGetErr)
+		}
+		t.Fatalf("timed out waiting for ClusterConfig %s/%s generation %d to report Ready=%s with the same observed generation: %v",
+			namespace, name, expectedGeneration, expectedReady, err)
+	}
+
+	return &latest
+}
+
 // ---------------------------------------------------------------------------
 // setupOIDCContext returns common OIDC-related values used across tests.
 // ---------------------------------------------------------------------------
@@ -649,9 +704,20 @@ func TestOIDC_RecoveryAfterFixingConfig(t *testing.T) {
 	err := cli.Create(ctx, cc)
 	require.NoError(t, err)
 
-	// Wait for not-Ready
-	result := waitForClusterConfigNotReady(t, ctx, cli, ccName, namespace, 60*time.Second)
-	assert.False(t, isClusterConfigReady(result), "CC with wrong secret should not be Ready")
+	// Record the persisted generation before making the negative assertion. A
+	// failed GET or an empty status is not evidence that the bad credential was
+	// processed; require the controller to publish Ready=False for this exact
+	// generation first.
+	var badConfig breakglassv1alpha1.ClusterConfig
+	err = cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &badConfig)
+	require.NoError(t, err, "bad-secret ClusterConfig must exist before waiting for reconciliation")
+	badGeneration := badConfig.Generation
+	require.Positive(t, badGeneration, "bad-secret ClusterConfig must have a persisted generation")
+
+	result := waitForClusterConfigGenerationCondition(
+		t, ctx, cli, ccName, namespace, badGeneration, metav1.ConditionFalse, 60*time.Second,
+	)
+	assert.False(t, isClusterConfigReady(result), "CC with wrong secret should report Ready=False")
 	t.Log("Step 1: CC is not Ready (expected)")
 
 	// Step 2: Create a correct secret and update the CC to reference it
@@ -675,14 +741,28 @@ func TestOIDC_RecoveryAfterFixingConfig(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	t.Log("Step 2: Updated CC to use correct secret")
 
-	// Step 3: CC should recover and become Ready
-	err = waitForClusterConfigConditionReady(t, ctx, cli, ccName, namespace, 90*time.Second)
-	require.NoError(t, err, "CC should recover after fixing client secret")
+	// Capture the committed resource after the conflict-aware write. This
+	// fences recovery to the successful spec generation rather than accepting a
+	// stale Ready condition left by the failed bad-secret generation.
+	var committed breakglassv1alpha1.ClusterConfig
+	err = cli.Get(ctx, types.NamespacedName{Name: ccName, Namespace: namespace}, &committed)
+	require.NoError(t, err, "failed to read committed ClusterConfig update")
+	committedGeneration := committed.Generation
+	require.Greater(t, committedGeneration, badGeneration, "correct-secret update must create a newer generation")
+	require.NotNil(t, committed.Spec.OIDCAuth.ClientSecretRef, "committed ClusterConfig must retain OIDC client secret reference")
+	require.Equal(t, goodSecretName, committed.Spec.OIDCAuth.ClientSecretRef.Name,
+		"committed ClusterConfig must reference the correct client secret")
+	t.Logf("Step 2: Updated CC to use correct secret at generation %d", committedGeneration)
 
-	recovered := getClusterConfigWithRetry(t, ctx, cli, ccName, namespace)
-	assertClusterConfigReady(t, &recovered)
+	// Step 3: CC must publish Ready=True for the committed update generation.
+	// The helper requires status.observedGeneration and the Ready condition's
+	// observedGeneration to equal that current generation, so stale state cannot
+	// satisfy the recovery proof.
+	recovered := waitForClusterConfigGenerationCondition(
+		t, ctx, cli, ccName, namespace, committedGeneration, metav1.ConditionTrue, 90*time.Second,
+	)
+	assertClusterConfigReady(t, recovered)
 
 	t.Log("=== CC-OIDC-COMP-010: Pass — CC recovered after fix ===")
 }
