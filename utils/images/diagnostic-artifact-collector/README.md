@@ -113,6 +113,9 @@ and ready marker. The uploader accepts only those two ownership/mode pairs,
 opens the marker, manifest, and archive without following links, enforces the
 manifest's immutable per-recipe ceiling, and verifies archive content and
 identity remain unchanged across transfer.
+PAX extension lengths are checked against the already buffered extension before
+they are converted to a native slice index, so an oversized signed length is
+rejected on every supported image architecture.
 The traversal runs in its own process group with fixed directory and regular-file
 filters; each private NUL path spool is file-size limited. Enumeration expiry
 and collector cleanup send TERM followed by KILL to that group, so a stuck finder

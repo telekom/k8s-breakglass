@@ -61,7 +61,8 @@ or after session expiry with a terminal authorization response (including HTTP
 Before a PUT and after each successful response, the uploader streams the
 gzip/tar archive and verifies the embedded manifest, payload paths, duplicate
 members, source counts/bytes, and raw payload checksum against the private
-sidecar. Corrupt, forged, or changed content is terminal.
+sidecar. PAX extension lengths are bounded by the received extension before a
+native slice-index conversion. Corrupt, forged, or changed content is terminal.
 The controller claims a durable, session-status upload lease before accepting
 bytes. A `409` means another attempt is active or the create-only object was
 already consumed; do not mint a new command or bypass the endpoint.

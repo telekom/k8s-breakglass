@@ -633,10 +633,6 @@ func openPrivateNoFollowContext(ctx context.Context, path string, expected os.Fi
 	return file, nil
 }
 
-func openArchiveNoFollow(expected os.FileInfo) (*os.File, error) {
-	return openArchiveNoFollowContext(context.Background(), expected)
-}
-
 func openArchiveNoFollowContext(ctx context.Context, expected os.FileInfo) (*os.File, error) {
 	file, err := openPrivateNoFollowContext(ctx, artifactPath, expected)
 	if err != nil {
@@ -1187,13 +1183,12 @@ func parseTarExtension(typeflag byte, content []byte) (string, error) {
 				}
 			}
 			length64, err := strconv.ParseInt(string(content[:space]), 10, 64)
-			if err != nil || length64 > int64(maxInt()) {
+			// Compare against len(content) while the value is still int64. This
+			// establishes the host-int range before the slice length is narrowed.
+			if err != nil || length64 < int64(space+3) || length64 > int64(len(content)) {
 				return "", errors.New("tar PAX extension length is invalid")
 			}
 			length := int(length64)
-			if length < space+3 || length > len(content) {
-				return "", errors.New("tar PAX extension length is invalid")
-			}
 			record := content[:length]
 			if record[length-1] != '\n' {
 				return "", errors.New("tar PAX extension record is invalid")

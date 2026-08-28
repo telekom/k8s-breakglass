@@ -137,6 +137,19 @@ copy_output_file() {
 		"$image" "/output/$copy_name" >"$copy_destination"
 }
 
+copy_root_owned_fixture_marker() {
+	fixture_directory=$1
+	fixture_name=$2
+	fixture_destination=$3
+	# This is intentionally not the ordinary hand-off reader: the fixture
+	# verifies a root-owned mode-0600 collector marker. Bind precisely that file
+	# and retain the image's restricted runtime shape while reading it as root.
+	docker run --rm --read-only --cap-drop=ALL --network none \
+		--user 0:65532 \
+		--mount "type=bind,src=$fixture_directory/$fixture_name,dst=/fixture-marker,readonly" \
+		--entrypoint /bin/cat "$image" /fixture-marker >"$fixture_destination"
+}
+
 assert_unique_members_and_payload_sha() {
 	archive=$1
 	manifest=$2
@@ -827,7 +840,12 @@ expect_bounded_collector_failure "$test_dir/deadline-wrapper-output" 'coredump e
 	echo 'deadline wrapper fixture did not create its FD-holding descendant' >&2
 	exit 1
 }
-[ "$(cat "$test_dir/deadline-wrapper-output/deadline-wrapper-parent-term-received")" = term ] || {
+# The root collector owns this mode-0600 bind-mounted marker on Linux CI. Read
+# this one fixture marker through a root, capability-free, networkless image
+# helper; the ordinary non-root hand-off reader above remains unchanged.
+deadline_wrapper_term_marker=$test_dir/deadline-wrapper-parent-term-received.copied
+copy_root_owned_fixture_marker "$test_dir/deadline-wrapper-output" deadline-wrapper-parent-term-received "$deadline_wrapper_term_marker"
+[ "$(cat "$deadline_wrapper_term_marker")" = term ] || {
 	echo 'deadline wrapper did not exit through its TERM barrier' >&2
 	exit 1
 }

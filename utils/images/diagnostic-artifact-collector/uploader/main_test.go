@@ -329,6 +329,29 @@ func TestOpenPrivateNoFollowFailureIsPathSafeAndNeutral(t *testing.T) {
 	}
 }
 
+func TestOpenArchiveNoFollowContextRejectsSymlink(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "private-archive")
+	if err := os.WriteFile(target, []byte("archive"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := os.Lstat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(directory, "artifact.tar.gz")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := artifactPath
+	defer func() { artifactPath = oldPath }()
+	artifactPath = link
+	if file, err := openArchiveNoFollowContext(context.Background(), expected); err == nil {
+		_ = file.Close()
+		t.Fatal("openArchiveNoFollowContext() unexpectedly followed a link")
+	}
+}
+
 func TestUploadRejectsForgedReadyMarker(t *testing.T) {
 	path, ready := uploadFixture(t, []byte("archive-bytes"))
 	oldPath, oldReady := artifactPath, readyPath
@@ -641,6 +664,8 @@ func TestTarExtensionParsingIsNarrowAndBounded(t *testing.T) {
 		{name: "valid PAX path", typeflag: 'x', content: validPAX, want: "files/coredumps/pax-name.dump", valid: true},
 		{name: "zero PAX record", typeflag: 'x', content: nil, valid: false},
 		{name: "malformed PAX length", typeflag: 'x', content: []byte("5 path=x\n"), valid: false},
+		{name: "maximum signed PAX length", typeflag: 'x', content: []byte("9223372036854775807 path=x\n"), valid: false},
+		{name: "PAX length above signed range", typeflag: 'x', content: []byte("9223372036854775808 path=x\n"), valid: false},
 		{name: "PAX size is unsupported", typeflag: 'x', content: paxRecord("size", "1"), valid: false},
 		{name: "PAX mtime is unsupported", typeflag: 'x', content: paxRecord("mtime", "1"), valid: false},
 		{name: "GNU sparse is unsupported", typeflag: 'x', content: paxRecord("GNU.sparse.map", "0,1"), valid: false},
