@@ -148,6 +148,7 @@ copy_root_owned_fixture_marker() {
 	# and retain the image's restricted runtime shape; no production hand-off
 	# reader gains this capability.
 	docker run --rm --read-only --cap-drop=ALL --cap-add=CAP_DAC_READ_SEARCH --network none \
+		--security-opt no-new-privileges \
 		--user 0:65532 \
 		--mount "type=bind,src=$fixture_directory/$fixture_name,dst=/fixture-marker,readonly" \
 		--entrypoint /bin/cat "$image" /fixture-marker >"$fixture_destination"
@@ -844,8 +845,9 @@ expect_bounded_collector_failure "$test_dir/deadline-wrapper-output" 'coredump e
 	exit 1
 }
 # The root collector owns this mode-0600 bind-mounted marker on Linux CI. Read
-# this one fixture marker through a root, capability-free, networkless image
-# helper; the ordinary non-root hand-off reader above remains unchanged.
+# this one fixture marker through a root, networkless image helper carrying
+# only CAP_DAC_READ_SEARCH; the ordinary non-root hand-off reader above remains
+# unchanged.
 deadline_wrapper_term_marker=$test_dir/deadline-wrapper-parent-term-received.copied
 copy_root_owned_fixture_marker "$test_dir/deadline-wrapper-output" deadline-wrapper-parent-term-received "$deadline_wrapper_term_marker"
 [ "$(cat "$deadline_wrapper_term_marker")" = term ] || {

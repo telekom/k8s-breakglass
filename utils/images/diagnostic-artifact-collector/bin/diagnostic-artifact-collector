@@ -277,7 +277,7 @@ stop_finder() {
 # spool is consumed. wait cannot reap a non-child descendant, so verify the
 # process-group target after TERM/KILL instead of assuming wrapper exit closed
 # every inherited descriptor.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 stop_completed_finder_group() {
 	completed_finder_group_was_live=
 	pgid=$finder_pgid
