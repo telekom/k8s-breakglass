@@ -71,6 +71,12 @@ child, recovering files left by a killed container.
 For a safe child, it also acquires and retains that child's legacy lock while
 holding the root lock; a live pre-volume-root writer therefore blocks before
 cleanup or evidence mutation, and its legacy artifacts are never removed.
+This is a migration guard, not a mixed-version coordination protocol: an old
+image can begin a different-child operation after the new image has taken and
+checked the root lock, because that old image does not participate in the root
+lock domain. Drain old workloads and do not overlap old and new image versions
+on a shared evidence volume during rollout. The controller/admission layer
+must enforce that deployment precondition.
 The owner record
 contains the operation, recording, approval, and SHA-256 digest of the exact
 approved tuple. Its timestamp and PID are audit context only, never liveness
@@ -81,6 +87,14 @@ replaced while any maintenance workload can run. The controller must also enforc
 one active workload per node because separate volumes cannot coordinate.
 Containers, evidence volumes, and controller leases must have bounded
 lifetimes and deterministic cleanup.
+
+The Docker integration contract separately demonstrates that an arbitrarily
+old informational lock record does not override a live `flock`, that SIGKILL
+releases that lock for a subsequent operation, and that a later operation
+removes helper-owned stale temporary candidates. It deliberately does not
+claim a power-loss proof for every instruction between candidate creation and
+atomic rename; filesystem and storage-backend crash semantics remain an
+operational validation responsibility.
 
 ## Invocation
 

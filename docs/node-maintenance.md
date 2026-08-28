@@ -28,6 +28,14 @@ process-held evidence-volume-root `flock` record. Kernel release on process
 death, not a timestamp or PID, controls liveness. The lock holder also recovers
 owned stale evidence candidates left by a killed operation.
 
+Compatibility with pre-volume-root images is intentionally limited. A new
+image checks and retains an already-live legacy child lock, but an older image
+can still start on a different child after that check because it does not join
+the new root-lock domain. Rollouts sharing an evidence volume must therefore
+drain old workloads before admitting the new image; this is a
+controller/admission deployment precondition, not a runtime compatibility
+guarantee.
+
 Built-in runbooks remain under
 `/usr/share/breakglass/runbooks/upstream/node-maintenance/`. A downstream
 deployment may mount an optional, digest-pinned [OCI runbook bundle](runbook-bundle-contract.md)
@@ -54,7 +62,10 @@ even a fixture executable. Tests also exercise recording evidence,
 shared-volume concurrency denial, read-only recovery assets, digest mismatch,
 container and volume cleanup, and fixed timeout/output quotas. Missing Docker,
 namespace support, or security flags fails the job with diagnostics; the proof
-never silently skips.
+never silently skips. SIGKILL lock release and stale-candidate recovery are
+exercised in separate behavioral scenarios; the suite does not claim to model
+power loss at every filesystem instruction between candidate creation and its
+atomic rename.
 
 The controller remains responsible for pinning the image by digest, enforcing
 one active workload per node, expiring approvals independently, bounding pod
