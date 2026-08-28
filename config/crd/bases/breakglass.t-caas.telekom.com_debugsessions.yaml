@@ -1372,6 +1372,116 @@ spec:
                       - podName
                       type: object
                     type: array
+                  operations:
+                    description: |-
+                      operations is the durable operation outbox for target-cluster mutations.
+                      An operation is persisted in Prepared state before the target API is
+                      changed and is reconciled to a terminal outcome after a restart or an
+                      ambiguous response. Completed operations are idempotent evidence and are
+                      not re-applied.
+                    items:
+                      description: |-
+                        KubectlDebugOperation is durable intent and outcome evidence for a
+                        target-cluster kubectl-debug operation. The target Pod UID and complete
+                        ephemeral-container request are part of the identity used during recovery;
+                        a same-named but different Pod/container is never treated as a match.
+                      properties:
+                        completedAt:
+                          description: completedAt records when the target outcome
+                            was persisted.
+                          format: date-time
+                          type: string
+                        ephemeralContainer:
+                          description: |-
+                            ephemeralContainer contains the exact request fields used to identify
+                            the target mutation.
+                          properties:
+                            command:
+                              description: command is the requested command.
+                              items:
+                                type: string
+                              type: array
+                            image:
+                              description: image is the requested image.
+                              type: string
+                            name:
+                              description: name is the ephemeral container name.
+                              type: string
+                            securityContextDigest:
+                              description: securityContextDigest identifies the complete
+                                requested security context.
+                              type: string
+                            stdin:
+                              description: stdin is the manager-owned standard-input
+                                setting.
+                              type: boolean
+                            tty:
+                              description: tty and stdin are the manager-owned terminal
+                                settings.
+                              type: boolean
+                          required:
+                          - image
+                          - name
+                          - securityContextDigest
+                          - stdin
+                          - tty
+                          type: object
+                        id:
+                          description: id is a unique operation identifier.
+                          minLength: 1
+                          type: string
+                        kind:
+                          description: kind identifies the operation implementation.
+                          minLength: 1
+                          type: string
+                        message:
+                          description: message describes a failed or unknown outcome.
+                          type: string
+                        preparedAt:
+                          description: preparedAt records when intent was persisted.
+                          format: date-time
+                          type: string
+                        requestedBy:
+                          description: requestedBy identifies the authenticated operation
+                            actor.
+                          type: string
+                        state:
+                          description: state is the durable outbox state.
+                          enum:
+                          - Prepared
+                          - Completed
+                          - Failed
+                          - Unknown
+                          type: string
+                        targetPod:
+                          description: targetPod identifies the target Pod and immutable
+                            UID.
+                          properties:
+                            name:
+                              description: name is the Pod name.
+                              type: string
+                            namespace:
+                              description: namespace is the Pod namespace.
+                              type: string
+                            uid:
+                              description: uid is the immutable Pod UID observed before
+                                the mutation.
+                              type: string
+                          required:
+                          - name
+                          - namespace
+                          - uid
+                          type: object
+                      required:
+                      - ephemeralContainer
+                      - id
+                      - kind
+                      - preparedAt
+                      - requestedBy
+                      - state
+                      - targetPod
+                      type: object
+                    type: array
                 type: object
               message:
                 description: message provides human-readable status information.
