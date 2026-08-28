@@ -33,6 +33,7 @@ parsed="$($contract parse-pr-url "$valid_pr_url")"
 test "$parsed" = $'github.com\ttelekom/k8s-breakglass\t1268' || fail "valid HTTPS PR URL was not parsed"
 expect_failure "$contract" parse-pr-url 'http://github.com/telekom/k8s-breakglass/pull/1268'
 expect_failure "$contract" parse-pr-url 'https://token@github.com/telekom/k8s-breakglass/pull/1268'
+expect_failure "$contract" parse-pr-url 'https://github.com:443/telekom/k8s-breakglass/pull/1268'
 
 write_fixture "$fixture_root/review-request.http" $'HTTP/2 201 Created\r\nDate: Fri, 28 Aug 2026 07:14:18 GMT\r\nContent-Type: application/json\r\n\r\n{}'
 expect_failure "$contract" verify-review-freshness "$fixture_root/review-request.http" '2026-08-28T07:14:18.999Z'
@@ -40,14 +41,24 @@ expect_failure "$contract" verify-review-freshness "$fixture_root/review-request
 write_fixture "$fixture_root/redirected-review-request.http" $'HTTP/2 302 Found\r\nDate: Fri, 28 Aug 2026 07:14:17 GMT\r\n\r\nHTTP/2 201 Created\r\nDate: Fri, 28 Aug 2026 07:14:18 GMT\r\n\r\n{}'
 test "$("$contract" request-date "$fixture_root/redirected-review-request.http")" = 'Fri, 28 Aug 2026 07:14:18 GMT' ||
   fail "final HTTP response Date was not selected"
+write_fixture "$fixture_root/protection-200.http" $'HTTP/2 200 OK\r\nDate: Fri, 28 Aug 2026 07:14:18 GMT\r\n\r\n{"required_status_checks":{"checks":[],"contexts":[]}}'
+"$contract" normalize-branch-protection-http "$fixture_root/protection-200.http" "$fixture_root/protection-200.json"
+jq -e '.required_status_checks.checks == []' "$fixture_root/protection-200.json" >/dev/null ||
+  fail "authenticated branch-protection 200 response was not normalized"
+write_fixture "$fixture_root/protection-404.http" $'HTTP/2 404 Not Found\r\nDate: Fri, 28 Aug 2026 07:14:18 GMT\r\n\r\n{"message":"Branch not protected"}'
+"$contract" normalize-branch-protection-http "$fixture_root/protection-404.http" "$fixture_root/protection-404.json"
+jq -e '. == {}' "$fixture_root/protection-404.json" >/dev/null ||
+  fail "authenticated branch-protection 404 did not become an empty policy"
+write_fixture "$fixture_root/protection-403.http" $'HTTP/2 403 Forbidden\r\nDate: Fri, 28 Aug 2026 07:14:18 GMT\r\n\r\n{"message":"forbidden"}'
+expect_failure "$contract" normalize-branch-protection-http "$fixture_root/protection-403.http" "$fixture_root/ignored.json"
 
 write_fixture "$fixture_root/effective-rules.json" '[[
   {"type":"pull_request","parameters":{"required_approving_review_count":1,"require_code_owner_review":true}},
-  {"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/test.yml","ref":"main"}]}}
+  {"type":"workflows","parameters":{"workflows":[{"repository_id":42,"path":".github/workflows/test.yml","ref":"main","sha":"0123456789abcdef0123456789abcdef01234567"}]}}
 ], [
   {"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test","integration_id":15368}]}},
   {"type":"required_deployments","parameters":{"required_deployment_environments":["staging"]}},
-  {"type":"code_scanning","parameters":{"required_code_scanning_tools":[{"tool":"CodeQL"}]}},
+  {"type":"code_scanning","parameters":{"code_scanning_tools":[{"tool":"CodeQL","alerts_threshold":"errors","security_alerts_threshold":"high_or_higher"}]}},
   {"type":"required_signatures","parameters":{}}
 ]]'
 write_fixture "$fixture_root/protection.json" '{"required_status_checks":{"checks":[],"contexts":[]}}'
@@ -63,6 +74,20 @@ expect_failure "$contract" inventory-policy github.com telekom/k8s-breakglass ma
 write_fixture "$fixture_root/legacy-protection.json" '{"required_status_checks":{"checks":[],"contexts":["test"]}}'
 expect_failure "$contract" inventory-policy github.com telekom/k8s-breakglass main \
   "$fixture_root/effective-rules.json" "$fixture_root/legacy-protection.json" "$fixture_root/ignored.json"
+
+# Known ruleset types must not be accepted with guessed/defaulted structures.
+write_fixture "$fixture_root/malformed-status-rules.json" '[[{"type":"required_status_checks","parameters":{"required_status_checks":{"context":"test","integration_id":15368}}}]]'
+expect_failure "$contract" inventory-policy github.com telekom/k8s-breakglass main \
+  "$fixture_root/malformed-status-rules.json" "$fixture_root/protection.json" "$fixture_root/ignored.json"
+write_fixture "$fixture_root/malformed-status-entry-rules.json" '[[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":42,"integration_id":"15368"}]}}]]'
+expect_failure "$contract" inventory-policy github.com telekom/k8s-breakglass main \
+  "$fixture_root/malformed-status-entry-rules.json" "$fixture_root/protection.json" "$fixture_root/ignored.json"
+write_fixture "$fixture_root/malformed-workflow-rules.json" '[[{"type":"workflows","parameters":{"workflows":[{"path":".github/workflows/test.yml","ref":"main"}]}}]]'
+expect_failure "$contract" inventory-policy github.com telekom/k8s-breakglass main \
+  "$fixture_root/malformed-workflow-rules.json" "$fixture_root/protection.json" "$fixture_root/ignored.json"
+write_fixture "$fixture_root/malformed-code-scanning-rules.json" '[[{"type":"code_scanning","parameters":{"required_code_scanning_tools":[{"tool":"CodeQL"}]}}]]'
+expect_failure "$contract" inventory-policy github.com telekom/k8s-breakglass main \
+  "$fixture_root/malformed-code-scanning-rules.json" "$fixture_root/protection.json" "$fixture_root/ignored.json"
 
 # Empty ruleset pages are valid API output. A real classic branch-protection
 # requirement must still produce a complete, usable inventory.
@@ -81,6 +106,16 @@ jq -e '.effectiveRules == [] and (.classicBranchProtectionRules | length) == 3 a
 write_fixture "$fixture_root/empty-protection.json" '{}'
 expect_failure "$contract" inventory-policy github.com telekom/k8s-breakglass main \
   "$fixture_root/empty-effective-rules.json" "$fixture_root/empty-protection.json" "$fixture_root/ignored.json"
+
+write_fixture "$fixture_root/linear-history-protection.json" '{"required_status_checks":{"checks":[{"context":"test","app_id":15368}],"contexts":[]},"required_linear_history":{"enabled":true}}'
+expect_failure "$contract" inventory-policy github.com telekom/k8s-breakglass main \
+  "$fixture_root/empty-effective-rules.json" "$fixture_root/linear-history-protection.json" "$fixture_root/ignored.json"
+write_fixture "$fixture_root/unsupported-classic-protection.json" '{"required_status_checks":{"checks":[{"context":"test","app_id":15368}],"contexts":[]},"block_creations":{"enabled":true}}'
+expect_failure "$contract" inventory-policy github.com telekom/k8s-breakglass main \
+  "$fixture_root/empty-effective-rules.json" "$fixture_root/unsupported-classic-protection.json" "$fixture_root/ignored.json"
+write_fixture "$fixture_root/malformed-classic-protection.json" '{"required_status_checks":{"checks":"test","contexts":[]}}'
+expect_failure "$contract" inventory-policy github.com telekom/k8s-breakglass main \
+  "$fixture_root/empty-effective-rules.json" "$fixture_root/malformed-classic-protection.json" "$fixture_root/ignored.json"
 
 write_fixture "$fixture_root/repository.json" '{
   "id": 42,

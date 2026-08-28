@@ -28,6 +28,12 @@ parse_pr_url() {
     raw = ARGV.fetch(0)
     uri = URI.parse(raw)
     abort "PR URL must use HTTPS" unless uri.is_a?(URI::HTTPS)
+    authority = raw[/\Ahttps:\/\/([^\/]+)/i, 1]
+    # URI#port normalizes an explicit :443 to the HTTPS default. The gate
+    # promises a host-only HTTPS endpoint, so inspect the original authority
+    # as well and reject every explicit port, including :443.
+    abort "PR URL must not contain an explicit port" unless authority &&
+      authority.casecmp?(uri.host.to_s)
     abort "PR URL must not contain credentials, a port, query, or fragment" unless
       uri.userinfo.nil? && uri.port == 443 && uri.query.nil? && uri.fragment.nil?
     segments = uri.path.split("/").reject(&:empty?)
@@ -39,6 +45,36 @@ parse_pr_url() {
     abort "invalid GitHub host" unless uri.host && uri.host.match?(/\A[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\z/i)
     puts [uri.host.downcase, "#{owner}/#{repo}", segments[3]].join("\t")
   ' "$1" || fail "invalid pull-request URL"
+}
+
+normalize_branch_protection_http() {
+  test "$#" = 2 || fail "usage: normalize-branch-protection-http HTTP_RESPONSE_FILE OUTPUT_JSON"
+  require_file "$1"
+  command -v ruby >/dev/null 2>&1 || fail "ruby is required"
+  ruby -r json -e '
+    raw = File.binread(ARGV.fetch(0)).gsub("\r\n", "\n")
+    blocks = raw.split(/\n\n/, -1)
+    header_indexes = blocks.each_index.select { |index| blocks[index].start_with?("HTTP/") }
+    abort "missing HTTP response headers" if header_indexes.empty?
+    header_index = header_indexes.last
+    status = blocks.fetch(header_index).lines.first.to_s.strip
+    code = status[/\AHTTP\/\S+\s+(\d{3})\b/, 1]
+    abort "malformed HTTP status" unless code
+    body = blocks[(header_index + 1)..].join("\n\n")
+    case code
+    when "200"
+      parsed = JSON.parse(body)
+      abort "branch-protection response is not an object" unless parsed.is_a?(Hash)
+      File.write(ARGV.fetch(1), JSON.generate(parsed) + "\n")
+    when "404"
+      # The authenticated endpoint conclusively says classic branch protection
+      # is absent. Preserve a normalized empty object rather than treating an
+      # arbitrary transport/API failure as absence.
+      File.write(ARGV.fetch(1), "{}\n")
+    else
+      abort "branch-protection request returned HTTP #{code}"
+    end
+  ' "$1" "$2" || fail "could not normalize authenticated branch-protection response"
 }
 
 request_date() {
@@ -114,6 +150,72 @@ inventory_policy() {
         [ $effective[0][] | .[] ]
       else error("malformed paginated effective-rules response") end;
     def protection: $protection[0];
+    def nonempty_string: type == "string" and length > 0;
+    def enabled_object: type == "object" and .enabled == true;
+    def nonempty_restrictions:
+      [(.users // [])[], (.teams // [])[], (.apps // [])[]] | length > 0;
+    def valid_required_check:
+      type == "object" and (.context | nonempty_string) and
+      ((.integration_id // .app_id) | type) == "number" and
+      (.integration_id // .app_id) > 0;
+    def valid_workflow:
+      type == "object" and (.repository_id | type) == "number" and .repository_id > 0 and
+      (.path | nonempty_string) and (.ref | nonempty_string) and
+      (.sha | type) == "string" and (.sha | test("^[0-9a-fA-F]{40}$"));
+    def valid_code_scanning_tool:
+      type == "object" and (.tool | nonempty_string) and
+      (.alerts_threshold | nonempty_string) and
+      (.security_alerts_threshold | nonempty_string);
+    def valid_known_ruleset_rule:
+      type == "object" and (.type | nonempty_string) and (.parameters | type) == "object" and
+      (if .type == "required_status_checks" then
+         (.parameters.required_status_checks | type) == "array" and
+         all(.parameters.required_status_checks[]; valid_required_check)
+       elif .type == "workflows" then
+         (.parameters.workflows | type) == "array" and
+         (.parameters.workflows | length) > 0 and
+         all(.parameters.workflows[]; valid_workflow)
+       elif .type == "code_scanning" then
+         (.parameters.code_scanning_tools | type) == "array" and
+         (.parameters.code_scanning_tools | length) > 0 and
+         all(.parameters.code_scanning_tools[]; valid_code_scanning_tool)
+       elif .type == "required_deployments" then
+         (.parameters.required_deployment_environments | type) == "array" and
+         (.parameters.required_deployment_environments | length) > 0 and
+         all(.parameters.required_deployment_environments[]; nonempty_string)
+       else true end);
+    def valid_classic_enabled_field($field):
+      (protection[$field] == null) or
+      ((protection[$field] | type) == "object" and
+       (protection[$field].enabled | type) == "boolean");
+    def valid_classic_protection:
+      (protection | type) == "object" and
+      ((protection.required_status_checks == null) or
+       ((protection.required_status_checks | type) == "object" and
+        ((protection.required_status_checks.checks // []) | type) == "array" and
+        all(protection.required_status_checks.checks[]?; valid_required_check) and
+        ((protection.required_status_checks.contexts // []) | type) == "array" and
+        all(protection.required_status_checks.contexts[]?; nonempty_string))) and
+      ((protection.required_pull_request_reviews == null) or
+       ((protection.required_pull_request_reviews | type) == "object" and
+        ((protection.required_pull_request_reviews.required_approving_review_count // 0) | type) == "number" and
+        (protection.required_pull_request_reviews.required_approving_review_count // 0) >= 0)) and
+      ((protection.required_conversation_resolution == null) or
+       valid_classic_enabled_field("required_conversation_resolution")) and
+      valid_classic_enabled_field("required_signatures") and
+      valid_classic_enabled_field("required_commit_signatures") and
+      valid_classic_enabled_field("required_linear_history") and
+      valid_classic_enabled_field("enforce_admins") and
+      valid_classic_enabled_field("allow_force_pushes") and
+      valid_classic_enabled_field("allow_deletions") and
+      valid_classic_enabled_field("lock_branch") and
+      valid_classic_enabled_field("allow_fork_syncing") and
+      valid_classic_enabled_field("block_creations") and
+      ((protection.restrictions == null) or
+       ((protection.restrictions | type) == "object" and
+        ((protection.restrictions.users // []) | type) == "array" and
+        ((protection.restrictions.teams // []) | type) == "array" and
+        ((protection.restrictions.apps // []) | type) == "array"));
     def has_classic_status_checks:
       (protection.required_status_checks | type) == "object" and
       (((protection.required_status_checks.checks // []) | length) > 0 or
@@ -136,7 +238,51 @@ inventory_policy() {
            protection.required_commit_signatures.enabled == true then
           {type: "required_signatures", source: "classic_branch_protection",
            parameters: (protection.required_signatures // protection.required_commit_signatures)}
-        else empty end
+        else empty end,
+        if protection.required_linear_history.enabled == true then
+          {type: "required_linear_history", source: "classic_branch_protection",
+           parameters: protection.required_linear_history}
+        else empty end,
+        if protection.enforce_admins.enabled == true then
+          {type: "enforce_admins", source: "classic_branch_protection",
+           parameters: protection.enforce_admins}
+        else empty end,
+        if protection.allow_force_pushes.enabled == true then
+          {type: "allow_force_pushes", source: "classic_branch_protection",
+           parameters: protection.allow_force_pushes}
+        else empty end,
+        if protection.allow_deletions.enabled == true then
+          {type: "allow_deletions", source: "classic_branch_protection",
+           parameters: protection.allow_deletions}
+        else empty end,
+        if protection.lock_branch.enabled == true then
+          {type: "lock_branch", source: "classic_branch_protection",
+           parameters: protection.lock_branch}
+        else empty end,
+        if protection.allow_fork_syncing.enabled == true then
+          {type: "allow_fork_syncing", source: "classic_branch_protection",
+           parameters: protection.allow_fork_syncing}
+        else empty end,
+        if protection.block_creations.enabled == true then
+          {type: "block_creations", source: "classic_branch_protection",
+           parameters: protection.block_creations}
+        else empty end,
+        if (protection.restrictions | type) == "object" and
+           (protection.restrictions | nonempty_restrictions) then
+          {type: "restrictions", source: "classic_branch_protection",
+           parameters: protection.restrictions}
+        else empty end,
+        [protection | to_entries[] |
+         select(.key as $key |
+           ["url", "enabled", "required_status_checks", "required_pull_request_reviews",
+            "required_conversation_resolution", "required_signatures", "required_commit_signatures",
+            "required_linear_history", "enforce_admins", "allow_force_pushes", "allow_deletions",
+            "lock_branch", "allow_fork_syncing", "block_creations", "restrictions"] | index($key) | not) |
+         select((.value | type) == "boolean" and .value == true or
+                (.value | enabled_object) or
+                ((.value | type) == "array" and (.value | length) > 0)) |
+         {type: ("classic_" + .key), source: "classic_branch_protection", parameters: .value}
+        ][]
       ];
     def rule_checks($all_rules):
       [$all_rules[] | select(.type == "required_status_checks") |
@@ -164,6 +310,10 @@ inventory_policy() {
       error("invalid repository")
     elif ($all_rules | type) != "array" or ($all_rules | length) == 0 then
       error("no active ruleset or classic branch-protection requirement; refusing a no-op policy")
+    elif valid_classic_protection | not then
+      error("malformed classic branch-protection schema")
+    elif any($rules[]; valid_known_ruleset_rule | not) then
+      error("malformed known ruleset schema or parameters")
     elif ($unsupported | length) != 0 then
       error("unsupported active rule(s): " + ($unsupported | tojson) +
             "; extend the verifier for these exact type/parameters or remove the rule before using this gate")
@@ -272,6 +422,7 @@ usage() {
   cat >&2 <<'EOF'
 usage:
   pr-gate-contract.sh parse-pr-url HTTPS_PR_URL
+  pr-gate-contract.sh normalize-branch-protection-http HTTP_RESPONSE_FILE OUTPUT_JSON
   pr-gate-contract.sh request-date HTTP_RESPONSE_FILE
   pr-gate-contract.sh request-date-to-ns HTTP_RESPONSE_FILE
   pr-gate-contract.sh verify-review-freshness HTTP_RESPONSE_FILE RFC3339_UTC_TIMESTAMP
@@ -284,6 +435,7 @@ EOF
 command="${1-}"
 case "$command" in
   parse-pr-url) shift; parse_pr_url "$@" ;;
+  normalize-branch-protection-http) shift; normalize_branch_protection_http "$@" ;;
   request-date) shift; request_date "$@" ;;
   request-date-to-ns) shift; request_date_to_ns "$@" ;;
   verify-review-freshness) shift; verify_review_freshness "$@" ;;

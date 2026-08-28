@@ -217,7 +217,10 @@ active `pull_request`, `required_signatures`, `workflows`,
 `required_deployments`, and `code_scanning` rules. The effective ruleset pages
 and classic branch-protection requirements form one inventory: a repository
 with no rulesets but an App-bound classic required check is supported, while a
-repository with neither fails closed. A merge queue,
+repository with neither fails closed. Classic `required_linear_history` and
+every other enabled classic control without an explicit verifier are synthesized
+into that inventory and fail closed with their exact payload; malformed known
+ruleset/classic schemas fail before validation. A merge queue,
 linear-history rule, or any unrecognised active type fails closed with the
 server-provided type/parameters in the error: extend the verifier for that
 type, or remove/replace the rule before using this ready/merge gate. It never
@@ -403,12 +406,19 @@ collect_policy_inventory() {
     "$gate_dir/effective-rules.json" >/dev/null ||
     fail "missing or malformed effective branch rules"
 
-  # A failed request is not evidence that protection is absent. Repositories
-  # using rulesets-only protection need a captured `{}` response produced by a
-  # separate, authenticated 404-aware collector; otherwise stop here.
-  gh_api "repos/$base_repo/branches/$base_ref/protection" \
-    >"$gate_dir/branch-protection.json" ||
-    fail "could not capture branch protection (do not substitute an empty object after an API failure)"
+  # Capture the authenticated HTTP response even when `gh` returns non-zero.
+  # The contract accepts only a final HTTP 200 object or an authenticated 404
+  # (which conclusively means this branch has no classic protection); 401/403,
+  # 5xx, malformed headers/body, and every other status remain fatal.
+  protection_http="$gate_dir/branch-protection.http"
+  if gh_api --include "repos/$base_repo/branches/$base_ref/protection" \
+    >"$protection_http"; then
+    :
+  else
+    : # normalize-branch-protection-http validates the final HTTP status below.
+  fi
+  "$contract" normalize-branch-protection-http "$protection_http" \
+    "$gate_dir/branch-protection.json"
   jq -e 'type == "object"' "$gate_dir/branch-protection.json" >/dev/null ||
     fail "malformed branch protection"
 
