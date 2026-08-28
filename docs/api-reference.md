@@ -989,7 +989,7 @@ POST /api/debugSessions
   },
   "reason": "Investigating issue #12345",
   "targetNamespace": "debug-team-sre",
-  "selectedSchedulingOption": "sriov"
+  "selectedSchedulingOption": "network-capable"
 }
 ```
 
@@ -1178,7 +1178,7 @@ access are all considered before a template is included in the response.
       "description": "Network debugging tools on all nodes",
       "mode": "workload",
       "workloadType": "DaemonSet",
-      "podTemplateRef": "netshoot-base",
+      "podTemplateRef": "workload-diagnostics",
       "targetNamespace": "breakglass-debug",
       "constraints": {
         "maxDuration": "4h",
@@ -1371,7 +1371,7 @@ GET /api/debugSessions/podTemplates
 {
   "templates": [
     {
-      "name": "netshoot-base",
+      "name": "workload-diagnostics",
       "displayName": "Netshoot Debug Pod",
       "description": "Network troubleshooting tools",
       "containers": 1
@@ -1395,6 +1395,15 @@ Returns full `DebugPodTemplate` CRD object.
 
 These endpoints provide kubectl-debug style operations for sessions in `kubectl-debug` or `hybrid` mode.
 
+The request schemas below are the wire-compatible API contract in this release. They
+are not an image, command, node, or security-profile approval mechanism. Providers
+must expose only an administrator-authored operation profile (normally one of the
+[utility images](./README.md#debug-utility-images), pinned by digest) and
+validate the selected target before calling these endpoints. The API accepts some
+caller-supplied fields for compatibility; an upstream deployment must not treat
+those fields as an unrestricted debugging interface. See the [DebugSession authoring
+guide](./debug-session-authoring.md) for the provider boundary and cleanup contract.
+
 ### Inject Ephemeral Container
 
 ```http
@@ -1403,33 +1412,31 @@ POST /api/debugSessions/:name/injectEphemeralContainer
 
 Injects an ephemeral container into a running pod for live debugging without restarting the pod.
 
-**Request Body:**
+**Request body fields:**
 
-```json
-{
-  "namespace": "default",
-  "podName": "my-app-pod-xyz",
-  "containerName": "debug",
-  "image": "busybox:latest",
-  "command": ["sh"]
-}
-```
+Send the required fields `namespace`, `podName`, `containerName`, and `image`.
+`command` and `securityContext` are optional wire fields. This reference omits
+sample values intentionally: the provider must select the image, entrypoint, and
+security context from its approved profile rather than accepting arbitrary values
+from the caller.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `namespace` | string | Yes | Target pod's namespace |
 | `podName` | string | Yes | Target pod's name |
-| `containerName` | string | No | Name for the ephemeral container (default: "debug") |
-| `image` | string | Yes | Container image to use |
-| `command` | string[] | No | Command to run in the container |
+| `containerName` | string | Yes | Name for the ephemeral container |
+| `image` | string | Yes | Provider-selected image; the resolved template validates its allowlist and, when configured, requires an `@sha256:` digest |
+| `command` | string[] | No | Provider-selected command; an upstream deployment must not expose this as unrestricted caller input |
+| `securityContext` | object | No | Provider-selected security context; capabilities, privileged mode, and non-root requirements are checked against the resolved template |
 
 **Response (200 OK):**
 
 ```json
 {
-  "success": true,
-  "message": "Ephemeral container 'debug' injected into pod 'my-app-pod-xyz'",
-  "containerName": "debug"
+  "message": "ephemeral container injected successfully",
+  "pod": "my-app-pod-xyz",
+  "namespace": "default",
+  "container": "debug"
 }
 ```
 
@@ -1446,28 +1453,31 @@ POST /api/debugSessions/:name/createPodCopy
 
 Creates a copy of an existing pod for debugging. The original pod is not modified.
 
-**Request Body:**
+**Request body fields:**
 
-```json
-{
-  "namespace": "default",
-  "podName": "my-app-pod-xyz",
-  "debugImage": "busybox:latest"
-}
-```
+Send `namespace` and `podName`. `debugImage` is an optional compatibility field;
+the provider should omit it unless the selected, administrator-authored copy
+profile explicitly requires it. The current handler does not apply the ephemeral
+container image allowlist to this field, so callers must not be allowed to choose
+it directly. The copied pod uses the source pod specification and, when
+`debugImage` is supplied, adds a debugger container with the fixed `sleep
+infinity` command.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `namespace` | string | Yes | Target pod's namespace |
 | `podName` | string | Yes | Target pod's name |
-| `debugImage` | string | No | Optional image to replace container image |
+| `debugImage` | string | No | Optional provider-selected debugger image; not a general image replacement or caller-controlled profile |
 
 **Response (200 OK):**
 
 ```json
 {
+  "message": "pod copy created successfully",
   "copyName": "my-app-pod-xyz-debug-abc123",
-  "copyNamespace": "default"
+  "copyNamespace": "default",
+  "originalPod": "my-app-pod-xyz",
+  "originalNamespace": "default"
 }
 ```
 
@@ -1482,15 +1492,18 @@ Creates a copy of an existing pod for debugging. The original pod is not modifie
 POST /api/debugSessions/:name/createNodeDebugPod
 ```
 
-Creates a privileged debug pod on a specific node for node-level debugging.
+Creates a privileged debug pod on a specific node for node-level debugging. The
+operation is intentionally high risk: the implementation uses host namespaces and
+a read-write `/host` host-path, and its debugger container is privileged. Expose it
+only through a separately approved node-maintenance or artifact-collection profile
+with the required admission policy and short expiry.
 
-**Request Body:**
+**Request body fields:**
 
-```json
-{
-  "nodeName": "worker-node-1"
-}
-```
+Send the required `nodeName` field. This reference does not provide a concrete
+node value: the provider must resolve the target from an approved maintenance
+workflow and the resolved template's node selector. It must not turn this field
+into arbitrary caller-selected node access.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -1500,8 +1513,10 @@ Creates a privileged debug pod on a specific node for node-level debugging.
 
 ```json
 {
+  "message": "node debug pod created successfully",
   "podName": "node-debug-worker-node-1-abc123",
-  "namespace": "breakglass-debug"
+  "namespace": "breakglass-debug",
+  "node": "worker-node-1"
 }
 ```
 

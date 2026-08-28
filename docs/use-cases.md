@@ -371,41 +371,11 @@ kubectl delete namespace orphaned-namespace
 
 ### Option 1: Using Debug Sessions (Recommended)
 
-Debug Sessions allow deploying controlled debug pods without granting broader RBAC:
-
-```yaml
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: DebugPodTemplate
-metadata:
-  name: network-debug-tools
-spec:
-  podSpec:
-    containers:
-    - name: debug
-      image: nicolaka/netshoot:latest  # or your approved debug image
-      command: ["/bin/sh", "-c", "sleep infinity"]
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-    restartPolicy: Never
----
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: DebugSessionTemplate
-metadata:
-  name: network-debugging
-spec:
-  mode: workload
-  workloadType: Deployment
-  podTemplateRef: "network-debug-tools"
-  allowed:
-    clusters: ["prod-cluster-1"]
-    groups: ["operations", "developers"]
-  approvers:
-    groups: ["sre"]
-  constraints:
-    maxDuration: "4h"
-    defaultDuration: "1h"
-```
+Debug Sessions allow deploying controlled debug pods without granting broader
+RBAC. Publish an administrator-owned `DebugPodTemplate` using an immutable
+utility digest and its image-owned entrypoint; the current shape is
+`spec.template.spec`, not `spec.podSpec`. See the [DebugSession authoring
+guide](./debug-session-authoring.md) and the [utility image catalogue](./README.md#debug-utility-images).
 
 ### Option 2: Using kubectl-debug Mode
 
@@ -421,9 +391,13 @@ spec:
   kubectlDebug:
     ephemeralContainers:
       enabled: true
-      allowedNamespaces: ["app-*", "services-*"]
-      deniedNamespaces: ["kube-system"]
-      allowedImages: ["busybox:*", "nicolaka/netshoot:*"]
+      allowedNamespaces:
+        patterns: ["app-*", "services-*"]
+      deniedNamespaces:
+        patterns: ["kube-system"]
+      allowedImages:
+        - "ghcr.io/telekom/k8s-breakglass/utils/network-debug@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      requireImageDigest: true
     podCopy:
       enabled: true
       ttl: "1h"
@@ -437,24 +411,10 @@ spec:
     defaultDuration: "30m"
 ```
 
-**Usage via API:**
-
-```bash
-# Create a kubectl-debug session
-curl -X POST https://breakglass.example.com/api/debugSessions \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"templateRef": "ephemeral-pod-debug", "cluster": "prod-cluster-1", "reason": "Debugging pod connectivity"}'
-
-# Inject ephemeral container into a running pod
-curl -X POST https://breakglass.example.com/api/debugSessions/{sessionName}/injectEphemeralContainer \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"namespace": "app-frontend", "podName": "web-abc123", "image": "nicolaka/netshoot:latest"}'
-
-# Create a debug copy of a pod
-curl -X POST https://breakglass.example.com/api/debugSessions/{sessionName}/createPodCopy \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"namespace": "app-frontend", "podName": "web-abc123", "debugImage": "busybox:latest"}'
-```
+**Usage via API:** create the session from its approved template, then invoke
+only the operation exposed by that template. Do not pass a free-form image,
+command, pod, or node target from the caller; a provider must resolve and
+validate those values from the template and admission policy.
 
 ### Option 3: Permanent Debug Pods with Breakglass Exec
 
@@ -523,110 +483,26 @@ nc -zv database-host 5432
 
 ### Configuration Example
 
-For TCP dump, you typically need privileged access to the host network. Use a DebugSession:
+Use the [network-debug utility](../utils/network-debug/README.md) through an
+administrator-authored DebugSessionTemplate. Its standard mode captures in a
+pod network namespace with bounded `tcpdump`; its advanced `pwru` mode needs a
+separate host-network/host-PID profile, Linux BPF prerequisites, and explicit
+capabilities. The controller must choose the immutable image, fixed command,
+interface, filter, duration, packet bound, and node policy. Never expose a
+free-form image, command, node name, or privileged pod spec to the requester.
 
-```yaml
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: DebugPodTemplate
-metadata:
-  name: tcpdump-tools
-spec:
-  podSpec:
-    hostNetwork: true  # Required for tcpdump on host interfaces
-    containers:
-    - name: tcpdump
-      image: your-registry/tcpdump:latest
-      command: ["/bin/sh", "-c", "sleep infinity"]
-      securityContext:
-        capabilities:
-          add: ["NET_ADMIN", "NET_RAW"]
-    nodeSelector:
-      # Optionally target specific nodes
-      kubernetes.io/hostname: "node-to-debug"
----
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: DebugSessionTemplate
-metadata:
-  name: network-capture
-spec:
-  mode: workload
-  workloadType: DaemonSet  # Deploy to all/selected nodes
-  podTemplateRef: "tcpdump-tools"
-  allowed:
-    clusters: ["prod-cluster-1"]
-    groups: ["network-team", "sre"]
-  approvers:
-    groups: ["security-team", "sre-leads"]
-  constraints:
-    maxDuration: "2h"
-    defaultDuration: "30m"
-```
-
-### Override Pod Security for Network Tools
-
-If SRE needs to access privileged debug pods:
-
-```yaml
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: BreakglassEscalation
-metadata:
-  name: sre-privileged-debug
-spec:
-  escalatedGroup: "cluster-admin"
-  allowed:
-    clusters: ["prod-cluster-1"]
-    groups: ["sre"]
-  approvers:
-    groups: ["sre-leads", "security-team"]
-  # Override pod security to allow access to privileged pods
-  podSecurityOverrides:
-    enabled: true
-    maxAllowedScore: 200
-    exemptFactors:
-      - hostNetwork
-      - capabilities
-    namespaceScope: ["debug-tools", "kube-system"]
-```
+Do not solve a host-capture requirement by broadly overriding Pod Security.
+Use a separately approved profile with only the capabilities documented by
+the utility, and apply a narrowly scoped admission exception if the platform
+requires one.
 
 ### Node-Level Debugging with kubectl-debug Mode
 
-For direct node access using kubectl-debug style operations:
-
-```yaml
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: DebugSessionTemplate
-metadata:
-  name: node-debug-access
-spec:
-  mode: kubectl-debug
-  kubectlDebug:
-    nodeDebug:
-      enabled: true
-      allowedImages: ["nicolaka/netshoot:*", "alpine:*"]
-      hostNamespaces:
-        hostNetwork: true
-        hostPID: true
-  allowed:
-    clusters: ["prod-cluster-1"]
-    groups: ["network-team", "sre"]
-  approvers:
-    groups: ["sre-leads"]
-  constraints:
-    maxDuration: "2h"
-    defaultDuration: "30m"
-```
-
-**Usage via API:**
-
-```bash
-# Create a node debug pod
-curl -X POST https://breakglass.example.com/api/debugSessions/{sessionName}/createNodeDebugPod \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"nodeName": "node-to-debug"}'
-
-# Then exec into the created pod
-kubectl exec -it node-debug-node-to-debug-abc123 -n breakglass-debug -- tcpdump -i any -n port 443
-```
+For host-level packet diagnosis, use the utility's advanced `pwru` contract or
+the provider's reviewed node-maintenance flow. A node target must be resolved
+from controller-owned constraints and verified at admission. The REST API
+endpoint for node debug operations exists, but this upstream guide does not
+publish a free-form node request or an interactive host shell example.
 
 ---
 
