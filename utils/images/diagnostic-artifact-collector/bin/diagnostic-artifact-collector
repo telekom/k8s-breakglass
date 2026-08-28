@@ -252,7 +252,7 @@ start_watchdog() {
 # Run the finder in an isolated session so expiry can stop the traversal rather
 # than only the immediate find PID. The image's BusyBox base provides setsid;
 # refuse an image variant without it instead of silently weakening cleanup.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 stop_finder() {
 	pgid=$finder_pgid
 	if [ -z "$pgid" ]; then
