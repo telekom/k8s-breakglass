@@ -20,7 +20,10 @@ limitations under the License.
 package api
 
 import (
+	"bufio"
 	"context"
+	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -62,7 +65,7 @@ func init() {
 // - TestUserWithApprovedSessionAllowed: Requester (breakglass-pods-reader)
 // - TestSessionClusterScopeEnforced: DevAlpha (breakglass-pods-admin)
 // - TestDenyPolicyEnforcedOnSpoke: PolicyTestRequester (breakglass-limited-access)
-// - TestExpiredSessionDenied: SchedulingTestRequester (breakglass-read-only)
+// - TestExpiredSessionDenied: SchedulingTestRequester (breakglass-pods-admin)
 // - TestMultipleUsersIndependentSessions: WebhookTestRequester (breakglass-emergency-admin)
 type SpokeHubAuthorizationSuite struct {
 	suite.Suite
@@ -131,7 +134,7 @@ func (s *SpokeHubAuthorizationSuite) TearDownSuite() {
 // deterministic: the first post-boundary write is evaluated while the stored
 // session is still Approved, then the normal controller expiry is restored and
 // verified separately.
-func (s *SpokeHubAuthorizationSuite) holdSessionExpiryCleanup() func() {
+func (s *SpokeHubAuthorizationSuite) holdSessionExpiryCleanup() (func(), time.Duration) {
 	const deploymentName = "breakglass-manager"
 	const deploymentNamespace = "breakglass-system"
 	const cleanupEnv = "CLEANUP_INTERVAL"
@@ -143,20 +146,28 @@ func (s *SpokeHubAuthorizationSuite) holdSessionExpiryCleanup() func() {
 	original := deployment.DeepCopy()
 	patched := deployment.DeepCopy()
 	found := false
+	var originalInterval time.Duration
 	for containerIndex := range patched.Spec.Template.Spec.Containers {
 		container := &patched.Spec.Template.Spec.Containers[containerIndex]
+		containerFound := false
 		for envIndex := range container.Env {
 			if container.Env[envIndex].Name == cleanupEnv {
+				parsed, parseErr := time.ParseDuration(container.Env[envIndex].Value)
+				s.Require().NoError(parseErr, "controller cleanup interval must be a valid duration")
+				s.Require().Positive(parsed, "controller cleanup interval must be positive")
+				originalInterval = parsed
 				container.Env[envIndex].Value = "1h"
 				found = true
+				containerFound = true
 			}
 		}
-		if !found {
+		if !containerFound {
 			container.Env = append(container.Env, corev1.EnvVar{Name: cleanupEnv, Value: "1h"})
 			found = true
 		}
 	}
 	s.Require().True(found, "breakglass controller deployment must have a writable cleanup interval")
+	s.Require().Positive(originalInterval, "breakglass controller deployment must expose its cleanup cadence")
 	s.Require().NoError(s.hubClient.Update(s.ctx, patched), "pause cleanup loop before expiry boundary")
 	s.waitForControllerDeployment(s.ctx, deploymentNamespace, deploymentName, patched.Generation)
 
@@ -172,7 +183,7 @@ func (s *SpokeHubAuthorizationSuite) holdSessionExpiryCleanup() func() {
 			return
 		}
 		s.waitForControllerDeployment(context.Background(), deploymentNamespace, deploymentName, current.Generation)
-	}
+	}, originalInterval
 }
 
 func (s *SpokeHubAuthorizationSuite) waitForControllerDeployment(ctx context.Context, namespace, name string, generation int64) {
@@ -432,7 +443,7 @@ func (s *SpokeHubAuthorizationSuite) TestDenyPolicyEnforcedOnSpoke() {
 }
 
 // TestExpiredSessionDenied verifies that access is denied after a session expires.
-// Uses: SchedulingTestRequester with breakglass-read-only group
+// Uses: SchedulingTestRequester with breakglass-pods-admin group
 //
 // User Flow:
 // 1. User requests a 60-second session and it is approved
@@ -447,6 +458,7 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 	t := s.T()
 	spokeCluster := s.mcCtx.Config.SpokeAClusterName
 	testUser := helpers.TestUsers.SchedulingTestRequester
+	const streamPodName = "hard-expiry-stream"
 
 	t.Log("=== Test: Expired Session Access Denial ===")
 	t.Logf("Using user: %s", testUser.Email)
@@ -464,12 +476,37 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 	s.Require().Error(baselineErr, "access must be denied before the session exists: %s", baselineOutput)
 	s.Require().Contains(strings.ToLower(baselineOutput), "forbidden", "baseline denial must come from Kubernetes authorization: %s", baselineOutput)
 
+	// Create a workload with an administrator-only fixture client. All requests
+	// under test continue to use the OIDC-only kubeconfig above, so no client
+	// certificate or ambient RBAC permission can mask the webhook decision.
+	adminKubeconfig := s.mcCtx.GetSpokeKubeconfig(spokeCluster)
+	s.Require().NotEmpty(adminKubeconfig, "hard-expiry stream fixture requires the spoke administrator kubeconfig")
+	fixtureArgs := []string{
+		"-n", "default", "run", streamPodName,
+		"--image=busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662", "--restart=Never", "--command", "--",
+		"sh", "-c", "while true; do echo hard-expiry-heartbeat; sleep 1; done",
+	}
+	fixtureOutput, fixtureErr := s.runKubectlWithKubeconfig(s.ctx, adminKubeconfig, fixtureArgs...)
+	s.Require().NoError(fixtureErr, "administrator fixture pod must be created: %s", fixtureOutput)
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_, cleanupErr := s.runKubectlWithKubeconfig(cleanupCtx, adminKubeconfig,
+			"-n", "default", "delete", "pod", streamPodName, "--ignore-not-found=true")
+		if cleanupErr != nil {
+			t.Logf("stream fixture cleanup failed: %v", cleanupErr)
+		}
+	}()
+	waitOutput, waitErr := s.runKubectlWithKubeconfig(s.ctx, adminKubeconfig,
+		"-n", "default", "wait", "--for=condition=Ready", "pod/"+streamPodName, "--timeout=60s")
+	s.Require().NoError(waitErr, "administrator fixture pod must become ready: %s", waitOutput)
+
 	// Create a normal session via API
 	t.Log("Step 1: Creating session via API")
 	session, err := userAPI.CreateSessionAndWaitForPending(s.ctx, t, helpers.SessionRequest{
 		Cluster:  spokeCluster,
 		User:     testUser.Email,
-		Group:    "breakglass-read-only",
+		Group:    "breakglass-pods-admin",
 		Reason:   "E2E Test - Session expiry verification",
 		Duration: 60,
 	}, helpers.WaitForStateTimeout)
@@ -508,11 +545,90 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 	// remains available, but the session stays Approved for the immediate
 	// post-boundary status-admission proof; natural terminalization is checked
 	// after the original cleanup interval is restored.
-	restoreCleanup := s.holdSessionExpiryCleanup()
+	restoreCleanup, cleanupInterval := s.holdSessionExpiryCleanup()
 	restoredCleanup := false
 	defer func() {
 		if !restoredCleanup {
 			restoreCleanup()
+		}
+	}()
+
+	// Start one native exec stream while the lease is still live. Kubernetes
+	// does not provide a revocation hook for an already-established exec,
+	// attach, logs or port-forward stream; this lane characterizes that
+	// limitation while all new requests below are required to deny at the hard
+	// boundary. The stream handshake reads a response before the deadline, and
+	// the post-boundary heartbeat proves the same bidirectional stream remains
+	// established rather than merely observing a still-running kubectl process.
+	const streamLead = 8 * time.Second
+	for time.Until(expiresAt.Add(-streamLead)) > 0 {
+		remaining := time.Until(expiresAt.Add(-streamLead))
+		if remaining > time.Second {
+			remaining = time.Second
+		}
+		select {
+		case <-s.ctx.Done():
+			s.Require().FailNow("test context cancelled while preparing the pre-boundary native stream")
+		case <-time.After(remaining):
+		}
+	}
+	streamCtx, streamCancel := context.WithCancel(s.ctx)
+	streamCmd := s.newLongLivedKubectlWithToken(streamCtx, kubeconfig, token,
+		"exec", "-i", streamPodName, "--", "sh", "-c", "while IFS= read -r line; do printf 'ack:%s\\n' \"$line\"; done")
+	streamStdin, err := streamCmd.StdinPipe()
+	s.Require().NoError(err, "pre-boundary exec stream must provide stdin")
+	streamStdout, err := streamCmd.StdoutPipe()
+	s.Require().NoError(err, "pre-boundary exec stream must provide stdout")
+	streamCmd.Stderr = io.Discard
+	streamStartedAt := time.Now()
+	s.Require().NoError(streamCmd.Start(), "pre-boundary exec stream must start")
+	streamDone := make(chan error, 1)
+	go func() { streamDone <- streamCmd.Wait() }()
+	streamReader := bufio.NewReader(streamStdout)
+	readHeartbeat := func(expected, phase string) {
+		response := make(chan struct {
+			line string
+			err  error
+		}, 1)
+		go func() {
+			line, readErr := streamReader.ReadString('\n')
+			response <- struct {
+				line string
+				err  error
+			}{line: line, err: readErr}
+		}()
+		select {
+		case result := <-response:
+			s.Require().NoError(result.err, "%s stream heartbeat read failed", phase)
+			s.Require().Equal("ack:"+expected+"\n", result.line, "%s stream heartbeat mismatch", phase)
+		case <-time.After(2 * time.Second):
+			s.Require().FailNow("timed out waiting for %s stream heartbeat", phase)
+		}
+	}
+	_, err = io.WriteString(streamStdin, "before-expiry\n")
+	s.Require().NoError(err, "pre-boundary exec stream must accept its first heartbeat")
+	streamAcceptedAt := time.Now()
+	readHeartbeat("before-expiry", "pre-boundary")
+	streamHandshakeCompletedAt := time.Now()
+	s.Require().True(streamAcceptedAt.Before(expiresAt) && streamHandshakeCompletedAt.Before(expiresAt),
+		"pre-boundary exec stream handshake must complete before expiresAt: accepted=%s completed=%s expires=%s",
+		streamAcceptedAt, streamHandshakeCompletedAt, expiresAt)
+	select {
+	case streamErr := <-streamDone:
+		streamCancel()
+		s.Require().NoError(streamErr, "pre-boundary exec stream must remain established after its handshake")
+	case <-time.After(750 * time.Millisecond):
+		// The explicit heartbeat above, rather than process liveness, proves the
+		// stream was accepted before the boundary.
+	}
+	defer func() {
+		_ = streamStdin.Close()
+		streamCancel()
+		select {
+		case <-streamDone:
+		case <-time.After(5 * time.Second):
+			_ = streamCmd.Process.Kill()
+			<-streamDone
 		}
 	}()
 
@@ -542,6 +658,9 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 		probeOutput, probeErr := s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
 		probeComplete := time.Now()
 		probes++
+		t.Logf("expiry probe %d: started=%s completed=%s duration=%s result=%v output=%q",
+			probes, probeStart.UTC().Format(time.RFC3339Nano), probeComplete.UTC().Format(time.RFC3339Nano),
+			probeComplete.Sub(probeStart), probeErr == nil, strings.TrimSpace(probeOutput))
 
 		switch {
 		case probeStart.Before(expiresAt) && probeComplete.Before(expiresAt):
@@ -553,6 +672,40 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 			s.Require().Less(probeComplete.Sub(probeStart), 5*time.Second, "post-boundary denial must return before the kubectl request timeout")
 			s.Require().True(strings.Contains(strings.ToLower(probeOutput), "forbidden") || strings.Contains(strings.ToLower(probeOutput), "denied"),
 				"post-boundary denial should be reported as forbidden, got: %s", probeOutput)
+
+			if postBoundaryDenials == 1 {
+				// Exercise fresh authorization requests for each native pod
+				// subresource immediately after the boundary. These must all
+				// deny even though the pre-boundary exec stream remains open.
+				s.requireFreshSubresourceDenials(kubeconfig, token, streamPodName)
+				// Keep the native stream open beyond the old five-second kubectl
+				// request timeout before sending the second heartbeat. This proves
+				// the dedicated long-lived helper really has no inherited timeout.
+				streamProofAt := streamStartedAt.Add(7 * time.Second)
+				postHeartbeatAt := expiresAt.Add(2 * time.Second)
+				if postHeartbeatAt.Before(streamProofAt) {
+					postHeartbeatAt = streamProofAt
+				}
+				if delay := time.Until(postHeartbeatAt); delay > 0 {
+					select {
+					case <-s.ctx.Done():
+						s.Require().FailNow("test context cancelled while proving the long-lived stream")
+					case <-time.After(delay):
+					}
+				}
+				select {
+				case streamErr := <-streamDone:
+					s.Require().NoError(streamErr, "a native exec stream established before expiry should remain open across expiry")
+				default:
+					_, err = io.WriteString(streamStdin, "after-expiry\n")
+					s.Require().NoError(err, "pre-boundary exec stream must accept a heartbeat after expiry")
+					readHeartbeat("after-expiry", "post-boundary")
+					streamHeartbeatAt := time.Now()
+					s.Require().GreaterOrEqual(streamHeartbeatAt.Sub(streamStartedAt), 7*time.Second,
+						"post-boundary heartbeat must be beyond the legacy five-second kubectl timeout")
+					t.Logf("pre-boundary native exec stream remains bidirectional after expiry (Kubernetes stream limitation); age=%s", streamHeartbeatAt.Sub(streamStartedAt))
+				}
+			}
 
 			// The status webhook is part of the same hard-expiry boundary. This
 			// happens on the first post-boundary request while cleanup is paused,
@@ -604,8 +757,7 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 
 	// Only after the immediate rejected write has been checked do we wait for
 	// the controller to record its normal terminal state.
-	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
-		breakglassv1alpha1.SessionStateExpired, 30*time.Second)
+	s.waitForSessionExpiredAfterCleanup(session, cleanupInterval)
 	var terminal breakglassv1alpha1.BreakglassSession
 	s.Require().NoError(s.hubClient.Get(s.ctx, client.ObjectKeyFromObject(session), &terminal))
 	s.Require().Equal(beforeResurrectionUID, string(terminal.UID), "expiry cleanup must not replace the session object")
@@ -618,6 +770,82 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 	t.Log("✓ Access after expiry: DENIED")
 
 	t.Log("=== Expired Session Test Passed! ===")
+}
+
+// TestHardExpiryMultipleIndependentSessions is reserved for the focused hard-
+// expiry CI lane. Keeping the gate here prevents the regular 1.36 suite from
+// duplicating this deliberately time-bound authorization proof.
+//
+// Two different session groups authorize the same request. Once the shorter
+// lease has elapsed, access must remain allowed through the still-live second
+// candidate; once both leases have elapsed, the same OIDC request must deny.
+func (s *SpokeHubAuthorizationSuite) TestHardExpiryMultipleIndependentSessions() {
+	if os.Getenv("E2E_HARD_EXPIRY") != "true" {
+		s.T().Skip("focused hard-expiry lane only")
+	}
+	t := s.T()
+	spokeCluster := s.mcCtx.Config.SpokeAClusterName
+	testUser := helpers.TestUsers.SchedulingTestRequester
+	userAPI := s.createAPIClientForUser(testUser)
+	token := s.mcCtx.GetTokenForTestUser(t, s.ctx, testUser)
+	kubeconfig := s.mcCtx.GetSpokeOIDCKubeconfig(spokeCluster)
+	s.Require().NotEmpty(kubeconfig, "independent-session proof requires the OIDC-only spoke kubeconfig")
+
+	short, err := userAPI.CreateSessionAndWaitForPending(s.ctx, t, helpers.SessionRequest{
+		Cluster: spokeCluster, User: testUser.Email, Group: "breakglass-read-only",
+		Reason: "Focused hard-expiry proof - first independent lease", Duration: 60,
+	}, helpers.WaitForStateTimeout)
+	s.Require().NoError(err)
+	s.cleanup.Add(short)
+	long, err := userAPI.CreateSessionAndWaitForPending(s.ctx, t, helpers.SessionRequest{
+		Cluster: spokeCluster, User: testUser.Email, Group: "breakglass-pods-reader",
+		Reason: "Focused hard-expiry proof - second independent lease", Duration: 90,
+	}, helpers.WaitForStateTimeout)
+	s.Require().NoError(err)
+	s.cleanup.Add(long)
+
+	for _, session := range []*breakglassv1alpha1.BreakglassSession{short, long} {
+		s.Require().NoError(s.approverAPI.ApproveSessionViaAPI(s.ctx, t, session.Name, session.Namespace))
+		helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
+			breakglassv1alpha1.SessionStateApproved, 30*time.Second)
+	}
+
+	var shortLive, longLive breakglassv1alpha1.BreakglassSession
+	s.Require().NoError(s.hubClient.Get(s.ctx, client.ObjectKeyFromObject(short), &shortLive))
+	s.Require().NoError(s.hubClient.Get(s.ctx, client.ObjectKeyFromObject(long), &longLive))
+	s.Require().True(shortLive.Status.ExpiresAt.Time.Before(longLive.Status.ExpiresAt.Time),
+		"independent leases must have staggered persisted deadlines: short=%s long=%s",
+		shortLive.Status.ExpiresAt.Time, longLive.Status.ExpiresAt.Time)
+	s.Require().Greater(longLive.Status.ExpiresAt.Sub(shortLive.Status.ExpiresAt.Time), 5*time.Second,
+		"staggered deadlines must leave an unambiguous second-session window")
+
+	initialOutput, initialErr := s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
+	s.Require().NoError(initialErr, "same request must be allowed while both sessions are live: %s", initialOutput)
+
+	wait := time.Until(shortLive.Status.ExpiresAt.Time) + 250*time.Millisecond
+	if wait > 0 {
+		select {
+		case <-s.ctx.Done():
+			s.Require().FailNow("context cancelled while waiting for first independent lease")
+		case <-time.After(wait):
+		}
+	}
+	firstExpiredOutput, firstExpiredErr := s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
+	s.Require().NoError(firstExpiredErr,
+		"the still-live independent session must preserve access after the first expiry: %s", firstExpiredOutput)
+
+	wait = time.Until(longLive.Status.ExpiresAt.Time) + 250*time.Millisecond
+	if wait > 0 {
+		select {
+		case <-s.ctx.Done():
+			s.Require().FailNow("context cancelled while waiting for second independent lease")
+		case <-time.After(wait):
+		}
+	}
+	finalOutput, finalErr := s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
+	s.Require().Error(finalErr, "same request must be denied after both independent leases expire: %s", finalOutput)
+	s.Require().Contains(strings.ToLower(finalOutput), "forbidden",
+		"final denial must be an authorization denial: %s", finalOutput)
 }
 
 // TestWebhookEndpointAccessibleFromSpoke verifies the hub webhook endpoint is reachable
@@ -701,25 +929,95 @@ func (s *SpokeHubAuthorizationSuite) TestMultipleUsersIndependentSessions() {
 
 // getOIDCKubeconfig returns the OIDC-only kubeconfig for token-based authentication.
 // This kubeconfig has no client certificates, forcing kubectl to use only the --token
-// flag for authentication. This is required for testing OIDC-based authorization flows.
-// Falls back to regular kubeconfig if OIDC kubeconfig is not available.
+// flag for authentication. This is required for testing OIDC-based authorization flows;
+// callers must not fall back to an administrator client certificate.
 func (s *SpokeHubAuthorizationSuite) getOIDCKubeconfig(clusterName string) string {
-	kubeconfig := s.mcCtx.GetSpokeOIDCKubeconfig(clusterName)
-	if kubeconfig == "" {
-		// Fall back to regular kubeconfig if OIDC kubeconfig not available
-		kubeconfig = s.mcCtx.GetSpokeKubeconfig(clusterName)
-	}
-	return kubeconfig
+	return s.mcCtx.GetSpokeOIDCKubeconfig(clusterName)
 }
 
 func (s *SpokeHubAuthorizationSuite) runKubectlWithToken(kubeconfig, token string, args ...string) (string, error) {
+	return s.runKubectlWithTokenContext(s.ctx, kubeconfig, token, args...)
+}
+
+func (s *SpokeHubAuthorizationSuite) runKubectlWithTokenContext(ctx context.Context, kubeconfig, token string, args ...string) (string, error) {
+	cmd := s.newKubectlWithToken(ctx, kubeconfig, token, args...)
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
+func (s *SpokeHubAuthorizationSuite) runKubectlWithKubeconfig(ctx context.Context, kubeconfig string, args ...string) (string, error) {
+	fullArgs := append([]string{"--kubeconfig", kubeconfig, "--request-timeout=5s"}, args...)
+	cmd := exec.CommandContext(ctx, "kubectl", fullArgs...)
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
+func (s *SpokeHubAuthorizationSuite) newKubectlWithToken(ctx context.Context, kubeconfig, token string, args ...string) *exec.Cmd {
 	fullArgs := append([]string{
 		"--kubeconfig", kubeconfig,
 		"--token", token,
 		"--request-timeout=5s",
 	}, args...)
+	return exec.CommandContext(ctx, "kubectl", fullArgs...)
+}
 
-	cmd := exec.CommandContext(s.ctx, "kubectl", fullArgs...)
-	output, err := cmd.CombinedOutput()
-	return string(output), err
+// newLongLivedKubectlWithToken starts a native Kubernetes stream without a
+// request timeout. The caller owns its lifetime through ctx and must arrange
+// explicit cleanup. This is intentionally separate from ordinary requests,
+// which retain the five-second timeout to keep authorization probes bounded.
+func (s *SpokeHubAuthorizationSuite) newLongLivedKubectlWithToken(ctx context.Context, kubeconfig, token string, args ...string) *exec.Cmd {
+	fullArgs := append([]string{
+		"--kubeconfig", kubeconfig,
+		"--token", token,
+	}, args...)
+	return exec.CommandContext(ctx, "kubectl", fullArgs...)
+}
+
+// waitForSessionExpiredAfterCleanup waits for the controller's normal cleanup
+// loop after its deployment rollout has become ready. The bound is derived
+// from the actual configured cadence, and each poll reads the live object so a
+// timeout reports the last observed state and expiry instead of hiding a
+// controller or rollout failure behind a fixed sleep.
+func (s *SpokeHubAuthorizationSuite) waitForSessionExpiredAfterCleanup(session *breakglassv1alpha1.BreakglassSession, cleanupInterval time.Duration) {
+	timeout := 3*cleanupInterval + 30*time.Second
+	ctx, cancel := context.WithTimeout(s.ctx, timeout)
+	defer cancel()
+
+	var last breakglassv1alpha1.BreakglassSession
+	var lastErr error
+	s.Require().Eventually(func() bool {
+		lastErr = s.hubClient.Get(ctx, client.ObjectKeyFromObject(session), &last)
+		if lastErr != nil {
+			return false
+		}
+		return last.Status.State == breakglassv1alpha1.SessionStateExpired
+	}, timeout, 500*time.Millisecond,
+		"session %s did not reach Expired after restored cleanup cadence %s (last state=%q expiresAt=%s retainedUntil=%s error=%v)",
+		session.Name, cleanupInterval, last.Status.State, last.Status.ExpiresAt.Time.UTC().Format(time.RFC3339Nano),
+		last.Status.RetainedUntil.Time.UTC().Format(time.RFC3339Nano), lastErr)
+}
+
+// requireFreshSubresourceDenials checks the requests that can create or open
+// native Kubernetes pod streams. Each command is started only after the
+// session deadline and has a bounded context, so an accidentally allowed
+// streaming request cannot hang the focused lane.
+func (s *SpokeHubAuthorizationSuite) requireFreshSubresourceDenials(kubeconfig, token, podName string) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{name: "pods/exec", args: []string{"exec", podName, "--", "true"}},
+		{name: "pods/attach", args: []string{"attach", podName, "--stdin=false", "--tty=false"}},
+		{name: "pods/portforward", args: []string{"port-forward", "pod/" + podName, "18080:80"}},
+		{name: "pods/log", args: []string{"logs", "-f", podName, "--tail=1"}},
+	}
+	for _, tc := range cases {
+		ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+		output, err := s.runKubectlWithTokenContext(ctx, kubeconfig, token, tc.args...)
+		cancel()
+		lowerOutput := strings.ToLower(output)
+		s.Require().Error(err, "%s started after expiry must be denied: %s", tc.name, output)
+		s.Require().True(strings.Contains(lowerOutput, "forbidden") || strings.Contains(lowerOutput, "denied"),
+			"%s must return an authorization denial, got: %s", tc.name, output)
+	}
 }
