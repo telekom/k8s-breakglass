@@ -118,7 +118,9 @@ filters; each private NUL path spool is file-size limited. Enumeration expiry
 and collector cleanup send TERM followed by KILL to that group, so a stuck finder
 descendant cannot outlive the failed collection. The collector exits 2 and
 emits the bounded diagnostic without publishing an archive, manifest, or ready
-marker.
+marker. After the direct finder wrapper exits, the collector also verifies that
+its process group is gone before consuming a spool; a surviving FD-holding
+descendant is terminated and fails the collection instead of racing publication.
 `BREAKGLASS_ARTIFACT_MAX_BYTES` can narrow the selected recipe archive ceiling
 for a session. The summary recipe is always capped at 16 MiB and crashdump at
 512 MiB; a deployment cap can only narrow those immutable ceilings. When

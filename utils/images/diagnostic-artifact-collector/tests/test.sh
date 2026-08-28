@@ -718,7 +718,7 @@ expect_failure "$test_dir/leading-zero-redaction-version" --env BREAKGLASS_ARTIF
 
 mkdir "$test_dir/symlink-coredumps" "$test_dir/symlink-output"
 ln -s "$test_dir/coredumps/nested/panic.dump" "$test_dir/symlink-coredumps/link.dump"
-expect_failure "$test_dir/symlink-output" --env DIAGNOSTIC_NODE=node-a \
+expect_bounded_collector_failure "$test_dir/symlink-output" 'unsupported filesystem entry in coredump mount' 45 --env DIAGNOSTIC_NODE=node-a \
 	--volume "$test_dir/symlink-coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
 
 mkdir "$test_dir/hardlink-coredumps" "$test_dir/hardlink-output"
@@ -740,7 +740,7 @@ expect_failure "$test_dir/oversize-output" --env DIAGNOSTIC_NODE=node-a \
 
 mkdir "$test_dir/special-coredumps" "$test_dir/special-output"
 mkfifo "$test_dir/special-coredumps/pipe"
-expect_failure "$test_dir/special-output" --env DIAGNOSTIC_NODE=node-a \
+expect_bounded_collector_failure "$test_dir/special-output" 'unsupported filesystem entry in coredump mount' 45 --env DIAGNOSTIC_NODE=node-a \
 	--volume "$test_dir/special-coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
 
 # Bind a real character device beneath the fixed source mount. The collector
@@ -753,7 +753,7 @@ expect_exit_two_without_handoff "$test_dir/device-output" --env DIAGNOSTIC_NODE=
 mkdir "$test_dir/control-coredumps" "$test_dir/control-output"
 control_name=$(printf 'line1\nline2.dump')
 printf '%s\n' 'control-name fixture' >"$test_dir/control-coredumps/$control_name"
-expect_failure "$test_dir/control-output" --env DIAGNOSTIC_NODE=node-a \
+expect_bounded_collector_failure "$test_dir/control-output" 'source filename contains an unsafe character' 45 --env DIAGNOSTIC_NODE=node-a \
 	--volume "$test_dir/control-coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
 
 mkdir "$test_dir/candidate-output" "$test_dir/candidate-find"
@@ -775,7 +775,7 @@ while [ "$i" -le 3 ]; do
 done
 long_name=$(printf '%80s' '' | tr ' ' y)
 printf '%s\n' 'long path fixture' >"$long_parent/$long_name.dump"
-expect_failure "$test_dir/long-path-output" --env DIAGNOSTIC_NODE=node-a \
+expect_bounded_collector_failure "$test_dir/long-path-output" 'source path length limit exceeded' 45 --env DIAGNOSTIC_NODE=node-a \
 	--volume "$test_dir/long-path-coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
 
 mkdir "$test_dir/entry-limit-output" "$test_dir/entry-find"
@@ -802,6 +802,29 @@ expect_bounded_collector_failure "$test_dir/stalled-find-output" 'coredump enume
 	--volume "$test_dir/stalled-find-coredumps:/host-coredumps:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
 [ -f "$test_dir/stalled-find-output/stalled-find-descendant.pid" ] || {
 	echo 'stalled find fixture did not start its TERM-resistant descendant' >&2
+	exit 1
+}
+
+# The final finder invocation is exec'd by the setsid wrapper. This fixture
+# exits that wrapper normally after creating a TERM-resistant descendant that
+# inherits the NUL spool FD. The collector must detect the still-live process
+# group, kill it, verify it is gone, and fail rather than reading/publishing a
+# spool a descendant can still hold or modify.
+mkdir "$test_dir/exited-wrapper-find" "$test_dir/exited-wrapper-output"
+printf '%s\n' '#!/bin/sh' \
+	'case "$*" in' \
+	'  *"-type f"*"-print0"*)' \
+	'    ( trap "" TERM; while :; do sleep 1; done ) &' \
+	'    printf "%s\\n" "$!" > /output/exited-wrapper-descendant.pid' \
+	'    exit 0' \
+	'    ;;' \
+	'esac' \
+	'exit 0' >"$test_dir/exited-wrapper-find/find"
+chmod 0755 "$test_dir/exited-wrapper-find/find"
+expect_bounded_collector_failure "$test_dir/exited-wrapper-output" 'coredump enumeration descendant survived wrapper exit' 45 --env DIAGNOSTIC_NODE=node-a \
+	--volume "$test_dir/exited-wrapper-find/find:/usr/bin/find:ro" -- collect --recipe crashdump-collection.v1 --output /output/artifact.tar.gz
+[ -f "$test_dir/exited-wrapper-output/exited-wrapper-descendant.pid" ] || {
+	echo 'exited-wrapper finder fixture did not create its FD-holding descendant' >&2
 	exit 1
 }
 

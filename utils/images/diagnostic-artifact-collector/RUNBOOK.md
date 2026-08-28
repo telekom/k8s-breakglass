@@ -66,6 +66,12 @@ The controller claims a durable, session-status upload lease before accepting
 bytes. A `409` means another attempt is active or the create-only object was
 already consumed; do not mint a new command or bypass the endpoint.
 
+Crashdump enumeration reaps the direct `setsid` wrapper and verifies its
+process group has disappeared before reading either private path spool. A
+wrapper-forked descendant that keeps a spool descriptor open is terminated with
+TERM then KILL and the collection fails; it cannot race source selection or
+publication after the wrapper exits.
+
 ## Recipes
 
 | Recipe | Use, inputs, and categories | Access and egress | Limits and outputs | Non-goals and fallback |

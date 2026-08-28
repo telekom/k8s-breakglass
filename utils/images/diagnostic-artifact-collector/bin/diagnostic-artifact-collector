@@ -82,6 +82,8 @@ archive_tmp=
 manifest_tmp=
 ready_tmp=
 finder_pid=
+finder_pgid=
+completed_finder_group_was_live=
 file_count=0
 total_bytes=0
 node=
@@ -251,24 +253,60 @@ start_watchdog() {
 # refuse an image variant without it instead of silently weakening cleanup.
 # shellcheck disable=SC2329
 stop_finder() {
-	[ -n "$finder_pid" ] || return 0
+	pgid=$finder_pgid
+	if [ -z "$pgid" ]; then
+		pgid=$finder_pid
+	fi
+	[ -n "$pgid" ] || return 0
 	# A negative PID targets the session/process group created by setsid.  Do
 	# not use a plain PID here: it can leave a traversal descendant alive.
-	kill -TERM "-$finder_pid" 2>/dev/null || true
+	kill -TERM "-$pgid" 2>/dev/null || true
 	sleep 1
-	kill -KILL "-$finder_pid" 2>/dev/null || true
-	wait "$finder_pid" 2>/dev/null || true
+	kill -KILL "-$pgid" 2>/dev/null || true
+	if [ -n "$finder_pid" ]; then
+		wait "$finder_pid" 2>/dev/null || true
+	fi
 	finder_pid=
+	finder_pgid=
+}
+
+# The direct setsid wrapper can exit while a forked descendant still belongs to
+# its process group and holds a private spool descriptor. Reap the wrapper
+# first, then verify that its former process group no longer exists before any
+# spool is consumed. wait cannot reap a non-child descendant, so verify the
+# process-group target after TERM/KILL instead of assuming wrapper exit closed
+# every inherited descriptor.
+# shellcheck disable=SC2329
+stop_completed_finder_group() {
+	completed_finder_group_was_live=
+	pgid=$finder_pgid
+	[ -n "$pgid" ] || return 0
+	if ! kill -0 "-$pgid" 2>/dev/null; then
+		finder_pgid=
+		return 0
+	fi
+	completed_finder_group_was_live=1
+	kill -TERM "-$pgid" 2>/dev/null || true
+	sleep 1
+	if kill -0 "-$pgid" 2>/dev/null; then
+		kill -KILL "-$pgid" 2>/dev/null || true
+		sleep 1
+	fi
+	if kill -0 "-$pgid" 2>/dev/null; then
+		return 1
+	fi
+	finder_pgid=
 }
 
 start_finder_watchdog() {
+	pgid=$finder_pgid
 	(
 		sleep "$CRASH_ENUMERATION_MAX_DURATION_SECONDS"
-		if kill -0 "-$finder_pid" 2>/dev/null; then
+		if kill -0 "-$pgid" 2>/dev/null; then
 			printf '%s\n' 'coredump enumeration deadline exceeded' >"$overflow_file"
-			kill -TERM "-$finder_pid" 2>/dev/null || true
+			kill -TERM "-$pgid" 2>/dev/null || true
 			sleep 1
-			kill -KILL "-$finder_pid" 2>/dev/null || true
+			kill -KILL "-$pgid" 2>/dev/null || true
 		fi
 	) &
 	finder_watchdog=$!
@@ -364,6 +402,7 @@ copy_coredumps() {
 		exec find -P "$coredump_dir" -xdev -type f -print0
 	' sh "$MAX_SOURCE_LIST_BLOCKS" "$unsupported_source_file" "$COREDUMP_DIR" "$directory_list" >"$source_list" &
 	finder_pid=$!
+	finder_pgid=$finder_pid
 	start_finder_watchdog
 	if wait "$finder_pid"; then
 		finder_status=0
@@ -371,6 +410,15 @@ copy_coredumps() {
 		finder_status=$?
 	fi
 	finder_pid=
+	finder_deadline=
+	if [ -s "$overflow_file" ]; then
+		finder_deadline=1
+	fi
+	if ! stop_completed_finder_group; then
+		printf '%s\n' 'coredump enumeration process group could not be terminated' >"$overflow_file"
+	elif [ -n "$completed_finder_group_was_live" ] && [ -z "$finder_deadline" ]; then
+		printf '%s\n' 'coredump enumeration descendant survived wrapper exit' >"$overflow_file"
+	fi
 	if [ -n "$finder_watchdog" ]; then
 		kill "$finder_watchdog" 2>/dev/null || true
 		wait "$finder_watchdog" 2>/dev/null || true

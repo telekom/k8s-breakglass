@@ -27,8 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Diagnostic collector traversal bound**: Crashdump enumeration now uses
   bounded NUL spools and fixed directory/regular-file filters while retaining
   the 30-second process-group deadline, exact entry/candidate diagnostics, and
-  copy-time no-follow validation. Expired controller upload responses are
-  terminal and are not retried.
+  copy-time no-follow validation. A wrapper-forked traversal descendant is
+  terminated and verified absent before any spool is consumed. Expired
+  controller upload responses are terminal and are not retried.
 - **Storage image behavior CI cleanup**: The storage-debug integration cleanup
   now tolerates auto-removed Docker containers recorded in cidfiles while still
   refusing to delete foreign, still-existing containers.
