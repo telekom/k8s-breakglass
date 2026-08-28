@@ -215,7 +215,9 @@ acquire_operation_lock() {
 		(umask 077; : >"$lock_candidate") || die "cannot create operation lock"
 	fi
 	operation_lock=$lock_candidate
-	[ -f "$operation_lock" ] && [ ! -L "$operation_lock" ] || die "operation lock must be a regular file"
+	if [ ! -f "$operation_lock" ] || [ -L "$operation_lock" ]; then
+		die "operation lock must be a regular file"
+	fi
 	resolved_lock=$(readlink -f "$operation_lock" 2>/dev/null || true)
 	[ "$resolved_lock" = "$operation_lock" ] || die "operation lock did not resolve safely"
 	chmod 0600 "$operation_lock" || die "cannot protect operation lock"
