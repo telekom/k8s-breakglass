@@ -20,18 +20,20 @@ There are two administrator-authored objects:
   scheduling, allowed pod operations, and optional auxiliary resources.
 
 Use a digest-pinned image from the [utility image catalogue](./README.md#debug-utility-images).
-Do not put an image, command, node name, mount, capability, or RBAC object in
-an end-user request or in an `extraDeployVariables` value. Those are template
-and provider policy. `extraDeployVariables` is useful for bounded, non-security
-parameters such as a report size or a predeclared scheduling option; it is not
-an authorization boundary.
+Do not expose an image, command, node name, mount, capability, or RBAC object as
+an unrestricted end-user input. Those remain template and provider policy.
+`extraDeployVariables` is useful for bounded parameters such as a report size
+or a predeclared scheduling option; it is not an authorization boundary.
 
 Keep the two similarly named fields distinct: `DebugSessionTemplate.spec.extraDeployVariables`
 is the administrator-owned declaration of allowed variable names, types,
 defaults, and constraints. A requester supplies only values for those declared
 variables in `DebugSession.spec.extraDeployValues` when creating a session.
-`extraDeployValues` cannot add variables or change the image, command,
-capabilities, mounts, namespace, or RBAC rendered by the template.
+Those values may select an explicitly declared, administrator-approved variant
+and therefore may change fields that the template deliberately interpolates
+(for example, a host-network or capture variant). They cannot add undeclared
+variables or bypass the template's validation, allowed groups, or provider
+admission constraints.
 
 The upstream API exposes kubectl-debug operation fields for compatibility. The
 upstream controller validates session state and the template's namespace/image
