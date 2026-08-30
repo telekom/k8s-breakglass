@@ -124,7 +124,7 @@ func validateStream(ctx context.Context, staged io.Reader, compressedSize int64,
 	}()
 
 	payloadHash := sha256.New()
-	seen := make(map[string]bool)
+	seen := pathRegistry{seen: make(map[string]bool), children: make(map[string]struct{})}
 	var pending []byte
 	var pendingName string
 	var embeddedManifest []byte
@@ -212,7 +212,7 @@ func validateStream(ctx context.Context, staged io.Reader, compressedSize int64,
 		if err != nil {
 			return result, err
 		}
-		if err := registerPath(seen, name, member.directory); err != nil {
+		if err := registerPath(&seen, name, member.directory); err != nil {
 			return result, err
 		}
 		if name == "manifest.json" && len(pending) != 0 {
@@ -285,12 +285,12 @@ func validateStream(ctx context.Context, staged io.Reader, compressedSize int64,
 		return result, errors.New("artifact is missing required members")
 	}
 	for required := range descriptor.requiredDirectories {
-		if isDirectory, found := seen[required]; !found || !isDirectory {
+		if isDirectory, found := seen.seen[required]; !found || !isDirectory {
 			return result, errors.New("artifact is missing a required directory")
 		}
 	}
 	if descriptor.requiredPayload != "" {
-		if isDirectory, found := seen[descriptor.requiredPayload]; !found || isDirectory {
+		if isDirectory, found := seen.seen[descriptor.requiredPayload]; !found || isDirectory {
 			return result, errors.New("artifact is missing its required payload")
 		}
 	}
@@ -321,7 +321,7 @@ func normalizeLimits(limits Limits, descriptor descriptor, expectedArchiveBytes 
 		limits.MaxCompressedBytes = expectedArchiveBytes
 	}
 	if limits.MaxDecompressedBytes == 0 {
-		limits.MaxDecompressedBytes = MaxCollectorArchiveBytes + MaxCollectorArchiveBytes/8 + MaxManifestBytes
+		limits.MaxDecompressedBytes = descriptor.maxArchiveBytes + descriptor.maxArchiveBytes/8 + MaxManifestBytes
 	}
 	if limits.MaxPayloadBytes == 0 {
 		limits.MaxPayloadBytes = descriptor.maxArchiveBytes
@@ -338,7 +338,7 @@ func normalizeLimits(limits Limits, descriptor descriptor, expectedArchiveBytes 
 	if limits.MaxPathBytes == 0 {
 		limits.MaxPathBytes = defaultMaxPathBytes
 	}
-	maximumDecompressed := int64(MaxCollectorArchiveBytes + MaxCollectorArchiveBytes/8 + MaxManifestBytes)
+	maximumDecompressed := descriptor.maxArchiveBytes + descriptor.maxArchiveBytes/8 + MaxManifestBytes
 	if limits.MaxCompressedBytes < 1 || limits.MaxCompressedBytes > expectedArchiveBytes ||
 		limits.MaxDecompressedBytes < 2*tarBlockSize || limits.MaxDecompressedBytes > maximumDecompressed ||
 		limits.MaxPayloadBytes < 0 || limits.MaxPayloadBytes > descriptor.maxArchiveBytes ||
@@ -366,26 +366,31 @@ func descriptorAllowsPayload(descriptor descriptor, name string) bool {
 		name != strings.TrimSuffix(descriptor.payloadPrefix, "/")
 }
 
-func registerPath(seen map[string]bool, name string, directory bool) error {
-	if _, exists := seen[name]; exists {
+type pathRegistry struct {
+	seen     map[string]bool
+	children map[string]struct{}
+}
+
+func registerPath(registry *pathRegistry, name string, directory bool) error {
+	if _, exists := registry.seen[name]; exists {
 		return errors.New("artifact contains a duplicate member")
 	}
 	parts := strings.Split(name, "/")
 	for index := 1; index < len(parts); index++ {
 		ancestor := strings.Join(parts[:index], "/")
-		if isDirectory, found := seen[ancestor]; found && !isDirectory {
+		if isDirectory, found := registry.seen[ancestor]; found && !isDirectory {
 			return errors.New("artifact contains a file/directory prefix collision")
 		}
 	}
 	if !directory {
-		prefix := name + "/"
-		for existing := range seen {
-			if strings.HasPrefix(existing, prefix) {
-				return errors.New("artifact contains a file/directory prefix collision")
-			}
+		if _, found := registry.children[name]; found {
+			return errors.New("artifact contains a file/directory prefix collision")
 		}
 	}
-	seen[name] = directory
+	registry.seen[name] = directory
+	for index := 1; index < len(parts); index++ {
+		registry.children[strings.Join(parts[:index], "/")] = struct{}{}
+	}
 	return nil
 }
 

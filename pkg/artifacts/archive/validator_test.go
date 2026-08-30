@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -261,6 +262,48 @@ func TestValidateEnforcesIndependentBoundsAndContext(t *testing.T) {
 	cancel()
 	if _, err := Validate(cancelled, bytes.NewReader(compressed), int64(len(compressed)), expected, Limits{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Validate() cancellation error = %v", err)
+	}
+}
+
+func TestNormalizeLimitsUsesRecipeSpecificDecompressedBound(t *testing.T) {
+	summary := summaryExpected()
+	summaryDescriptor := mustDescriptor(t, summary)
+	limits, err := normalizeLimits(Limits{}, summaryDescriptor, summary.Inputs.MaxArchiveBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := summaryDescriptor.maxArchiveBytes + summaryDescriptor.maxArchiveBytes/8 + MaxManifestBytes
+	if limits.MaxDecompressedBytes != want {
+		t.Fatalf("system-summary MaxDecompressedBytes = %d, want %d", limits.MaxDecompressedBytes, want)
+	}
+	if _, err := normalizeLimits(Limits{MaxDecompressedBytes: MaxCollectorArchiveBytes + MaxCollectorArchiveBytes/8 + MaxManifestBytes}, summaryDescriptor, summary.Inputs.MaxArchiveBytes); err == nil {
+		t.Fatal("system-summary limits accepted the crashdump decompression bound")
+	}
+
+	crash := crashExpected()
+	crashDescriptor := mustDescriptor(t, crash)
+	crashLimits, err := normalizeLimits(Limits{}, crashDescriptor, crash.Inputs.MaxArchiveBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if crashLimits.MaxDecompressedBytes != MaxCollectorArchiveBytes+MaxCollectorArchiveBytes/8+MaxManifestBytes {
+		t.Fatalf("crashdump MaxDecompressedBytes = %d, want collector bound", crashLimits.MaxDecompressedBytes)
+	}
+}
+
+func TestRegisterPathScalesAndPreservesPrefixRejection(t *testing.T) {
+	registry := pathRegistry{seen: make(map[string]bool), children: make(map[string]struct{})}
+	for index := 0; index < MaxCollectorTarRecords-1; index++ {
+		name := "files/coredumps/" + strings.Repeat("a", 4) + "/entry-" + fmt.Sprint(index)
+		if err := registerPath(&registry, name, false); err != nil {
+			t.Fatalf("registerPath(%q) error = %v", name, err)
+		}
+	}
+	if err := registerPath(&registry, "files/coredumps/"+strings.Repeat("a", 4), false); err == nil {
+		t.Fatal("registerPath() accepted a file over existing descendants")
+	}
+	if err := registerPath(&registry, "files/coredumps/"+strings.Repeat("a", 4)+"/entry-0/child", false); err == nil {
+		t.Fatal("registerPath() accepted a descendant of an existing file")
 	}
 }
 
