@@ -1017,11 +1017,15 @@ or confirm its outcome afterward.
 Ephemeral containers are injected only through the authenticated
 `DebugSession` API operation. That operation validates the administrator-authored
 image, capability, namespace, and non-root policy, requires an active exact-UID
-lease, persists bounded evidence before the target update, and confirms the
-result afterward. At expiry, the controller revokes new Breakglass access and
-retains the immutable evidence; Kubernetes cannot remove an ephemeral
-container from a live Pod. This API path is separate from direct target API
-RBAC and is the only supported Breakglass-mediated injection path.
+lease, and checks the live session and target cluster configuration immediately
+before the target update. It records bounded evidence after the update. It does
+not yet store durable pre-effect evidence, so an interrupted status write can
+leave an effect without matching evidence. PR
+[#1278](https://github.com/telekom/k8s-breakglass/pull/1278) adds that durable
+operation outbox. At expiry, the controller revokes new Breakglass access;
+Kubernetes cannot remove an ephemeral container from a live Pod. This API path
+is separate from direct target API RBAC and is the only supported
+Breakglass-mediated injection path.
 
 ### DenyPolicy Integration
 

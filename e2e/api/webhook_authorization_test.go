@@ -356,14 +356,12 @@ func TestSessionBasedAuthorization(t *testing.T) {
 		require.NoError(t, err, "Failed to approve session via API")
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
-		// Set to expired state (simulating time passage)
+		// End through the owner API so the fixture follows the supported state
+		// transition and lease rules.
 		var toExpire breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &toExpire)
 		require.NoError(t, err)
-
-		toExpire.Status.State = breakglassv1alpha1.SessionStateExpired
-		toExpire.Status.ReasonEnded = "timeExpired"
-		err = cli.Status().Update(ctx, &toExpire)
+		err = apiClient.DropSessionViaAPI(ctx, t, session.Name, namespace)
 		require.NoError(t, err)
 
 		// Wait for expired state to be fully persisted before next subtest runs

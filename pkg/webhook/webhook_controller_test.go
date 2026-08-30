@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/escalation"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
@@ -397,6 +398,170 @@ func TestSendAuthorizationResponseFinalFenceSuppressesAllowSideEffects(t *testin
 	tracker.mu.Lock()
 	assert.Empty(t, tracker.entries, "revoked session must not record activity")
 	tracker.mu.Unlock()
+}
+
+func TestSessionFinalFenceRejectsDeletingSession(t *testing.T) {
+	now := metav1.Now()
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "deleting-session", Namespace: "breakglass", UID: "session-uid", DeletionTimestamp: &now, Finalizers: []string{"test"}},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user", Cluster: "cluster", GrantedGroup: "admin"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		},
+	}
+	base := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(session).Build()
+	wc := &WebhookController{log: zap.NewNop().Sugar(), sesManager: breakglass.NewSessionManagerWithClient(base)}
+	candidate := sessionAuthorizationCandidate{
+		namespace: session.Namespace, name: session.Name, uid: string(session.UID), user: session.Spec.User,
+		cluster: session.Spec.Cluster, grantedGroup: session.Spec.GrantedGroup,
+	}
+
+	assert.Empty(t, wc.liveSessionAuthorizationCandidates(context.Background(), []breakglassv1alpha1.BreakglassSession{*session}, []sessionAuthorizationCandidate{candidate}),
+		"DeletionTimestamp must revoke regular-session access immediately")
+}
+
+func TestSendAuthorizationResponseEnrichesAuditBeforeLastLiveFence(t *testing.T) {
+	logger := zap.NewNop()
+	expiresAt := metav1.NewTime(time.Now().Add(time.Hour))
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "audit-delay", Namespace: "breakglass", UID: "audit-delay-uid"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user", Cluster: "cluster", GrantedGroup: "admin"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: expiresAt},
+	}
+	base := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	auditService := audit.NewService(base, nil, logger, "breakglass")
+	require.NoError(t, auditService.Reload(context.Background(), &breakglassv1alpha1.AuditConfig{
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{{
+				Name: "test", Type: breakglassv1alpha1.AuditSinkTypeLog,
+			}},
+		},
+	}))
+	defer func() { require.NoError(t, auditService.Close()) }()
+	wc := &WebhookController{
+		log:          logger.Sugar(),
+		sesManager:   breakglass.NewSessionManagerWithClient(base),
+		auditService: auditService,
+		namespaceLabelsFetchFn: func(ctx context.Context, _, _ string) (map[string]string, error) {
+			var live breakglassv1alpha1.BreakglassSession
+			require.NoError(t, base.Get(ctx, client.ObjectKeyFromObject(session), &live))
+			live.Status.State = breakglassv1alpha1.SessionStateExpired
+			require.NoError(t, base.Status().Update(ctx, &live))
+			return map[string]string{"environment": "production"}, nil
+		},
+	}
+	s := &authorizeState{
+		ctx: context.Background(), clusterName: "cluster", allowed: true, allowSource: "session",
+		sessions: []breakglassv1alpha1.BreakglassSession{*session},
+		allowedSessions: []sessionAuthorizationCandidate{{
+			namespace: session.Namespace, name: session.Name, uid: string(session.UID),
+			user: session.Spec.User, cluster: session.Spec.Cluster, grantedGroup: session.Spec.GrantedGroup,
+		}},
+		reqLog: logger.Sugar(),
+		sar: authorization.SubjectAccessReview{Spec: authorization.SubjectAccessReviewSpec{
+			User: "user", ResourceAttributes: &authorization.ResourceAttributes{Verb: "get", Resource: "pods", Namespace: "production"},
+		}},
+	}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	wc.sendAuthorizationResponse(c, s)
+
+	var response SubjectAccessReviewResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	assert.False(t, response.Status.Allowed,
+		"a lease revoked during blocking audit enrichment must be denied by the last live fence")
+	assert.Equal(t, map[string]string{"environment": "production"}, s.auditTarget.NamespaceLabels)
+}
+
+func TestSendAuthorizationResponseSkipsAuditEnrichmentWhenDisabled(t *testing.T) {
+	logger := zap.NewNop()
+	called := false
+	wc := &WebhookController{
+		log:          logger.Sugar(),
+		auditService: audit.NewService(nil, nil, logger, "breakglass"),
+		namespaceLabelsFetchFn: func(context.Context, string, string) (map[string]string, error) {
+			called = true
+			return nil, nil
+		},
+	}
+	s := &authorizeState{
+		ctx: context.Background(), clusterName: "cluster", reqLog: logger.Sugar(),
+		sar: authorization.SubjectAccessReview{Spec: authorization.SubjectAccessReviewSpec{
+			ResourceAttributes: &authorization.ResourceAttributes{Verb: "get", Resource: "pods", Namespace: "production"},
+		}},
+	}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	wc.sendAuthorizationResponse(c, s)
+
+	assert.False(t, called, "disabled auditing must not perform spoke enrichment work")
+}
+
+func TestClusterConfigFinalFenceIncludesMutableSecurityIdentity(t *testing.T) {
+	logger := zap.NewNop()
+	configured := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster", Namespace: "breakglass", UID: "cluster-uid"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef:  &breakglassv1alpha1.SecretKeyReference{Name: "old-credentials", Namespace: "breakglass"},
+			IdentityProviderRefs: []string{"trusted-idp"},
+		},
+	}
+	live := configured.DeepCopy()
+	live.Spec.KubeconfigSecretRef.Name = "replacement-credentials"
+	client := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(live).Build()
+	wc := &WebhookController{log: logger.Sugar(), ccProvider: cluster.NewClientProvider(client, logger.Sugar()).WithLiveReader(client)}
+
+	assert.False(t, wc.isClusterConfigStillActive(context.Background(), configured),
+		"same-UID ClusterConfig authentication changes must invalidate an in-flight session allow")
+}
+
+func TestSendAuthorizationResponseWritesBeforeAllowAccounting(t *testing.T) {
+	logger := zap.NewNop()
+	expiresAt := metav1.NewTime(time.Now().Add(time.Hour))
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "response-first", Namespace: "breakglass", UID: "response-first-uid"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user", Cluster: "cluster", GrantedGroup: "admin"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: expiresAt},
+	}
+	base := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(session).Build()
+	tracker := NewActivityTracker(base, WithFlushInterval(time.Hour))
+	defer tracker.Stop(context.Background())
+	wc := &WebhookController{log: logger.Sugar(), sesManager: breakglass.NewSessionManagerWithClient(base), activityTracker: tracker}
+	s := &authorizeState{
+		ctx: context.Background(), clusterName: "cluster", allowed: true, allowSource: "session",
+		sessions: []breakglassv1alpha1.BreakglassSession{*session},
+		allowedSessions: []sessionAuthorizationCandidate{{
+			namespace: session.Namespace, name: session.Name, uid: string(session.UID),
+			user: session.Spec.User, cluster: session.Spec.Cluster, grantedGroup: session.Spec.GrantedGroup,
+		}},
+		sessionActivityName: session.Name, sessionActivityGroup: session.Spec.GrantedGroup,
+		reqLog: logger.Sugar(), sar: authorization.SubjectAccessReview{},
+	}
+	w := &observingResponseWriter{ResponseRecorder: httptest.NewRecorder(), onWrite: func() {
+		tracker.mu.Lock()
+		defer tracker.mu.Unlock()
+		assert.Empty(t, tracker.entries, "allow accounting must not run before the final response write")
+	}}
+	c, _ := gin.CreateTestContext(w)
+	wc.sendAuthorizationResponse(c, s)
+	assert.True(t, w.wrote)
+}
+
+type observingResponseWriter struct {
+	*httptest.ResponseRecorder
+	onWrite func()
+	wrote   bool
+}
+
+func (w *observingResponseWriter) Write(data []byte) (int, error) {
+	if !w.wrote {
+		w.wrote = true
+		w.onWrite()
+	}
+	return w.ResponseRecorder.Write(data)
 }
 
 func TestSendAuthorizationResponseKeepsSecondLiveSessionWinner(t *testing.T) {

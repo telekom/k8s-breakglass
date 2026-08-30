@@ -62,6 +62,7 @@ const (
 type DebugSessionController struct {
 	log          *zap.SugaredLogger
 	client       ctrlclient.Client
+	reader       ctrlclient.Reader
 	ccProvider   *cluster.ClientProvider
 	auditService *audit.Service
 	auditManager *audit.Manager
@@ -77,9 +78,19 @@ func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client,
 	return &DebugSessionController{
 		log:          log,
 		client:       client,
+		reader:       client,
 		ccProvider:   ccProvider,
 		auxiliaryMgr: NewAuxiliaryResourceManager(log.Named("auxiliary"), client),
 	}
+}
+
+// WithLiveReader configures the uncached reader used for final authorization
+// fences during target-cluster deployment.
+func (c *DebugSessionController) WithLiveReader(reader ctrlclient.Reader) *DebugSessionController {
+	if reader != nil {
+		c.reader = reader
+	}
+	return c
 }
 
 // WithAuditManager sets the audit manager for the controller
@@ -172,6 +183,10 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	log = log.With("state", ds.Status.State, "cluster", ds.Spec.Cluster)
+	if ds.Status.State == breakglassv1alpha1.DebugSessionStateActive &&
+		(ds.Status.ExpiresAt == nil || ds.Status.ExpiresAt.IsZero()) {
+		return c.terminalizeActiveSessionWithoutExpiry(ctx, ds)
+	}
 
 	switch ds.Status.State {
 	case "", breakglassv1alpha1.DebugSessionStatePending:
@@ -324,6 +339,9 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 // handleActive manages an active debug session
 func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
+	if ds.Status.ExpiresAt == nil || ds.Status.ExpiresAt.IsZero() {
+		return c.terminalizeActiveSessionWithoutExpiry(ctx, ds)
+	}
 
 	// Emit expiring-soon status message when within grace period
 	if ds.Status.ExpiresAt != nil && ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry != "" {
@@ -346,20 +364,6 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 
 	// Check expiration
 	if ds.Status.ExpiresAt != nil && time.Now().After(ds.Status.ExpiresAt.Time) {
-		if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.ExpirationBehavior == "notify-only" {
-			if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
-				status.Message = "Session expired (notify-only)"
-				status.ExpiresAt = nil
-			}); err != nil {
-				if apierrors.IsConflict(err) {
-					log.Debugw("skipping notify-only expiration status update after concurrent debug session change", "error", err)
-					return ctrl.Result{}, nil
-				}
-				return ctrl.Result{}, err
-			}
-			log.Info("Debug session expired")
-			return ctrl.Result{}, nil
-		}
 		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 			status.State = breakglassv1alpha1.DebugSessionStateExpired
 			status.Message = "Session expired"
@@ -370,6 +374,16 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 			}
 			return ctrl.Result{}, err
 		}
+		notificationSession := ds.DeepCopy()
+		if notificationSession.Status.ResolvedTemplate != nil && notificationSession.Status.ResolvedTemplate.ExpirationBehavior == "notify-only" {
+			log.Warn("deprecated notify-only expiration still enforces hard expiry")
+			if notificationSession.Status.ResolvedTemplate.Notification == nil {
+				notificationSession.Status.ResolvedTemplate.Notification = &breakglassv1alpha1.DebugSessionNotificationConfig{}
+			}
+			notificationSession.Status.ResolvedTemplate.Notification.Enabled = true
+			notificationSession.Status.ResolvedTemplate.Notification.NotifyOnExpiry = true
+		}
+		c.sendDebugSessionExpiredEmail(*notificationSession)
 		log.Info("Debug session expired")
 		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
@@ -389,6 +403,30 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 	}
 
 	return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
+}
+
+func (c *DebugSessionController) terminalizeActiveSessionWithoutExpiry(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
+	const reason = "Active debug session has no expiry; access was revoked"
+	if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.State = breakglassv1alpha1.DebugSessionStateFailed
+		status.Message = reason
+	}); err != nil {
+		return ctrl.Result{}, err
+	}
+	c.log.Errorw("Debug session failed closed because its active lease is missing",
+		"debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
+	metrics.DebugSessionsFailed.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()
+	return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+}
+
+func (c *DebugSessionController) sendDebugSessionExpiredEmail(ds breakglassv1alpha1.DebugSession) {
+	routine := breakglass.CleanupRoutine{
+		Log:          c.log,
+		MailService:  c.mailService,
+		DisableEmail: c.disableEmail,
+		BrandingName: c.brandingName,
+	}
+	routine.SendDebugSessionExpiredEmail(ds)
 }
 
 // handleFailedCleanup finishes cleanup for a session already in the terminal

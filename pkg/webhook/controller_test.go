@@ -1727,6 +1727,24 @@ func TestLiveDebugSessionAccessRequiresExactCapturedUID(t *testing.T) {
 	}(), "the exact live UID should allow the otherwise valid request")
 }
 
+func TestLiveDebugSessionAccessRejectsDeletingSession(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	deletingAt := metav1.Now()
+	ds := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "deleting-debug", Namespace: "default", UID: "debug-uid", DeletionTimestamp: &deletingAt, Finalizers: []string{"test"}},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
+			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod"}},
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
+	}
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds).Build()
+	wc := &WebhookController{log: zap.NewNop().Sugar(), sesManager: breakglass.NewSessionManagerWithClient(cli)}
+	ra := &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}
+
+	allowed, _ := wc.liveDebugSessionAccess(context.Background(), "user", "cluster", ra, "default", ds.Name, string(ds.UID))
+	assert.False(t, allowed, "DeletionTimestamp must revoke debug-session access immediately")
+}
+
 func TestSendAuthorizationResponseDebugSessionRequiresCapturedUID(t *testing.T) {
 	future := metav1.NewTime(time.Now().Add(time.Hour))
 	ds := &breakglassv1alpha1.DebugSession{

@@ -93,13 +93,33 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	}
 
 	// Create base client for spoke cluster (no impersonation yet)
-	baseRestCfg, restErr := c.ccProvider.GetRESTConfig(ctx, ds.Spec.Cluster)
+	baseRestCfg, configuredCluster, restErr := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)
 	if restErr != nil {
 		return fmt.Errorf("failed to get REST config for cluster %s: %w", ds.Spec.Cluster, restErr)
 	}
+	defer c.ccProvider.ReleasePrivilegedOperationClusterConfig(configuredCluster)
 	baseClient, baseErr := ctrlclient.New(baseRestCfg, ctrlclient.Options{})
 	if baseErr != nil {
 		return fmt.Errorf("failed to create base client for cluster %s: %w", ds.Spec.Cluster, baseErr)
+	}
+	fence := func() error {
+		if err := c.ccProvider.ValidatePrivilegedOperationClusterConfig(ctx, configuredCluster); err != nil {
+			return fmt.Errorf("privileged target configuration changed during deployment: %w", err)
+		}
+		liveSession := &breakglassv1alpha1.DebugSession{}
+		reader := c.reader
+		if reader == nil {
+			reader = c.client
+		}
+		if err := reader.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), liveSession); err != nil {
+			return fmt.Errorf("read live debug session before deployment mutation: %w", err)
+		}
+		if liveSession.UID != ds.UID || !liveSession.DeletionTimestamp.IsZero() ||
+			liveSession.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
+			liveSession.Status.ExpiresAt == nil || !time.Now().UTC().Before(liveSession.Status.ExpiresAt.Time) {
+			return fmt.Errorf("debug session is no longer active before deployment mutation")
+		}
+		return nil
 	}
 
 	// Handle impersonation configuration
@@ -144,6 +164,9 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			return fmt.Errorf("failed to build resource quota: %w", rqErr)
 		}
 		if rq != nil {
+			if err := fence(); err != nil {
+				return err
+			}
 			gvk := rq.GetObjectKind().GroupVersionKind()
 			if err := utils.ApplyObject(ctx, targetClient, rq); err != nil {
 				return fmt.Errorf("failed to apply resource quota: %w", err)
@@ -166,6 +189,9 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			return fmt.Errorf("failed to build pod disruption budget: %w", pdbErr)
 		}
 		if pdb != nil {
+			if err := fence(); err != nil {
+				return err
+			}
 			gvk := pdb.GetObjectKind().GroupVersionKind()
 			if err := utils.ApplyObject(ctx, targetClient, pdb); err != nil {
 				return fmt.Errorf("failed to apply pod disruption budget: %w", err)
@@ -194,6 +220,9 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			"count", len(podTemplateResources),
 			"debugSession", ds.Name)
 		for _, res := range podTemplateResources {
+			if err := fence(); err != nil {
+				return err
+			}
 			if err := c.deployPodTemplateResource(ctx, targetClient, ds, res, targetNs); err != nil {
 				return fmt.Errorf("failed to deploy pod template resource %s/%s: %w", res.GetKind(), res.GetName(), err)
 			}
@@ -203,7 +232,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	auxiliaryResourcesConfigured := c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0
 	auxStatuses := startAuxiliaryStatusTracking(ds, auxiliaryResourcesConfigured)
 	if auxiliaryResourcesConfigured {
-		beforeStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhase(ctx, ds, &template.Spec, binding, targetClient, targetNs, true)
+		if err := fence(); err != nil {
+			return err
+		}
+		beforeStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFence(ctx, ds, &template.Spec, binding, targetClient, targetNs, true, fence)
 		auxStatuses = append(auxStatuses, beforeStatuses...)
 		ds.Status.AuxiliaryResourceStatuses = auxStatuses
 		if auxErr != nil {
@@ -214,6 +246,9 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	// Capture GVK before Apply call as Kubernetes client may clear TypeMeta
 	gvk := workload.GetObjectKind().GroupVersionKind()
 
+	if err := fence(); err != nil {
+		return err
+	}
 	if err := utils.ApplyObject(ctx, targetClient, workload); err != nil {
 		return fmt.Errorf("failed to apply workload: %w", err)
 	}
@@ -234,7 +269,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		"kind", gvk.Kind)
 
 	if auxiliaryResourcesConfigured {
-		afterStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhase(ctx, ds, &template.Spec, binding, targetClient, targetNs, false)
+		if err := fence(); err != nil {
+			return err
+		}
+		afterStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFence(ctx, ds, &template.Spec, binding, targetClient, targetNs, false, fence)
 		auxStatuses = append(auxStatuses, afterStatuses...)
 		ds.Status.AuxiliaryResourceStatuses = auxStatuses
 		if auxErr != nil {

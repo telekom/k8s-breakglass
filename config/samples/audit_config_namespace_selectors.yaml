@@ -7,6 +7,9 @@
 # - You want to audit based on team/environment/compliance labels
 #
 # NOTE: AuditConfig is cluster-scoped (no namespace in metadata)
+# WARNING: The log-only sinks below are for filtering examples. Logs are not
+# durable audit receipts and cannot acknowledge session.termination_intent.
+# Add a synchronous webhook or acknowledged Kafka sink before production use.
 
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: AuditConfig

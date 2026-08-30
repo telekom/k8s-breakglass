@@ -160,10 +160,11 @@ func TestIsSessionExpired(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name      string
-		state     breakglassv1alpha1.BreakglassSessionState
-		expiresAt *time.Time
-		expected  bool
+		name       string
+		state      breakglassv1alpha1.BreakglassSessionState
+		expiresAt  *time.Time
+		deletingAt *metav1.Time
+		expected   bool
 	}{
 		{
 			name:     "expired state returns true regardless of timestamp",
@@ -489,10 +490,11 @@ func TestIsSessionActive(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name      string
-		state     breakglassv1alpha1.BreakglassSessionState
-		expiresAt *time.Time
-		expected  bool
+		name       string
+		state      breakglassv1alpha1.BreakglassSessionState
+		expiresAt  *time.Time
+		deletingAt *metav1.Time
+		expected   bool
 	}{
 		{
 			name:      "approved session with valid expiry is active",
@@ -626,10 +628,11 @@ func TestIsSessionAccessActive(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name      string
-		state     breakglassv1alpha1.BreakglassSessionState
-		expiresAt *time.Time
-		expected  bool
+		name       string
+		state      breakglassv1alpha1.BreakglassSessionState
+		expiresAt  *time.Time
+		deletingAt *metav1.Time
+		expected   bool
 	}{
 		{
 			name:      "approved session with valid expiry grants access",
@@ -654,6 +657,13 @@ func TestIsSessionAccessActive(t *testing.T) {
 			expected:  false,
 		},
 		{
+			name:       "deleting approved session is immediately revoked",
+			state:      breakglassv1alpha1.SessionStateApproved,
+			expiresAt:  func() *time.Time { t := now.Add(1 * time.Hour); return &t }(),
+			deletingAt: func() *metav1.Time { t := metav1.NewTime(now); return &t }(),
+			expected:   false,
+		},
+		{
 			name:     "rejected session does not grant access",
 			state:    breakglassv1alpha1.SessionStateRejected,
 			expected: false,
@@ -663,6 +673,7 @@ func TestIsSessionAccessActive(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			session := breakglassv1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{DeletionTimestamp: tt.deletingAt},
 				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State: tt.state,
 				},

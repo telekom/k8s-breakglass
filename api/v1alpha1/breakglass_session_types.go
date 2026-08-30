@@ -51,6 +51,10 @@ const (
 	// DuplicateCleanupAuditComplete records durable duplicate-cleanup audit
 	// delivery. A false value is a pending outbox entry and blocks deletion.
 	SessionConditionTypeDuplicateCleanupAuditComplete BreakglassSessionConditionType = "DuplicateCleanupAuditComplete"
+	// ExpiryNotificationIntent records durable intent to enqueue an expiry email.
+	// False means enqueue is pending; True means the in-memory queue accepted the
+	// email or notifications were intentionally disabled. It is not a delivery receipt.
+	SessionConditionTypeExpiryNotificationIntent BreakglassSessionConditionType = "ExpiryNotificationIntent"
 	// SessionExpired tracks when a session's validity window has ended
 	SessionConditionTypeSessionExpired     BreakglassSessionConditionType   = "SessionExpired"
 	SessionConditionReasonEditedByApprover BreakglassSessionConditionReason = "EditedByApprover"
@@ -276,6 +280,7 @@ func (bs *BreakglassSession) ValidateCreate(ctx context.Context, obj *Breakglass
 	result := ValidateBreakglassSession(obj)
 	var allErrs field.ErrorList
 	allErrs = append(allErrs, result.Errors...)
+	allErrs = append(allErrs, validateExpiryNotificationIntent(&BreakglassSession{}, obj)...)
 
 	// Validate scheduledStartTime if provided (webhook-specific as it's time-sensitive)
 	if obj.Spec.ScheduledStartTime != nil && !obj.Spec.ScheduledStartTime.IsZero() {
@@ -320,6 +325,8 @@ func (bs *BreakglassSession) ValidateUpdate(ctx context.Context, oldObj, newObj 
 	// This prevents buggy controllers or concurrent writers from corrupting activity data.
 	allErrs = append(allErrs, validateMonotonicStatusFields(oldObj, newObj)...)
 	allErrs = append(allErrs, validateExpiryUpdate(oldObj, newObj)...)
+	allErrs = append(allErrs, validateDuplicateCleanupAuditIntent(oldObj, newObj)...)
+	allErrs = append(allErrs, validateExpiryNotificationIntent(oldObj, newObj)...)
 
 	allErrs = append(allErrs, ensureClusterWideUniqueName(ctx, &BreakglassSessionList{}, newObj.Namespace, newObj.Name, field.NewPath("metadata").Child("name"))...)
 	if len(allErrs) == 0 {
@@ -328,13 +335,174 @@ func (bs *BreakglassSession) ValidateUpdate(ctx context.Context, oldObj, newObj 
 	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "BreakglassSession"}, newObj.Name, allErrs)
 }
 
+func validateExpiryNotificationIntent(oldObj, newObj *BreakglassSession) field.ErrorList {
+	conditionType := string(SessionConditionTypeExpiryNotificationIntent)
+	oldCondition := oldObj.GetCondition(conditionType)
+	newCondition := newObj.GetCondition(conditionType)
+	conditionPath := field.NewPath("status").Child("conditions").Key(conditionType)
+
+	if oldCondition == nil {
+		if newCondition == nil {
+			return nil
+		}
+		expiredCondition := newObj.GetCondition(string(SessionConditionTypeExpired))
+		validState := (oldObj.Status.State == SessionStateApproved && newObj.Status.State == SessionStateExpired) ||
+			(oldObj.Status.State == SessionStatePending && newObj.Status.State == SessionStateTimeout)
+		if newCondition.Status != metav1.ConditionFalse || newCondition.Reason != "PendingEnqueue" ||
+			newCondition.LastTransitionTime.IsZero() || !validState || expiredCondition == nil ||
+			expiredCondition.Status != metav1.ConditionTrue ||
+			!expiredCondition.LastTransitionTime.Equal(&newCondition.LastTransitionTime) {
+			return field.ErrorList{field.Forbidden(conditionPath,
+				"expiry notification intent must be created as PendingEnqueue with the terminal expiry transition timestamp")}
+		}
+		return nil
+	}
+	if newCondition == nil {
+		return field.ErrorList{field.Forbidden(conditionPath, "expiry notification intent cannot be removed")}
+	}
+	oldPending := oldCondition.Status == metav1.ConditionFalse && oldCondition.Reason == "PendingEnqueue"
+	oldAcknowledged := oldCondition.Status == metav1.ConditionTrue &&
+		(oldCondition.Reason == "QueueAccepted" || oldCondition.Reason == "NotificationsDisabled")
+	if oldCondition.LastTransitionTime.IsZero() || (!oldPending && !oldAcknowledged) {
+		return field.ErrorList{field.Forbidden(conditionPath, "existing expiry notification condition is invalid")}
+	}
+	if !newCondition.LastTransitionTime.Equal(&oldCondition.LastTransitionTime) {
+		return field.ErrorList{field.Forbidden(conditionPath, "expiry notification intent timestamp is immutable")}
+	}
+	if oldAcknowledged {
+		if !reflect.DeepEqual(oldCondition, newCondition) {
+			return field.ErrorList{field.Forbidden(conditionPath, "acknowledged expiry notification intent cannot be changed or reopened")}
+		}
+		return nil
+	}
+	validPending := newCondition.Status == metav1.ConditionFalse && newCondition.Reason == "PendingEnqueue"
+	validAcknowledgement := newCondition.Status == metav1.ConditionTrue &&
+		(newCondition.Reason == "QueueAccepted" || newCondition.Reason == "NotificationsDisabled")
+	if !validPending && !validAcknowledgement {
+		return field.ErrorList{field.Forbidden(conditionPath,
+			"PendingEnqueue may only remain pending or change to QueueAccepted or NotificationsDisabled")}
+	}
+	if validPending && !reflect.DeepEqual(oldCondition, newCondition) {
+		return field.ErrorList{field.Forbidden(conditionPath, "pending expiry notification intent is immutable until acknowledgement")}
+	}
+	return nil
+}
+
+func isPendingExpiryNotificationIntent(obj *BreakglassSession) bool {
+	condition := obj.GetCondition(string(SessionConditionTypeExpiryNotificationIntent))
+	expiredCondition := obj.GetCondition(string(SessionConditionTypeExpired))
+	terminalExpiryState := obj.Status.State == SessionStateExpired || obj.Status.State == SessionStateTimeout
+	return condition != nil && condition.Status == metav1.ConditionFalse &&
+		condition.Reason == "PendingEnqueue" && !condition.LastTransitionTime.IsZero() &&
+		terminalExpiryState && expiredCondition != nil && expiredCondition.Status == metav1.ConditionTrue &&
+		expiredCondition.LastTransitionTime.Equal(&condition.LastTransitionTime)
+}
+
+func validateDuplicateCleanupAuditIntent(oldObj, newObj *BreakglassSession) field.ErrorList {
+	conditionType := string(SessionConditionTypeDuplicateCleanupAuditComplete)
+	oldCondition := oldObj.GetCondition(conditionType)
+	newCondition := newObj.GetCondition(conditionType)
+	path := field.NewPath("status").Child("conditions").Key(conditionType)
+	if oldCondition == nil {
+		if newCondition == nil {
+			return nil
+		}
+		if newCondition.Status == metav1.ConditionTrue && newCondition.Reason == "AuditingDisabledAtCommit" &&
+			!newCondition.LastTransitionTime.IsZero() {
+			validCommit := (oldObj.Status.State == SessionStateApproved && newObj.Status.State == SessionStateExpired) ||
+				((oldObj.Status.State == SessionStatePending || oldObj.Status.State == SessionStateWaitingForScheduledTime) &&
+					newObj.Status.State == SessionStateWithdrawn)
+			if validCommit {
+				return nil
+			}
+		}
+		validIntent := newCondition.Status == metav1.ConditionFalse && !newCondition.LastTransitionTime.IsZero() &&
+			((newCondition.Reason == "ExpireDecision" && oldObj.Status.State == SessionStateApproved && newObj.Status.State == SessionStateExpired) ||
+				(newCondition.Reason == "WithdrawDecision" &&
+					(oldObj.Status.State == SessionStatePending || oldObj.Status.State == SessionStateWaitingForScheduledTime) &&
+					newObj.Status.State == SessionStateWithdrawn))
+		if !validIntent {
+			return field.ErrorList{field.Forbidden(path, "duplicate cleanup must atomically persist a pending audit intent and its matching terminal state")}
+		}
+		return nil
+	}
+	if newCondition == nil {
+		return field.ErrorList{field.Forbidden(path, "duplicate cleanup audit status cannot be removed")}
+	}
+	if oldCondition.Status == metav1.ConditionFalse && oldCondition.Reason == "PendingDelivery" {
+		if newObj.Status.State != oldObj.Status.State || !isTerminalBreakglassSessionState(oldObj.Status.State) {
+			return field.ErrorList{field.Forbidden(field.NewPath("status").Child("state"), "legacy duplicate cleanup delivery must remain in its terminal state")}
+		}
+		if !newCondition.LastTransitionTime.Equal(&oldCondition.LastTransitionTime) ||
+			!((newCondition.Status == metav1.ConditionFalse && newCondition.Reason == "PendingDelivery") ||
+				(newCondition.Status == metav1.ConditionTrue &&
+					(newCondition.Reason == "EmissionAccepted" || newCondition.Reason == "AuditingDisabledAtCommit"))) {
+			return field.ErrorList{field.Forbidden(path, "legacy duplicate cleanup delivery may only be acknowledged")}
+		}
+		return nil
+	}
+	if oldCondition.Status == metav1.ConditionFalse && newCondition.Status == metav1.ConditionTrue &&
+		newCondition.Reason == "AuditingDisabledAtCommit" &&
+		newCondition.LastTransitionTime.Equal(&oldCondition.LastTransitionTime) {
+		validCommit := (oldCondition.Reason == "ExpireDecision" && oldObj.Status.State == SessionStateExpired && newObj.Status.State == SessionStateExpired) ||
+			(oldCondition.Reason == "WithdrawDecision" && oldObj.Status.State == SessionStateWithdrawn && newObj.Status.State == SessionStateWithdrawn)
+		if validCommit {
+			return nil
+		}
+		return field.ErrorList{field.Forbidden(path, "disabled audit acknowledgement must commit the persisted terminal decision")}
+	}
+	if newCondition.Reason != oldCondition.Reason || !newCondition.LastTransitionTime.Equal(&oldCondition.LastTransitionTime) {
+		return field.ErrorList{field.Forbidden(path, "duplicate cleanup audit intent tuple is immutable")}
+	}
+	if oldCondition.Status == metav1.ConditionTrue {
+		if newCondition.Status != metav1.ConditionTrue {
+			return field.ErrorList{field.Forbidden(path, "completed duplicate cleanup audit cannot be reopened")}
+		}
+		return nil
+	}
+	if oldCondition.Status != metav1.ConditionFalse ||
+		(newCondition.Status != metav1.ConditionFalse && newCondition.Status != metav1.ConditionTrue) {
+		return field.ErrorList{field.Forbidden(path, "duplicate cleanup audit status must transition from pending to complete")}
+	}
+	if newCondition.Status == metav1.ConditionFalse && newObj.Status.State != oldObj.Status.State {
+		validLegacyRevocation := (oldCondition.Reason == "ExpireDecision" && oldObj.Status.State == SessionStateApproved && newObj.Status.State == SessionStateExpired) ||
+			(oldCondition.Reason == "WithdrawDecision" &&
+				(oldObj.Status.State == SessionStatePending || oldObj.Status.State == SessionStateWaitingForScheduledTime) &&
+				newObj.Status.State == SessionStateWithdrawn)
+		if validLegacyRevocation {
+			return nil
+		}
+		return field.ErrorList{field.Forbidden(field.NewPath("status").Child("state"), "state cannot change while duplicate cleanup audit delivery is pending")}
+	}
+	if newCondition.Status == metav1.ConditionFalse && !reflect.DeepEqual(newObj.Status, oldObj.Status) {
+		return field.ErrorList{field.Forbidden(field.NewPath("status"), "only the duplicate cleanup audit acknowledgement may change status while delivery is pending")}
+	}
+	if newCondition.Status == metav1.ConditionTrue {
+		validCommit := (oldCondition.Reason == "ExpireDecision" && newObj.Status.State == SessionStateExpired) ||
+			(oldCondition.Reason == "WithdrawDecision" && newObj.Status.State == SessionStateWithdrawn)
+		if !validCommit {
+			return field.ErrorList{field.Forbidden(field.NewPath("status").Child("state"), "duplicate cleanup acknowledgement must commit its persisted terminal decision")}
+		}
+	}
+	return nil
+}
+
+func isTerminalBreakglassSessionState(state BreakglassSessionState) bool {
+	switch state {
+	case SessionStateRejected, SessionStateWithdrawn, SessionStateExpired, SessionStateIdleExpired, SessionStateTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
 // validateExpiryUpdate keeps active and scheduled session leases monotonic. A
 // terminal transition may shorten the timestamp (for example, an explicit drop
 // or cleanup expiry), but no update may extend a lease. In particular, a status
 // writer cannot move an already-reached expiry into the future and resurrect
 // access, or activate an already-expired scheduled session. This is enforced
-// for both the main resource and its status subresource by the webhook marker
-// above.
+// for both ordinary updates and updates to the status subresource by the
+// registered BreakglassSession validation webhook.
 func validateExpiryUpdate(oldObj, newObj *BreakglassSession) field.ErrorList {
 	decisionNow := time.Now()
 	oldExpiry := oldObj.Status.ExpiresAt
@@ -504,11 +672,30 @@ func (bs *BreakglassSession) ValidateDelete(ctx context.Context, obj *Breakglass
 	if obj == nil {
 		obj = bs
 	}
-	if condition := obj.GetCondition(string(SessionConditionTypeDuplicateCleanupAuditComplete)); condition != nil &&
-		condition.Status != metav1.ConditionTrue {
+	if isPendingDuplicateCleanupAudit(obj) {
 		return nil, fmt.Errorf("duplicate cleanup audit delivery is pending; deletion is not allowed")
 	}
+	if isPendingExpiryNotificationIntent(obj) {
+		return nil, fmt.Errorf("expiry notification enqueue intent is pending; deletion is not allowed")
+	}
 	return nil, nil
+}
+
+func isPendingDuplicateCleanupAudit(obj *BreakglassSession) bool {
+	condition := obj.GetCondition(string(SessionConditionTypeDuplicateCleanupAuditComplete))
+	if condition == nil || condition.Status != metav1.ConditionFalse || condition.LastTransitionTime.IsZero() {
+		return false
+	}
+	switch condition.Reason {
+	case "ExpireDecision":
+		return obj.Status.State == SessionStateExpired
+	case "WithdrawDecision":
+		return obj.Status.State == SessionStateWithdrawn
+	case "PendingDelivery":
+		return isTerminalBreakglassSessionState(obj.Status.State)
+	default:
+		return false
+	}
 }
 
 // SetCondition updates or adds a condition in the BreakglassSession status

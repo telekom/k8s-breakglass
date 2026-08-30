@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -318,7 +319,7 @@ func (wc *WebhookController) findDebugSessionAccess(ctx context.Context, usernam
 			ds = &live
 		}
 		// Only check active sessions for this cluster
-		if ds.Status.State != breakglassv1alpha1.DebugSessionStateActive || ds.Spec.Cluster != clusterName {
+		if !ds.DeletionTimestamp.IsZero() || ds.Status.State != breakglassv1alpha1.DebugSessionStateActive || ds.Spec.Cluster != clusterName {
 			continue
 		}
 		// Debug sessions must always carry a live lease. Missing, equal, and
@@ -404,7 +405,7 @@ func (wc *WebhookController) liveDebugSessionAccess(ctx context.Context, usernam
 	if uid == "" || string(ds.UID) != uid {
 		return false, ""
 	}
-	if ds.Status.State != breakglassv1alpha1.DebugSessionStateActive || ds.Spec.Cluster != clusterName {
+	if !ds.DeletionTimestamp.IsZero() || ds.Status.State != breakglassv1alpha1.DebugSessionStateActive || ds.Spec.Cluster != clusterName {
 		return false, ""
 	}
 	now := time.Now()
@@ -662,12 +663,21 @@ func (wc *WebhookController) isClusterConfigStillActive(ctx context.Context, con
 		}
 		return false
 	}
-	return live.Namespace == configured.Namespace && live.Name == configured.Name && live.UID == configured.UID && live.DeletionTimestamp.IsZero()
+	return live.Namespace == configured.Namespace && live.Name == configured.Name && live.UID == configured.UID &&
+		live.DeletionTimestamp.IsZero() && apiequality.Semantic.DeepEqual(live.Spec, configured.Spec)
 }
 
 // emitAccessDecisionAudit emits an audit event for SAR authorization decisions.
 // This captures both allowed and denied access attempts for audit trail purposes.
 func (wc *WebhookController) emitAccessDecisionAudit(ctx context.Context, username string, groups []string, cluster string, sar *authorizationv1.SubjectAccessReview, allowed bool, source, reason string) {
+	if wc.auditService == nil {
+		return
+	}
+	target, _, _, _ := wc.auditTargetFromSAR(ctx, cluster, sar)
+	wc.emitAccessDecisionAuditWithTarget(ctx, username, groups, sar, target, allowed, source, reason)
+}
+
+func (wc *WebhookController) emitAccessDecisionAuditWithTarget(ctx context.Context, username string, groups []string, sar *authorizationv1.SubjectAccessReview, target audit.Target, allowed bool, source, reason string) {
 	if wc.auditService == nil {
 		return
 	}
@@ -679,7 +689,7 @@ func (wc *WebhookController) emitAccessDecisionAudit(ctx context.Context, userna
 		severity = audit.SeverityWarning
 	}
 
-	target, verb, subresource, apiGroup := wc.auditTargetFromSAR(ctx, cluster, sar)
+	_, verb, subresource, apiGroup := wc.auditTargetFromSARWithoutEnrichment(sar)
 
 	// Build details map
 	details := map[string]interface{}{
@@ -705,6 +715,29 @@ func (wc *WebhookController) emitAccessDecisionAudit(ctx context.Context, userna
 	}
 
 	wc.auditService.Emit(ctx, event)
+}
+
+func (wc *WebhookController) auditTargetFromSARWithoutEnrichment(sar *authorizationv1.SubjectAccessReview) (audit.Target, string, string, string) {
+	target := audit.Target{}
+	var verb, subresource, apiGroup string
+	if sar == nil {
+		return target, verb, subresource, apiGroup
+	}
+	if sar.Spec.ResourceAttributes != nil {
+		ra := sar.Spec.ResourceAttributes
+		target.Kind = ra.Resource
+		target.Name = ra.Name
+		target.Namespace = ra.Namespace
+		verb = ra.Verb
+		subresource = ra.Subresource
+		apiGroup = ra.Group
+	} else if sar.Spec.NonResourceAttributes != nil {
+		nra := sar.Spec.NonResourceAttributes
+		target.Kind = "nonresource"
+		target.Name = nra.Path
+		verb = nra.Verb
+	}
+	return target, verb, subresource, apiGroup
 }
 
 // emitPolicyDenialAudit emits an audit event when a DenyPolicy blocks access.
@@ -787,25 +820,11 @@ func (wc *WebhookController) emitPodSecurityAudit(ctx context.Context, username 
 }
 
 func (wc *WebhookController) auditTargetFromSAR(ctx context.Context, cluster string, sar *authorizationv1.SubjectAccessReview) (audit.Target, string, string, string) {
-	target := audit.Target{Cluster: cluster}
-	var verb, subresource, apiGroup string
-	if sar == nil {
-		return target, verb, subresource, apiGroup
-	}
-	if sar.Spec.ResourceAttributes != nil {
+	target, verb, subresource, apiGroup := wc.auditTargetFromSARWithoutEnrichment(sar)
+	target.Cluster = cluster
+	if sar != nil && sar.Spec.ResourceAttributes != nil {
 		ra := sar.Spec.ResourceAttributes
-		target.Kind = ra.Resource
-		target.Name = ra.Name
-		target.Namespace = ra.Namespace
 		target.NamespaceLabels = wc.auditNamespaceLabels(ctx, cluster, ra.Namespace)
-		verb = ra.Verb
-		subresource = ra.Subresource
-		apiGroup = ra.Group
-	} else if sar.Spec.NonResourceAttributes != nil {
-		nra := sar.Spec.NonResourceAttributes
-		target.Kind = "nonresource"
-		target.Name = nra.Path
-		verb = nra.Verb
 	}
 	return target, verb, subresource, apiGroup
 }

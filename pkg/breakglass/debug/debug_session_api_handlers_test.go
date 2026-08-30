@@ -734,6 +734,81 @@ func TestHandleInjectEphemeralContainer_ValidationErrorClassification(t *testing
 	}
 }
 
+func TestHandleInjectEphemeralContainer_UsesLiveSessionBeforeUpdate(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	expiresAt := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	active := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "active-session",
+			Namespace: "default",
+			UID:       "debug-session-uid",
+			Labels:    map[string]string{DebugSessionLabelKey: "active-session"},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "test-user",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &expiresAt,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
+						Enabled:           true,
+						AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"default"}},
+					},
+				},
+			},
+		},
+	}
+	liveTerminated := active.DeepCopy()
+	liveTerminated.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+
+	cachedClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(active.DeepCopy()).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	liveReader := &stagedDebugSessionReader{
+		first:  fake.NewClientBuilder().WithScheme(scheme).WithObjects(active.DeepCopy()).Build(),
+		second: fake.NewClientBuilder().WithScheme(scheme).WithObjects(liveTerminated).Build(),
+		key:    client.ObjectKey{Name: active.Name, Namespace: active.Namespace},
+	}
+	targetClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "app-pod", Namespace: "default", UID: "target-pod-uid"},
+			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "busybox"}}},
+		}).
+		Build()
+
+	ctrl := NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), cachedClient, nil, nil).
+		WithAPIReader(liveReader).
+		WithClusterClients(&mockClientProvider{clients: map[string]client.Client{"test-cluster": targetClient}})
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "test-user", "", nil)
+	body, err := json.Marshal(InjectEphemeralContainerRequest{
+		Namespace:     "default",
+		PodName:       "app-pod",
+		ContainerName: "debugger",
+		Image:         "busybox",
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, "/api/debugSessions/active-session/injectEphemeralContainer?namespace=default", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Contains(t, rr.Body.String(), "debug session is no longer active")
+
+	storedPod := &corev1.Pod{}
+	require.NoError(t, targetClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "app-pod"}, storedPod))
+	assert.Empty(t, storedPod.Spec.EphemeralContainers, "a terminated live session must not update the target Pod")
+}
+
 func TestKubectlDebugMutationHandlers_ViewerParticipantForbidden(t *testing.T) {
 	now := metav1.Now()
 	session := &breakglassv1alpha1.DebugSession{
@@ -1020,7 +1095,7 @@ func TestHandleCreatePodCopy_FinalFenceUsesLiveReader(t *testing.T) {
 		WithScheme(scheme).
 		WithObjects(
 			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "production"}},
-			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug-copies"}},
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug-copies", UID: "debug-copies-uid"}},
 			&corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "app-pod",
@@ -1302,7 +1377,7 @@ func TestHandleCreateNodeDebugPod_FinalFenceUsesLiveReader(t *testing.T) {
 	targetClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(
-			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug"}},
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug", UID: "breakglass-debug-uid"}},
 			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1", UID: "worker-uid"}},
 		).
 		Build()

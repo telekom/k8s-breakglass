@@ -61,11 +61,39 @@ Once a session enters a terminal state (**Rejected**, **Withdrawn**, **Expired**
 - These states take absolute precedence over any timestamps
 - Even if timestamps appear valid, the session is not valid
 - The state field determines whether a session is terminal; an `Approved` session additionally requires a non-zero lease that is still strictly in the future
+- A non-zero `metadata.deletionTimestamp` revokes an otherwise approved session immediately; authorization does not wait for finalizer completion.
 - An `Approved` session with a missing or zero `expiresAt` fails closed and is revoked by cleanup; approval never grants unbounded access.
 - Expiry always revokes access at the exact boundary. Regular sessions have no renewal or extension operation; a future timestamp written after expiry cannot resurrect a terminal session.
 - While a session is `Approved` or `WaitingForScheduledTime`, `status.expiresAt` cannot be extended. The validating webhook also covers `breakglasssessions/status`, so controller or administrative status writes cannot move a reached expiry into the future; terminal revocation may shorten only a still-live lease to the current time, while post-boundary cleanup preserves the natural timestamp.
 - The authorization webhook governs new Kubernetes authorization requests. Kubernetes cannot terminate an already-established native `exec`, `attach`, `logs -f`, or `port-forward` stream at expiry; strict profiles must use an expiry-aware proxy or controller-owned workload termination where that distinction matters. Every new request, including these pod subresources, is denied at the boundary.
+- Blocking audit enrichment is completed before the last uncached authorization
+  read. That last fence binds the session lease and identity plus the full mutable
+  `ClusterConfig` specification, including its security identity; no spoke lookup
+  occurs between the fence and the SubjectAccessReview response.
+- Duplicate cleanup with auditing enabled atomically revokes duplicate access
+  and persists an immutable `session.termination_intent` outbox tuple.
+  The tuple fixes the event ID, timestamp, event type, and terminal decision
+  across conflicts, cleanup ticks, and restarts. Immediately before this
+  status update, cleanup lists the complete live duplicate set and checks its
+  ordering again: `Approved` before `WaitingForScheduledTime` before `Pending`,
+  then oldest creation time, then name. Cleanup then delivers the saved intent synchronously and
+  records acknowledgement after every matching
+  required sink accepts it; delivery failure never restores access. A Kafka
+  sink configured with `async: true` or `requiredAcks: 0` cannot acknowledge
+  this delivery. Kubernetes Events and logs are not durable receipts, and a
+  configured filter that excludes the intent leaves cleanup pending. Legacy
+  terminal `PendingDelivery` tuples are drained after upgrade with their
+  original terminal event type and fields before deletion becomes eligible.
 - Automatic expiry routines re-check live state before writing terminal status, so a concurrent withdraw, rejection, drop, or cancellation keeps its original terminal audit reason.
+- Time-expiry and approval-timeout email enqueue intents are stored durably in
+  session status with the terminal transition. While configured mail is
+  unavailable or enqueue fails, the intent stays pending and blocks terminal
+  cleanup so a later cleanup pass retries it. `QueueAccepted` means only that
+  the process-local queue accepted the message for best-effort asynchronous
+  delivery; it is not an SMTP delivery receipt. A crash can lose accepted mail
+  or cause a duplicate around the enqueue/status-update boundary. When email is
+  intentionally disabled, pending intents become `NotificationsDisabled`,
+  allowing cleanup without claiming that mail was sent.
 - Scheduled sessions whose `expiresAt` is already in the past when cleanup reaches their `scheduledStartTime` are marked `Expired` instead of being activated
 - Scheduled activation re-reads the live session before granting access and skips the object if it has already left `WaitingForScheduledTime`.
 

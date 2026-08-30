@@ -1025,6 +1025,9 @@ func (s *SpokeHubAuthorizationSuite) TestRetiredEphemeralAdmissionRouteAndAPIMed
 		ContainerName: "hard-expiry-after-boundary",
 		Image:         image,
 		Command:       []string{"sh", "-c", "sleep 60"},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsNonRoot: &runAsNonRoot,
+		},
 	})
 	s.Require().Error(err, "API-mediated ephemeral injection must fail closed after expiresAt")
 

@@ -42,6 +42,37 @@ func TestNewService(t *testing.T) {
 	svc := NewService(client, nil, logger, "test-namespace")
 	assert.NotNil(t, svc)
 	assert.False(t, svc.IsEnabled())
+	assert.True(t, svc.IsConfigured(), "startup must fail closed until absence of enabled AuditConfigs is proven")
+	assert.Equal(t, ConfigurationUnavailable, svc.ConfigurationState())
+}
+
+func TestService_ReloadStateTransitions(t *testing.T) {
+	svc := NewService(fake.NewClientBuilder().WithScheme(newServiceTestScheme(t)).Build(), nil, zap.NewNop(), "test-namespace")
+	valid := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "valid"},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks:   []breakglassv1alpha1.AuditSinkConfig{{Name: "log", Type: breakglassv1alpha1.AuditSinkTypeLog}},
+		},
+	}
+
+	require.NoError(t, svc.Reload(context.Background(), valid))
+	assert.True(t, svc.IsEnabled())
+	assert.True(t, svc.IsConfigured())
+	assert.Equal(t, ConfigurationReady, svc.ConfigurationState())
+
+	err := svc.ReloadMultipleWithAvailability(context.Background(), nil, true)
+	require.Error(t, err)
+	assert.False(t, svc.IsEnabled())
+	assert.True(t, svc.IsConfigured())
+	assert.Equal(t, ConfigurationUnavailable, svc.ConfigurationState())
+	assert.ErrorContains(t, svc.EmitSync(context.Background(), &Event{Type: EventSessionTerminationIntent}), "disabled")
+
+	require.NoError(t, svc.Reload(context.Background(), valid))
+	assert.Equal(t, ConfigurationReady, svc.ConfigurationState())
+	require.NoError(t, svc.Reload(context.Background(), nil))
+	assert.False(t, svc.IsConfigured())
+	assert.Equal(t, ConfigurationDisabled, svc.ConfigurationState())
 }
 
 func TestService_ReloadDisablesOnNilConfig(t *testing.T) {
@@ -255,7 +286,7 @@ func TestService_ReloadMultipleDisablesManagerEventFilterForDifferentConfigs(t *
 	_ = svc.Close()
 }
 
-func TestService_ReloadNoSinks(t *testing.T) {
+func TestService_EnabledConfigWithoutSinksIsUnavailable(t *testing.T) {
 	logger := zap.NewNop()
 	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -271,9 +302,10 @@ func TestService_ReloadNoSinks(t *testing.T) {
 	}
 
 	err := svc.Reload(context.Background(), config)
-	assert.NoError(t, err)
-	// No sinks means disabled
+	require.Error(t, err)
 	assert.False(t, svc.IsEnabled())
+	assert.True(t, svc.IsConfigured())
+	assert.Equal(t, ConfigurationUnavailable, svc.ConfigurationState())
 }
 
 func TestService_EmitWhenDisabled(t *testing.T) {
@@ -294,9 +326,9 @@ func TestService_EmitWhenDisabled(t *testing.T) {
 	// Should not panic
 	svc.Emit(context.Background(), event)
 
-	// Sync emit should return nil
+	// Required synchronous delivery must fail closed while auditing is disabled.
 	err := svc.EmitSync(context.Background(), event)
-	assert.NoError(t, err)
+	assert.Error(t, err)
 }
 
 func TestService_EmitWhenEnabled(t *testing.T) {
@@ -333,9 +365,9 @@ func TestService_EmitWhenEnabled(t *testing.T) {
 	// Should not panic
 	svc.Emit(context.Background(), event)
 
-	// Sync emit
+	// A log write has no durable receipt and cannot satisfy required delivery.
 	err = svc.EmitSync(context.Background(), event)
-	assert.NoError(t, err)
+	assert.Error(t, err)
 
 	// Cleanup
 	_ = svc.Close()
@@ -795,7 +827,7 @@ func TestService_BuildKubernetesSink(t *testing.T) {
 	_ = svc.Close()
 }
 
-func TestService_SkipsInvalidSinkType(t *testing.T) {
+func TestService_ConfiguredSinkConstructionFailureDisablesRequiredAudit(t *testing.T) {
 	logger := zap.NewNop()
 	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -820,12 +852,43 @@ func TestService_SkipsInvalidSinkType(t *testing.T) {
 	}
 
 	err := svc.Reload(context.Background(), config)
-	assert.NoError(t, err)
-	// Still enabled because valid log sink exists
-	assert.True(t, svc.IsEnabled())
+	require.Error(t, err)
+	assert.False(t, svc.IsEnabled())
+	assert.True(t, svc.IsConfigured())
+	assert.Equal(t, ConfigurationUnavailable, svc.ConfigurationState())
+	assert.Error(t, svc.EmitSync(context.Background(), &Event{Type: EventSessionTerminationIntent}))
 
 	// Cleanup
 	_ = svc.Close()
+}
+
+func TestService_MissingSinkSecretIsConfiguredButUnavailable(t *testing.T) {
+	svc := NewService(fake.NewClientBuilder().WithScheme(newServiceTestScheme(t)).Build(), nil, zap.NewNop(), "test-namespace")
+	config := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "missing-secret"},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{{
+				Name: "kafka",
+				Type: breakglassv1alpha1.AuditSinkTypeKafka,
+				Kafka: &breakglassv1alpha1.KafkaSinkSpec{
+					Brokers: []string{"localhost:9092"},
+					Topic:   "audit",
+					TLS: &breakglassv1alpha1.KafkaTLSSpec{
+						Enabled:     true,
+						CASecretRef: &breakglassv1alpha1.SecretKeySelector{Name: "missing", Namespace: "test-namespace"},
+					},
+				},
+			}},
+		},
+	}
+
+	err := svc.Reload(context.Background(), config)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "missing")
+	assert.False(t, svc.IsEnabled())
+	assert.True(t, svc.IsConfigured())
+	assert.Equal(t, ConfigurationUnavailable, svc.ConfigurationState())
 }
 
 func TestService_KafkaSinkMissingConfig(t *testing.T) {
@@ -850,9 +913,10 @@ func TestService_KafkaSinkMissingConfig(t *testing.T) {
 	}
 
 	err := svc.Reload(context.Background(), config)
-	assert.NoError(t, err)
-	// Disabled because no valid sinks
+	require.Error(t, err)
 	assert.False(t, svc.IsEnabled())
+	assert.True(t, svc.IsConfigured())
+	assert.Equal(t, ConfigurationUnavailable, svc.ConfigurationState())
 }
 
 func TestService_BuildKafkaSinkRequiredAcks(t *testing.T) {
@@ -892,6 +956,38 @@ func TestService_BuildKafkaSinkRequiredAcks(t *testing.T) {
 	}
 }
 
+func TestService_EmitSyncRejectsConfiguredAsyncKafka(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := newServiceTestScheme(t)
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	svc := NewService(kubeClient, nil, logger, "test-namespace")
+
+	config := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "async-kafka"},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{{
+				Name: "async-kafka",
+				Type: breakglassv1alpha1.AuditSinkTypeKafka,
+				Kafka: &breakglassv1alpha1.KafkaSinkSpec{
+					Brokers: []string{"localhost:9092"},
+					Topic:   "audit-events",
+					Async:   true,
+				},
+			}},
+		},
+	}
+
+	require.NoError(t, svc.Reload(context.Background(), config))
+	defer func() { require.NoError(t, svc.Close()) }()
+
+	err := svc.EmitSync(context.Background(), &Event{Type: EventSessionExpired})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "async-kafka")
+	assert.Contains(t, err.Error(), "uses asynchronous delivery")
+	assert.Zero(t, svc.manager.Stats().ProcessedEvents)
+}
+
 func TestService_WebhookSinkMissingConfig(t *testing.T) {
 	logger := zap.NewNop()
 	scheme := newServiceTestScheme(t)
@@ -914,9 +1010,10 @@ func TestService_WebhookSinkMissingConfig(t *testing.T) {
 	}
 
 	err := svc.Reload(context.Background(), config)
-	assert.NoError(t, err)
-	// Disabled because no valid sinks
+	require.Error(t, err)
 	assert.False(t, svc.IsEnabled())
+	assert.True(t, svc.IsConfigured())
+	assert.Equal(t, ConfigurationUnavailable, svc.ConfigurationState())
 }
 
 func TestService_GetSecretKey(t *testing.T) {

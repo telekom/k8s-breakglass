@@ -18,6 +18,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/impersonation"
@@ -87,6 +88,7 @@ type authorizeState struct {
 	allowedSession        *sessionAuthorizationCandidate
 	allowedSessions       []sessionAuthorizationCandidate
 	sessionDerivedRBAC    bool
+	auditTarget           audit.Target
 	// sessionActivity fields are populated during authorization but recorded only
 	// after the final live authorization fence has passed.
 	sessionActivityName  string
@@ -900,6 +902,20 @@ func (wc *WebhookController) buildFinalReason(s *authorizeState) {
 func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *authorizeState) {
 	username := s.sar.Spec.User
 
+	// Namespace-label enrichment may call the spoke API and block. Complete it
+	// before the last live authorization fence so time spent enriching the audit
+	// event can never consume the remaining lease after the allow decision.
+	if wc.auditService != nil && wc.auditService.IsEnabled() {
+		s.auditTarget, _, _, _ = wc.auditTargetFromSAR(s.ctx, s.clusterName, &s.sar)
+	}
+
+	sessionDerivedAllow := s.allowSource == "session" || (s.allowSource == "rbac" && s.sessionDerivedRBAC)
+	if s.allowed && wc.ccProvider != nil && s.clusterCfg != nil && !wc.isClusterConfigStillActive(s.ctx, s.clusterCfg) {
+		s.allowed = false
+		s.allowSource = ""
+		s.reason = wc.finalizeReason("Breakglass cluster configuration was removed or replaced before authorization completed", false, s.clusterName)
+	}
+
 	if s.allowed && s.allowSource == "debug-session" {
 		var ra *authorizationv1.ResourceAttributes
 		if s.sar.Spec.ResourceAttributes != nil {
@@ -911,16 +927,10 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 			s.allowSource = ""
 			s.reason = wc.finalizeReason("Debug session expired, was revoked, or no longer authorizes this pod operation", false, s.clusterName)
 		} else {
-			s.reason = reason
+			s.reason = wc.finalizeReason(reason, true, s.clusterName)
 		}
 	}
 
-	sessionDerivedAllow := s.allowSource == "session" || (s.allowSource == "rbac" && s.sessionDerivedRBAC)
-	if s.allowed && sessionDerivedAllow && wc.ccProvider != nil && s.clusterCfg != nil && !wc.isClusterConfigStillActive(s.ctx, s.clusterCfg) {
-		s.allowed = false
-		s.allowSource = ""
-		s.reason = wc.finalizeReason("Breakglass cluster configuration was removed or replaced before authorization completed", false, s.clusterName)
-	}
 	if s.allowed && sessionDerivedAllow {
 		liveCandidates := wc.liveSessionAuthorizationCandidates(s.ctx, s.sessions, s.allowedSessions)
 		if len(liveCandidates) == 0 {
@@ -933,8 +943,26 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 		}
 	}
 
-	// All allow-side effects are deliberately after the final live fence. This
-	// includes audit/impersonation accounting and idle-activity recording.
+	response := SubjectAccessReviewResponse{
+		ApiVersion: s.sar.APIVersion,
+		Kind:       s.sar.Kind,
+		Status: SubjectAccessReviewResponseStatus{
+			Allowed: s.allowed,
+			Reason:  s.reason,
+		},
+	}
+	// There must be no blocking work between the last live fence and writing the
+	// response. Audit delivery and detailed logging happen after c.JSON has
+	// committed the decision to the caller.
+	if cidv, ok := c.Get("cid"); ok {
+		if cidstr, ok2 := cidv.(string); ok2 && cidstr != "" {
+			c.Writer.Header().Set("X-Request-ID", cidstr)
+		}
+	}
+	c.JSON(http.StatusOK, &response)
+
+	// All allow-side effects are deliberately after the final live fence and
+	// response. This includes audit/impersonation accounting and idle activity.
 	wc.noteImpersonationOutcome(s)
 	if s.allowed && s.allowSource == "session" && s.sessionActivityName != "" {
 		// If the first SAR winner expired during the request, attribute activity
@@ -975,14 +1003,6 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 		}
 	}
 
-	response := SubjectAccessReviewResponse{
-		ApiVersion: s.sar.APIVersion,
-		Kind:       s.sar.Kind,
-		Status: SubjectAccessReviewResponseStatus{
-			Allowed: s.allowed,
-			Reason:  s.reason,
-		},
-	}
 	s.reqLog.Debugw("Authorization decision",
 		"allowed", s.allowed, "reason", s.reason,
 		"sessionCount", len(s.sessions), "source", s.allowSource)
@@ -1053,9 +1073,10 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 		"username", username, "cluster", s.clusterName,
 		"allowed", s.allowed, "reason", s.reason, "response", respLogForInfo)
 
-	// Emit audit event for authorization decisions
-	wc.emitAccessDecisionAudit(s.ctx, username, s.sar.Spec.Groups, s.clusterName,
-		&s.sar, s.allowed, s.allowSource, s.reason)
+	// Emit the already-enriched audit event without another spoke lookup after
+	// the final live fence.
+	wc.emitAccessDecisionAuditWithTarget(s.ctx, username, s.sar.Spec.Groups,
+		&s.sar, s.auditTarget, s.allowed, s.allowSource, s.reason)
 
 	// Record total SAR processing duration
 	decision := "allowed"
@@ -1065,13 +1086,5 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 	metrics.WebhookSARDuration.WithLabelValues(s.clusterLabel, decision).
 		Observe(time.Since(s.startTime).Seconds())
 
-	// Ensure correlation ID header is present for apiserver correlation
-	if cidv, ok := c.Get("cid"); ok {
-		if cidstr, ok2 := cidv.(string); ok2 && cidstr != "" {
-			c.Writer.Header().Set("X-Request-ID", cidstr)
-		}
-	}
-
-	c.JSON(http.StatusOK, &response)
 	s.reqLog.Debug("Authorization handler completed successfully")
 }

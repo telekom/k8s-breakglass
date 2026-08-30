@@ -9,13 +9,16 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap/zaptest"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -154,6 +157,116 @@ func TestGetRESTConfig_RewritesLoopbackHostAndCaches(t *testing.T) {
 	cfg2, err2 := provider.GetRESTConfig(context.Background(), "default/my-cluster")
 	assert.NoError(t, err2)
 	assert.Same(t, cfg, cfg2)
+}
+
+func TestGetRESTConfigForPrivilegedOperationCapturesExactLiveClusterConfig(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	qps := int32(25)
+	spec := breakglassv1alpha1.ClusterConfigSpec{
+		KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "kube-secret", Namespace: "default"},
+		QPS:                 &qps,
+	}
+	cached := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "privileged", Namespace: "default", UID: "cluster-uid", ResourceVersion: "1"},
+		Spec:       spec,
+	}
+	live := cached.DeepCopy()
+	live.ResourceVersion = "2"
+	live.Labels = map[string]string{"source": "uncached"}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "kube-secret", Namespace: "default"},
+		Data:       map[string][]byte{"value": mustBuildKubeconfigYAML("https://10.0.0.10:6443")},
+	}
+	cachedClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cached, secret).Build()
+	liveReader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(live, secret.DeepCopy()).Build()
+	provider := NewClientProvider(cachedClient, zaptest.NewLogger(t).Sugar()).WithLiveReader(liveReader)
+
+	_, snapshot, err := provider.GetRESTConfigForPrivilegedOperation(context.Background(), "default/privileged")
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	assert.Equal(t, types.UID("cluster-uid"), snapshot.UID)
+	assert.Equal(t, "2", snapshot.ResourceVersion)
+	assert.Equal(t, "uncached", snapshot.Labels["source"])
+	assert.Equal(t, spec, snapshot.Spec)
+}
+
+func TestValidatePrivilegedOperationClusterConfigRejectsCredentialSecretChange(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	cc := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "privileged", Namespace: "default", UID: "cluster-uid"},
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "kube-secret", Namespace: "default"}},
+	}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "kube-secret", Namespace: "default", ResourceVersion: "1"}, Data: map[string][]byte{"value": mustBuildKubeconfigYAML("https://10.0.0.10:6443")}}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cc.DeepCopy(), secret.DeepCopy()).Build()
+	provider := NewClientProvider(client, zaptest.NewLogger(t).Sugar()).WithLiveReader(client)
+	_, snapshot, err := provider.GetRESTConfigForPrivilegedOperation(context.Background(), "default/privileged")
+	require.NoError(t, err)
+	changed := &corev1.Secret{}
+	require.NoError(t, client.Get(context.Background(), ctrlclient.ObjectKeyFromObject(secret), changed))
+	changed.Data["value"] = []byte("changed")
+	require.NoError(t, client.Update(context.Background(), changed))
+	err = provider.ValidatePrivilegedOperationClusterConfig(context.Background(), snapshot)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "privileged input secret/default/kube-secret changed")
+}
+
+func TestValidatePrivilegedOperationClusterConfigRejectsLiveChanges(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	qps := int32(25)
+	snapshot := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "privileged", Namespace: "default", UID: "cluster-uid"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "kube-secret", Namespace: "default"},
+			QPS:                 &qps,
+		},
+	}
+	now := metav1.Now()
+	tests := []struct {
+		name string
+		live *breakglassv1alpha1.ClusterConfig
+		want string
+	}{
+		{name: "deleted", want: "not found"},
+		{name: "deleting", live: func() *breakglassv1alpha1.ClusterConfig {
+			object := snapshot.DeepCopy()
+			object.Finalizers = []string{"test.example/finalizer"}
+			object.DeletionTimestamp = &now
+			return object
+		}(), want: "being deleted"},
+		{name: "replaced", live: func() *breakglassv1alpha1.ClusterConfig {
+			object := snapshot.DeepCopy()
+			object.UID = "replacement-uid"
+			return object
+		}(), want: "was replaced"},
+		{name: "spec changed", live: func() *breakglassv1alpha1.ClusterConfig {
+			object := snapshot.DeepCopy()
+			changedQPS := int32(50)
+			object.Spec.QPS = &changedQPS
+			return object
+		}(), want: "spec changed"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			if tt.live != nil {
+				builder = builder.WithObjects(tt.live)
+			}
+			liveReader := builder.Build()
+			provider := NewClientProvider(liveReader, zaptest.NewLogger(t).Sugar()).WithLiveReader(liveReader)
+
+			err := provider.ValidatePrivilegedOperationClusterConfig(context.Background(), snapshot)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
 }
 
 func TestGetRESTConfig_MissingSecretKey(t *testing.T) {

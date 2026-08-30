@@ -1476,6 +1476,52 @@ func TestDebugSession_ValidateUpdate(t *testing.T) {
 	}
 }
 
+func TestDebugSessionValidateUpdateKeepsTerminalStateAndElapsedExpiry(t *testing.T) {
+	expiredAt := metav1.NewTime(time.Now().Add(-time.Minute))
+	base := &DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "breakglass"},
+		Spec:       DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "user@example.com"},
+		Status: DebugSessionStatus{
+			State:     DebugSessionStateExpired,
+			ExpiresAt: &expiredAt,
+		},
+	}
+	resurrected := base.DeepCopy()
+	resurrected.Status.State = DebugSessionStateActive
+	futureExpiry := metav1.NewTime(time.Now().Add(time.Hour))
+	resurrected.Status.ExpiresAt = &futureExpiry
+	resurrected.Status.RenewalCount = 1
+
+	_, err := resurrected.ValidateUpdate(context.Background(), base, resurrected)
+	if err == nil {
+		t.Fatal("expected terminal DebugSession resurrection to be rejected")
+	}
+}
+
+func TestDebugSessionRejectsActiveStateWithoutExpiry(t *testing.T) {
+	session := &DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "breakglass"},
+		Spec:       DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "user@example.com"},
+		Status:     DebugSessionStatus{State: DebugSessionStateActive},
+	}
+	if _, err := session.ValidateCreate(context.Background(), session); err == nil {
+		t.Fatal("expected active creation without expiry to be rejected")
+	}
+
+	addedExpiry := session.DeepCopy()
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	addedExpiry.Status.ExpiresAt = &future
+	if _, err := addedExpiry.ValidateUpdate(context.Background(), session, addedExpiry); err == nil {
+		t.Fatal("expected a missing active expiry to remain missing")
+	}
+
+	failed := session.DeepCopy()
+	failed.Status.State = DebugSessionStateFailed
+	if _, err := failed.ValidateUpdate(context.Background(), session, failed); err != nil {
+		t.Fatalf("expected malformed active session to become failed: %v", err)
+	}
+}
+
 func TestDebugSession_ValidateDelete(t *testing.T) {
 	ctx := context.Background()
 	session := &DebugSession{

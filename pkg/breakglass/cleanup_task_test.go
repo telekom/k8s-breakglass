@@ -19,6 +19,7 @@ import (
 )
 
 func TestCleanupRoutinePendingDuplicateAuditBlocksRetentionDeletion(t *testing.T) {
+	intentTime := metav1.NewTime(time.Unix(100, 0))
 	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "pending-audit-delete", Namespace: "default"},
 		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "cluster", User: "user", GrantedGroup: "admin"},
@@ -26,9 +27,10 @@ func TestCleanupRoutinePendingDuplicateAuditBlocksRetentionDeletion(t *testing.T
 			State:         breakglassv1alpha1.SessionStateWithdrawn,
 			RetainedUntil: metav1.NewTime(time.Now().Add(-time.Hour)),
 			Conditions: []metav1.Condition{{
-				Type:   string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete),
-				Status: metav1.ConditionFalse,
-				Reason: "PendingDelivery",
+				Type:               string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete),
+				Status:             metav1.ConditionFalse,
+				Reason:             "PendingDelivery",
+				LastTransitionTime: intentTime,
 			}},
 		},
 	}
@@ -38,6 +40,28 @@ func TestCleanupRoutinePendingDuplicateAuditBlocksRetentionDeletion(t *testing.T
 
 	var retained breakglassv1alpha1.BreakglassSession
 	require.NoError(t, fc.Get(context.Background(), client.ObjectKeyFromObject(session), &retained), "pending audit outbox must retain the terminal object")
+}
+
+func TestCleanupRoutinePendingExpiryNotificationBlocksRetentionDeletion(t *testing.T) {
+	intentTime := metav1.NewTime(time.Unix(100, 0))
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-expiry-email-delete", Namespace: "default"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "cluster", User: "user", GrantedGroup: "admin"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:         breakglassv1alpha1.SessionStateExpired,
+			RetainedUntil: metav1.NewTime(time.Now().Add(-time.Hour)),
+			Conditions: []metav1.Condition{
+				{Type: string(breakglassv1alpha1.SessionConditionTypeExpired), Status: metav1.ConditionTrue, Reason: "ExpiredByTime", LastTransitionTime: intentTime},
+				{Type: string(breakglassv1alpha1.SessionConditionTypeExpiryNotificationIntent), Status: metav1.ConditionFalse, Reason: "PendingEnqueue", LastTransitionTime: intentTime},
+			},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(session).Build()
+	routine := CleanupRoutine{Log: zaptest.NewLogger(t).Sugar(), Manager: NewSessionManagerWithClient(fakeClient)}
+	routine.markCleanupExpiredSession(context.Background())
+
+	var retained breakglassv1alpha1.BreakglassSession
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &retained), "pending expiry notification must retain the terminal object")
 }
 
 func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {

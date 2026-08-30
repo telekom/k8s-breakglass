@@ -36,6 +36,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -58,25 +59,37 @@ var systemCertPool = x509.SystemCertPool
 // Service manages the audit system lifecycle, including sink creation and event emission.
 // It watches AuditConfig changes and reconfigures the audit manager accordingly.
 type Service struct {
-	client            client.Client
-	recorder          events.EventRecorder
-	logger            *zap.Logger
-	mu                sync.RWMutex
-	manager           *Manager
-	sinks             []Sink
-	isolatedMultiSink *IsolatedMultiSink
-	enabled           bool
-	configNS          string // namespace where secrets are located (controller namespace)
+	client             client.Client
+	recorder           events.EventRecorder
+	logger             *zap.Logger
+	mu                 sync.RWMutex
+	manager            *Manager
+	sinks              []Sink
+	isolatedMultiSink  *IsolatedMultiSink
+	enabled            bool
+	configurationState ConfigurationState
+	configNS           string // namespace where secrets are located (controller namespace)
 }
+
+// ConfigurationState distinguishes intentional audit disablement from a
+// configured audit system that cannot currently construct its sinks.
+type ConfigurationState string
+
+const (
+	ConfigurationDisabled    ConfigurationState = "disabled"
+	ConfigurationReady       ConfigurationState = "ready"
+	ConfigurationUnavailable ConfigurationState = "unavailable"
+)
 
 // NewService creates a new audit Service.
 func NewService(kubeClient client.Client, recorder events.EventRecorder, logger *zap.Logger, controllerNamespace string) *Service {
 	return &Service{
-		client:   kubeClient,
-		recorder: recorder,
-		logger:   logger.Named("audit-service"),
-		enabled:  false,
-		configNS: controllerNamespace,
+		client:             kubeClient,
+		recorder:           recorder,
+		logger:             logger.Named("audit-service"),
+		enabled:            false,
+		configurationState: ConfigurationUnavailable,
+		configNS:           controllerNamespace,
 	}
 }
 
@@ -94,6 +107,14 @@ func (s *Service) Reload(ctx context.Context, config *breakglassv1alpha1.AuditCo
 // Sinks from all enabled configs are aggregated together.
 // If configs is nil or empty, auditing is disabled.
 func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alpha1.AuditConfig) error {
+	return s.ReloadMultipleWithAvailability(ctx, configs, false)
+}
+
+// ReloadMultipleWithAvailability reloads valid enabled configs. If
+// configuredUnavailable is true, at least one enabled AuditConfig was rejected
+// before sink construction, so auditing must fail closed instead of appearing
+// intentionally disabled.
+func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []*breakglassv1alpha1.AuditConfig, configuredUnavailable bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -110,6 +131,14 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 
 	// Now safe to close the underlying sinks.
 	s.closeSinksLocked()
+	s.isolatedMultiSink = nil
+	s.enabled = false
+
+	if configuredUnavailable {
+		s.configurationState = ConfigurationUnavailable
+		metrics.AuditConfigReloads.WithLabelValues("error").Inc()
+		return errors.New("one or more enabled AuditConfigs are invalid or unavailable")
+	}
 
 	// Filter to only enabled configs
 	var enabledConfigs []*breakglassv1alpha1.AuditConfig
@@ -120,7 +149,7 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 	}
 
 	if len(enabledConfigs) == 0 {
-		s.enabled = false
+		s.configurationState = ConfigurationDisabled
 		s.manager = nil
 		s.logger.Info("audit system disabled (no enabled configs)")
 		metrics.AuditConfigReloads.WithLabelValues("disabled").Inc()
@@ -133,20 +162,28 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 	for _, config := range enabledConfigs {
 		sinks, err := s.buildSinks(ctx, config)
 		if err != nil {
-			s.logger.Error("failed to build audit sinks from config, skipping",
+			for _, built := range allSinks {
+				_ = built.Close()
+			}
+			s.logger.Error("failed to build audit sinks from config",
 				zap.String("config", config.Name),
 				zap.String("error", err.Error()))
-			continue
+			s.enabled = false
+			s.configurationState = ConfigurationUnavailable
+			s.manager = nil
+			s.sinks = nil
+			metrics.AuditConfigReloads.WithLabelValues("error").Inc()
+			return fmt.Errorf("build audit sinks from config %q: %w", config.Name, err)
 		}
 		allSinks = append(allSinks, sinks...)
 		configNames = append(configNames, config.Name)
 	}
 
 	if len(allSinks) == 0 {
-		s.logger.Warn("no audit sinks configured from any AuditConfig, auditing disabled")
-		s.enabled = false
-		metrics.AuditConfigReloads.WithLabelValues("no_sinks").Inc()
-		return nil
+		s.logger.Error("enabled AuditConfig produced no audit sinks")
+		s.configurationState = ConfigurationUnavailable
+		metrics.AuditConfigReloads.WithLabelValues("error").Inc()
+		return errors.New("enabled AuditConfig produced no audit sinks")
 	}
 
 	// Use queue config from the first enabled config (or defaults)
@@ -232,6 +269,7 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 	s.sinks = allSinks
 	s.isolatedMultiSink = isolatedMultiSink
 	s.enabled = true
+	s.configurationState = ConfigurationReady
 
 	// Log detailed configuration summary
 	s.logger.Info("audit system configured with aggregated sinks",
@@ -322,7 +360,7 @@ func (s *Service) EmitSync(ctx context.Context, event *Event) error {
 	defer s.mu.RUnlock()
 
 	if !s.enabled || s.manager == nil {
-		return nil
+		return errors.New("audit service is disabled")
 	}
 
 	return s.manager.EmitSync(ctx, event)
@@ -333,6 +371,21 @@ func (s *Service) IsEnabled() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.enabled
+}
+
+// IsConfigured reports whether an enabled AuditConfig intentionally requires
+// auditing, including when its configuration or sinks are unavailable.
+func (s *Service) IsConfigured() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.configurationState != ConfigurationDisabled
+}
+
+// ConfigurationState returns the current audit configuration state.
+func (s *Service) ConfigurationState() ConfigurationState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.configurationState
 }
 
 // Manager returns the current audit Manager, or nil if auditing is not yet configured.
@@ -451,8 +504,11 @@ func (s *Service) Close() error {
 	if s.manager != nil {
 		closeErr = s.manager.Close()
 	}
+	s.manager = nil
 	s.closeSinksLocked()
+	s.isolatedMultiSink = nil
 	s.enabled = false
+	s.configurationState = ConfigurationDisabled
 
 	s.logger.Info("audit service closed")
 	return closeErr
@@ -477,11 +533,10 @@ func (s *Service) buildSinks(ctx context.Context, config *breakglassv1alpha1.Aud
 	for _, sinkCfg := range config.Spec.Sinks {
 		sink, err := s.buildSink(ctx, sinkCfg)
 		if err != nil {
-			s.logger.Warn("failed to build sink, skipping",
-				zap.String("name", sinkCfg.Name),
-				zap.String("type", string(sinkCfg.Type)),
-				zap.String("error", err.Error()))
-			continue
+			for _, built := range sinks {
+				_ = built.Close()
+			}
+			return nil, fmt.Errorf("build audit sink %q: %w", sinkCfg.Name, err)
 		}
 
 		// Wrap network sinks with circuit breaker for resilience

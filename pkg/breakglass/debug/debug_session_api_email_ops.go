@@ -728,6 +728,28 @@ func (a *clusterClientAdapter) GetClient(ctx context.Context, clusterName string
 	return ctrlclient.New(restCfg, ctrlclient.Options{})
 }
 
+func (a *clusterClientAdapter) GetClientForPrivilegedOperation(ctx context.Context, clusterName string) (ctrlclient.Client, *breakglassv1alpha1.ClusterConfig, error) {
+	if a.ccProvider == nil {
+		return nil, nil, fmt.Errorf("cluster client provider is not configured")
+	}
+	restCfg, configured, err := a.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, clusterName)
+	if err != nil {
+		return nil, nil, err
+	}
+	targetClient, err := ctrlclient.New(restCfg, ctrlclient.Options{})
+	if err != nil {
+		return nil, nil, fmt.Errorf("create target cluster client: %w", err)
+	}
+	return targetClient, configured, nil
+}
+
+func (a *clusterClientAdapter) ValidatePrivilegedOperationClusterConfig(ctx context.Context, configured *breakglassv1alpha1.ClusterConfig) error {
+	if a.ccProvider == nil {
+		return fmt.Errorf("cluster client provider is not configured")
+	}
+	return a.ccProvider.ValidatePrivilegedOperationClusterConfig(ctx, configured)
+}
+
 // isUserParticipant checks if the user is a participant of the session
 func (c *DebugSessionAPIController) isUserParticipant(session *breakglassv1alpha1.DebugSession, user string) bool {
 	// Owner is always a participant

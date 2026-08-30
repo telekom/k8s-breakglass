@@ -123,39 +123,25 @@ func ensureTestSessionTemplate(t *testing.T, cli client.Client, ctx context.Cont
 	}
 
 	// Create session template with auto-approval
-	replicas := int32(1)
-	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "e2e-test-session-template",
-		},
-		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
-			DisplayName: "E2E Test Session Template",
-			Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
-			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
-				Name: podTemplate.Name,
-			},
-			WorkloadType:    breakglassv1alpha1.DebugWorkloadDeployment,
-			Replicas:        &replicas,
-			TargetNamespace: "breakglass-debug",
-			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
-				Clusters: []string{"*"},
-				Groups:   []string{"*"},
-			},
-			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
-				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
-					Clusters: []string{"*"},
-				},
-			},
-			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
-				MaxDuration:     "4h",
-				DefaultDuration: "1h",
-				AllowRenewal:    ptrBool(true),
-				MaxRenewals:     ptrInt32(3),
-			},
-		},
-	}
+	sessionTemplate := newE2ETestSessionTemplate(podTemplate.Name)
 	err = cli.Create(ctx, sessionTemplate)
 	require.NoError(t, err, "Failed to create shared e2e-test-session-template")
+}
+
+func newE2ETestSessionTemplate(podTemplateName string) *breakglassv1alpha1.DebugSessionTemplate {
+	template := helpers.NewValidDebugSessionTemplate("e2e-test-session-template", "E2E Test Session Template", "*",
+		breakglassv1alpha1.DebugSessionModeWorkload, podTemplateName)
+	template.Spec.TargetNamespace = "breakglass-debug"
+	template.Spec.Constraints.AllowRenewal = ptrBool(true)
+	template.Spec.Constraints.MaxRenewals = ptrInt32(3)
+	return template
+}
+
+func TestE2ETestSessionTemplateFixtureValid(t *testing.T) {
+	template := newE2ETestSessionTemplate("e2e-shared-pod-template")
+	assert.Equal(t, breakglassv1alpha1.DebugSessionModeWorkload, template.Spec.Mode)
+	require.NotNil(t, template.Spec.PodTemplateRef)
+	assert.Empty(t, breakglassv1alpha1.ValidateDebugSessionTemplate(template).Errors)
 }
 
 func TestDebugSession_E2E_DebugPodTemplateCreation(t *testing.T) {
@@ -373,8 +359,10 @@ func TestDebugSession_E2E_SessionTermination(t *testing.T) {
 		_ = cli.Delete(ctx, session)
 	}()
 
-	// Wait for session to have a state
-	session = helpers.WaitForDebugSessionStateAny(t, ctx, cli, session.Name, session.Namespace, defaultTimeout)
+	// Wait for the valid Pending -> Active controller transition before checking
+	// the lease and its natural terminal transition.
+	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
+		breakglassv1alpha1.DebugSessionStateActive, defaultTimeout)
 
 	// Terminate the session via API (preferred method)
 	err := api.TerminateDebugSession(ctx, t, session.Name)
@@ -854,26 +842,17 @@ func TestDebugSession_E2E_SessionExpiration(t *testing.T) {
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
 
-	// Wait for session to have a state
-	session = helpers.WaitForDebugSessionStateAny(t, ctx, cli, session.Name, session.Namespace, defaultTimeout)
+	// Start from the valid Active state before waiting for natural expiry.
+	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
+		breakglassv1alpha1.DebugSessionStateActive, defaultTimeout)
 
-	// Simulate expiration by setting state to Expired
-	// Note: This simulates controller behavior - no API for expiration
-	var fetched breakglassv1alpha1.DebugSession
-	err := cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetched)
-	require.NoError(t, err)
+	require.NotNil(t, session.Status.ExpiresAt)
+	require.True(t, session.Status.ExpiresAt.After(time.Now()), "active session must start with a future expiry")
 
-	// Set expiry to past time and state to expired
-	pastTime := metav1.Time{Time: time.Now().Add(-1 * time.Hour)}
-	fetched.Status.ExpiresAt = &pastTime
-	fetched.Status.State = breakglassv1alpha1.DebugSessionStateExpired
-	fetched.Status.Message = "Session expired"
-	err = cli.Status().Update(ctx, &fetched)
-	require.NoError(t, err)
-
-	// Verify expiration
-	err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetched)
-	require.NoError(t, err)
+	// Let the persisted lease expire naturally and require the controller-owned
+	// Active -> Expired transition.
+	fetched := helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
+		breakglassv1alpha1.DebugSessionStateExpired, 2*time.Minute)
 	assert.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, fetched.Status.State)
 	t.Logf("Session expired at: %v", fetched.Status.ExpiresAt)
 }

@@ -568,6 +568,141 @@ func TestExpireApprovedSessionsDetailed(t *testing.T) {
 	})
 }
 
+func TestExpireApprovedSessionsRetriesPendingNotification(t *testing.T) {
+	transitionTime := metav1.NewTime(time.Now().UTC().Add(-time.Hour).Truncate(time.Second))
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-expiry-email", Namespace: "breakglass"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User: "user@example.com", Cluster: "production", GrantedGroup: "admin",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:           breakglassv1alpha1.SessionStateExpired,
+			ActualStartTime: metav1.NewTime(transitionTime.Add(-time.Hour)),
+			ExpiresAt:       transitionTime,
+			Conditions: []metav1.Condition{{
+				Type:               string(breakglassv1alpha1.SessionConditionTypeExpiryNotificationIntent),
+				Status:             metav1.ConditionFalse,
+				Reason:             "PendingEnqueue",
+				LastTransitionTime: transitionTime,
+			}},
+		},
+	}
+	fakeClient := newFakeApprovedClient(session)
+	mailService := NewMockMailEnqueuer(true)
+	mailService.SetError(assert.AnError)
+	controller := &BreakglassSessionController{
+		log:            zaptest.NewLogger(t).Sugar(),
+		sessionManager: NewSessionManagerWithClient(fakeClient),
+		mailService:    mailService,
+	}
+
+	controller.ExpireApprovedSessions()
+	var pending breakglassv1alpha1.BreakglassSession
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &pending))
+	assert.Equal(t, metav1.ConditionFalse, pending.GetCondition(string(breakglassv1alpha1.SessionConditionTypeExpiryNotificationIntent)).Status)
+	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, pending.Status.State)
+
+	mailService.SetError(nil)
+	controller.ExpireApprovedSessions()
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &pending))
+	condition := pending.GetCondition(string(breakglassv1alpha1.SessionConditionTypeExpiryNotificationIntent))
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionTrue, condition.Status)
+	assert.Equal(t, "QueueAccepted", condition.Reason)
+	assert.Contains(t, condition.Message, "best-effort asynchronous delivery")
+	require.Len(t, mailService.GetMessages(), 1)
+	assert.Contains(t, mailService.GetMessages()[0].Body, transitionTime.Format("2006-01-02 15:04:05 UTC"))
+
+	controller.ExpireApprovedSessions()
+	assert.Len(t, mailService.GetMessages(), 1, "an acknowledged notification must not be enqueued again")
+}
+
+func TestExpireApprovedSessionsPersistsNotificationBeforeEnqueue(t *testing.T) {
+	naturalExpiry := metav1.NewTime(time.Now().UTC().Add(-time.Hour))
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "new-expiry-email", Namespace: "breakglass"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User: "user@example.com", Cluster: "production", GrantedGroup: "admin",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: naturalExpiry,
+		},
+	}
+	fakeClient := newFakeApprovedClient(session)
+	mailService := NewMockMailEnqueuer(true)
+	mailService.SetError(assert.AnError)
+	controller := &BreakglassSessionController{
+		log:            zaptest.NewLogger(t).Sugar(),
+		sessionManager: NewSessionManagerWithClient(fakeClient),
+		mailService:    mailService,
+	}
+
+	controller.ExpireApprovedSessions()
+
+	var stored breakglassv1alpha1.BreakglassSession
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, stored.Status.State, "hard expiry must not wait for email")
+	condition := stored.GetCondition(string(breakglassv1alpha1.SessionConditionTypeExpiryNotificationIntent))
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, "PendingEnqueue", condition.Reason)
+}
+
+func TestExpireApprovedSessionsAcknowledgesPendingIntentWhenEmailDisabled(t *testing.T) {
+	transitionTime := metav1.NewTime(time.Now().UTC().Add(-time.Hour))
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "disabled-expiry-email", Namespace: "breakglass"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateExpired, ReasonEnded: "timeExpired",
+			Conditions: []metav1.Condition{{
+				Type: string(breakglassv1alpha1.SessionConditionTypeExpiryNotificationIntent), Status: metav1.ConditionFalse,
+				Reason: "PendingEnqueue", LastTransitionTime: transitionTime,
+			}},
+		},
+	}
+	fakeClient := newFakeApprovedClient(session)
+	controller := &BreakglassSessionController{
+		log: zaptest.NewLogger(t).Sugar(), sessionManager: NewSessionManagerWithClient(fakeClient), disableEmail: true,
+	}
+
+	controller.ExpireApprovedSessions()
+
+	var stored breakglassv1alpha1.BreakglassSession
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+	condition := stored.GetCondition(string(breakglassv1alpha1.SessionConditionTypeExpiryNotificationIntent))
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionTrue, condition.Status)
+	assert.Equal(t, "NotificationsDisabled", condition.Reason)
+}
+
+func TestExpireApprovedSessionsKeepsPendingIntentWhenMailUnavailable(t *testing.T) {
+	transitionTime := metav1.NewTime(time.Now().UTC().Add(-time.Hour))
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "unavailable-expiry-email", Namespace: "breakglass"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateExpired, ReasonEnded: "timeExpired",
+			Conditions: []metav1.Condition{{
+				Type: string(breakglassv1alpha1.SessionConditionTypeExpiryNotificationIntent), Status: metav1.ConditionFalse,
+				Reason: "PendingEnqueue", LastTransitionTime: transitionTime,
+			}},
+		},
+	}
+	fakeClient := newFakeApprovedClient(session)
+	controller := &BreakglassSessionController{
+		log: zaptest.NewLogger(t).Sugar(), sessionManager: NewSessionManagerWithClient(fakeClient),
+		mailService: NewMockMailEnqueuer(false),
+	}
+
+	controller.ExpireApprovedSessions()
+
+	var stored breakglassv1alpha1.BreakglassSession
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+	condition := stored.GetCondition(string(breakglassv1alpha1.SessionConditionTypeExpiryNotificationIntent))
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, "PendingEnqueue", condition.Reason)
+}
+
 // TestIsSessionExpiredEdgeCases validates the IsSessionExpired helper for
 // edge-case inputs that the main integration-style tests do not cover.
 func TestIsSessionExpiredEdgeCases(t *testing.T) {

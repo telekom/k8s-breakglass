@@ -1008,6 +1008,11 @@ POST /api/debugSessions
 
 JSON bodies for debug-session create requests must contain only known field names and exactly one JSON object. Unknown fields, malformed JSON, and trailing JSON values are rejected with `400 Bad Request`.
 
+`DebugSessionTemplate.spec.expirationBehavior: notify-only` is deprecated. It
+now requests the configured expiry notification and still performs mandatory
+hard expiry, access revocation, and cleanup. Use `expirationBehavior: terminate`
+with `notification.notifyOnExpiry` for new templates.
+
 ClusterConfig readiness, missing-cluster, and tenant-alias errors are returned only after the request is authorized by the selected template or binding.
 
 The same strict JSON parsing applies to DebugSession renew, approve, reject, and kubectl-debug operation bodies. Bodyless actions such as join, leave, and terminate reject any non-empty body before JSON parsing.
@@ -1403,9 +1408,14 @@ POST /api/debugSessions/:name/injectEphemeralContainer
 
 Injects an ephemeral container into a running pod for live debugging without
 restarting the pod. This is the only Breakglass-mediated ephemeral-container
-path: the manager validates the authenticated session and policy, fences the
-live session and target Pod UID immediately before the target update, and
-records bounded evidence for the successful operation. Direct writes to
+path: the manager validates the authenticated session and policy and fences the
+live session and target Pod UID immediately before the target update. PR
+[#1277](https://github.com/telekom/k8s-breakglass/pull/1277) records ephemeral
+operation evidence after that effect. It has no durable pre-effect record, so
+an interrupted status write can leave the effect without matching evidence.
+PR [#1278](https://github.com/telekom/k8s-breakglass/pull/1278) adds the durable
+pre-effect operation outbox.
+Direct writes to
 `pods/ephemeralcontainers` through
 the target cluster API are governed by target-cluster RBAC and are outside
 Breakglass.

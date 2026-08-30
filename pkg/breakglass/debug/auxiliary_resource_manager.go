@@ -84,7 +84,7 @@ func (m *AuxiliaryResourceManager) DeployAuxiliaryResources(
 	targetClient client.Client,
 	targetNamespace string,
 ) ([]breakglassv1alpha1.AuxiliaryResourceStatus, error) {
-	return m.deployAuxiliaryResources(ctx, session, template, binding, targetClient, targetNamespace, nil)
+	return m.deployAuxiliaryResources(ctx, session, template, binding, targetClient, targetNamespace, nil, nil)
 }
 
 // DeployAuxiliaryResourcesForPhase deploys enabled auxiliary resources for one createBefore phase.
@@ -97,9 +97,25 @@ func (m *AuxiliaryResourceManager) DeployAuxiliaryResourcesForPhase(
 	targetNamespace string,
 	createBefore bool,
 ) ([]breakglassv1alpha1.AuxiliaryResourceStatus, error) {
+	return m.DeployAuxiliaryResourcesForPhaseWithFence(ctx, session, template, binding, targetClient, targetNamespace, createBefore, nil)
+}
+
+// DeployAuxiliaryResourcesForPhaseWithFence applies fence immediately before
+// each individual target-resource write. This prevents a long auxiliary list
+// from continuing after the session or target credentials were revoked.
+func (m *AuxiliaryResourceManager) DeployAuxiliaryResourcesForPhaseWithFence(
+	ctx context.Context,
+	session *breakglassv1alpha1.DebugSession,
+	template *breakglassv1alpha1.DebugSessionTemplateSpec,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
+	targetClient client.Client,
+	targetNamespace string,
+	createBefore bool,
+	fence func() error,
+) ([]breakglassv1alpha1.AuxiliaryResourceStatus, error) {
 	return m.deployAuxiliaryResources(ctx, session, template, binding, targetClient, targetNamespace, func(auxRes breakglassv1alpha1.AuxiliaryResource) bool {
 		return auxRes.CreateBefore == createBefore
-	})
+	}, fence)
 }
 
 func (m *AuxiliaryResourceManager) deployAuxiliaryResources(
@@ -110,6 +126,7 @@ func (m *AuxiliaryResourceManager) deployAuxiliaryResources(
 	targetClient client.Client,
 	targetNamespace string,
 	shouldDeploy func(breakglassv1alpha1.AuxiliaryResource) bool,
+	fence func() error,
 ) ([]breakglassv1alpha1.AuxiliaryResourceStatus, error) {
 	if template == nil || len(template.AuxiliaryResources) == 0 {
 		return nil, nil
@@ -133,6 +150,11 @@ func (m *AuxiliaryResourceManager) deployAuxiliaryResources(
 			continue
 		}
 
+		if fence != nil {
+			if err := fence(); err != nil {
+				return statuses, err
+			}
+		}
 		status, err := m.deployResource(ctx, targetClient, targetNamespace, auxRes, renderCtx, session)
 		statuses = append(statuses, status)
 

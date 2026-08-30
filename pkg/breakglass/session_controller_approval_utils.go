@@ -662,7 +662,7 @@ func IsSessionAccessActiveAt(session breakglassv1alpha1.BreakglassSession, now t
 }
 
 func isSessionAccessActiveAt(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
-	if session.Status.State != breakglassv1alpha1.SessionStateApproved {
+	if !session.DeletionTimestamp.IsZero() || session.Status.State != breakglassv1alpha1.SessionStateApproved {
 		return false
 	}
 	return isSessionValidAt(session, now)

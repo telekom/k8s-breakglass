@@ -551,8 +551,8 @@ func TestClusterConfigReconciler_DeleteTerminatesDebugSessions(t *testing.T) {
 		},
 	}
 
-	// Failed sessions may still have tracked resources, so they should be
-	// moved into the terminated cleanup path.
+	// Failed sessions may still have tracked resources, but Failed is terminal
+	// and its cleanup path already retries tracked resources.
 	failedDebugSession := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "failed-debug",
@@ -603,13 +603,12 @@ func TestClusterConfigReconciler_DeleteTerminatesDebugSessions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, other.Status.State)
 
-	// Verify failed session was terminated so cleanup can run
+	// Verify the existing terminal decision was not rewritten.
 	var failed breakglassv1alpha1.DebugSession
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "failed-debug", Namespace: "default"}, &failed)
 	require.NoError(t, err)
-	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, failed.Status.State)
-	assert.Contains(t, failed.Status.Message, "ClusterConfig")
-	assert.Contains(t, failed.Status.Message, "deleted")
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, failed.Status.State)
+	assert.Empty(t, failed.Status.Message)
 }
 
 func TestClusterConfigReconciler_DeleteTerminatesBothSessionTypes(t *testing.T) {

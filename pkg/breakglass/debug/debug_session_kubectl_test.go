@@ -29,6 +29,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -39,8 +40,13 @@ import (
 
 // mockClientProvider is a test implementation of ClientProviderInterface
 type mockClientProvider struct {
-	clients map[string]ctrlclient.Client
-	err     error
+	clients       map[string]ctrlclient.Client
+	err           error
+	configured    *breakglassv1alpha1.ClusterConfig
+	events        *[]string
+	validateCalls int
+	validateErrAt int
+	validateErr   error
 }
 
 func (m *mockClientProvider) GetClient(_ context.Context, clusterName string) (ctrlclient.Client, error) {
@@ -51,6 +57,31 @@ func (m *mockClientProvider) GetClient(_ context.Context, clusterName string) (c
 		return client, nil
 	}
 	return nil, nil
+}
+
+func (m *mockClientProvider) GetClientForPrivilegedOperation(ctx context.Context, clusterName string) (ctrlclient.Client, *breakglassv1alpha1.ClusterConfig, error) {
+	targetClient, err := m.GetClient(ctx, clusterName)
+	if err != nil {
+		return nil, nil, err
+	}
+	configured := m.configured
+	if configured == nil {
+		configured = &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: "default", UID: types.UID(clusterName + "-uid")},
+		}
+	}
+	return targetClient, configured.DeepCopy(), nil
+}
+
+func (m *mockClientProvider) ValidatePrivilegedOperationClusterConfig(_ context.Context, _ *breakglassv1alpha1.ClusterConfig) error {
+	m.validateCalls++
+	if m.events != nil {
+		*m.events = append(*m.events, "validate-cluster-config")
+	}
+	if m.validateErr != nil && (m.validateErrAt == 0 || m.validateCalls == m.validateErrAt) {
+		return m.validateErr
+	}
+	return nil
 }
 
 func newKubectlTestScheme() *runtime.Scheme {
@@ -1049,6 +1080,160 @@ func TestKubectlDebugHandler_InjectEphemeralContainerFinalSessionFence(t *testin
 	}
 }
 
+func TestKubectlDebugHandler_InjectEphemeralContainerRepeatsNamespacePolicyAtMutation(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	expiresAt := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "namespace-fence", Namespace: "default", UID: "namespace-fence-uid"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster", RequestedBy: "operator@example.com"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expiresAt,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
+					Enabled: true,
+					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{{
+						MatchLabels: map[string]string{"debug": "allowed"},
+					}}},
+				}},
+			},
+		},
+	}
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	namespaceReads := 0
+	updates := 0
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "production", Labels: map[string]string{"debug": "allowed"}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "production", UID: "pod-uid"}},
+	).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+			if err := cl.Get(ctx, key, obj, opts...); err != nil {
+				return err
+			}
+			if ns, ok := obj.(*corev1.Namespace); ok {
+				namespaceReads++
+				if namespaceReads > 1 {
+					ns.Labels = map[string]string{"debug": "denied"}
+				}
+			}
+			return nil
+		},
+		SubResourceUpdate: func(context.Context, ctrlclient.Client, string, ctrlclient.Object, ...ctrlclient.SubResourceUpdateOption) error {
+			updates++
+			return nil
+		},
+	}).Build()
+	handler := NewKubectlDebugHandlerWithReader(hubClient, hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+	require.NoError(t, handler.ValidateEphemeralContainerRequest(context.Background(), session, "production", "app", "busybox:stable", nil, false, false))
+	err := handler.InjectEphemeralContainer(context.Background(), session, "production", "app", "debugger", "busybox:stable", nil, nil, "operator@example.com")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no longer allowed")
+	assert.Zero(t, updates, "namespace policy revoked before the privileged boundary must prevent the target update")
+}
+
+func TestKubectlDebugHandler_PrivilegedWritesFenceClusterConfig(t *testing.T) {
+	tests := []struct {
+		name      string
+		operation func(context.Context, *KubectlDebugHandler, *breakglassv1alpha1.DebugSession) error
+		objects   []ctrlclient.Object
+	}{
+		{
+			name: "ephemeral update",
+			objects: []ctrlclient.Object{
+				&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "production", UID: "pod-uid"}},
+			},
+			operation: func(ctx context.Context, handler *KubectlDebugHandler, session *breakglassv1alpha1.DebugSession) error {
+				return handler.InjectEphemeralContainer(ctx, session, "production", "app", "debugger", "busybox:stable", nil, nil, "operator@example.com")
+			},
+		},
+		{
+			name: "pod copy create",
+			objects: []ctrlclient.Object{
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "production", UID: "production-uid"}},
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug-copies", UID: "debug-copies-uid"}},
+				&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "production", UID: "pod-uid"}},
+			},
+			operation: func(ctx context.Context, handler *KubectlDebugHandler, session *breakglassv1alpha1.DebugSession) error {
+				_, err := handler.CreatePodCopy(ctx, session, "production", "app", "", "operator@example.com")
+				return err
+			},
+		},
+		{
+			name: "node debug create",
+			objects: []ctrlclient.Object{
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug", UID: "debug-namespace-uid"}},
+				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1", UID: "node-uid"}},
+			},
+			operation: func(ctx context.Context, handler *KubectlDebugHandler, session *breakglassv1alpha1.DebugSession) error {
+				_, err := handler.CreateNodeDebugPod(ctx, session, "worker-1", "operator@example.com")
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, outcome := range []struct {
+				name        string
+				validateErr error
+				wantEvents  []string
+			}{
+				{name: "unchanged", wantEvents: []string{"validate-cluster-config", "target-write"}},
+				{name: "changed", validateErr: errors.New("ClusterConfig default/test-cluster spec changed"), wantEvents: []string{"validate-cluster-config"}},
+			} {
+				t.Run(outcome.name, func(t *testing.T) {
+					scheme := newKubectlTestScheme()
+					expiresAt := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+					session := &breakglassv1alpha1.DebugSession{
+						ObjectMeta: metav1.ObjectMeta{Name: "cluster-fence-session", Namespace: "default", UID: "session-uid"},
+						Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster", RequestedBy: "operator@example.com"},
+						Status: breakglassv1alpha1.DebugSessionStatus{
+							State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expiresAt,
+							ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+								Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug, TargetNamespace: "breakglass-debug",
+								KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+									EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{Enabled: true},
+									PodCopy:             &breakglassv1alpha1.PodCopyConfig{Enabled: true, TargetNamespace: "debug-copies"},
+									NodeDebug:           &breakglassv1alpha1.NodeDebugConfig{Enabled: true},
+								},
+							},
+						},
+					}
+					events := []string{}
+					targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tt.objects...).WithInterceptorFuncs(interceptor.Funcs{
+						Create: func(context.Context, ctrlclient.WithWatch, ctrlclient.Object, ...ctrlclient.CreateOption) error {
+							events = append(events, "target-write")
+							return nil
+						},
+						SubResourceUpdate: func(context.Context, ctrlclient.Client, string, ctrlclient.Object, ...ctrlclient.SubResourceUpdateOption) error {
+							events = append(events, "target-write")
+							return nil
+						},
+					}).Build()
+					hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+					provider := &mockClientProvider{
+						clients:     map[string]ctrlclient.Client{"test-cluster": targetClient},
+						events:      &events,
+						validateErr: outcome.validateErr,
+					}
+					handler := NewKubectlDebugHandlerWithReader(hubClient, hubClient, provider)
+
+					err := tt.operation(context.Background(), handler, session.DeepCopy())
+					if outcome.validateErr != nil {
+						require.Error(t, err)
+						assert.Contains(t, err.Error(), "target cluster configuration changed")
+					} else {
+						require.NoError(t, err)
+					}
+					assert.Equal(t, 1, provider.validateCalls, "the ClusterConfig must be read at the final write fence")
+					assert.Equal(t, outcome.wantEvents, events, "the final live ClusterConfig read must be immediately before the target write")
+				})
+			}
+		})
+	}
+}
+
 func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 	scheme := newKubectlTestScheme()
 
@@ -1056,6 +1241,7 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 	testNs := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "debug-copies",
+			UID:  "debug-copies-uid",
 		},
 	}
 
@@ -1348,7 +1534,7 @@ func TestKubectlDebugHandler_CreatePodCopyPreservesLiveStatusFromStaleSession(t 
 	targetClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(
-			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug-copies"}},
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug-copies", UID: "debug-copies-uid"}},
 			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "production"}},
 			&corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
@@ -1430,6 +1616,68 @@ func TestKubectlDebugHandler_CreatePodCopyPreservesLiveStatusFromStaleSession(t 
 	})
 }
 
+func TestKubectlDebugHandler_CreatePodCopyFailsClosedOnDestinationNamespaceUID(t *testing.T) {
+	for _, scenario := range []struct {
+		name       string
+		initialUID types.UID
+		freshUID   types.UID
+		want       string
+	}{
+		{name: "initial UID empty", initialUID: "", freshUID: "", want: "has no UID"},
+		{name: "fresh UID empty", initialUID: "debug-copies-uid", freshUID: "", want: "changed during copy authorization"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			scheme := newKubectlTestScheme()
+			expiresAt := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "copy-uid-session", Namespace: "default", UID: "copy-uid-session-uid"},
+				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster", RequestedBy: "operator@example.com"},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					State:     breakglassv1alpha1.DebugSessionStateActive,
+					ExpiresAt: &expiresAt,
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						Mode:         breakglassv1alpha1.DebugSessionModeKubectlDebug,
+						KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{PodCopy: &breakglassv1alpha1.PodCopyConfig{Enabled: true, TargetNamespace: "debug-copies"}},
+					},
+				},
+			}
+			hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).
+				WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+			destinationReads := 0
+			creates := 0
+			targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "production", UID: "production-uid"}},
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug-copies", UID: scenario.initialUID}},
+				&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "production", UID: "source-pod-uid"}},
+			).WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+					if err := cl.Get(ctx, key, obj, opts...); err != nil {
+						return err
+					}
+					if ns, ok := obj.(*corev1.Namespace); ok && key.Name == "debug-copies" {
+						destinationReads++
+						if destinationReads > 1 {
+							ns.UID = scenario.freshUID
+						}
+					}
+					return nil
+				},
+				Create: func(ctx context.Context, cl ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.CreateOption) error {
+					creates++
+					return cl.Create(ctx, obj, opts...)
+				},
+			}).Build()
+			handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+			pod, err := handler.CreatePodCopy(context.Background(), session, "production", "app", "", "operator@example.com")
+			require.Error(t, err)
+			assert.Nil(t, pod)
+			assert.Contains(t, err.Error(), scenario.want)
+			assert.Zero(t, creates)
+		})
+	}
+}
+
 func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 	scheme := newKubectlTestScheme()
 
@@ -1437,6 +1685,7 @@ func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 	testNs := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "breakglass-debug",
+			UID:  "breakglass-debug-uid",
 		},
 	}
 
@@ -1537,6 +1786,7 @@ func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 		tenantNs := &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "tenant-debug",
+				UID:  "tenant-debug-uid",
 			},
 		}
 		targetClient := fake.NewClientBuilder().
@@ -1602,6 +1852,82 @@ func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 	})
 }
 
+func TestKubectlDebugHandler_CreateNodeDebugPodFencesLiveNamespace(t *testing.T) {
+	for _, scenario := range []struct {
+		name   string
+		mutate func(*corev1.Namespace)
+		want   string
+	}{
+		{
+			name: "namespace deletion and recreation",
+			mutate: func(ns *corev1.Namespace) {
+				ns.UID = "recreated-namespace-uid"
+			},
+			want: "changed during pod authorization",
+		},
+		{
+			name: "namespace allow label removed",
+			mutate: func(ns *corev1.Namespace) {
+				ns.Labels = map[string]string{"debug": "denied"}
+			},
+			want: "no longer allowed",
+		},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			scheme := newKubectlTestScheme()
+			expiresAt := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "node-namespace-session", Namespace: "default", UID: "node-namespace-session-uid"},
+				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster", RequestedBy: "operator@example.com"},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					State:     breakglassv1alpha1.DebugSessionStateActive,
+					ExpiresAt: &expiresAt,
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						Mode:            breakglassv1alpha1.DebugSessionModeKubectlDebug,
+						TargetNamespace: "breakglass-debug",
+						NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+							AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{{MatchLabels: map[string]string{"debug": "allowed"}}}},
+						},
+						KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{NodeDebug: &breakglassv1alpha1.NodeDebugConfig{Enabled: true}},
+					},
+				},
+			}
+			hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).
+				WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+			namespaceReads := 0
+			creates := 0
+			targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug", UID: "namespace-uid", Labels: map[string]string{"debug": "allowed"}}},
+				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1", UID: "node-uid"}},
+			).WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+					if err := cl.Get(ctx, key, obj, opts...); err != nil {
+						return err
+					}
+					if ns, ok := obj.(*corev1.Namespace); ok && key.Name == "breakglass-debug" {
+						namespaceReads++
+						if namespaceReads > 1 {
+							scenario.mutate(ns)
+						}
+					}
+					return nil
+				},
+				Create: func(ctx context.Context, cl ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.CreateOption) error {
+					creates++
+					return cl.Create(ctx, obj, opts...)
+				},
+			}).Build()
+			handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+			pod, err := handler.CreateNodeDebugPod(context.Background(), session, "worker-1", "operator@example.com")
+			require.Error(t, err)
+			assert.Nil(t, pod)
+			assert.Contains(t, err.Error(), scenario.want)
+			assert.Zero(t, creates, "namespace change must prevent privileged Pod creation")
+		})
+	}
+}
+
 func TestKubectlDebugHandler_CreateNodeDebugPodPreservesLiveStatusFromStaleSession(t *testing.T) {
 	scheme := newKubectlTestScheme()
 	ctx := context.Background()
@@ -1611,7 +1937,7 @@ func TestKubectlDebugHandler_CreateNodeDebugPodPreservesLiveStatusFromStaleSessi
 	targetClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(
-			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug"}},
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug", UID: "breakglass-debug-uid"}},
 			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1", UID: "node-live-uid"}},
 		).
 		Build()
@@ -1751,7 +2077,7 @@ func TestKubectlDebugHandler_FinalMutationFencePreventsPrivilegedCreates(t *test
 			podReads := 0
 			targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "production"}},
-				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug-copies"}},
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug-copies", UID: "debug-copies-uid"}},
 				&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "production", UID: "source-pod-uid"}},
 			).WithInterceptorFuncs(interceptor.Funcs{
 				Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
@@ -1816,7 +2142,7 @@ func TestKubectlDebugHandler_FinalMutationFencePreventsPrivilegedCreates(t *test
 			creates := 0
 			nodeReads := 0
 			targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug"}},
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug", UID: "breakglass-debug-uid"}},
 				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1", UID: "node-fence-uid"}},
 			).WithInterceptorFuncs(interceptor.Funcs{
 				Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
@@ -2359,7 +2685,7 @@ func TestCreatePodCopy_StatusFailureDeletesOrphan(t *testing.T) {
 	// namespace to exist, so both namespaces must be seeded for the test to reach
 	// the create at all.
 	sourceNS := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
-	copiesNS := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug-copies"}}
+	copiesNS := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug-copies", UID: "debug-copies-uid"}}
 	targetClient := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(originalPod, sourceNS, copiesNS).Build()
 

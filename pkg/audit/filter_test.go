@@ -38,7 +38,11 @@ func TestManager_GlobalEventTypeFiltering(t *testing.T) {
 	}
 	for _, eventType := range events {
 		err := manager.EmitSync(context.Background(), &Event{Type: eventType})
-		require.NoError(t, err)
+		if eventType == EventSessionRequested || eventType == EventAccessDenied {
+			require.NoError(t, err)
+		} else {
+			require.Error(t, err)
+		}
 	}
 
 	assert.Equal(t, []EventType{EventSessionRequested, EventAccessDenied}, received)

@@ -246,10 +246,20 @@ func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
 			routine.Log.Debugw("Skipping session already marked for deletion", system.NamespacedFields(ses.Name, ses.Namespace)...)
 			continue
 		}
-		if condition := ses.GetCondition(string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete)); condition != nil &&
-			condition.Status != metav1.ConditionTrue {
+		if condition := ses.GetCondition(string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete)); condition != nil && condition.Status == metav1.ConditionFalse && !condition.LastTransitionTime.IsZero() &&
+			((condition.Reason == "ExpireDecision" && ses.Status.State == breakglassv1alpha1.SessionStateExpired) ||
+				(condition.Reason == "WithdrawDecision" && ses.Status.State == breakglassv1alpha1.SessionStateWithdrawn) ||
+				(condition.Reason == "PendingDelivery" && IsTerminalSessionState(ses.Status.State))) {
 			routine.Log.Warnw("Retaining terminal session while duplicate cleanup audit is pending", system.NamespacedFields(ses.Name, ses.Namespace)...)
 			continue
+		}
+		if condition := ses.GetCondition(string(breakglassv1alpha1.SessionConditionTypeExpiryNotificationIntent)); condition != nil && condition.Status == metav1.ConditionFalse && condition.Reason == "PendingEnqueue" &&
+			!condition.LastTransitionTime.IsZero() && (ses.Status.State == breakglassv1alpha1.SessionStateExpired || ses.Status.State == breakglassv1alpha1.SessionStateTimeout) {
+			expiredCondition := ses.GetCondition(string(breakglassv1alpha1.SessionConditionTypeExpired))
+			if expiredCondition != nil && expiredCondition.Status == metav1.ConditionTrue && expiredCondition.LastTransitionTime.Equal(&condition.LastTransitionTime) {
+				routine.Log.Warnw("Retaining terminal session while expiry notification enqueue is pending", system.NamespacedFields(ses.Name, ses.Namespace)...)
+				continue
+			}
 		}
 
 		routine.Log.Debugw("Checking session for expiration", system.NamespacedFields(ses.Name, ses.Namespace)...)
@@ -492,6 +502,13 @@ func (routine CleanupRoutine) sendDebugSessionExpiredEmail(ds breakglassv1alpha1
 		routine.Log.Errorw("failed to enqueue debug session expired email",
 			append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
 	}
+}
+
+// SendDebugSessionExpiredEmail sends the configured expiry notification.
+// It is exported so the DebugSession reconciler can use the same rendering and
+// recipient rules when it commits the expiry transition first.
+func (routine CleanupRoutine) SendDebugSessionExpiredEmail(ds breakglassv1alpha1.DebugSession) {
+	routine.sendDebugSessionExpiredEmail(ds)
 }
 
 func buildDebugSessionNotificationRecipients(ds breakglassv1alpha1.DebugSession) []string {

@@ -121,10 +121,16 @@ test-controller: vet ## Run controller unit tests (excludes bgctl and e2e) witho
 .PHONY: test-hard-expiry-unit
 test-hard-expiry-unit: vet ## Run the focused unit boundary tests for regular-session hard expiry.
 	go test $(GO_TEST_FLAGS) ./pkg/utils -run 'TestClampBreakglassSessionExpiry'
-	go test $(GO_TEST_FLAGS) ./api/v1alpha1 -run 'TestValidateUpdate_ExpiryCannotResurrectApprovedSession'
-	go test $(GO_TEST_FLAGS) ./pkg/breakglass -run 'Test(DropApprovedSessionExpires|DropScheduledApprovedSessionExpiresAndPreservesApprovalHistory|ApproverCancelRunningSession|OwnerActionsMatchAlternateAuthIdentifiers|GetBreakglassSessionByNameExpiredApprovalMetadata|ExpireApprovedSessionsDetailed|ExpirePendingSessions|ExpireIdleSessions|CleanupDuplicateSessions)'
-	go test $(GO_TEST_FLAGS) ./pkg/webhook -run 'Test(GetSessionsWithIDPMismatchInfoRequiresActiveExpiry|PerformRBACCheckAttributes|SendAuthorizationResponse)'
-	go test $(GO_TEST_FLAGS) ./pkg/config -run 'Test(ShippedAuthorizationConfigurationsParseAndValidate|AuthorizationConfigurationDefaultingDoesNotDisablePositiveCache)'
+	go test $(GO_TEST_FLAGS) ./api/v1alpha1 -run 'Test(ValidateUpdate_ExpiryCannotResurrectApprovedSession|ValidateDuplicateCleanupAuditIntentCreationRequiresExactPendingTuple|ValidateExpiryNotificationIntent|BreakglassSessionDeleteAllowsForgedDuplicateAudit|BreakglassSessionDeleteAllowsForgedExpiryNotificationCondition|BreakglassSessionCreateRejectsExpiryNotificationIntent|DebugSessionValidateUpdateKeepsTerminalStateAndElapsedExpiry|DebugSessionRejectsActiveStateWithoutExpiry)'
+	go test $(GO_TEST_FLAGS) ./pkg/audit -run 'Test(ManagerEmitSync|Service_EmitWhenDisabled|Service_EmitSyncRejectsConfiguredAsyncKafka|Service_ConfiguredSinkConstructionFailureDisablesRequiredAudit|Service_EnabledConfigWithoutSinksIsUnavailable)'
+	go test $(GO_TEST_FLAGS) ./pkg/mail -run 'TestService_EnqueueWhenDisabled'
+	go test $(GO_TEST_FLAGS) ./pkg/breakglass -run 'Test(DropApprovedSessionExpires|DropScheduledApprovedSessionExpiresAndPreservesApprovalHistory|ApproverCancelRunningSession|OwnerActionsMatchAlternateAuthIdentifiers|GetBreakglassSessionByNameExpiredApprovalMetadata|ExpireApprovedSessions|ExpirePendingSessions|ExpireIdleSessions|CleanupDuplicateSessions|DuplicateCleanupAudit|IsSessionAccessActive)'
+	go test $(GO_TEST_FLAGS) ./pkg/breakglass -run 'Test(PatchDebugSessionStatusWithOptimisticLock|ApplyDebugSessionStatus)'
+	go test $(GO_TEST_FLAGS) ./pkg/breakglass/debug -run 'Test(HandleInjectEphemeralContainer_UsesLiveSessionBeforeUpdate|HandleCreatePodCopy_FinalFenceUsesLiveReader|HandleCreateNodeDebugPod_FinalFenceUsesLiveReader|KubectlDebugHandler_InjectEphemeralContainerRepeatsNamespacePolicyAtMutation|KubectlDebugHandler_PrivilegedWritesFenceClusterConfig|KubectlDebugHandler_CreatePodCopyFailsClosedOnDestinationNamespaceUID|KubectlDebugHandler_CreateNodeDebugPodFencesLiveNamespace|DebugSessionReconciler_ExpiryNotificationAndHardExpiry|DebugSessionReconcilerFailsActiveSessionWithoutExpiry)'
+	go test $(GO_TEST_FLAGS) ./pkg/cluster -run 'Test(GetRESTConfigForPrivilegedOperationCapturesExactLiveClusterConfig|ValidatePrivilegedOperationClusterConfigRejectsLiveChanges)'
+	go test $(GO_TEST_FLAGS) ./pkg/webhook -run 'Test(GetSessionsWithIDPMismatchInfoRequiresActiveExpiry|PerformRBACCheckAttributes|SendAuthorizationResponse|ClusterConfigFinalFence|SessionFinalFenceRejectsDeletingSession|LiveDebugSessionAccessRejectsDeletingSession)'
+	go test $(GO_TEST_FLAGS) ./pkg/config -run 'Test(ShippedAuthorizationConfigurationsParseAndValidate|AuthorizationConfigurationDefaultingDoesNotDisablePositiveCache|AuditConfigReconciler_EnabledInvalidConfigMakesAllAuditUnavailable)'
+	go test $(GO_TEST_FLAGS) ./e2e -run '^TestE2ETestSessionTemplateFixtureValid$$'
 
 .PHONY: test-hard-expiry-e2e
 test-hard-expiry-e2e: ## Run the focused multicluster hard-expiry behavior lane against an existing Kubernetes setup.

@@ -1567,6 +1567,10 @@ rules:
 - apiGroups: [""]
   resources: ["pods", "pods/exec", "pods/log", "pods/portforward"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Ephemeral containers use a separate Pod subresource and require update.
+- apiGroups: [""]
+  resources: ["pods/ephemeralcontainers"]
+  verbs: ["update"]
 # Allow managing services for debug sessions
 - apiGroups: [""]
   resources: ["services", "configmaps", "secrets"]
