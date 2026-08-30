@@ -1175,7 +1175,7 @@ access are all considered before a template is included in the response.
     {
       "name": "standard-debug",
       "displayName": "Standard Debug Access",
-      "description": "Network debugging tools on all nodes",
+      "description": "Bounded workload diagnostic tools",
       "mode": "workload",
       "workloadType": "DaemonSet",
       "podTemplateRef": "workload-diagnostics",

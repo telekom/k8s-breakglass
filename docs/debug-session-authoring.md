@@ -166,8 +166,11 @@ metadata:
   namespace: "{{ .target.namespace }}"
 rules:
   - apiGroups: [""]
-    resources: [pods, pods/log]
+    resources: [pods]
     verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
