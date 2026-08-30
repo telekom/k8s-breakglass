@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 )
 
@@ -124,7 +125,7 @@ func validateStream(ctx context.Context, staged io.Reader, compressedSize int64,
 	}()
 
 	payloadHash := sha256.New()
-	seen := pathRegistry{seen: make(map[string]bool), children: make(map[string]struct{})}
+	seen := pathRegistry{seen: make(map[string]bool)}
 	var pending []byte
 	var pendingName string
 	var embeddedManifest []byte
@@ -284,6 +285,9 @@ func validateStream(ctx context.Context, staged io.Reader, compressedSize int64,
 	if len(pending) != 0 || !foundManifest || !foundStdout || !foundStderr {
 		return result, errors.New("artifact is missing required members")
 	}
+	if err := validatePathCollisions(seen.seen); err != nil {
+		return result, err
+	}
 	for required := range descriptor.requiredDirectories {
 		if isDirectory, found := seen.seen[required]; !found || !isDirectory {
 			return result, errors.New("artifact is missing a required directory")
@@ -367,8 +371,7 @@ func descriptorAllowsPayload(descriptor descriptor, name string) bool {
 }
 
 type pathRegistry struct {
-	seen     map[string]bool
-	children map[string]struct{}
+	seen map[string]bool
 }
 
 func registerPath(registry *pathRegistry, name string, directory bool) error {
@@ -382,14 +385,21 @@ func registerPath(registry *pathRegistry, name string, directory bool) error {
 			return errors.New("artifact contains a file/directory prefix collision")
 		}
 	}
-	if !directory {
-		if _, found := registry.children[name]; found {
+	registry.seen[name] = directory
+	return nil
+}
+
+func validatePathCollisions(seen map[string]bool) error {
+	paths := make([]string, 0, len(seen))
+	for name := range seen {
+		paths = append(paths, name)
+	}
+	sort.Strings(paths)
+	for index := 1; index < len(paths); index++ {
+		ancestor, name := paths[index-1], paths[index]
+		if !seen[ancestor] && strings.HasPrefix(name, ancestor+"/") {
 			return errors.New("artifact contains a file/directory prefix collision")
 		}
-	}
-	registry.seen[name] = directory
-	for index := 1; index < len(parts); index++ {
-		registry.children[strings.Join(parts[:index], "/")] = struct{}{}
 	}
 	return nil
 }

@@ -292,18 +292,36 @@ func TestNormalizeLimitsUsesRecipeSpecificDecompressedBound(t *testing.T) {
 }
 
 func TestRegisterPathScalesAndPreservesPrefixRejection(t *testing.T) {
-	registry := pathRegistry{seen: make(map[string]bool), children: make(map[string]struct{})}
+	registry := pathRegistry{seen: make(map[string]bool)}
 	for index := 0; index < MaxCollectorTarRecords-1; index++ {
 		name := "files/coredumps/" + strings.Repeat("a", 4) + "/entry-" + fmt.Sprint(index)
 		if err := registerPath(&registry, name, false); err != nil {
 			t.Fatalf("registerPath(%q) error = %v", name, err)
 		}
 	}
-	if err := registerPath(&registry, "files/coredumps/"+strings.Repeat("a", 4), false); err == nil {
+	if err := registerPath(&registry, "files/coredumps/"+strings.Repeat("a", 4), false); err != nil {
 		t.Fatal("registerPath() accepted a file over existing descendants")
+	}
+	if err := validatePathCollisions(registry.seen); err == nil {
+		t.Fatal("validatePathCollisions() accepted a file over existing descendants")
+	}
+	registry = pathRegistry{seen: make(map[string]bool)}
+	if err := registerPath(&registry, "files/coredumps/"+strings.Repeat("a", 4)+"/entry-0", false); err != nil {
+		t.Fatal(err)
 	}
 	if err := registerPath(&registry, "files/coredumps/"+strings.Repeat("a", 4)+"/entry-0/child", false); err == nil {
 		t.Fatal("registerPath() accepted a descendant of an existing file")
+	}
+}
+
+func TestValidatePathCollisionsBoundsDeepUniquePaths(t *testing.T) {
+	seen := make(map[string]bool, MaxCollectorTarRecords)
+	for index := 0; index < MaxCollectorTarRecords; index++ {
+		name := "files/" + strings.Repeat("a", defaultMaxPathBytes-20) + fmt.Sprintf("/%05d", index)
+		seen[name] = false
+	}
+	if err := validatePathCollisions(seen); err != nil {
+		t.Fatalf("validatePathCollisions() rejected deep unique paths: %v", err)
 	}
 }
 
