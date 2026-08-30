@@ -585,25 +585,6 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 		}
 		return workload, renderResult.AdditionalResources, nil
 
-	case breakglassv1alpha1.DebugWorkloadJob:
-		if podSpec.RestartPolicy != corev1.RestartPolicyNever && podSpec.RestartPolicy != corev1.RestartPolicyOnFailure {
-			podSpec.RestartPolicy = corev1.RestartPolicyNever
-		}
-		backoffLimit := int32(0)
-		return &batchv1.Job{
-			TypeMeta: metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
-			ObjectMeta: metav1.ObjectMeta{
-				Name: workloadName, Namespace: targetNs, Labels: labels, Annotations: annotations,
-			},
-			Spec: batchv1.JobSpec{
-				BackoffLimit: &backoffLimit,
-				Template: corev1.PodTemplateSpec{
-					ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
-					Spec:       podSpec,
-				},
-			},
-		}, renderResult.AdditionalResources, nil
-
 	default:
 		return nil, nil, fmt.Errorf("unsupported workload type: %s", workloadType)
 	}

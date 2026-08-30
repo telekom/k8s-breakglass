@@ -14,7 +14,10 @@ test_dir="$(mktemp -d)"
 trap 'rm -rf "${test_dir}"' EXIT
 
 mkdir -p "${test_dir}/bin" "${test_dir}/charts"
-printf 'locally packaged chart\n' >"${test_dir}/charts/debug-session-catalogue-0.2.0.tgz"
+package_dir="${test_dir}/package-chart"
+mkdir -p "${package_dir}"
+printf 'name: debug-session-catalogue\nversion: 0.2.0\n' >"${package_dir}/Chart.yaml"
+tar -czf "${test_dir}/charts/debug-session-catalogue-0.2.0.tgz" -C "${package_dir}" Chart.yaml
 
 cat >"${test_dir}/bin/helm" <<'EOF'
 #!/usr/bin/env bash
@@ -103,7 +106,13 @@ fi
 if FAKE_REMOTE_MODE=missing FAKE_LOCAL_METADATA=incomplete run_publish >/dev/null 2>&1; then
   echo "incomplete packaged chart metadata did not fail closed" >&2
   exit 1
-}
+fi
+fixture_dir="${test_dir}/fixture-chart"
+mkdir -p "${fixture_dir}"
+printf 'name: debug-session-catalogue\nversion: 0.2.0\n' >"${fixture_dir}/Chart.yaml"
+tar -czf "${test_dir}/timestamp.tgz" -C "${fixture_dir}" Chart.yaml
+printf 'name: changed-catalogue\nversion: 0.2.0\n' >"${fixture_dir}/Chart.yaml"
+tar -czf "${test_dir}/changed.tgz" -C "${fixture_dir}" Chart.yaml
 [ "$(ruby "${script_dir}/canonical-helm-chart-digest.rb" "${test_dir}/charts/debug-session-catalogue-0.2.0.tgz")" = \
   "$(ruby "${script_dir}/canonical-helm-chart-digest.rb" "${test_dir}/timestamp.tgz")" ] || {
   echo "timestamp fixture changed canonical chart content" >&2

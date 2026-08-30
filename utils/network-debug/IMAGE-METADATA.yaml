@@ -5,7 +5,7 @@
 
 schemaVersion: 1
 image:
-  name: ghcr.io/telekom/k8s-breakglass/network-debug
+  name: ghcr.io/telekom/k8s-breakglass/utils/network-debug
   version: 0.1.0
   intent: network-diagnostics
   platforms:
@@ -44,7 +44,6 @@ image:
       - ethtool
       - jq
     additions:
-      - kubestr
       - pwru
       - net-debug
       - net-report
@@ -62,6 +61,13 @@ image:
     - NET_ADMIN
     - BPF
     - PERFMON
+    - SYS_RESOURCE
+    - SYS_PTRACE
+  operationCapabilities:
+    selectedPodCapture: [NET_RAW]
+    hostNamespaceTrace: [BPF, PERFMON, NET_ADMIN, SYS_RESOURCE, SYS_PTRACE]
+  droppedCapabilities:
+    hostNamespaceTrace: [NET_RAW]
 provenance:
   source: https://github.com/telekom/k8s-breakglass/tree/main/utils/network-debug
   license: Apache-2.0

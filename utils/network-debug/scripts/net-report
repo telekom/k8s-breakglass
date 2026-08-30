@@ -4,7 +4,19 @@
 
 set -eu
 
-version=${NETWORK_DEBUG_VERSION:-unknown}
+sanitize_metadata() {
+	value=$1
+	case "$value" in
+		''|*[!A-Za-z0-9._-]*) printf '%s' unknown ;;
+		*) printf '%s' "$value" ;;
+	esac
+}
+
+# These values may be overridden by a container caller. Keep control
+# characters and delimiters out of the line-oriented report rather than
+# allowing metadata to inject fields or carry caller-supplied secret text.
+version=$(sanitize_metadata "${NETWORK_DEBUG_VERSION:-unknown}")
+intent=$(sanitize_metadata "${NETWORK_DEBUG_INTENT:-network-diagnostics}")
 
 help() {
 	cat <<'EOF'
@@ -22,16 +34,20 @@ tool_version() {
 	name=$1
 	if command -v "$name" >/dev/null 2>&1; then
 		case "$name" in
-			kubestr)
-				value=$(kubestr version 2>/dev/null | sed -n '1p' || true)
-				printf '%s\t%s\n' "$name" "${value:-installed}"
-				;;
 			pwru)
-				value=$(pwru --version 2>/dev/null | sed -n '1p' || true)
-				printf '%s\t%s\n' "$name" "${value:-installed}"
+				value=$(pwru --version 2>/dev/null) || {
+					printf '%s\tunavailable\n' "$name"
+					return
+				}
 				;;
-			*) printf '%s\tinstalled\n' "$name" ;;
+			*) printf '%s\tinstalled\n' "$name"; return ;;
 		esac
+		version=$(printf '%s\n' "$value" | sed -n 's/.*\(v[0-9][0-9]*\(\.[0-9][0-9]*\)\{1,2\}\([.-][[:alnum:].-]*\)\{0,1\}\).*/\1/p' | sed -n '1p')
+		if [ -n "$version" ]; then
+			printf '%s\t%s %s\n' "$name" "$name" "$version"
+		else
+			printf '%s\tinstalled\n' "$name"
+		fi
 	else
 		printf '%s\tunavailable\n' "$name"
 	fi
@@ -42,7 +58,7 @@ case "${1:-}" in
 	--version|-V) printf 'net-report %s\n' "$version"; exit 0 ;;
 	--tools)
 		printf 'tool\tstatus\n'
-		for tool in curl dig host nslookup nc ping tracepath traceroute mtr ip ss tcpdump ethtool kubestr pwru; do tool_version "$tool"; done
+		for tool in curl dig host nslookup nc ping tracepath traceroute mtr ip ss tcpdump ethtool pwru; do tool_version "$tool"; done
 		exit 0
 		;;
 	'') : ;;
@@ -50,7 +66,7 @@ case "${1:-}" in
 esac
 
 printf 'network-debug report %s\n' "$version"
-printf 'intent %s\n' "${NETWORK_DEBUG_INTENT:-network-diagnostics}"
+printf 'intent %s\n' "$intent"
 printf '\n[interfaces]\n'
 if command -v ip >/dev/null 2>&1; then ip -o address show 2>/dev/null | LC_ALL=C sort -k2,2 -k3,3 -k4,4 || true; else printf 'unavailable\n'; fi
 printf '\n[routes]\n'
