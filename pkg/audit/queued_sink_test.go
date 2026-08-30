@@ -141,6 +141,26 @@ func TestIsolatedMultiSink_PropagatesSensitiveWriteFailure(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestIsolatedMultiSink_WriteBatchMatchesSensitiveErrorPropagation(t *testing.T) {
+	failing := newQueuedMockSink("failing")
+	failing.alwaysFail = true
+	failing.writeDelay = time.Second
+	ims := NewIsolatedMultiSink([]Sink{failing}, QueuedSinkConfig{
+		QueueSize: 1, WorkerCount: 1, WriteTimeout: time.Second,
+	}, zap.NewNop())
+	defer func() { _ = ims.Close() }()
+
+	ims.sinks[0].queue <- &Event{Type: EventResourceGet}
+	time.Sleep(25 * time.Millisecond)
+	ims.sinks[0].queue <- &Event{Type: EventResourceList}
+
+	err := ims.WriteBatch(context.Background(), []*Event{{Type: EventSessionValidated}})
+	assert.NoError(t, err)
+
+	err = ims.WriteBatch(context.Background(), []*Event{{Type: EventSessionRevoked}})
+	assert.Error(t, err)
+}
+
 func TestQueuedSink_QueueOverflow(t *testing.T) {
 	logger := zap.NewNop()
 	mock := newQueuedMockSink("slow-sink")

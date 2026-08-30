@@ -2085,6 +2085,35 @@ func TestValidateDebugSessionTemplate(t *testing.T) {
 		assert.Contains(t, result.ErrorMessage(), "defaultDuration")
 	})
 
+	t.Run("constraint duration validation order is deterministic", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				Constraints: &DebugSessionConstraints{
+					MaxDuration:     "invalid-max",
+					DefaultDuration: "invalid-default",
+					ApprovalTimeout: "invalid-approval",
+					IdleTimeout:     "invalid-idle",
+					RetainFor:       "invalid-retain",
+				},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		require.False(t, result.IsValid())
+		require.Len(t, result.Errors, 5)
+		assert.Equal(t, "spec.constraints.maxDuration", result.Errors[0].Field)
+		assert.Equal(t, "spec.constraints.defaultDuration", result.Errors[1].Field)
+		assert.Equal(t, "spec.constraints.approvalTimeout", result.Errors[2].Field)
+		assert.Equal(t, "spec.constraints.idleTimeout", result.Errors[3].Field)
+		assert.Equal(t, "spec.constraints.retainFor", result.Errors[4].Field)
+	})
+
 	t.Run("default mode (empty) uses workload", func(t *testing.T) {
 		template := &DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{

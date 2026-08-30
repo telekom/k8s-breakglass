@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"path"
 	"regexp"
@@ -22,8 +23,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// dayPattern matches duration strings with day units (e.g., "90d", "7d", "1d12h")
-var dayPattern = regexp.MustCompile(`^(\d+)d(.*)$`)
+// extendedDurationTermPattern parses signed duration terms, including
+// day/week/year units that Go's time.ParseDuration does not support.
+var extendedDurationTermPattern = regexp.MustCompile(`([+-]?)(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h|d|w|y)`)
 
 // maxDurationDays is the upper bound for day values in ParseDuration to prevent
 // integer overflow when converting to time.Duration (int64 nanoseconds).
@@ -35,9 +37,14 @@ const maxDurationDays = 365
 // drift from Kubernetes defaulting silently.
 const defaultBreakglassMaxValidFor = "1h"
 
-// ParseDuration parses a duration string with extended support for day units.
+// ParseDuration parses a duration string with extended support for day/week/year units.
 // Go's time.ParseDuration only supports up to hours (h), but this function
-// also accepts days (d) where 1d = 24h. Day values are bounded to maxDurationDays.
+// also accepts days (d), weeks (w), and years (y) where:
+//   - 1d = 24h
+//   - 1w = 7d
+//   - 1y = 365d
+//
+// Positive d/w/y contribution is bounded to maxDurationDays.
 //
 // Examples:
 //   - "90d" -> 90 days (2160 hours)
@@ -45,40 +52,84 @@ const defaultBreakglassMaxValidFor = "1h"
 //   - "1d12h" -> 1 day and 12 hours (36 hours)
 //   - "2h30m" -> 2 hours and 30 minutes (standard Go duration)
 //
-// Returns an error if the duration string is invalid or exceeds maxDurationDays.
+// Returns an error if the duration string is invalid or positive d/w/y units exceed maxDurationDays.
 func ParseDuration(s string) (time.Duration, error) {
 	if s == "" {
 		return 0, nil
 	}
 
-	// Check if the duration contains day units
-	if matches := dayPattern.FindStringSubmatch(s); matches != nil {
-		days, err := strconv.Atoi(matches[1])
-		if err != nil {
-			return 0, fmt.Errorf("invalid day value: %w", err)
-		}
-		if days > maxDurationDays {
-			return 0, fmt.Errorf("day value %d exceeds maximum of %d", days, maxDurationDays)
-		}
-
-		// Convert days to hours
-		daysDuration := time.Duration(days) * 24 * time.Hour
-
-		// Parse the remainder if present (e.g., "12h" in "1d12h")
-		remainder := matches[2]
-		if remainder != "" {
-			remainderDuration, err := time.ParseDuration(remainder)
-			if err != nil {
-				return 0, fmt.Errorf("invalid duration after days: %w", err)
-			}
-			return daysDuration + remainderDuration, nil
-		}
-
-		return daysDuration, nil
+	if !strings.ContainsAny(s, "dwy") {
+		return time.ParseDuration(s)
 	}
 
-	// No day units, use standard Go parsing
-	return time.ParseDuration(s)
+	var (
+		total             time.Duration
+		totalPositiveDays int64
+		pos               int
+	)
+	for pos < len(s) {
+		match := extendedDurationTermPattern.FindStringSubmatchIndex(s[pos:])
+		if match == nil || match[0] != 0 {
+			return 0, fmt.Errorf("invalid duration %q", s)
+		}
+
+		sign := s[pos+match[2] : pos+match[3]]
+		value := s[pos+match[4] : pos+match[5]]
+		unit := s[pos+match[6] : pos+match[7]]
+
+		var term time.Duration
+		switch unit {
+		case "d", "w", "y":
+			if strings.Contains(value, ".") {
+				return 0, fmt.Errorf("invalid %s value %q", unit, value)
+			}
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return 0, fmt.Errorf("invalid %s value %q: %w", unit, value, err)
+			}
+			multiplier := int64(1)
+			switch unit {
+			case "w":
+				multiplier = 7
+			case "y":
+				multiplier = 365
+			}
+			if n > math.MaxInt64/multiplier {
+				return 0, fmt.Errorf("duration component %q overflows", s[pos+match[0]:pos+match[1]])
+			}
+			days := n * multiplier
+			if sign != "-" {
+				if totalPositiveDays > math.MaxInt64-days {
+					return 0, fmt.Errorf("duration %q overflows", s)
+				}
+				totalPositiveDays += days
+				if totalPositiveDays > maxDurationDays {
+					return 0, fmt.Errorf("day value %d exceeds maximum of %d", totalPositiveDays, maxDurationDays)
+				}
+			}
+			if days > int64(time.Duration(math.MaxInt64)/(24*time.Hour)) {
+				return 0, fmt.Errorf("duration component %q overflows", s[pos+match[0]:pos+match[1]])
+			}
+			term = time.Duration(days) * 24 * time.Hour
+			if sign == "-" {
+				term = -term
+			}
+		default:
+			var err error
+			term, err = time.ParseDuration(sign + value + unit)
+			if err != nil {
+				return 0, err
+			}
+		}
+
+		if (term > 0 && total > time.Duration(math.MaxInt64)-term) || (term < 0 && total < time.Duration(math.MinInt64)-term) {
+			return 0, fmt.Errorf("duration %q overflows", s)
+		}
+
+		total += term
+		pos += match[1]
+	}
+	return total, nil
 }
 
 // getWebhookReader returns the preferred client.Reader for webhook validations.

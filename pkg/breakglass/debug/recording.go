@@ -35,7 +35,11 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-var recordingSecretPattern = regexp.MustCompile(`(?i)(bearer\s+|token|password|passwd|secret|authorization)([=:]\s*|\s+)[^\s,;]+`)
+var (
+	recordingAuthorizationPattern = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*)(bearer\s+)?[^\s,;]+`)
+	recordingBearerPattern        = regexp.MustCompile(`(?i)(\bbearer\s+)[^\s,;]+`)
+	recordingSecretPattern        = regexp.MustCompile(`(?i)\b(token|password|passwd|secret)\b([=:]\s*|\s+)[^\s,;]+`)
+)
 
 const (
 	terminalRecordingVolumeName = "breakglass-terminal-recording"
@@ -74,27 +78,7 @@ func recordingRetentionDuration(value string) (time.Duration, error) {
 	if value == "" {
 		value = "90d"
 	}
-	// time.ParseDuration deliberately has no days or years. Keep the CRD's
-	// human-friendly units while doing strict overflow-safe conversion.
-	if strings.HasSuffix(value, "d") || strings.HasSuffix(value, "w") || strings.HasSuffix(value, "y") {
-		unit := value[len(value)-1]
-		n, err := strconv.ParseInt(value[:len(value)-1], 10, 64)
-		if err != nil || n <= 0 {
-			return 0, fmt.Errorf("recording retention must be a positive duration: %q", value)
-		}
-		multiplier := int64(24 * time.Hour)
-		switch unit {
-		case 'w':
-			multiplier *= 7
-		case 'y':
-			multiplier *= 365
-		}
-		if n > int64((time.Duration(1<<63-1))/time.Duration(multiplier)) {
-			return 0, fmt.Errorf("recording retention overflows duration: %q", value)
-		}
-		return time.Duration(n * multiplier), nil
-	}
-	d, err := time.ParseDuration(value)
+	d, err := breakglassv1alpha1.ParseDuration(value)
 	if err != nil || d <= 0 {
 		return 0, fmt.Errorf("recording retention must be a positive duration: %q", value)
 	}
@@ -129,6 +113,8 @@ func safeRecordingFailure(reason string) string {
 	if reason == "" {
 		return "terminal recording failed"
 	}
+	reason = recordingAuthorizationPattern.ReplaceAllString(reason, "$1$2[REDACTED]")
+	reason = recordingBearerPattern.ReplaceAllString(reason, "$1[REDACTED]")
 	reason = recordingSecretPattern.ReplaceAllString(reason, "$1$2[REDACTED]")
 	if len(reason) > 512 {
 		reason = reason[:512] + "..."

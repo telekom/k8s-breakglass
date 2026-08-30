@@ -99,6 +99,8 @@ func TestRecordingRetentionDuration(t *testing.T) {
 	}{
 		{"90d", int64(90 * 24 * 60 * 60)},
 		{"2w", int64(14 * 24 * 60 * 60)},
+		{"1d12h", int64(36 * 60 * 60)},
+		{"1w2d3h", int64(219 * 60 * 60)},
 		{"1h", int64(60 * 60)},
 	} {
 		d, err := recordingRetentionDuration(tc.value)
@@ -231,6 +233,10 @@ func TestSafeRecordingFailureRedactsSecretsAndBoundsLength(t *testing.T) {
 	got := safeRecordingFailure("sidecar rejected Authorization: Bearer super-secret-token")
 	if got == "" || got == "sidecar rejected Authorization: Bearer super-secret-token" {
 		t.Fatalf("secret was not redacted: %q", got)
+	}
+	bearer := safeRecordingFailure("Authorization: Bearer " + "abc123")
+	if strings.Contains(bearer, "abc123") {
+		t.Fatalf("bearer token was not redacted: %q", bearer)
 	}
 	long := safeRecordingFailure("token=" + string(make([]byte, 1024)))
 	if len(long) > 515 {

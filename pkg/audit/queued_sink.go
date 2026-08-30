@@ -575,9 +575,20 @@ func (qs *QueuedSink) WriteBatch(ctx context.Context, events []*Event) error {
 
 // WriteBatch broadcasts the batch to all queued sinks (non-blocking).
 func (ims *IsolatedMultiSink) WriteBatch(ctx context.Context, events []*Event) error {
+	propagateErrors := false
+	for _, event := range events {
+		if IsSensitiveEvent(event.Type) {
+			propagateErrors = true
+			break
+		}
+	}
+
 	var errs []error
 	for _, qs := range ims.sinks {
 		if err := qs.WriteBatch(ctx, events); err != nil {
+			if !propagateErrors {
+				continue
+			}
 			errs = append(errs, err)
 		}
 	}

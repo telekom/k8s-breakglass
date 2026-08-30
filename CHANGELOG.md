@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profiles. Requesters, approvers, targets, images, and the target namespace are
   configurable; elevated profiles are disabled and require explicit opt-in.
 
+### Fixed
+
+- DebugSession recording retention now parses mixed and extended duration units (`d`, `w`, `y`) consistently between template admission validation and runtime sidecar injection checks.
+- DebugSession recording failure redaction now consistently removes bearer tokens from `Authorization`-style error messages.
+- DebugSessionTemplate constraint duration validation now emits errors in a deterministic field order.
+- Audit `IsolatedMultiSink.WriteBatch` now mirrors single-event sensitive-event error propagation behavior.
+
 ## [0.1.0-rc.8] - 2026-08-22
 
 ### Added
