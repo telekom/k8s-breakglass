@@ -26,6 +26,13 @@ and provider policy. `extraDeployVariables` is useful for bounded, non-security
 parameters such as a report size or a predeclared scheduling option; it is not
 an authorization boundary.
 
+Keep the two similarly named fields distinct: `DebugSessionTemplate.spec.extraDeployVariables`
+is the administrator-owned declaration of allowed variable names, types,
+defaults, and constraints. A requester supplies only values for those declared
+variables in `DebugSession.spec.extraDeployValues` when creating a session.
+`extraDeployValues` cannot add variables or change the image, command,
+capabilities, mounts, namespace, or RBAC rendered by the template.
+
 The upstream API exposes kubectl-debug operation fields for compatibility. The
 upstream controller validates session state and the template's namespace/image
 rules, but the API is not a substitute for provider admission. A deployment
