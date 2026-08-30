@@ -67,6 +67,9 @@ Every utility is published as an immutable,
     workflows
   - **[Diagnostic artifact collection](../utils/images/diagnostic-artifact-collector/README.md)** -
     Bounded system summaries and separately approved coredump collection
+
+### DebugSession and resource guides
+
 - **[DebugSession authoring guide](./debug-session-authoring.md)** - Publish
   safe templates, ephemeral identity/RBAC, NetworkPolicy, lifecycle cleanup,
   and downstream OCI runbook extensions

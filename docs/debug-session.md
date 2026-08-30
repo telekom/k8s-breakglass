@@ -174,7 +174,7 @@ spec:
           limits:
             cpu: {{ .vars.cpuLimit | default "500m" }}
             memory: {{ .vars.memoryLimit | default "256Mi" }}
-  ```
+```
 
 The `templateString` supports session context variables (`.session`, `.target`,
 and the explicitly declared `.vars` values) using Sprig template functions.
