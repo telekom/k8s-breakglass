@@ -19,7 +19,6 @@ fi
 printf '%s\n' 'Name: localhost' 'Address: 127.0.0.1'
 EOF
 chmod +x "$fixture/nslookup"
-<<<<<<< HEAD
 no_nslookup="$fixture/no-nslookup"
 mkdir -p "$no_nslookup"
 cat >"$no_nslookup/getent" <<'EOF'
@@ -28,8 +27,6 @@ cat >"$no_nslookup/getent" <<'EOF'
 printf '%s\n' '127.0.0.1 localhost'
 EOF
 chmod +x "$no_nslookup/getent"
-=======
->>>>>>> 9e9bc785 (fix(utility-tests): harden endpoint and artifact boundaries)
 cat >"$fixture/openssl" <<'EOF'
 #!/bin/sh
 printf '%s\n' 'fake TLS client'

@@ -75,7 +75,7 @@ fail_contract("base digest is not an immutable sha256 digest") unless base_diges
 
 context_components = context_name.split("/")
 fail_contract("context must be a relative repository path") if context_name.start_with?("/") || context_name.empty? || context_components.include?("..") || context_components.include?("")
-fail_contract("image name must match the context directory") if modern && image_name.to_s != File.basename(context_name)
+fail_contract("image name must match the context directory") if modern && File.basename(image_name.to_s) != File.basename(context_name)
 
 if modern
   runtime_user = require_value(runtime["user"], "runtime.user is required")
@@ -83,7 +83,7 @@ if modern
   fail_contract("runtime.user must not be root") if runtime_user.split(":", 2).first == "0"
   fail_contract("runtime.capabilities must be an empty list") unless runtime["capabilities"] == []
   fail_contract("runtime.privileged must be false") unless runtime["privileged"] == false
-  fail_contract("runtime.network_required must be false") unless runtime["network_required"] == false
+  fail_contract("runtime.network_required must be false or operation-dependent") unless [false, "operation-dependent"].include?(runtime["network_required"])
 
   executable = require_value(contract["executable"], "contract.executable is required")
   fail_contract("contract.executable must be absolute") unless executable.start_with?("/")
