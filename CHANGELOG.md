@@ -117,6 +117,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Debug-session catalogue schema now uses the same grouped duration grammar as
   the CRD (`^([0-9]+(ns|us|ms|s|m|h|d))+$`) for `defaultDuration` and
   `maxDuration`.
+- Catalogue utility integration now runs storage image mounted-volume checks
+  through the `storage-diagnostics` dispatcher and removes a stale network job
+  build reference to a non-existent kubestr fixture path.
 
 ## [0.1.0-rc.8] - 2026-08-22
 
