@@ -325,6 +325,31 @@ func TestValidatePathCollisionsBoundsDeepUniquePaths(t *testing.T) {
 	}
 }
 
+func TestValidatePathCollisionsRejectsInterposedPath(t *testing.T) {
+	tests := map[string]struct {
+		seen map[string]bool
+		want bool
+	}{
+		"file with interposer before descendant": {
+			seen: map[string]bool{"a": false, "a.foo": true, "a/child": true}, want: true,
+		},
+		"directory with interposer before descendant": {
+			seen: map[string]bool{"a": true, "a.foo": true, "a/child": true}, want: false,
+		},
+		"file without descendant": {
+			seen: map[string]bool{"a": false, "a.foo": true}, want: false,
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			err := validatePathCollisions(test.seen)
+			if (err != nil) != test.want {
+				t.Fatalf("validatePathCollisions() error = %v, want error = %t", err, test.want)
+			}
+		})
+	}
+}
+
 func TestValidateKeepsCancellationIdentityThroughValidation(t *testing.T) {
 	expected := summaryExpected()
 	compressed, _ := archiveFixture(t, expected, summaryEntries(), nil)

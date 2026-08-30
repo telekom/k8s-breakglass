@@ -395,9 +395,13 @@ func validatePathCollisions(seen map[string]bool) error {
 		paths = append(paths, name)
 	}
 	sort.Strings(paths)
-	for index := 1; index < len(paths); index++ {
-		ancestor, name := paths[index-1], paths[index]
-		if !seen[ancestor] && strings.HasPrefix(name, ancestor+"/") {
+	for _, name := range paths {
+		if seen[name] {
+			continue
+		}
+		descendant := name + "/"
+		index := sort.SearchStrings(paths, descendant)
+		if index < len(paths) && strings.HasPrefix(paths[index], descendant) {
 			return errors.New("artifact contains a file/directory prefix collision")
 		}
 	}
