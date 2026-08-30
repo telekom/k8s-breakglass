@@ -1,9 +1,14 @@
+//go:build linux || darwin
+
 // SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 // SPDX-License-Identifier: Apache-2.0
 
 // Package local implements the explicit single-replica RWO artifact backend.
-// Paths are descriptor-relative, publication is atomic and create-only, and
-// every read verifies the exact stored version before returning bytes.
+// The 0700 roots must be private to the dedicated serving process. Privileged
+// processes and other processes with the configured UID are outside this trust
+// boundary. Paths are descriptor-relative, publication is atomic and
+// create-only, and every read verifies the exact stored version before
+// returning bytes.
 package local
 
 import (
@@ -39,23 +44,23 @@ const (
 	headerJSONPos   = headerLengthPos + 4
 	temporaryPrefix = "tmp-"
 	probePrefix     = ".probe-"
+	deletionPrefix  = ".delete-"
 )
 
 // Store holds descriptor-opened roots and their runtime device/inode fence.
 // It is valid only while the configured PVC remains mounted at those roots.
 type Store struct {
-	config         Config
-	artifactRoot   *os.File
-	stagingRoot    *os.File
-	instanceID     string
-	artifactDevice uint64
-	artifactInode  uint64
-	stagingDevice  uint64
-	stagingInode   uint64
-	operations     fileOperations
-	capacityMu     sync.Mutex
-	reservedBytes  int64
-	mutationMu     sync.Mutex
+	config        Config
+	artifactRoot  *os.File
+	stagingRoot   *os.File
+	instanceID    string
+	artifactStat  unix.Stat_t
+	stagingStat   unix.Stat_t
+	operations    fileOperations
+	capacityMu    sync.Mutex
+	reservedBytes int64
+	mutationMu    sync.RWMutex
+	ambiguous     bool
 }
 
 type fileOperations struct {
@@ -63,13 +68,19 @@ type fileOperations struct {
 	unlink               func(int, string, int) error
 	syncDirectory        func(*os.File) error
 	availableBytes       func(*os.File) (int64, error)
+	closeFile            func(*os.File) error
+	renameNoReplace      func(*os.File, string, *os.File, string) error
 	beforeIdentityUnlink func(*os.File, string)
+	afterIdentityCheck   func(*os.File, string)
 }
 
 func defaultFileOperations() fileOperations {
 	return fileOperations{
 		link: unix.Linkat, unlink: unix.Unlinkat, syncDirectory: syncDirectory,
-		availableBytes: availableBytes, beforeIdentityUnlink: func(*os.File, string) {},
+		availableBytes: availableBytes, closeFile: func(file *os.File) error { return file.Close() },
+		renameNoReplace:      renameNoReplace,
+		beforeIdentityUnlink: func(*os.File, string) {},
+		afterIdentityCheck:   func(*os.File, string) {},
 	}
 }
 
@@ -88,7 +99,7 @@ type diskHeader struct {
 
 // ProvisionSentinels is the controller-owned provisioning step. Open never
 // creates a missing sentinel, so an empty or repointed volume fails closed.
-func ProvisionSentinels(config Config) error {
+func ProvisionSentinels(config Config) (result error) {
 	validated, err := config.validate()
 	if err != nil {
 		return err
@@ -97,12 +108,12 @@ func ProvisionSentinels(config Config) error {
 	if err != nil {
 		return fmt.Errorf("open local artifact root for provisioning: %w", err)
 	}
-	defer artifactRoot.Close()
+	defer func() { result = errors.Join(result, artifactRoot.Close()) }()
 	stagingRoot, stagingStat, err := openRoot(validated.StagingRoot, validated)
 	if err != nil {
 		return fmt.Errorf("open local staging root for provisioning: %w", err)
 	}
-	defer stagingRoot.Close()
+	defer func() { result = errors.Join(result, stagingRoot.Close()) }()
 	if artifactStat.Dev != stagingStat.Dev {
 		return errors.New("local artifact and staging roots are not on the same filesystem")
 	}
@@ -127,35 +138,28 @@ func Open(config Config) (*Store, error) {
 	}
 	stagingRoot, stagingStat, err := openRoot(validated.StagingRoot, validated)
 	if err != nil {
-		artifactRoot.Close()
-		return nil, fmt.Errorf("open local staging root: %w", err)
+		return nil, errors.Join(fmt.Errorf("open local staging root: %w", err), artifactRoot.Close())
 	}
 	store := &Store{
 		config: validated, artifactRoot: artifactRoot, stagingRoot: stagingRoot,
-		instanceID:     backendInstanceID(validated.InstanceID),
-		artifactDevice: uint64(artifactStat.Dev), artifactInode: uint64(artifactStat.Ino),
-		stagingDevice: uint64(stagingStat.Dev), stagingInode: uint64(stagingStat.Ino),
+		instanceID:   backendInstanceID(validated.InstanceID),
+		artifactStat: *artifactStat, stagingStat: *stagingStat,
 		operations: defaultFileOperations(),
 	}
 	if artifactStat.Dev != stagingStat.Dev {
-		store.Close()
-		return nil, errors.New("local artifact and staging roots are not on the same filesystem")
+		return nil, errors.Join(errors.New("local artifact and staging roots are not on the same filesystem"), store.Close())
 	}
 	if err := verifySentinel(artifactRoot, validated); err != nil {
-		store.Close()
-		return nil, fmt.Errorf("verify local artifact sentinel: %w", err)
+		return nil, errors.Join(fmt.Errorf("verify local artifact sentinel: %w", err), store.Close())
 	}
 	if err := verifySentinel(stagingRoot, validated); err != nil {
-		store.Close()
-		return nil, fmt.Errorf("verify local staging sentinel: %w", err)
+		return nil, errors.Join(fmt.Errorf("verify local staging sentinel: %w", err), store.Close())
 	}
 	if err := store.removeStaleTemporaryFiles(); err != nil {
-		store.Close()
-		return nil, err
+		return nil, errors.Join(err, store.Close())
 	}
 	if err := store.probe(); err != nil {
-		store.Close()
-		return nil, fmt.Errorf("probe local artifact storage: %w", err)
+		return nil, errors.Join(fmt.Errorf("probe local artifact storage: %w", err), store.Close())
 	}
 	return store, nil
 }
@@ -187,7 +191,7 @@ func (store *Store) Close() error {
 	return result
 }
 
-func (store *Store) PutIfAbsent(ctx context.Context, object artifactstorage.Object, source io.Reader) (artifactstorage.Metadata, error) {
+func (store *Store) PutIfAbsent(ctx context.Context, object artifactstorage.Object, source io.Reader) (metadata artifactstorage.Metadata, result error) {
 	var empty artifactstorage.Metadata
 	if err := store.ready(object); err != nil {
 		return empty, err
@@ -195,9 +199,18 @@ func (store *Store) PutIfAbsent(ctx context.Context, object artifactstorage.Obje
 	if ctx == nil || source == nil {
 		return empty, errors.New("local artifact source and context are required")
 	}
-	if existing, found, err := store.existingBeforePut(ctx, object); err != nil {
+	store.mutationMu.RLock()
+	err := store.ambiguityError()
+	var existing artifactstorage.Metadata
+	var found bool
+	if err == nil {
+		existing, found, err = store.existingBeforePut(ctx, object)
+	}
+	store.mutationMu.RUnlock()
+	if err != nil {
 		return empty, err
-	} else if found {
+	}
+	if found {
 		return existing, artifactstorage.ErrAlreadyExists
 	}
 	releaseCapacity, err := store.reserveCapacity(object.Size)
@@ -205,7 +218,7 @@ func (store *Store) PutIfAbsent(ctx context.Context, object artifactstorage.Obje
 		return empty, err
 	}
 	defer releaseCapacity()
-	metadata := metadataFor(store.instanceID, object, store.config.Now().UTC())
+	metadata = metadataFor(store.instanceID, object, store.config.Now().UTC())
 	if metadata.ModifiedAt.IsZero() {
 		return empty, errors.New("local artifact clock returned a zero timestamp")
 	}
@@ -219,18 +232,44 @@ func (store *Store) PutIfAbsent(ctx context.Context, object artifactstorage.Obje
 	}
 	temporaryStat, err := statDescriptor(temporary)
 	if err != nil || temporaryStat.Nlink != 1 || temporaryStat.Mode&unix.S_IFMT != unix.S_IFREG {
-		_ = temporary.Close()
-		return empty, errors.New("local artifact staging descriptor is unsafe")
+		return empty, errors.Join(errors.New("local artifact staging descriptor is unsafe"), err,
+			errorContext("close unsafe local artifact staging file", temporary.Close()))
 	}
 	removeTemporary := true
+	publishedName := ""
+	publicationMayBeDurable := false
+	mutationLocked := false
 	defer func() {
-		_ = temporary.Close()
+		var cleanupErr error
+		if result != nil && publishedName != "" && !publicationMayBeDurable {
+			cleanupErr = errors.Join(cleanupErr, store.removeBoundName(
+				store.artifactRoot, publishedName, temporaryStat, 2, 2, "publication rollback",
+			))
+		}
 		if removeTemporary {
-			removed, _ := store.unlinkIfIdentity(store.stagingRoot, temporaryName, temporaryStat, 1, 2)
+			removed, unlinkErr := store.unlinkIfIdentity(store.stagingRoot, temporaryName, temporaryStat, 1, 2)
+			if unlinkErr != nil {
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("rollback local artifact staging file: %w", unlinkErr))
+			} else if !removed {
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("local artifact staging rollback changed before removal: %w", artifactstorage.ErrAmbiguous))
+			}
 			if removed {
-				_ = store.operations.syncDirectory(store.stagingRoot)
+				if syncErr := store.operations.syncDirectory(store.stagingRoot); syncErr != nil {
+					cleanupErr = errors.Join(cleanupErr, fmt.Errorf("fsync local artifact staging parent after rollback: %w", syncErr))
+				}
 			}
 		}
+		if closeErr := store.operations.closeFile(temporary); closeErr != nil {
+			result = errors.Join(result, fmt.Errorf("close local artifact staging file: %w", closeErr))
+		}
+		if mutationLocked {
+			if publishedName != "" && cleanupErr != nil {
+				store.ambiguous = true
+				cleanupErr = errors.Join(cleanupErr, store.ambiguityError())
+			}
+			store.mutationMu.Unlock()
+		}
+		result = errors.Join(result, cleanupErr)
 	}()
 	if err := writeObject(ctx, temporary, header, source, object); err != nil {
 		return empty, err
@@ -245,17 +284,31 @@ func (store *Store) PutIfAbsent(ctx context.Context, object artifactstorage.Obje
 		return empty, err
 	}
 	store.mutationMu.Lock()
-	defer store.mutationMu.Unlock()
+	mutationLocked = true
+	if err := store.ambiguityError(); err != nil {
+		return empty, err
+	}
 	name := objectName(object.Key)
-	if err := store.operations.link(int(store.stagingRoot.Fd()), temporaryName, int(store.artifactRoot.Fd()), name, 0); err != nil {
+	if err := linkAt(store.operations.link, store.stagingRoot, temporaryName, store.artifactRoot, name); err != nil {
 		if errors.Is(err, unix.EEXIST) {
-			return empty, artifactstorage.ErrAlreadyExists
+			winner, found, reconcileErr := store.existingBeforePut(ctx, object)
+			if reconcileErr != nil {
+				return empty, reconcileErr
+			}
+			if !found {
+				return empty, fmt.Errorf("local artifact publication winner disappeared: %w", artifactstorage.ErrAmbiguous)
+			}
+			return winner, artifactstorage.ErrAlreadyExists
 		}
 		return empty, fmt.Errorf("publish local artifact without replacement: %w", err)
 	}
+	publishedName = name
 	if err := store.verifyPublishedIdentity(temporary, temporaryStat, name, 2); err != nil {
 		return empty, err
 	}
+	// Once fsync starts, failure leaves durability unknown. Keep the exact
+	// publication so a retry can reconcile it.
+	publicationMayBeDurable = true
 	if err := store.operations.syncDirectory(store.artifactRoot); err != nil {
 		return empty, fmt.Errorf("fsync local artifact parent after publication: %w", err)
 	}
@@ -299,8 +352,8 @@ func (store *Store) verifyPublishedIdentity(temporary *os.File, original *unix.S
 	publishedStat, publishedErr := statNameNoFollow(store.artifactRoot, name)
 	if descriptorErr == nil && publishedErr == nil && sameFileIdentity(original, descriptorStat) &&
 		sameFileIdentity(original, publishedStat) && descriptorStat.Mode&unix.S_IFMT == unix.S_IFREG &&
-		publishedStat.Mode&unix.S_IFMT == unix.S_IFREG && uint64(descriptorStat.Nlink) == expectedLinks &&
-		uint64(publishedStat.Nlink) == expectedLinks {
+		publishedStat.Mode&unix.S_IFMT == unix.S_IFREG && linkCount(descriptorStat.Nlink) == expectedLinks &&
+		linkCount(publishedStat.Nlink) == expectedLinks {
 		return nil
 	}
 	return fmt.Errorf("local artifact publication identity is ambiguous: %w", artifactstorage.ErrAmbiguous)
@@ -315,11 +368,23 @@ func (store *Store) unlinkIfIdentity(root *os.File, name string, expected *unix.
 	if err != nil {
 		return false, err
 	}
-	links := uint64(actual.Nlink)
+	links := linkCount(actual.Nlink)
 	if !sameFileIdentity(actual, expected) || links < minimumLinks || links > maximumLinks {
 		return false, nil
 	}
-	if err := store.operations.unlink(int(root.Fd()), name, 0); err != nil {
+	store.operations.afterIdentityCheck(root, name)
+	actual, err = statNameNoFollow(root, name)
+	if errors.Is(err, unix.ENOENT) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	links = linkCount(actual.Nlink)
+	if !sameFileIdentity(actual, expected) || links < minimumLinks || links > maximumLinks {
+		return false, nil
+	}
+	if err := unlinkAt(store.operations.unlink, root, name); err != nil {
 		if errors.Is(err, unix.ENOENT) {
 			return false, nil
 		}
@@ -330,42 +395,58 @@ func (store *Store) unlinkIfIdentity(root *os.File, name string, expected *unix.
 
 func (store *Store) OpenVersion(ctx context.Context, object artifactstorage.Object, expected artifactstorage.Metadata) (io.ReadCloser, artifactstorage.Metadata, error) {
 	var empty artifactstorage.Metadata
+	if err := store.ready(object); err != nil {
+		return nil, empty, err
+	}
+	store.mutationMu.RLock()
+	defer store.mutationMu.RUnlock()
+	if err := store.ambiguityError(); err != nil {
+		return nil, empty, err
+	}
 	file, actual, err := store.openAndVerify(ctx, object)
 	if err != nil {
 		return nil, empty, err
 	}
 	if !metadataEqual(actual, expected) {
-		file.Close()
-		return nil, empty, artifactstorage.ErrConflict
+		return nil, empty, errors.Join(artifactstorage.ErrConflict, file.Close())
 	}
 	if _, err := file.Seek(headerSize, io.SeekStart); err != nil {
-		file.Close()
-		return nil, empty, fmt.Errorf("seek local artifact content: %w", err)
+		return nil, empty, errors.Join(fmt.Errorf("seek local artifact content: %w", err), file.Close())
 	}
 	if err := contextError(ctx); err != nil {
-		file.Close()
-		return nil, empty, err
+		return nil, empty, errors.Join(err, file.Close())
 	}
 	return &boundedReadCloser{Reader: &contextReader{ctx: ctx, reader: io.LimitReader(file, object.Size)}, closer: file}, actual, nil
 }
 
-func (store *Store) StatVersion(ctx context.Context, object artifactstorage.Object, expected artifactstorage.Metadata) (artifactstorage.Metadata, error) {
+func (store *Store) StatVersion(ctx context.Context, object artifactstorage.Object, expected artifactstorage.Metadata) (metadata artifactstorage.Metadata, result error) {
 	var empty artifactstorage.Metadata
+	if err := store.ready(object); err != nil {
+		return empty, err
+	}
+	store.mutationMu.RLock()
+	defer store.mutationMu.RUnlock()
+	if err := store.ambiguityError(); err != nil {
+		return empty, err
+	}
 	file, actual, err := store.openAndVerify(ctx, object)
 	if err != nil {
 		return empty, err
 	}
-	if err := file.Close(); err != nil {
-		return empty, fmt.Errorf("close local artifact after stat: %w", err)
-	}
+	defer func() { result = errors.Join(result, errorContext("close local artifact after stat", file.Close())) }()
 	if !metadataEqual(actual, expected) {
 		return empty, artifactstorage.ErrConflict
 	}
 	return actual, nil
 }
 
-func (store *Store) Inventory(ctx context.Context, object artifactstorage.Object) ([]artifactstorage.Version, error) {
+func (store *Store) Inventory(ctx context.Context, object artifactstorage.Object) (versions []artifactstorage.Version, result error) {
 	if err := store.ready(object); err != nil {
+		return nil, err
+	}
+	store.mutationMu.RLock()
+	defer store.mutationMu.RUnlock()
+	if err := store.ambiguityError(); err != nil {
 		return nil, err
 	}
 	file, metadata, err := store.openAndVerify(ctx, object)
@@ -378,16 +459,16 @@ func (store *Store) Inventory(ctx context.Context, object artifactstorage.Object
 	if err != nil {
 		return nil, err
 	}
-	if err := file.Close(); err != nil {
-		return nil, fmt.Errorf("close local artifact after inventory: %w", err)
-	}
+	defer func() {
+		result = errors.Join(result, errorContext("close local artifact after inventory", file.Close()))
+	}()
 	if err := store.operations.syncDirectory(store.artifactRoot); err != nil {
 		return nil, fmt.Errorf("fsync local artifact parent before inventory proof: %w", err)
 	}
 	return []artifactstorage.Version{versionFromMetadata(metadata)}, nil
 }
 
-func (store *Store) DeleteVersion(ctx context.Context, object artifactstorage.Object, version artifactstorage.Version) error {
+func (store *Store) DeleteVersion(ctx context.Context, object artifactstorage.Object, version artifactstorage.Version) (result error) {
 	if err := store.ready(object); err != nil {
 		return err
 	}
@@ -396,14 +477,16 @@ func (store *Store) DeleteVersion(ctx context.Context, object artifactstorage.Ob
 	}
 	store.mutationMu.Lock()
 	defer store.mutationMu.Unlock()
+	if err := store.ambiguityError(); err != nil {
+		return err
+	}
 	file, metadata, err := store.openAndVerify(ctx, object)
 	if err != nil {
 		return err
 	}
-	closeFile := true
 	defer func() {
-		if closeFile {
-			_ = file.Close()
+		if closeErr := store.operations.closeFile(file); closeErr != nil {
+			result = errors.Join(result, fmt.Errorf("close exact local artifact: %w", closeErr))
 		}
 	}()
 	descriptorStat, err := statDescriptor(file)
@@ -419,24 +502,57 @@ func (store *Store) DeleteVersion(ctx context.Context, object artifactstorage.Ob
 	if err := store.verifyRuntimeFence(); err != nil {
 		return err
 	}
-	removed, err := store.unlinkIfIdentity(store.artifactRoot, objectName(object.Key), descriptorStat, 1, 1)
+	result = errors.Join(result, store.deleteExactName(objectName(object.Key), descriptorStat))
+	return result
+}
+
+func (store *Store) deleteExactName(name string, expected *unix.Stat_t) (result error) {
+	store.operations.beforeIdentityUnlink(store.artifactRoot, name)
+	actual, err := statNameNoFollow(store.artifactRoot, name)
 	if err != nil {
-		return fmt.Errorf("unlink exact local artifact version: %w", err)
+		return fmt.Errorf("inspect exact local artifact before deletion: %w", err)
 	}
-	if !removed {
+	if !sameFileIdentity(actual, expected) || linkCount(actual.Nlink) != 1 {
 		return fmt.Errorf("exact local artifact changed before deletion: %w", artifactstorage.ErrAmbiguous)
 	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("close exact local artifact after deletion: %w", err)
+	quarantine, err := randomName(deletionPrefix)
+	if err != nil {
+		return fmt.Errorf("create exact local artifact deletion name: %w", err)
 	}
-	closeFile = false
-	if err := store.operations.syncDirectory(store.artifactRoot); err != nil {
-		return fmt.Errorf("fsync local artifact parent after deletion: %w", err)
+	store.operations.afterIdentityCheck(store.artifactRoot, name)
+	if err := store.operations.renameNoReplace(store.artifactRoot, name, store.artifactRoot, quarantine); err != nil {
+		return fmt.Errorf("move exact local artifact for deletion: %w", err)
 	}
+
+	rollback := true
+	defer func() {
+		if rollback {
+			restoreErr := store.operations.renameNoReplace(store.artifactRoot, quarantine, store.artifactRoot, name)
+			if restoreErr != nil {
+				store.ambiguous = true
+				result = errors.Join(result, fmt.Errorf("restore local artifact after rejected deletion: %w", restoreErr),
+					store.ambiguityError())
+			}
+		}
+		result = errors.Join(result, errorContext("fsync local artifact parent after deletion",
+			store.operations.syncDirectory(store.artifactRoot)))
+	}()
+
+	moved, err := statNameNoFollow(store.artifactRoot, quarantine)
+	if err != nil {
+		return fmt.Errorf("inspect moved local artifact before deletion: %w", err)
+	}
+	if !sameFileIdentity(moved, expected) || linkCount(moved.Nlink) != 1 {
+		return fmt.Errorf("exact local artifact changed during deletion: %w", artifactstorage.ErrAmbiguous)
+	}
+	if err := unlinkAt(store.operations.unlink, store.artifactRoot, quarantine); err != nil {
+		return fmt.Errorf("unlink exact local artifact version: %w", err)
+	}
+	rollback = false
 	return nil
 }
 
-func (store *Store) openAndVerify(ctx context.Context, object artifactstorage.Object) (*os.File, artifactstorage.Metadata, error) {
+func (store *Store) openAndVerify(ctx context.Context, object artifactstorage.Object) (file *os.File, metadata artifactstorage.Metadata, result error) {
 	var empty artifactstorage.Metadata
 	if err := store.verifyRuntimeFence(); err != nil {
 		return nil, empty, err
@@ -451,7 +567,9 @@ func (store *Store) openAndVerify(ctx context.Context, object artifactstorage.Ob
 	closeOnError := true
 	defer func() {
 		if closeOnError {
-			_ = file.Close()
+			if closeErr := file.Close(); closeErr != nil {
+				result = errors.Join(result, fmt.Errorf("close local artifact after failed verification: %w", closeErr))
+			}
 		}
 	}()
 	if stat.Nlink != 1 || stat.Size < headerSize || stat.Size != headerSize+object.Size {
@@ -461,7 +579,7 @@ func (store *Store) openAndVerify(ctx context.Context, object artifactstorage.Ob
 	if err := readFullContext(ctx, file, headerBytes); err != nil {
 		return nil, empty, fmt.Errorf("read local artifact metadata: %w", err)
 	}
-	metadata, err := unmarshalHeader(headerBytes)
+	metadata, err = unmarshalHeader(headerBytes)
 	if err != nil || !metadataMatchesObject(metadata, store.instanceID, object) {
 		return nil, empty, artifactstorage.ErrConflict
 	}
@@ -486,18 +604,25 @@ func (store *Store) ready(object artifactstorage.Object) error {
 	return store.verifyRuntimeFence()
 }
 
+func (store *Store) ambiguityError() error {
+	if !store.ambiguous {
+		return nil
+	}
+	return fmt.Errorf("local artifact store needs reopen or reconciliation: %w", artifactstorage.ErrAmbiguous)
+}
+
 func (store *Store) verifyRuntimeFence() error {
 	if store == nil || store.artifactRoot == nil || store.stagingRoot == nil {
 		return artifactstorage.ErrBackendDrift
 	}
 	artifactStat, err := statDescriptor(store.artifactRoot)
 	if err != nil || !safeRootStat(artifactStat, store.config) ||
-		uint64(artifactStat.Dev) != store.artifactDevice || uint64(artifactStat.Ino) != store.artifactInode {
+		!sameFileIdentity(artifactStat, &store.artifactStat) {
 		return artifactstorage.ErrBackendDrift
 	}
 	stagingStat, err := statDescriptor(store.stagingRoot)
 	if err != nil || !safeRootStat(stagingStat, store.config) ||
-		uint64(stagingStat.Dev) != store.stagingDevice || uint64(stagingStat.Ino) != store.stagingInode {
+		!sameFileIdentity(stagingStat, &store.stagingStat) {
 		return artifactstorage.ErrBackendDrift
 	}
 	return nil
@@ -527,12 +652,19 @@ func (store *Store) reserveCapacity(size int64) (func(), error) {
 	}, nil
 }
 
-func (store *Store) removeStaleTemporaryFiles() error {
+func (store *Store) removeStaleTemporaryFiles() (result error) {
 	names, err := store.stagingRoot.Readdirnames(-1)
 	if err != nil {
 		return fmt.Errorf("list local artifact staging root: %w", err)
 	}
 	removed := false
+	defer func() {
+		if removed {
+			if err := syncDirectory(store.stagingRoot); err != nil {
+				result = errors.Join(result, fmt.Errorf("fsync local artifact staging root after recovery: %w", err))
+			}
+		}
+	}()
 	for _, name := range names {
 		if name == sentinelName || !validTemporaryName(name) {
 			continue
@@ -542,38 +674,44 @@ func (store *Store) removeStaleTemporaryFiles() error {
 			return fmt.Errorf("inspect stale local artifact staging file: %w", err)
 		}
 		if stat.Nlink < 1 || stat.Nlink > 2 {
-			_ = file.Close()
-			return errors.New("stale local artifact staging link count is unsafe")
+			return errors.Join(errors.New("stale local artifact staging link count is unsafe"), file.Close())
 		}
-		links := uint64(stat.Nlink)
+		links := linkCount(stat.Nlink)
 		unlinked, unlinkErr := store.unlinkIfIdentity(store.stagingRoot, name, stat, links, links)
-		closeErr := file.Close()
-		if unlinkErr != nil {
-			return fmt.Errorf("remove stale local artifact staging file: %w", unlinkErr)
+		if unlinked {
+			removed = true
 		}
-		if !unlinked {
-			return fmt.Errorf("stale local artifact staging file changed before removal: %w", artifactstorage.ErrAmbiguous)
-		}
-		if closeErr != nil {
-			return fmt.Errorf("close stale local artifact staging file: %w", closeErr)
-		}
-		removed = true
-	}
-	if removed {
-		if err := syncDirectory(store.stagingRoot); err != nil {
-			return fmt.Errorf("fsync local artifact staging root after recovery: %w", err)
+		closeErr := store.operations.closeFile(file)
+		if unlinkErr != nil || !unlinked || closeErr != nil {
+			var identityErr error
+			if !unlinked && unlinkErr == nil {
+				identityErr = fmt.Errorf("stale local artifact staging file changed before removal: %w", artifactstorage.ErrAmbiguous)
+			}
+			return errors.Join(errorContext("remove stale local artifact staging file", unlinkErr), identityErr,
+				errorContext("close stale local artifact staging file", closeErr))
 		}
 	}
-	return store.removeStaleProbeFiles()
+	result = errors.Join(result, store.removeStaleProbeFiles())
+	return result
 }
 
-func (store *Store) removeStaleProbeFiles() error {
+func (store *Store) removeStaleProbeFiles() (result error) {
 	names, err := store.artifactRoot.Readdirnames(-1)
 	if err != nil {
 		return fmt.Errorf("list local artifact root for stale probes: %w", err)
 	}
 	removed := false
+	defer func() {
+		if removed {
+			if err := syncDirectory(store.artifactRoot); err != nil {
+				result = errors.Join(result, fmt.Errorf("fsync local artifact root after probe recovery: %w", err))
+			}
+		}
+	}()
 	for _, name := range names {
+		if validDeletionName(name) {
+			return fmt.Errorf("unfinished local artifact deletion %q requires reconciliation: %w", name, artifactstorage.ErrAmbiguous)
+		}
 		if !validProbeName(name) {
 			continue
 		}
@@ -582,26 +720,21 @@ func (store *Store) removeStaleProbeFiles() error {
 			return fmt.Errorf("inspect stale local artifact probe: %w", err)
 		}
 		if stat.Nlink < 1 || stat.Nlink > 2 {
-			_ = file.Close()
-			return errors.New("stale local artifact probe link count is unsafe")
+			return errors.Join(errors.New("stale local artifact probe link count is unsafe"), file.Close())
 		}
-		links := uint64(stat.Nlink)
+		links := linkCount(stat.Nlink)
 		unlinked, unlinkErr := store.unlinkIfIdentity(store.artifactRoot, name, stat, links, links)
-		closeErr := file.Close()
-		if unlinkErr != nil {
-			return fmt.Errorf("remove stale local artifact probe: %w", unlinkErr)
+		if unlinked {
+			removed = true
 		}
-		if !unlinked {
-			return fmt.Errorf("stale local artifact probe changed before removal: %w", artifactstorage.ErrAmbiguous)
-		}
-		if closeErr != nil {
-			return fmt.Errorf("close stale local artifact probe: %w", closeErr)
-		}
-		removed = true
-	}
-	if removed {
-		if err := syncDirectory(store.artifactRoot); err != nil {
-			return fmt.Errorf("fsync local artifact root after probe recovery: %w", err)
+		closeErr := store.operations.closeFile(file)
+		if unlinkErr != nil || !unlinked || closeErr != nil {
+			var identityErr error
+			if !unlinked && unlinkErr == nil {
+				identityErr = fmt.Errorf("stale local artifact probe changed before removal: %w", artifactstorage.ErrAmbiguous)
+			}
+			return errors.Join(errorContext("remove stale local artifact probe", unlinkErr), identityErr,
+				errorContext("close stale local artifact probe", closeErr))
 		}
 	}
 	return nil
@@ -614,27 +747,27 @@ func (store *Store) probe() (result error) {
 	}
 	temporaryStat, err := statDescriptor(temporary)
 	if err != nil || temporaryStat.Nlink != 1 || temporaryStat.Mode&unix.S_IFMT != unix.S_IFREG {
-		_ = temporary.Close()
-		return errors.New("local artifact probe descriptor is unsafe")
+		return errors.Join(errors.New("local artifact probe descriptor is unsafe"), err,
+			errorContext("close unsafe local artifact probe", temporary.Close()))
 	}
 	temporaryPresent := true
 	defer func() {
 		if temporaryPresent {
 			result = errors.Join(result, store.removeBoundName(store.stagingRoot, temporaryName, temporaryStat, 1, 2, "staging probe"))
 		}
-		result = errors.Join(result, temporary.Close())
+		result = errors.Join(result, store.operations.closeFile(temporary))
 	}()
-	if err := unix.Flock(int(temporary.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+	if err := flock(temporary, unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		return fmt.Errorf("lock local artifact probe file: %w", err)
 	}
 	second, _, err := openRegular(store.stagingRoot, temporaryName, objectMode, store.config)
 	if err != nil {
 		return err
 	}
-	defer func() { result = errors.Join(result, second.Close()) }()
-	if err := unix.Flock(int(second.Fd()), unix.LOCK_EX|unix.LOCK_NB); err == nil {
-		_ = unix.Flock(int(second.Fd()), unix.LOCK_UN)
-		return errors.New("local artifact filesystem did not enforce exclusive locking")
+	defer func() { result = errors.Join(result, store.operations.closeFile(second)) }()
+	if err := flock(second, unix.LOCK_EX|unix.LOCK_NB); err == nil {
+		return errors.Join(errors.New("local artifact filesystem did not enforce exclusive locking"),
+			errorContext("unlock local artifact probe", flock(second, unix.LOCK_UN)))
 	} else if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EAGAIN) {
 		return fmt.Errorf("verify local artifact lock exclusion: %w", err)
 	}
@@ -645,7 +778,7 @@ func (store *Store) probe() (result error) {
 		return fmt.Errorf("fsync local artifact probe: %w", err)
 	}
 	probeName := probePrefix + strings.TrimPrefix(temporaryName, temporaryPrefix)
-	if err := store.operations.link(int(store.stagingRoot.Fd()), temporaryName, int(store.artifactRoot.Fd()), probeName, 0); err != nil {
+	if err := linkAt(store.operations.link, store.stagingRoot, temporaryName, store.artifactRoot, probeName); err != nil {
 		return fmt.Errorf("publish local artifact probe: %w", err)
 	}
 	probePresent := true
@@ -657,7 +790,7 @@ func (store *Store) probe() (result error) {
 	if err := store.verifyPublishedIdentity(temporary, temporaryStat, probeName, 2); err != nil {
 		return err
 	}
-	if err := store.operations.link(int(store.stagingRoot.Fd()), temporaryName, int(store.artifactRoot.Fd()), probeName, 0); !errors.Is(err, unix.EEXIST) {
+	if err := linkAt(store.operations.link, store.stagingRoot, temporaryName, store.artifactRoot, probeName); !errors.Is(err, unix.EEXIST) {
 		return errors.New("local artifact filesystem did not enforce create-only publication")
 	}
 	if err := store.operations.syncDirectory(store.artifactRoot); err != nil {
@@ -688,11 +821,11 @@ func (store *Store) removeBoundName(root *os.File, name string, expected *unix.S
 	return nil
 }
 
-func provisionSentinel(root *os.File, config Config) error {
+func provisionSentinel(root *os.File, config Config) (result error) {
 	content := []byte(config.InstanceID + "\n")
 	file, _, err := openRegular(root, sentinelName, sentinelMode, config)
 	if err == nil {
-		defer file.Close()
+		defer func() { result = errors.Join(result, file.Close()) }()
 		actual, readErr := io.ReadAll(io.LimitReader(file, int64(len(content)+1)))
 		if readErr != nil || string(actual) != string(content) {
 			return artifactstorage.ErrBackendDrift
@@ -702,16 +835,29 @@ func provisionSentinel(root *os.File, config Config) error {
 	if !errors.Is(err, unix.ENOENT) {
 		return fmt.Errorf("open local artifact sentinel: %w", err)
 	}
-	fd, err := unix.Openat(int(root.Fd()), sentinelName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, sentinelMode)
+	rootFD, err := fileDescriptor(root)
+	if err != nil {
+		return err
+	}
+	fd, err := unix.Openat(rootFD, sentinelName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, sentinelMode)
 	if err != nil {
 		return fmt.Errorf("create local artifact sentinel: %w", err)
 	}
-	created := os.NewFile(uintptr(fd), sentinelName)
+	created, err := fileFromDescriptor(fd, sentinelName)
+	if err != nil {
+		return err
+	}
 	remove := true
 	defer func() {
-		_ = created.Close()
 		if remove {
-			_ = unix.Unlinkat(int(root.Fd()), sentinelName, 0)
+			if unlinkErr := unlinkAt(unix.Unlinkat, root, sentinelName); unlinkErr != nil && !errors.Is(unlinkErr, unix.ENOENT) {
+				result = errors.Join(result, fmt.Errorf("rollback local artifact sentinel: %w", unlinkErr))
+			} else if unlinkErr == nil {
+				result = errors.Join(result, errorContext("fsync local artifact root after sentinel rollback", syncDirectory(root)))
+			}
+		}
+		if closeErr := created.Close(); closeErr != nil {
+			result = errors.Join(result, fmt.Errorf("close local artifact sentinel: %w", closeErr))
 		}
 	}()
 	if _, err := created.Write(content); err != nil {
@@ -727,12 +873,12 @@ func provisionSentinel(root *os.File, config Config) error {
 	return nil
 }
 
-func verifySentinel(root *os.File, config Config) error {
+func verifySentinel(root *os.File, config Config) (result error) {
 	file, stat, err := openRegular(root, sentinelName, sentinelMode, config)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { result = errors.Join(result, file.Close()) }()
 	if stat.Nlink != 1 {
 		return artifactstorage.ErrBackendDrift
 	}
@@ -752,21 +898,25 @@ func openRoot(root string, config Config) (*os.File, *unix.Stat_t, error) {
 	}
 	for _, component := range components {
 		next, openErr := unix.Openat(fd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-		_ = unix.Close(fd)
+		closeErr := unix.Close(fd)
 		if openErr != nil {
-			return nil, nil, openErr
+			return nil, nil, errors.Join(openErr, closeErr)
+		}
+		if closeErr != nil {
+			return nil, nil, errors.Join(closeErr, unix.Close(next))
 		}
 		fd = next
 	}
-	file := os.NewFile(uintptr(fd), root)
-	stat, err := statDescriptor(file)
+	file, err := fileFromDescriptor(fd, root)
 	if err != nil {
-		file.Close()
 		return nil, nil, err
 	}
+	stat, err := statDescriptor(file)
+	if err != nil {
+		return nil, nil, errors.Join(err, file.Close())
+	}
 	if !safeRootStat(stat, config) {
-		file.Close()
-		return nil, nil, errors.New("local artifact root ownership or mode is unsafe")
+		return nil, nil, errors.Join(errors.New("local artifact root ownership or mode is unsafe"), file.Close())
 	}
 	return file, stat, nil
 }
@@ -782,20 +932,25 @@ func openRegular(root *os.File, name string, mode uint32, config Config) (*os.Fi
 	if before.Mode&unix.S_IFMT != unix.S_IFREG {
 		return nil, nil, errors.New("local artifact path is not a regular file")
 	}
-	fd, err := unix.Openat(int(root.Fd()), name, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	rootFD, err := fileDescriptor(root)
 	if err != nil {
 		return nil, nil, err
 	}
-	file := os.NewFile(uintptr(fd), name)
+	fd, err := unix.Openat(rootFD, name, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+	file, err := fileFromDescriptor(fd, name)
+	if err != nil {
+		return nil, nil, err
+	}
 	stat, err := statDescriptor(file)
 	if err != nil {
-		file.Close()
-		return nil, nil, err
+		return nil, nil, errors.Join(err, file.Close())
 	}
-	if !sameFileIdentity(before, stat) || stat.Mode&unix.S_IFMT != unix.S_IFREG || uint32(stat.Mode&07777) != mode ||
+	if !sameFileIdentity(before, stat) || stat.Mode&unix.S_IFMT != unix.S_IFREG || modeBits(stat.Mode&07777) != mode ||
 		int(stat.Uid) != config.ExpectedUID || int(stat.Gid) != config.ExpectedGID {
-		file.Close()
-		return nil, nil, errors.New("local artifact file ownership, type, or mode is unsafe")
+		return nil, nil, errors.Join(errors.New("local artifact file ownership, type, or mode is unsafe"), file.Close())
 	}
 	return file, stat, nil
 }
@@ -805,7 +960,11 @@ func statNameNoFollow(root *os.File, name string) (*unix.Stat_t, error) {
 	if root == nil {
 		return nil, errors.New("local artifact root descriptor is closed")
 	}
-	if err := unix.Fstatat(int(root.Fd()), name, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	rootFD, err := fileDescriptor(root)
+	if err != nil {
+		return nil, err
+	}
+	if err := unix.Fstatat(rootFD, name, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return nil, err
 	}
 	return &stat, nil
@@ -820,7 +979,11 @@ func statDescriptor(file *os.File) (*unix.Stat_t, error) {
 	if file == nil {
 		return nil, errors.New("local artifact descriptor is closed")
 	}
-	if err := unix.Fstat(int(file.Fd()), &stat); err != nil {
+	fd, err := fileDescriptor(file)
+	if err != nil {
+		return nil, err
+	}
+	if err := unix.Fstat(fd, &stat); err != nil {
 		return nil, err
 	}
 	return &stat, nil
@@ -828,21 +991,36 @@ func statDescriptor(file *os.File) (*unix.Stat_t, error) {
 
 func createTemporary(root *os.File) (string, *os.File, error) {
 	for attempt := 0; attempt < 4; attempt++ {
-		random := make([]byte, 16)
-		if _, err := rand.Read(random); err != nil {
+		name, err := randomName(temporaryPrefix)
+		if err != nil {
 			return "", nil, fmt.Errorf("generate local artifact staging name: %w", err)
 		}
-		name := temporaryPrefix + hex.EncodeToString(random)
-		fd, err := unix.Openat(int(root.Fd()), name, unix.O_RDWR|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, objectMode)
+		rootFD, err := fileDescriptor(root)
+		if err != nil {
+			return "", nil, err
+		}
+		fd, err := unix.Openat(rootFD, name, unix.O_RDWR|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, objectMode)
 		if errors.Is(err, unix.EEXIST) {
 			continue
 		}
 		if err != nil {
 			return "", nil, err
 		}
-		return name, os.NewFile(uintptr(fd), name), nil
+		file, err := fileFromDescriptor(fd, name)
+		if err != nil {
+			return "", nil, err
+		}
+		return name, file, nil
 	}
 	return "", nil, errors.New("local artifact staging name collisions exceeded their bound")
+}
+
+func randomName(prefix string) (string, error) {
+	random := make([]byte, 16)
+	if _, err := rand.Read(random); err != nil {
+		return "", err
+	}
+	return prefix + hex.EncodeToString(random), nil
 }
 
 func writeObject(ctx context.Context, file *os.File, header []byte, source io.Reader, object artifactstorage.Object) error {
@@ -880,7 +1058,7 @@ func marshalHeader(metadata artifactstorage.Metadata) ([]byte, error) {
 	}
 	result := make([]byte, headerSize)
 	copy(result, headerPrefix)
-	binary.BigEndian.PutUint32(result[headerLengthPos:headerJSONPos], uint32(len(encoded)))
+	binary.BigEndian.PutUint32(result[headerLengthPos:headerJSONPos], uint32(len(encoded))) // #nosec G115 -- fixed header bound checked above.
 	copy(result[headerJSONPos:], encoded)
 	return result, nil
 }
@@ -980,6 +1158,14 @@ func validProbeName(name string) bool {
 	return err == nil && strings.ToLower(name) == name
 }
 
+func validDeletionName(name string) bool {
+	if len(name) != len(deletionPrefix)+32 || !strings.HasPrefix(name, deletionPrefix) {
+		return false
+	}
+	_, err := hex.DecodeString(name[len(deletionPrefix):])
+	return err == nil && strings.ToLower(name) == name
+}
+
 func backendInstanceID(sentinel string) string {
 	digest := sha256.Sum256([]byte("local-artifact-backend/v1\x00" + sentinel))
 	return hex.EncodeToString(digest[:])
@@ -1010,9 +1196,9 @@ func copyExactToWriters(ctx context.Context, first io.Writer, second io.Writer, 
 		if err := contextError(ctx); err != nil {
 			return written, err
 		}
-		want := int64(len(buffer))
-		if remaining := size - written; remaining < want {
-			want = remaining
+		want := len(buffer)
+		if remaining := size - written; remaining < int64(want) {
+			want = int(remaining)
 		}
 		read, err := source.Read(buffer[:want])
 		if read > 0 {
@@ -1074,19 +1260,19 @@ func allZero(value []byte) bool {
 	return true
 }
 
-func syncDirectory(directory *os.File) error { return unix.Fsync(int(directory.Fd())) }
-
-func availableBytes(directory *os.File) (int64, error) {
-	var stats unix.Statfs_t
-	if err := unix.Fstatfs(int(directory.Fd()), &stats); err != nil {
-		return 0, err
+func syncDirectory(directory *os.File) error {
+	fd, err := fileDescriptor(directory)
+	if err != nil {
+		return err
 	}
-	blockSize := int64(stats.Bsize)
-	availableBlocks := int64(stats.Bavail)
-	if blockSize <= 0 || availableBlocks < 0 || availableBlocks > (1<<63-1)/blockSize {
+	return unix.Fsync(fd)
+}
+
+func availableCapacity(blockSize, availableBlocks uint64) (int64, error) {
+	if blockSize == 0 || blockSize > 1<<63-1 || availableBlocks > (1<<63-1)/blockSize {
 		return 0, errors.New("local artifact filesystem capacity is invalid")
 	}
-	return availableBlocks * blockSize, nil
+	return int64(availableBlocks * blockSize), nil // #nosec G115 -- product is bounded by MaxInt64 above.
 }
 
 func addInt64(left, right int64) (int64, bool) {
@@ -1116,6 +1302,71 @@ func (reader *contextReader) Read(value []byte) (int, error) {
 }
 
 func safeRootStat(stat *unix.Stat_t, config Config) bool {
-	return stat != nil && stat.Mode&unix.S_IFMT == unix.S_IFDIR && uint32(stat.Mode&07777) == rootMode &&
+	return stat != nil && stat.Mode&unix.S_IFMT == unix.S_IFDIR && modeBits(stat.Mode&07777) == rootMode &&
 		int(stat.Uid) == config.ExpectedUID && int(stat.Gid) == config.ExpectedGID
+}
+
+func fileDescriptor(file *os.File) (int, error) {
+	if file == nil {
+		return 0, errors.New("local artifact descriptor is closed")
+	}
+	value := file.Fd()
+	if value > ^uintptr(0)>>1 {
+		return 0, errors.New("local artifact descriptor exceeds the platform range")
+	}
+	return int(value), nil // #nosec G115 -- value is checked against the maximum int above.
+}
+
+func fileFromDescriptor(fd int, name string) (*os.File, error) {
+	if fd < 0 {
+		return nil, errors.New("local artifact descriptor is invalid")
+	}
+	file := os.NewFile(uintptr(fd), name) // #nosec G115 -- non-negative int always fits uintptr.
+	if file == nil {
+		return nil, errors.Join(errors.New("create local artifact file from descriptor"), unix.Close(fd))
+	}
+	return file, nil
+}
+
+func linkAt(link func(int, string, int, string, int) error, oldRoot *os.File, oldName string, newRoot *os.File, newName string) error {
+	oldFD, err := fileDescriptor(oldRoot)
+	if err != nil {
+		return err
+	}
+	newFD, err := fileDescriptor(newRoot)
+	if err != nil {
+		return err
+	}
+	return link(oldFD, oldName, newFD, newName, 0)
+}
+
+func unlinkAt(unlink func(int, string, int) error, root *os.File, name string) error {
+	fd, err := fileDescriptor(root)
+	if err != nil {
+		return err
+	}
+	return unlink(fd, name, 0)
+}
+
+func flock(file *os.File, operation int) error {
+	fd, err := fileDescriptor(file)
+	if err != nil {
+		return err
+	}
+	return unix.Flock(fd, operation)
+}
+
+func linkCount[T ~uint16 | ~uint32 | ~uint64](value T) uint64 {
+	return uint64(value)
+}
+
+func modeBits[T ~uint16 | ~uint32](value T) uint32 {
+	return uint32(value)
+}
+
+func errorContext(message string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", message, err)
 }

@@ -1,3 +1,5 @@
+//go:build linux || darwin
+
 // SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 // SPDX-License-Identifier: Apache-2.0
 
@@ -23,25 +25,29 @@ const (
 // Config is deliberately explicit. Local storage is never selected as a
 // fallback when another backend is incomplete or unavailable.
 type Config struct {
-	ExplicitlyEnabled      bool
-	ArtifactRoot           string
-	StagingRoot            string
-	InstanceID             string
-	ExpectedUID            int
-	ExpectedGID            int
-	ServingReplicas        int
-	AccessMode             string
-	DeploymentStrategy     string
-	EncryptionAcknowledged bool
-	SnapshotPolicy         string
-	MaximumObjectBytes     int64
-	MinimumFreeBytes       int64
-	Now                    func() time.Time
+	ExplicitlyEnabled       bool
+	PrivateRootAcknowledged bool
+	ArtifactRoot            string
+	StagingRoot             string
+	InstanceID              string
+	ExpectedUID             int
+	ExpectedGID             int
+	ServingReplicas         int
+	AccessMode              string
+	DeploymentStrategy      string
+	EncryptionAcknowledged  bool
+	SnapshotPolicy          string
+	MaximumObjectBytes      int64
+	MinimumFreeBytes        int64
+	Now                     func() time.Time
 }
 
 func (config Config) validate() (Config, error) {
 	if !config.ExplicitlyEnabled {
 		return config, errors.New("local artifact storage requires an explicit enable switch")
+	}
+	if !config.PrivateRootAcknowledged {
+		return config, errors.New("local artifact storage roots must be private to the serving process")
 	}
 	if !cleanAbsoluteRoot(config.ArtifactRoot) || !cleanAbsoluteRoot(config.StagingRoot) ||
 		config.ArtifactRoot == config.StagingRoot || pathContains(config.ArtifactRoot, config.StagingRoot) ||

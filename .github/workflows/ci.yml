@@ -49,6 +49,8 @@ jobs:
         run: make controller-gen kustomize golangci-lint
       - name: Lint
         run: make lint
+      - name: Cross-compile supported Unix targets
+        run: make cross-compile
 
   unit-tests-controller:
     name: Controller Unit Tests

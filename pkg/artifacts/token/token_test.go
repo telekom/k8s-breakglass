@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -101,6 +102,23 @@ func TestVerifyUsesInclusiveTimeBoundaries(t *testing.T) {
 	}
 	if _, err := keyring.Verify(encoded, claims.ExpiresAt); !errors.Is(err, ErrExpired) {
 		t.Fatalf("at expiry error = %v", err)
+	}
+}
+
+func TestSignRejectsSubsecondTokenTimes(t *testing.T) {
+	keyring := testKeyring(t, "active", []Key{{ID: "active", Secret: bytesOf('k', minimumKeyBytes)}})
+	for name, mutate := range map[string]func(*Claims){
+		"issued at":  func(claims *Claims) { claims.IssuedAt = claims.IssuedAt.Add(time.Nanosecond) },
+		"not before": func(claims *Claims) { claims.NotBefore = claims.NotBefore.Add(time.Nanosecond) },
+		"expires at": func(claims *Claims) { claims.ExpiresAt = claims.ExpiresAt.Add(time.Nanosecond) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			claims := testClaims(t)
+			mutate(&claims)
+			if _, err := keyring.Sign(claims); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("Sign() error = %v, want ErrInvalid", err)
+			}
+		})
 	}
 }
 
@@ -203,7 +221,7 @@ func testClaims(t *testing.T) Claims {
 	issued := time.Date(2026, time.August, 28, 10, 0, 0, 0, time.UTC)
 	claims := Claims{
 		JTI: jti, IssuedAt: issued, NotBefore: issued.Add(time.Second), ExpiresAt: issued.Add(5 * time.Minute),
-		Method: "PUT", SessionNamespace: "support", SessionName: "session-one",
+		Method: http.MethodPut, SessionNamespace: "support", SessionName: "session-one",
 		SessionUID: "11111111-2222-3333-4444-555555555555", ArtifactID: "dsa-0123456789abcdef01234567",
 		ArtifactPlanDigest: strings.Repeat("a", sha256.Size*2), RuntimeBindingDigest: strings.Repeat("b", sha256.Size*2),
 		OperationEpoch: 1, TargetIdentityDigest: strings.Repeat("c", sha256.Size*2),

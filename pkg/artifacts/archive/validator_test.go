@@ -160,6 +160,56 @@ func TestValidateRejectsManifestAmbiguityAndBindingForgery(t *testing.T) {
 	}
 }
 
+func TestValidateRequiresFieldsThatCanBeZeroOrNull(t *testing.T) {
+	expected := summaryExpected()
+	valid, _ := archiveFixture(t, expected, summaryEntries(), nil)
+	if _, err := Validate(context.Background(), bytes.NewReader(valid), int64(len(valid)), expected, Limits{}); err != nil {
+		t.Fatalf("Validate() rejected an explicit null node: %v", err)
+	}
+
+	for _, field := range []string{"exit_code", "file_count", "bytes", "node"} {
+		t.Run(field, func(t *testing.T) {
+			withoutField := func(value []byte) []byte {
+				var fields map[string]json.RawMessage
+				if err := json.Unmarshal(value, &fields); err != nil {
+					t.Fatal(err)
+				}
+				delete(fields, field)
+				result, err := json.Marshal(fields)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return result
+			}
+			compressed, _ := archiveFixture(t, expected, summaryEntries(), withoutField)
+			if _, err := Validate(context.Background(), bytes.NewReader(compressed), int64(len(compressed)), expected, Limits{}); err == nil {
+				t.Fatalf("Validate() accepted a manifest without %s", field)
+			}
+		})
+	}
+
+	for _, field := range []string{"exit_code", "file_count", "bytes"} {
+		t.Run(field+" null", func(t *testing.T) {
+			withNull := func(value []byte) []byte {
+				var fields map[string]json.RawMessage
+				if err := json.Unmarshal(value, &fields); err != nil {
+					t.Fatal(err)
+				}
+				fields[field] = json.RawMessage("null")
+				result, err := json.Marshal(fields)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return result
+			}
+			compressed, _ := archiveFixture(t, expected, summaryEntries(), withNull)
+			if _, err := Validate(context.Background(), bytes.NewReader(compressed), int64(len(compressed)), expected, Limits{}); err == nil {
+				t.Fatalf("Validate() accepted null %s", field)
+			}
+		})
+	}
+}
+
 func TestValidateRejectsChecksumCountsAndHeaderTampering(t *testing.T) {
 	expected := summaryExpected()
 	compressed, _ := archiveFixture(t, expected, summaryEntries(), nil)
@@ -211,6 +261,33 @@ func TestValidateEnforcesIndependentBoundsAndContext(t *testing.T) {
 	cancel()
 	if _, err := Validate(cancelled, bytes.NewReader(compressed), int64(len(compressed)), expected, Limits{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Validate() cancellation error = %v", err)
+	}
+}
+
+func TestValidateKeepsCancellationIdentityThroughValidation(t *testing.T) {
+	expected := summaryExpected()
+	compressed, _ := archiveFixture(t, expected, summaryEntries(), nil)
+	tests := []struct {
+		name       string
+		cancelSeek int
+		cancelRead int
+	}{
+		{name: "measure", cancelSeek: 1},
+		{name: "compressed digest", cancelRead: 1},
+		{name: "archive stream", cancelRead: 2},
+		{name: "final rewind", cancelSeek: 4},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			staged := &cancelDuringValidation{
+				ReadSeeker: bytes.NewReader(compressed), cancel: cancel,
+				cancelSeek: test.cancelSeek, cancelRead: test.cancelRead,
+			}
+			if _, err := Validate(ctx, staged, int64(len(compressed)), expected, Limits{}); !errors.Is(err, context.Canceled) {
+				t.Fatalf("Validate() cancellation error = %v", err)
+			}
+		})
 	}
 }
 
@@ -440,8 +517,8 @@ func cloneString(value *string) *string {
 	if value == nil {
 		return nil
 	}
-	copy := *value
-	return &copy
+	cloned := *value
+	return &cloned
 }
 
 func mustDescriptor(t *testing.T, expected Expected) descriptor {
@@ -451,4 +528,29 @@ func mustDescriptor(t *testing.T, expected Expected) descriptor {
 		t.Fatal(err)
 	}
 	return descriptor
+}
+
+type cancelDuringValidation struct {
+	io.ReadSeeker
+	cancel     context.CancelFunc
+	cancelSeek int
+	cancelRead int
+	seeks      int
+	reads      int
+}
+
+func (staged *cancelDuringValidation) Seek(offset int64, whence int) (int64, error) {
+	staged.seeks++
+	if staged.seeks == staged.cancelSeek {
+		staged.cancel()
+	}
+	return staged.ReadSeeker.Seek(offset, whence)
+}
+
+func (staged *cancelDuringValidation) Read(value []byte) (int, error) {
+	staged.reads++
+	if staged.reads == staged.cancelRead {
+		staged.cancel()
+	}
+	return staged.ReadSeeker.Read(value)
 }

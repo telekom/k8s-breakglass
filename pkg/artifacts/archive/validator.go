@@ -49,10 +49,13 @@ type Result struct {
 // Validate consumes one seekable staged archive. It verifies the exact
 // compressed size and digest, one gzip member, exact tar framing, allowed raw
 // records, recipe descriptor, runtime binding, and collector payload digest.
-func Validate(ctx context.Context, staged io.ReadSeeker, compressedSize int64, expected Expected, limits Limits) (Result, error) {
-	var result Result
+func Validate(ctx context.Context, staged io.ReadSeeker, compressedSize int64, expected Expected, limits Limits) (result Result, resultErr error) {
 	if ctx == nil || staged == nil {
 		return result, errors.New("artifact validation context and staged archive are required")
+	}
+	defer func() { resultErr = errors.Join(resultErr, contextError(ctx)) }()
+	if err := contextError(ctx); err != nil {
+		return result, err
 	}
 	descriptor, err := descriptorFor(expected.Recipe, expected.RecipeVersion)
 	if err != nil {
@@ -83,6 +86,9 @@ func Validate(ctx context.Context, staged io.ReadSeeker, compressedSize int64, e
 		}
 		return result, err
 	}
+	if err := contextError(ctx); err != nil {
+		return result, err
+	}
 	result.CompressedBytes = compressedSize
 	result.CompressedSHA256 = hex.EncodeToString(compressedHash.Sum(nil))
 	if _, err := staged.Seek(0, io.SeekStart); err != nil {
@@ -94,21 +100,28 @@ func Validate(ctx context.Context, staged io.ReadSeeker, compressedSize int64, e
 	}
 	streamResult.CompressedBytes = result.CompressedBytes
 	streamResult.CompressedSHA256 = result.CompressedSHA256
+	if err := contextError(ctx); err != nil {
+		return Result{}, err
+	}
 	if _, err := staged.Seek(0, io.SeekStart); err != nil {
 		return Result{}, fmt.Errorf("rewind validated artifact: %w", err)
 	}
 	return streamResult, nil
 }
 
-func validateStream(ctx context.Context, staged io.Reader, compressedSize int64, expected Expected, descriptor descriptor, limits Limits) (Result, error) {
-	var result Result
+func validateStream(ctx context.Context, staged io.Reader, compressedSize int64, expected Expected, descriptor descriptor, limits Limits) (result Result, resultErr error) {
 	compressed := &contextLimitedReader{ctx: ctx, reader: staged, remaining: compressedSize}
 	reader, err := gzip.NewReader(compressed)
 	if err != nil {
+		if contextErr := contextError(ctx); contextErr != nil {
+			return result, contextErr
+		}
 		return result, errors.New("artifact is not a valid gzip stream")
 	}
 	reader.Multistream(false)
-	defer func() { _ = reader.Close() }()
+	defer func() {
+		resultErr = errors.Join(resultErr, contextError(ctx), errorContext("close artifact gzip reader", reader.Close()))
+	}()
 
 	payloadHash := sha256.New()
 	seen := make(map[string]bool)
@@ -143,7 +156,7 @@ func validateStream(ctx context.Context, staged io.Reader, compressedSize int64,
 			_, _ = payloadHash.Write(trailer)
 			var extra [1]byte
 			n, readErr := reader.Read(extra[:])
-			if n != 0 || readErr != io.EOF || compressed.remaining != 0 {
+			if n != 0 || !errors.Is(readErr, io.EOF) || compressed.remaining != 0 {
 				return result, errors.New("artifact has trailing compressed or tar content")
 			}
 			break
@@ -399,7 +412,7 @@ func (reader *contextLimitedReader) Read(buffer []byte) (int, error) {
 		return 0, io.EOF
 	}
 	if int64(len(buffer)) > reader.remaining {
-		buffer = buffer[:reader.remaining]
+		buffer = buffer[:int(reader.remaining)]
 	}
 	read, err := reader.reader.Read(buffer)
 	reader.remaining -= int64(read)
@@ -435,9 +448,9 @@ func copyExact(ctx context.Context, writer io.Writer, reader io.Reader, size int
 		if err := contextError(ctx); err != nil {
 			return copied, err
 		}
-		want := int64(len(buffer))
-		if remaining := size - copied; remaining < want {
-			want = remaining
+		want := len(buffer)
+		if remaining := size - copied; remaining < int64(want) {
+			want = int(remaining)
 		}
 		read, err := reader.Read(buffer[:want])
 		if read > 0 {
@@ -478,6 +491,13 @@ func contextError(ctx context.Context) error {
 	default:
 		return nil
 	}
+}
+
+func errorContext(message string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", message, err)
 }
 
 func maxInt() int {

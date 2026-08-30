@@ -1,3 +1,5 @@
+//go:build linux || darwin
+
 // SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 // SPDX-License-Identifier: Apache-2.0
 
@@ -30,6 +32,11 @@ func TestLocalStoreRequiresExplicitProvisionedTopology(t *testing.T) {
 	}
 	if _, err := Open(config); err == nil {
 		t.Fatal("Open() provisioned a missing sentinel implicitly")
+	}
+	untrusted := config
+	untrusted.PrivateRootAcknowledged = false
+	if _, err := Open(untrusted); err == nil {
+		t.Fatal("Open() accepted roots without the private-root trust boundary")
 	}
 	if err := ProvisionSentinels(config); err != nil {
 		t.Fatalf("ProvisionSentinels() error = %v", err)
@@ -238,6 +245,29 @@ func TestLocalStoreRecoversOnlyRecognizedStaleNames(t *testing.T) {
 	}
 }
 
+func TestLocalStoreStartupRejectsAndPreservesDeletionQuarantine(t *testing.T) {
+	config := localTestConfig(t)
+	if err := ProvisionSentinels(config); err != nil {
+		t.Fatal(err)
+	}
+	quarantinePath := filepath.Join(config.ArtifactRoot, deletionPrefix+strings.Repeat("d", 32))
+	quarantineContent := []byte("unfinished deletion")
+	if err := os.WriteFile(quarantinePath, quarantineContent, objectMode); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Open(config); !errors.Is(err, artifactstorage.ErrAmbiguous) {
+		t.Fatalf("Open() deletion quarantine error = %v", err)
+	}
+	actual, err := os.ReadFile(quarantinePath)
+	if err != nil {
+		t.Fatalf("Open() removed the deletion quarantine: %v", err)
+	}
+	if !bytes.Equal(actual, quarantineContent) {
+		t.Fatalf("Open() changed the deletion quarantine: got %q, want %q", actual, quarantineContent)
+	}
+}
+
 func TestLocalStoreDetectsContentAndRootModeDrift(t *testing.T) {
 	store, config := openLocalTestStore(t)
 	content := []byte("immutable")
@@ -273,6 +303,9 @@ func TestLocalStoreConcurrentPublicationIsAtomicAndCreateOnly(t *testing.T) {
 	content := bytes.Repeat([]byte("concurrent"), 4096)
 	object := testObject(content)
 	start := make(chan struct{})
+	releaseReaders := make(chan struct{})
+	readerStarted := []chan struct{}{make(chan struct{}), make(chan struct{})}
+	metadataByAttempt := make([]artifactstorage.Metadata, 2)
 	errorsByAttempt := make([]error, 2)
 	var wait sync.WaitGroup
 	for attempt := range errorsByAttempt {
@@ -280,18 +313,27 @@ func TestLocalStoreConcurrentPublicationIsAtomicAndCreateOnly(t *testing.T) {
 		go func() {
 			defer wait.Done()
 			<-start
-			_, errorsByAttempt[attempt] = store.PutIfAbsent(context.Background(), object, bytes.NewReader(content))
+			metadataByAttempt[attempt], errorsByAttempt[attempt] = store.PutIfAbsent(context.Background(), object, &blockingReader{
+				Reader: bytes.NewReader(content), started: readerStarted[attempt], release: releaseReaders,
+			})
 		}()
 	}
 	close(start)
+	for _, started := range readerStarted {
+		<-started
+	}
+	close(releaseReaders)
 	wait.Wait()
 	var accepted, collided int
-	for _, err := range errorsByAttempt {
+	var acceptedMetadata, collidedMetadata artifactstorage.Metadata
+	for attempt, err := range errorsByAttempt {
 		switch {
 		case err == nil:
 			accepted++
+			acceptedMetadata = metadataByAttempt[attempt]
 		case errors.Is(err, artifactstorage.ErrAlreadyExists):
 			collided++
+			collidedMetadata = metadataByAttempt[attempt]
 		default:
 			t.Fatalf("concurrent PutIfAbsent() error = %v", err)
 		}
@@ -299,9 +341,237 @@ func TestLocalStoreConcurrentPublicationIsAtomicAndCreateOnly(t *testing.T) {
 	if accepted != 1 || collided != 1 {
 		t.Fatalf("concurrent outcomes: accepted=%d collided=%d", accepted, collided)
 	}
+	if !metadataEqual(collidedMetadata, acceptedMetadata) {
+		t.Fatalf("collision metadata = %#v, want %#v", collidedMetadata, acceptedMetadata)
+	}
 	inventory, err := store.Inventory(context.Background(), object)
 	if err != nil || len(inventory) != 1 {
 		t.Fatalf("Inventory() after concurrent publication = %#v, error=%v", inventory, err)
+	}
+}
+
+func TestLocalStoreConcurrentConflictsKeepOneWinner(t *testing.T) {
+	content := []byte("same-size-content-a")
+	otherContent := []byte("same-size-content-b")
+	if len(content) != len(otherContent) {
+		t.Fatal("test content sizes differ")
+	}
+
+	tests := []struct {
+		name    string
+		objects [2]artifactstorage.Object
+		content [2][]byte
+	}{
+		{
+			name: "different content",
+			objects: [2]artifactstorage.Object{
+				testObjectWithKey(content, "shared-content-key"),
+				testObjectWithKey(otherContent, "shared-content-key"),
+			},
+			content: [2][]byte{content, otherContent},
+		},
+		{
+			name: "different binding",
+			objects: func() [2]artifactstorage.Object {
+				first := testObjectWithKey(content, "shared-binding-key")
+				second := first
+				digest := sha256.Sum256([]byte("other-runtime-binding"))
+				second.RuntimeBindingDigest = hex.EncodeToString(digest[:])
+				return [2]artifactstorage.Object{first, second}
+			}(),
+			content: [2][]byte{content, content},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store, _ := openLocalTestStore(t)
+			defer store.Close()
+			releaseReaders := make(chan struct{})
+			readerStarted := []chan struct{}{make(chan struct{}), make(chan struct{})}
+			metadataByAttempt := make([]artifactstorage.Metadata, 2)
+			errorsByAttempt := make([]error, 2)
+			var wait sync.WaitGroup
+			for attempt := range errorsByAttempt {
+				wait.Add(1)
+				go func() {
+					defer wait.Done()
+					metadataByAttempt[attempt], errorsByAttempt[attempt] = store.PutIfAbsent(
+						context.Background(), test.objects[attempt], &blockingReader{
+							Reader:  bytes.NewReader(test.content[attempt]),
+							started: readerStarted[attempt], release: releaseReaders,
+						},
+					)
+				}()
+			}
+			for _, started := range readerStarted {
+				<-started
+			}
+			close(releaseReaders)
+			wait.Wait()
+
+			winner := -1
+			var accepted, conflicted int
+			for attempt, err := range errorsByAttempt {
+				switch {
+				case err == nil:
+					accepted++
+					winner = attempt
+				case errors.Is(err, artifactstorage.ErrConflict):
+					conflicted++
+				default:
+					t.Fatalf("PutIfAbsent() error = %v", err)
+				}
+			}
+			if accepted != 1 || conflicted != 1 {
+				t.Fatalf("outcomes: accepted=%d conflicted=%d", accepted, conflicted)
+			}
+			reader, actual, err := store.OpenVersion(context.Background(), test.objects[winner], metadataByAttempt[winner])
+			if err != nil {
+				t.Fatalf("OpenVersion() error = %v", err)
+			}
+			stored, readErr := io.ReadAll(reader)
+			closeErr := reader.Close()
+			if readErr != nil || closeErr != nil || !bytes.Equal(stored, test.content[winner]) ||
+				!metadataEqual(actual, metadataByAttempt[winner]) {
+				t.Fatalf("winner was not stored exactly: bytes=%q metadata=%#v read error=%v close error=%v",
+					stored, actual, readErr, closeErr)
+			}
+		})
+	}
+}
+
+func TestLocalStorePutRollbackBlocksOperationsAndFailsClosed(t *testing.T) {
+	store, config := openLocalTestStore(t)
+	t.Cleanup(func() { _ = store.Close() })
+	content := []byte("failed publication stays hidden")
+	object := testObject(content)
+	metadata := metadataFor(store.instanceID, object, store.config.Now().UTC())
+	objectPath := filepath.Join(config.ArtifactRoot, objectName(object.Key))
+	extraLink := filepath.Join(filepath.Dir(config.ArtifactRoot), "failed-publication-link")
+
+	defaultOperations := store.operations
+	linkResult := make(chan error, 1)
+	store.operations.link = func(oldDirectory int, oldName string, newDirectory int, newName string, flags int) error {
+		if err := defaultOperations.link(oldDirectory, oldName, newDirectory, newName, flags); err != nil {
+			return err
+		}
+		linkResult <- os.Link(objectPath, extraLink)
+		return nil
+	}
+	publicationCleanupStarted := make(chan struct{})
+	releasePublicationCleanup := make(chan struct{})
+	stagingCleanupStarted := make(chan struct{})
+	releaseStagingCleanup := make(chan struct{})
+	store.operations.beforeIdentityUnlink = func(root *os.File, name string) {
+		switch {
+		case root == store.artifactRoot && name == objectName(object.Key):
+			close(publicationCleanupStarted)
+			<-releasePublicationCleanup
+		case root == store.stagingRoot && validTemporaryName(name):
+			close(stagingCleanupStarted)
+			<-releaseStagingCleanup
+		}
+	}
+
+	putResult := make(chan error, 1)
+	go func() {
+		_, err := store.PutIfAbsent(context.Background(), object, bytes.NewReader(content))
+		putResult <- err
+	}()
+	if err := <-linkResult; err != nil {
+		t.Fatalf("create extra publication link: %v", err)
+	}
+	<-publicationCleanupStarted
+	if store.mutationMu.TryRLock() {
+		store.mutationMu.RUnlock()
+		t.Fatal("read lock was available during publication cleanup")
+	}
+	if store.mutationMu.TryLock() {
+		store.mutationMu.Unlock()
+		t.Fatal("write lock was available during publication cleanup")
+	}
+
+	type operationResult struct {
+		name string
+		err  error
+	}
+	operations := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "inventory",
+			run: func() error {
+				_, err := store.Inventory(context.Background(), object)
+				return err
+			},
+		},
+		{
+			name: "open",
+			run: func() error {
+				reader, _, err := store.OpenVersion(context.Background(), object, metadata)
+				if reader != nil {
+					return errors.Join(errors.New("OpenVersion() returned a reader"), reader.Close())
+				}
+				return err
+			},
+		},
+		{
+			name: "stat",
+			run: func() error {
+				_, err := store.StatVersion(context.Background(), object, metadata)
+				return err
+			},
+		},
+		{
+			name: "delete",
+			run: func() error {
+				return store.DeleteVersion(context.Background(), object, versionFromMetadata(metadata))
+			},
+		},
+		{
+			name: "retry put if absent",
+			run: func() error {
+				_, err := store.PutIfAbsent(context.Background(), object, bytes.NewReader(content))
+				return err
+			},
+		},
+	}
+	started := make(chan struct{}, len(operations))
+	results := make(chan operationResult, len(operations))
+	for _, operation := range operations {
+		go func() {
+			started <- struct{}{}
+			results <- operationResult{name: operation.name, err: operation.run()}
+		}()
+	}
+	for range operations {
+		<-started
+	}
+	select {
+	case result := <-results:
+		t.Fatalf("%s returned during publication cleanup: %v", result.name, result.err)
+	default:
+	}
+
+	close(releasePublicationCleanup)
+	<-stagingCleanupStarted
+	select {
+	case result := <-results:
+		t.Fatalf("%s returned during staging cleanup: %v", result.name, result.err)
+	default:
+	}
+	close(releaseStagingCleanup)
+
+	if err := <-putResult; !errors.Is(err, artifactstorage.ErrAmbiguous) {
+		t.Fatalf("PutIfAbsent() cleanup error = %v", err)
+	}
+	for range operations {
+		result := <-results
+		if !errors.Is(result.err, artifactstorage.ErrAmbiguous) {
+			t.Errorf("%s after cleanup error = %v", result.name, result.err)
+		}
 	}
 }
 
@@ -492,8 +762,238 @@ func TestLocalStoreDeleteRefusesNewUnrecognizedHardlink(t *testing.T) {
 	}
 	for _, retained := range []string{objectPath, extraPath} {
 		if _, statErr := os.Lstat(retained); statErr != nil {
-			t.Fatalf("DeleteVersion() removed hardlinked artifact %s: %v", retained, statErr)
+			t.Fatalf("DeleteVersion() removed hard-link artifact %s: %v", retained, statErr)
 		}
+	}
+}
+
+func TestLocalStoreDeleteRefusesPostValidationSubstitution(t *testing.T) {
+	store, config := openLocalTestStore(t)
+	defer store.Close()
+	content := []byte("post-validation deletion identity")
+	object := testObject(content)
+	metadata, err := store.PutIfAbsent(context.Background(), object, bytes.NewReader(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectPath := filepath.Join(config.ArtifactRoot, objectName(object.Key))
+	savedPath := objectPath + ".validated"
+	var hookErr error
+	var swap sync.Once
+	store.operations.afterIdentityCheck = func(root *os.File, name string) {
+		if root != store.artifactRoot || name != objectName(object.Key) {
+			return
+		}
+		swap.Do(func() {
+			if err := os.Rename(objectPath, savedPath); err != nil {
+				hookErr = err
+				return
+			}
+			hookErr = os.WriteFile(objectPath, []byte("replacement"), objectMode)
+		})
+	}
+	err = store.DeleteVersion(context.Background(), object, versionFromMetadata(metadata))
+	if hookErr != nil {
+		t.Fatalf("post-validation substitution hook error = %v", hookErr)
+	}
+	if !errors.Is(err, artifactstorage.ErrAmbiguous) {
+		t.Fatalf("DeleteVersion() post-validation substitution error = %v", err)
+	}
+	for _, retained := range []string{objectPath, savedPath} {
+		if _, statErr := os.Lstat(retained); statErr != nil {
+			t.Fatalf("DeleteVersion() removed post-validation path %s: %v", retained, statErr)
+		}
+	}
+	actual, readErr := os.ReadFile(objectPath)
+	if readErr != nil || string(actual) != "replacement" {
+		t.Fatalf("DeleteVersion() did not restore replacement: bytes=%q error=%v", actual, readErr)
+	}
+}
+
+func TestLocalStoreDeleteQuarantineMovePreservesDestinationCollision(t *testing.T) {
+	store, config := openLocalTestStore(t)
+	defer store.Close()
+	content := []byte("quarantine move collision")
+	object := testObject(content)
+	metadata, err := store.PutIfAbsent(context.Background(), object, bytes.NewReader(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectPath := filepath.Join(config.ArtifactRoot, objectName(object.Key))
+	original, err := os.ReadFile(objectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collisionContent := []byte("existing quarantine destination")
+	defaultRename := store.operations.renameNoReplace
+	var collisionPath string
+	store.operations.renameNoReplace = func(oldRoot *os.File, oldName string, newRoot *os.File, newName string) error {
+		collisionPath = filepath.Join(config.ArtifactRoot, newName)
+		if err := os.WriteFile(collisionPath, collisionContent, objectMode); err != nil {
+			return err
+		}
+		return defaultRename(oldRoot, oldName, newRoot, newName)
+	}
+
+	err = store.DeleteVersion(context.Background(), object, versionFromMetadata(metadata))
+	if !errors.Is(err, unix.EEXIST) {
+		t.Fatalf("DeleteVersion() quarantine collision error = %v", err)
+	}
+	assertFileContent(t, objectPath, original)
+	assertFileContent(t, collisionPath, collisionContent)
+}
+
+func TestLocalStoreDeleteRestorePreservesDestinationCollision(t *testing.T) {
+	store, config := openLocalTestStore(t)
+	defer store.Close()
+	content := []byte("restore collision")
+	object := testObject(content)
+	metadata, err := store.PutIfAbsent(context.Background(), object, bytes.NewReader(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectPath := filepath.Join(config.ArtifactRoot, objectName(object.Key))
+	artifactContent, err := os.ReadFile(objectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collisionContent := []byte("existing restored destination")
+	unlinkFailure := errors.New("injected quarantine unlink failure")
+	store.operations.unlink = func(int, string, int) error { return unlinkFailure }
+	defaultRename := store.operations.renameNoReplace
+	renames := 0
+	var quarantinePath string
+	store.operations.renameNoReplace = func(oldRoot *os.File, oldName string, newRoot *os.File, newName string) error {
+		renames++
+		if renames == 1 {
+			quarantinePath = filepath.Join(config.ArtifactRoot, newName)
+			return defaultRename(oldRoot, oldName, newRoot, newName)
+		}
+		if err := os.WriteFile(objectPath, collisionContent, objectMode); err != nil {
+			return err
+		}
+		return defaultRename(oldRoot, oldName, newRoot, newName)
+	}
+
+	err = store.DeleteVersion(context.Background(), object, versionFromMetadata(metadata))
+	if !errors.Is(err, unlinkFailure) || !errors.Is(err, unix.EEXIST) {
+		t.Fatalf("DeleteVersion() restoration collision error = %v", err)
+	}
+	if renames != 2 {
+		t.Fatalf("DeleteVersion() rename calls = %d, want 2", renames)
+	}
+	assertFileContent(t, objectPath, collisionContent)
+	assertFileContent(t, quarantinePath, artifactContent)
+}
+
+func TestLocalStoreFailsClosedAfterDeleteRollbackFailure(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*Store, artifactstorage.Object, artifactstorage.Metadata, []byte) error
+	}{
+		{
+			name: "inventory",
+			run: func(store *Store, object artifactstorage.Object, _ artifactstorage.Metadata, _ []byte) error {
+				_, err := store.Inventory(context.Background(), object)
+				return err
+			},
+		},
+		{
+			name: "put if absent",
+			run: func(store *Store, object artifactstorage.Object, _ artifactstorage.Metadata, content []byte) error {
+				_, err := store.PutIfAbsent(context.Background(), object, bytes.NewReader(content))
+				return err
+			},
+		},
+		{
+			name: "get through open version",
+			run: func(store *Store, object artifactstorage.Object, metadata artifactstorage.Metadata, _ []byte) error {
+				reader, _, err := store.OpenVersion(context.Background(), object, metadata)
+				if reader != nil {
+					return errors.Join(errors.New("OpenVersion() returned a reader from an ambiguous store"), reader.Close())
+				}
+				return err
+			},
+		},
+		{
+			name: "get through stat version",
+			run: func(store *Store, object artifactstorage.Object, metadata artifactstorage.Metadata, _ []byte) error {
+				_, err := store.StatVersion(context.Background(), object, metadata)
+				return err
+			},
+		},
+		{
+			name: "delete",
+			run: func(store *Store, object artifactstorage.Object, metadata artifactstorage.Metadata, _ []byte) error {
+				return store.DeleteVersion(context.Background(), object, versionFromMetadata(metadata))
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store, config := openLocalTestStore(t)
+			t.Cleanup(func() { _ = store.Close() })
+			content := []byte("hidden after failed rollback")
+			object := testObject(content)
+			metadata, err := store.PutIfAbsent(context.Background(), object, bytes.NewReader(content))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			defaultOperations := store.operations
+			unlinkFailure := errors.New("injected quarantine unlink failure")
+			rollbackFailure := errors.New("injected quarantine rollback failure")
+			store.operations.unlink = func(int, string, int) error { return unlinkFailure }
+			renames := 0
+			var quarantinePath string
+			rollbackStarted := make(chan struct{})
+			releaseRollback := make(chan struct{})
+			store.operations.renameNoReplace = func(oldRoot *os.File, oldName string, newRoot *os.File, newName string) error {
+				renames++
+				if renames == 2 {
+					close(rollbackStarted)
+					<-releaseRollback
+					return rollbackFailure
+				}
+				quarantinePath = filepath.Join(config.ArtifactRoot, newName)
+				return defaultOperations.renameNoReplace(oldRoot, oldName, newRoot, newName)
+			}
+
+			deleteResult := make(chan error, 1)
+			go func() {
+				deleteResult <- store.DeleteVersion(context.Background(), object, versionFromMetadata(metadata))
+			}()
+			<-rollbackStarted
+			operationStarted := make(chan struct{})
+			operationResult := make(chan error, 1)
+			go func() {
+				close(operationStarted)
+				operationResult <- test.run(store, object, metadata, content)
+			}()
+			<-operationStarted
+			select {
+			case err := <-operationResult:
+				t.Fatalf("operation returned during rollback with error %v", err)
+			case <-time.After(20 * time.Millisecond):
+			}
+			close(releaseRollback)
+
+			err = <-deleteResult
+			if !errors.Is(err, unlinkFailure) || !errors.Is(err, rollbackFailure) || !errors.Is(err, artifactstorage.ErrAmbiguous) {
+				t.Fatalf("DeleteVersion() rollback error = %v", err)
+			}
+			if _, err := os.Lstat(filepath.Join(config.ArtifactRoot, objectName(object.Key))); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("normal object path after failed rollback error = %v", err)
+			}
+			if _, err := os.Lstat(quarantinePath); err != nil {
+				t.Fatalf("hidden quarantine after failed rollback error = %v", err)
+			}
+
+			if err := <-operationResult; !errors.Is(err, artifactstorage.ErrAmbiguous) {
+				t.Fatalf("operation after failed rollback error = %v", err)
+			}
+		})
 	}
 }
 
@@ -616,6 +1116,101 @@ func TestLocalStoreReconcilesAmbiguousPublicationAndDeletion(t *testing.T) {
 	}
 }
 
+func TestLocalStoreAggregatesMutationCleanupErrors(t *testing.T) {
+	t.Run("put rollback", func(t *testing.T) {
+		store, _ := openLocalTestStore(t)
+		defer store.Close()
+		content := []byte("rollback errors")
+		object := testObject(content)
+		object.SHA256 = strings.Repeat("f", sha256.Size*2)
+		unlinkFailure := errors.New("injected rollback unlink failure")
+		closeFailure := errors.New("injected staging close failure")
+		store.operations.unlink = func(int, string, int) error { return unlinkFailure }
+		store.operations.closeFile = func(file *os.File) error {
+			return errors.Join(file.Close(), closeFailure)
+		}
+		_, err := store.PutIfAbsent(context.Background(), object, bytes.NewReader(content))
+		if !errors.Is(err, artifactstorage.ErrConflict) || !errors.Is(err, unlinkFailure) || !errors.Is(err, closeFailure) {
+			t.Fatalf("PutIfAbsent() joined error = %v", err)
+		}
+	})
+
+	t.Run("put rollback sync", func(t *testing.T) {
+		store, _ := openLocalTestStore(t)
+		defer store.Close()
+		content := []byte("rollback sync")
+		object := testObject(content)
+		object.SHA256 = strings.Repeat("f", sha256.Size*2)
+		syncFailure := errors.New("injected staging sync failure")
+		defaults := store.operations
+		store.operations.syncDirectory = func(directory *os.File) error {
+			if directory == store.stagingRoot {
+				return syncFailure
+			}
+			return defaults.syncDirectory(directory)
+		}
+		_, err := store.PutIfAbsent(context.Background(), object, bytes.NewReader(content))
+		if !errors.Is(err, artifactstorage.ErrConflict) || !errors.Is(err, syncFailure) {
+			t.Fatalf("PutIfAbsent() joined error = %v", err)
+		}
+	})
+
+	t.Run("delete close and parent sync", func(t *testing.T) {
+		store, _ := openLocalTestStore(t)
+		defer store.Close()
+		content := []byte("delete cleanup errors")
+		object := testObject(content)
+		metadata, err := store.PutIfAbsent(context.Background(), object, bytes.NewReader(content))
+		if err != nil {
+			t.Fatal(err)
+		}
+		closeFailure := errors.New("injected delete close failure")
+		syncFailure := errors.New("injected delete parent sync failure")
+		store.operations.closeFile = func(file *os.File) error {
+			return errors.Join(file.Close(), closeFailure)
+		}
+		store.operations.syncDirectory = func(*os.File) error { return syncFailure }
+		err = store.DeleteVersion(context.Background(), object, versionFromMetadata(metadata))
+		if !errors.Is(err, closeFailure) || !errors.Is(err, syncFailure) {
+			t.Fatalf("DeleteVersion() joined error = %v", err)
+		}
+	})
+
+	t.Run("delete primary close and parent sync", func(t *testing.T) {
+		store, _ := openLocalTestStore(t)
+		defer store.Close()
+		content := []byte("delete joined primary error")
+		object := testObject(content)
+		metadata, err := store.PutIfAbsent(context.Background(), object, bytes.NewReader(content))
+		if err != nil {
+			t.Fatal(err)
+		}
+		unlinkFailure := errors.New("injected delete unlink failure")
+		closeFailure := errors.New("injected delete close failure")
+		syncFailure := errors.New("injected delete parent sync failure")
+		rollbackFailure := errors.New("injected delete rollback failure")
+		defaultRename := store.operations.renameNoReplace
+		store.operations.unlink = func(int, string, int) error { return unlinkFailure }
+		renames := 0
+		store.operations.renameNoReplace = func(oldRoot *os.File, oldName string, newRoot *os.File, newName string) error {
+			renames++
+			if renames == 2 {
+				return rollbackFailure
+			}
+			return defaultRename(oldRoot, oldName, newRoot, newName)
+		}
+		store.operations.closeFile = func(file *os.File) error {
+			return errors.Join(file.Close(), closeFailure)
+		}
+		store.operations.syncDirectory = func(*os.File) error { return syncFailure }
+		err = store.DeleteVersion(context.Background(), object, versionFromMetadata(metadata))
+		if !errors.Is(err, unlinkFailure) || !errors.Is(err, rollbackFailure) ||
+			!errors.Is(err, closeFailure) || !errors.Is(err, syncFailure) {
+			t.Fatalf("DeleteVersion() joined primary error = %v", err)
+		}
+	})
+}
+
 func TestLocalStoreCapacityFloorDeniesBeforePublication(t *testing.T) {
 	config := localTestConfig(t)
 	config.MaximumObjectBytes = 1024
@@ -678,7 +1273,7 @@ func TestLocalStoreRejectsUnrecognizedHardlinkAndWidenedMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.StatVersion(context.Background(), object, metadata); !errors.Is(err, artifactstorage.ErrConflict) {
-		t.Fatalf("hardlinked StatVersion() error = %v", err)
+		t.Fatalf("hard-link StatVersion() error = %v", err)
 	}
 	if err := os.Remove(extraLink); err != nil {
 		t.Fatal(err)
@@ -702,6 +1297,42 @@ func TestLocalConfigRejectsNestedRoots(t *testing.T) {
 	}
 }
 
+func TestDescriptorAndCapacityConversionsRejectInvalidValues(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "closed-descriptor-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fileDescriptor(file); err == nil {
+		t.Fatal("fileDescriptor() accepted a closed file")
+	}
+	if _, err := fileFromDescriptor(-1, "invalid"); err == nil {
+		t.Fatal("fileFromDescriptor() accepted a negative descriptor")
+	}
+
+	tests := []struct {
+		name      string
+		blockSize uint64
+		blocks    uint64
+		valid     bool
+	}{
+		{name: "valid", blockSize: 4096, blocks: 1024, valid: true},
+		{name: "zero block size", blocks: 1},
+		{name: "block size overflow", blockSize: 1 << 63, blocks: 1},
+		{name: "product overflow", blockSize: 2, blocks: 1 << 62},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := availableCapacity(test.blockSize, test.blocks)
+			if (err == nil) != test.valid {
+				t.Fatalf("availableCapacity() error = %v, valid want %t", err, test.valid)
+			}
+		})
+	}
+}
+
 func localTestConfig(t *testing.T) Config {
 	t.Helper()
 	parent := t.TempDir()
@@ -718,7 +1349,8 @@ func localTestConfig(t *testing.T) Config {
 		t.Fatal(err)
 	}
 	return Config{
-		ExplicitlyEnabled: true, ArtifactRoot: artifactRoot, StagingRoot: stagingRoot,
+		ExplicitlyEnabled: true, PrivateRootAcknowledged: true,
+		ArtifactRoot: artifactRoot, StagingRoot: stagingRoot,
 		InstanceID: "pvc-test-0123456789abcdef", ExpectedUID: os.Getuid(), ExpectedGID: os.Getgid(),
 		ServingReplicas: 1, AccessMode: AccessModeReadWriteOnce, DeploymentStrategy: StrategyRecreate,
 		EncryptionAcknowledged: true, SnapshotPolicy: SnapshotsProhibited,
@@ -751,6 +1383,17 @@ func testObjectWithKey(content []byte, key string) artifactstorage.Object {
 	return artifactstorage.Object{
 		Key: hex.EncodeToString(keyDigest[:]), RuntimeBindingDigest: hex.EncodeToString(bindingDigest[:]),
 		Size: int64(len(content)), SHA256: hex.EncodeToString(contentDigest[:]),
+	}
+}
+
+func assertFileContent(t *testing.T, path string, expected []byte) {
+	t.Helper()
+	actual, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read retained file %q: %v", path, err)
+	}
+	if !bytes.Equal(actual, expected) {
+		t.Fatalf("retained file %q = %q, want %q", path, actual, expected)
 	}
 }
 

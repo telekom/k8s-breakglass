@@ -4,8 +4,10 @@
 package archive
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -110,6 +112,9 @@ func parseAndValidateManifest(data []byte, expected Expected) (Manifest, descrip
 	if err := strictjson.Decode(data, MaxManifestBytes, &manifest); err != nil {
 		return manifest, descriptor{}, fmt.Errorf("artifact manifest is invalid: %w", err)
 	}
+	if err := validateManifestFieldPresence(data); err != nil {
+		return manifest, descriptor{}, err
+	}
 	descriptor, err := descriptorFor(expected.Recipe, expected.RecipeVersion)
 	if err != nil {
 		return manifest, descriptor, err
@@ -121,6 +126,23 @@ func parseAndValidateManifest(data []byte, expected Expected) (Manifest, descrip
 		return manifest, descriptor, errors.New("artifact manifest does not match the runtime binding")
 	}
 	return manifest, descriptor, nil
+}
+
+func validateManifestFieldPresence(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("inspect artifact manifest fields: %w", err)
+	}
+	if _, found := fields["node"]; !found {
+		return errors.New("artifact manifest is missing required fields")
+	}
+	for _, name := range []string{"file_count", "bytes", "exit_code"} {
+		value, found := fields[name]
+		if !found || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return errors.New("artifact manifest is missing required fields")
+		}
+	}
+	return nil
 }
 
 func validateManifestContract(manifest Manifest, descriptor descriptor) error {

@@ -282,7 +282,8 @@ func (keyring *Keyring) validateClaims(claims Claims) error {
 	notBefore := claims.NotBefore.UTC()
 	expiresAt := claims.ExpiresAt.UTC()
 	if issuedAt.IsZero() || notBefore.IsZero() || expiresAt.IsZero() ||
-		issuedAt.Unix() > notBefore.Unix() || notBefore.Unix() >= expiresAt.Unix() ||
+		issuedAt.Nanosecond() != 0 || notBefore.Nanosecond() != 0 || expiresAt.Nanosecond() != 0 ||
+		issuedAt.After(notBefore) || !notBefore.Before(expiresAt) ||
 		expiresAt.Sub(issuedAt) > keyring.limits.MaxTTL {
 		return ErrInvalid
 	}
