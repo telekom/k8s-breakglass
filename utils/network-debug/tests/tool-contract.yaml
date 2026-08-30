@@ -19,22 +19,35 @@ checks:
     operation: fixture-dns-and-http-plus-local-tls
     tools: [dig, host, nslookup, curl]
   - id: packet-capture
-    operation: capture-generated-http-packets
-    tools: [tcpdump]
-    requirements: [CAP_NET_RAW, CAP_NET_ADMIN]
+    operation: bounded-image-owned-capture
+    tools: [net-debug, tcpdump]
+    requirements: [CAP_NET_RAW, writable-work-mount]
+    bounds: {durationSeconds: [1, 300], packets: [1, 10000], snaplenBytes: [64, 256], filterCharacters: 256}
+  - id: selected-pod-capture
+    operation: approved-target-ephemeral-container-bounded-capture
+    tools: [net-debug, tcpdump]
+    requirements: [linux-kernel, target-container-network-namespace, non-hostNetwork, CAP_NET_RAW, disposable-kind-cluster, owner-only-emptyDir]
+    prohibited: [caller-pid, caller-pod-name, caller-node-name, shell-argv, hostPath, CRI-socket, privileged, hostPID, hostNetwork]
+    bounds: {durationSeconds: [1, 300], packets: [1, 10000], snaplenBytes: [64, 256], filterCharacters: 256, outputFilenameBytes: 64}
   - id: kernel-packet-tracing
-    operation: observe-generated-packets
-    tools: [pwru]
-    requirements: [linux-kernel, kernel-btf, debugfs, tracefs, securityfs, CAP_BPF, CAP_PERFMON, CAP_NET_ADMIN, CAP_NET_RAW, CAP_SYS_RESOURCE, ephemeral-network-namespace]
-  - id: kubernetes-storage
-    operation: provision-and-run-disposable-fio
-    tools: [kubestr]
-    requirements: [docker, kind, kubectl, default-storage-class, disposable-kubernetes-cluster]
+    operation: bounded-image-owned-host-netns-trace
+    tools: [net-debug, pwru]
+    requirements: [host-network-namespace, hostPID, linux-kernel, kernel-btf, debugfs, tracefs, securityfs, CAP_BPF, CAP_PERFMON, CAP_NET_ADMIN, CAP_SYS_RESOURCE, CAP_SYS_PTRACE, writable-work-mount]
+    bounds: {durationSeconds: [1, 60], events: [1, 10000], filterCharacters: 256}
 bounded:
   commandTimeoutSeconds: 20
-  packetTraceTimeoutSeconds: 20
-  kubestrWaitTimeoutSeconds: 60
+  captureDurationSeconds: 300
+  capturePackets: 10000
+  captureSnaplenBytes: 256
+  traceDurationSeconds: 60
+  traceEvents: 10000
+  filterCharacters: 256
+  packetTraceTimeoutSeconds: 60
+  selectedPodCaptureDurationSeconds: 15
+  selectedPodCapturePackets: 8
+  selectedPodCaptureSnaplenBytes: 128
 cleanup:
   container: required
   networkNamespace: required
-  kubestrNamespace: required
+  networkDiagnosticsPod: required
+  selectedPodCaptureEphemeralContainer: required
