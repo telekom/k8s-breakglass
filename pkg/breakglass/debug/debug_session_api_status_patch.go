@@ -23,9 +23,9 @@ import (
 	"github.com/gin-gonic/gin"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
+	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func (c *DebugSessionAPIController) patchDebugSessionStatusWithOptimisticLock(
@@ -33,13 +33,7 @@ func (c *DebugSessionAPIController) patchDebugSessionStatusWithOptimisticLock(
 	session *breakglassv1alpha1.DebugSession,
 	mutate func(*breakglassv1alpha1.DebugSessionStatus),
 ) error {
-	base := session.DeepCopy()
-	mutate(&session.Status)
-	if session.Generation > 0 {
-		session.Status.ObservedGeneration = session.Generation
-	}
-
-	if err := c.client.Status().Patch(ctx, session, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
+	if err := breakglass.PatchDebugSessionStatusWithReader(ctx, c.client, c.reader(), session, mutate); err != nil {
 		return fmt.Errorf("patch DebugSession API status with optimistic lock: %w", err)
 	}
 	return nil

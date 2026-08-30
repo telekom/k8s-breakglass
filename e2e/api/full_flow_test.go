@@ -24,11 +24,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
 
 // TestHappyPathCompleteBreakglassFlow tests the complete happy path of a breakglass session
@@ -109,7 +109,8 @@ func TestHappyPathCompleteBreakglassFlow(t *testing.T) {
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &sessionToExpire)
 		require.NoError(t, err)
 		sessionToExpire.Status.State = breakglassv1alpha1.SessionStateExpired
-		sessionToExpire.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Minute))
+		sessionToExpire.Status.ReasonEnded = "testCleanup"
+		sessionToExpire.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(sessionToExpire.Status.ExpiresAt, time.Now())
 		err = helpers.ApplySessionStatus(ctx, cli, &sessionToExpire)
 		require.NoError(t, err)
 		t.Logf("Step 5: Session expired")

@@ -504,6 +504,7 @@ spec:
         # Filter to only critical events
         eventFilter:
           eventTypes:
+            - "session.termination_intent"
             - "session.created"
             - "session.approved"
             - "session.rejected"

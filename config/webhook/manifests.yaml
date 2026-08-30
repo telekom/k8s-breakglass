@@ -131,6 +131,7 @@ webhooks:
     - UPDATE
     resources:
     - debugsessions
+    - debugsessions/status
   sideEffects: None
 - admissionReviewVersions:
   - v1

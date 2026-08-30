@@ -1942,6 +1942,20 @@ func TestValidateDebugSessionTemplate(t *testing.T) {
 		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
 	})
 
+	t.Run("deprecated notify-only expiration remains valid", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "notify-only"},
+			Spec: DebugSessionTemplateSpec{
+				Mode:               DebugSessionModeWorkload,
+				PodTemplateRef:     &DebugPodTemplateReference{Name: "pod-template"},
+				ExpirationBehavior: "notify-only",
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.True(t, result.IsValid(), "legacy notify-only templates must remain writable: %s", result.ErrorMessage())
+		assert.Contains(t, result.Warnings, "spec.expirationBehavior notify-only is deprecated; use terminate with notification.notifyOnExpiry")
+	})
+
 	t.Run("invalid podCopy TTL", func(t *testing.T) {
 		template := &DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{

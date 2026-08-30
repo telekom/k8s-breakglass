@@ -91,3 +91,37 @@ ci_redacted_docker_inspect() {
     } > "$output"
   fi
 }
+
+ci_redact_diagnostic_stream() {
+  perl -pe '
+    if ($in_private_key) {
+      $in_private_key = 0 if /-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----/i;
+      $_ = "";
+      next;
+    }
+    if (/-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/i) {
+      $in_private_key = 1 unless /-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----/i;
+      $_ = "-----BEGIN PRIVATE KEY----- [REDACTED]\n";
+      next;
+    }
+	s~^([[:space:]]*(?:authorization|proxy-authorization|cookie|set-cookie|api-key|x-[a-z0-9-]*(?:api-key|token|secret|password|credential|cookie))[[:space:]]*:[[:space:]]*).*$~$1[REDACTED]~ig;
+    s~((?:authorization|proxy-authorization)\s*[:=]\s*(?:Bearer|Basic)\s+)[^\s,"}]+~$1[REDACTED]~ig;
+    s~("(?:access[_-]?token|refresh[_-]?token|id[_-]?token|subject[_-]?token|actor[_-]?token|auth[_-]?token|bearer[_-]?token|session[_-]?token|token|secret|client[_-]?secret|api[_-]?key|password|passwd|private[_-]?key|credential|credentials|cookie)"\s*:\s*)"(?:\\.|[^"\\])*"~$1"[REDACTED]"~ig;
+    s~^([[:space:]]*(?:access[_-]?token|refresh[_-]?token|id[_-]?token|subject[_-]?token|actor[_-]?token|auth[_-]?token|bearer[_-]?token|session[_-]?token|token|secret|client[_-]?secret|api[_-]?key|password|passwd|private[_-]?key|credential|credentials|cookie)[[:space:]]*:[[:space:]]*)(?:"(?:\\.|[^"\\])*"|\047(?:\\.|[^\047\\])*\047|[^#\r\n]*?)([[:space:]]*(?:#.*)?\r?\n?)$~$1[REDACTED]$2~ig;
+    s~((?:access[_-]?token|refresh[_-]?token|id[_-]?token|subject[_-]?token|actor[_-]?token|auth[_-]?token|bearer[_-]?token|session[_-]?token|token|secret|client[_-]?secret|api[_-]?key|password|passwd|private[_-]?key|credential|credentials|cookie)\s*=\s*)(?:"(?:\\.|[^"\\])*"|\047(?:\\.|[^\047\\])*\047|[^\s,;]+)~$1[REDACTED]~ig;
+    s~[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}~[REDACTED-JWT]~g;
+    s~[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}~[REDACTED-EMAIL]~g;
+  '
+}
+
+ci_write_bounded_redacted_file() {
+  local output="$1"
+  local max_lines="${2:-2000}"
+  local max_bytes="${3:-1048576}"
+
+  mkdir -p "$(dirname "$output")"
+	ci_redact_diagnostic_stream \
+		| tail -c "$max_bytes" \
+		| tail -n "$max_lines" \
+		> "$output"
+}

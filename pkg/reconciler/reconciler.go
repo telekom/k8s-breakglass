@@ -112,8 +112,6 @@ func InformerSyncCheck(cache CacheSyncer) func(req *http.Request) error {
 }
 
 type controllerSetupPlan struct {
-	// Cached clients are shared by API and webhook paths, so these indexes are
-	// required even when reconcilers are disabled.
 	registerControllerIndexes bool
 	registerReconcilers       bool
 	attachCachedReconcilers   bool
@@ -121,7 +119,7 @@ type controllerSetupPlan struct {
 
 func newControllerSetupPlan(enableControllers bool) controllerSetupPlan {
 	return controllerSetupPlan{
-		registerControllerIndexes: true,
+		registerControllerIndexes: enableControllers,
 		registerReconcilers:       enableControllers,
 		attachCachedReconcilers:   enableControllers,
 	}
@@ -172,6 +170,8 @@ func Setup(
 		if err := indexer.AssertIndexesRegistered(log); err != nil {
 			return fmt.Errorf("index registration assertion failed: %w", err)
 		}
+	} else {
+		log.Infow("Controller field indexes disabled via --enable-controllers=false")
 	}
 
 	if plan.registerReconcilers {
@@ -321,12 +321,9 @@ func Setup(
 		// Register DebugSession Reconciler with controller-runtime manager
 		log.Debugw("Setting up DebugSession reconciler")
 		debugSessionReconciler := debug.NewDebugSessionController(log, mgr.GetClient(), ccProvider).
-			WithAPIReader(mgr.GetAPIReader()).
+			WithLiveReader(mgr.GetAPIReader()).
 			WithAuditService(auditService).
 			WithMailService(mailService, frontendConfig.BrandingName, frontendConfig.BaseURL, disableEmail)
-		if auditService != nil {
-			debugSessionReconciler.WithQuotaNamespace(auditService.ControllerNamespace())
-		}
 		if err := debugSessionReconciler.SetupWithManager(mgr); err != nil {
 			return fmt.Errorf("failed to setup DebugSession reconciler with manager: %w", err)
 		}
@@ -338,13 +335,13 @@ func Setup(
 			mgr.GetClient(),
 			log,
 			mgr.GetEventRecorder("breakglass-audit-controller"),
-			func(ctx context.Context, auditConfigs []*breakglassv1alpha1.AuditConfig) error {
+			func(ctx context.Context, auditConfigs []*breakglassv1alpha1.AuditConfig, configuredUnavailable bool) error {
 				// Reload audit service with aggregated configuration from all AuditConfigs
 				if auditService == nil {
 					log.Warnw("AuditConfig changed but audit service is nil - skipping reload")
 					return nil
 				}
-				if err := auditService.ReloadMultiple(ctx, auditConfigs); err != nil {
+				if err := auditService.ReloadMultipleWithAvailability(ctx, auditConfigs, configuredUnavailable); err != nil {
 					log.Errorw("Failed to reload audit service", "error", err)
 					return err
 				}
@@ -367,9 +364,6 @@ func Setup(
 			},
 			10*time.Minute,
 		)
-		if auditService != nil {
-			auditConfigReconciler.SetControllerNamespace(auditService.ControllerNamespace())
-		}
 
 		// Set up sink health provider to report circuit breaker status
 		if auditService != nil {

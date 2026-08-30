@@ -1,5 +1,8 @@
 # Example: Kubernetes Events audit configuration
 # Creates native Kubernetes Events for audit trail, visible via kubectl get events
+# WARNING: Kubernetes Events are short-lived and are not durable audit receipts.
+# This Events-only example cannot acknowledge session.termination_intent. Duplicate
+# cleanup stays pending until you add a synchronous webhook or acknowledged Kafka sink.
 # NOTE: AuditConfig is cluster-scoped (no namespace in metadata)
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: AuditConfig
@@ -15,7 +18,8 @@ spec:
       kubernetes:
         # Limit to session-related events (empty = sensible defaults)
         eventTypes:
-          - session.created
+          - session.termination_intent
+          - session.requested
           - session.approved
           - session.rejected
           - session.expired
@@ -23,7 +27,8 @@ spec:
 
 ---
 # Example: Combined Kubernetes Events + Log sink
-# Use Kubernetes Events for visibility and structured logs for persistence
+# WARNING: Logs are also not durable receipts. This example is for visibility only.
+# Add a synchronous webhook or acknowledged Kafka sink for required audit delivery.
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: AuditConfig
 metadata:

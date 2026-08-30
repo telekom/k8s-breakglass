@@ -8,6 +8,7 @@ import (
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -35,7 +36,11 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		var err error
 		binding, err = c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace)
 		if err != nil {
-			return fmt.Errorf("resolve workload binding: %w", err)
+			log.Warnw("Failed to get binding by ref, will try auto-discovery",
+				"binding", ds.Spec.BindingRef.Name,
+				"namespace", ds.Spec.BindingRef.Namespace,
+				"error", err)
+			// Non-fatal: try auto-discovery below
 		}
 	}
 
@@ -45,7 +50,8 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	if binding == nil {
 		discoveredBinding, err := c.findBindingForSession(ctx, template, ds.Spec.Cluster)
 		if err != nil {
-			return fmt.Errorf("discover workload binding: %w", err)
+			log.Warnw("Failed to auto-discover binding, continuing without binding config",
+				"error", err)
 		} else if discoveredBinding != nil {
 			log.Infow("Auto-discovered binding for session",
 				"binding", discoveredBinding.Name,
@@ -87,13 +93,33 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	}
 
 	// Create base client for spoke cluster (no impersonation yet)
-	baseRestCfg, restErr := c.ccProvider.GetRESTConfig(ctx, ds.Spec.Cluster)
+	baseRestCfg, configuredCluster, restErr := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)
 	if restErr != nil {
 		return fmt.Errorf("failed to get REST config for cluster %s: %w", ds.Spec.Cluster, restErr)
 	}
+	defer c.ccProvider.ReleasePrivilegedOperationClusterConfig(configuredCluster)
 	baseClient, baseErr := ctrlclient.New(baseRestCfg, ctrlclient.Options{})
 	if baseErr != nil {
 		return fmt.Errorf("failed to create base client for cluster %s: %w", ds.Spec.Cluster, baseErr)
+	}
+	fence := func() error {
+		if err := c.ccProvider.ValidatePrivilegedOperationClusterConfig(ctx, configuredCluster); err != nil {
+			return fmt.Errorf("privileged target configuration changed during deployment: %w", err)
+		}
+		liveSession := &breakglassv1alpha1.DebugSession{}
+		reader := c.reader
+		if reader == nil {
+			reader = c.client
+		}
+		if err := reader.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), liveSession); err != nil {
+			return fmt.Errorf("read live debug session before deployment mutation: %w", err)
+		}
+		if liveSession.UID != ds.UID || !liveSession.DeletionTimestamp.IsZero() ||
+			liveSession.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
+			liveSession.Status.ExpiresAt == nil || !time.Now().UTC().Before(liveSession.Status.ExpiresAt.Time) {
+			return fmt.Errorf("debug session is no longer active before deployment mutation")
+		}
+		return nil
 	}
 
 	// Handle impersonation configuration
@@ -138,8 +164,11 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			return fmt.Errorf("failed to build resource quota: %w", rqErr)
 		}
 		if rq != nil {
+			if err := fence(); err != nil {
+				return err
+			}
 			gvk := rq.GetObjectKind().GroupVersionKind()
-			if err := applyTrackedResource(ctx, targetClient, rq); err != nil {
+			if err := utils.ApplyObject(ctx, targetClient, rq); err != nil {
 				return fmt.Errorf("failed to apply resource quota: %w", err)
 			}
 			log.Infow("ResourceQuota applied", "name", rq.Name)
@@ -148,7 +177,6 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				Kind:       gvk.Kind,
 				Name:       rq.Name,
 				Namespace:  rq.Namespace,
-				UID:        string(rq.GetUID()),
 				Source:     "debug-resourcequota",
 			})
 		}
@@ -161,8 +189,11 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			return fmt.Errorf("failed to build pod disruption budget: %w", pdbErr)
 		}
 		if pdb != nil {
+			if err := fence(); err != nil {
+				return err
+			}
 			gvk := pdb.GetObjectKind().GroupVersionKind()
-			if err := applyTrackedResource(ctx, targetClient, pdb); err != nil {
+			if err := utils.ApplyObject(ctx, targetClient, pdb); err != nil {
 				return fmt.Errorf("failed to apply pod disruption budget: %w", err)
 			}
 			log.Infow("PodDisruptionBudget applied", "name", pdb.Name)
@@ -171,7 +202,6 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				Kind:       gvk.Kind,
 				Name:       pdb.Name,
 				Namespace:  pdb.Namespace,
-				UID:        string(pdb.GetUID()),
 				Source:     "debug-pdb",
 			})
 		}
@@ -190,6 +220,9 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			"count", len(podTemplateResources),
 			"debugSession", ds.Name)
 		for _, res := range podTemplateResources {
+			if err := fence(); err != nil {
+				return err
+			}
 			if err := c.deployPodTemplateResource(ctx, targetClient, ds, res, targetNs); err != nil {
 				return fmt.Errorf("failed to deploy pod template resource %s/%s: %w", res.GetKind(), res.GetName(), err)
 			}
@@ -199,7 +232,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	auxiliaryResourcesConfigured := c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0
 	auxStatuses := startAuxiliaryStatusTracking(ds, auxiliaryResourcesConfigured)
 	if auxiliaryResourcesConfigured {
-		beforeStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhase(ctx, ds, &template.Spec, binding, targetClient, targetNs, true)
+		if err := fence(); err != nil {
+			return err
+		}
+		beforeStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFence(ctx, ds, &template.Spec, binding, targetClient, targetNs, true, fence)
 		auxStatuses = append(auxStatuses, beforeStatuses...)
 		ds.Status.AuxiliaryResourceStatuses = auxStatuses
 		if auxErr != nil {
@@ -210,7 +246,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	// Capture GVK before Apply call as Kubernetes client may clear TypeMeta
 	gvk := workload.GetObjectKind().GroupVersionKind()
 
-	if err := applyTrackedResource(ctx, targetClient, workload); err != nil {
+	if err := fence(); err != nil {
+		return err
+	}
+	if err := utils.ApplyObject(ctx, targetClient, workload); err != nil {
 		return fmt.Errorf("failed to apply workload: %w", err)
 	}
 	log.Infow("Debug workload applied", "name", workload.GetName())
@@ -221,7 +260,6 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		Kind:       gvk.Kind,
 		Name:       workload.GetName(),
 		Namespace:  targetNs,
-		UID:        string(workload.GetUID()),
 		Source:     "debug-pod",
 	})
 
@@ -231,7 +269,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		"kind", gvk.Kind)
 
 	if auxiliaryResourcesConfigured {
-		afterStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhase(ctx, ds, &template.Spec, binding, targetClient, targetNs, false)
+		if err := fence(); err != nil {
+			return err
+		}
+		afterStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFence(ctx, ds, &template.Spec, binding, targetClient, targetNs, false, fence)
 		auxStatuses = append(auxStatuses, afterStatuses...)
 		ds.Status.AuxiliaryResourceStatuses = auxStatuses
 		if auxErr != nil {
@@ -524,7 +565,8 @@ func (c *DebugSessionController) deployPodTemplateResource(
 
 	// Deploy using Server-Side Apply for idempotency
 	obj.SetManagedFields(nil)
-	if err := applyTrackedResource(ctx, targetClient, obj); err != nil {
+	//nolint:staticcheck // SA1019: client.Apply for Patch is still required for unstructured objects
+	if err := targetClient.Patch(ctx, obj, ctrlclient.Apply, ctrlclient.FieldOwner("breakglass-controller"), ctrlclient.ForceOwnership); err != nil {
 		return fmt.Errorf("SSA apply failed: %w", err)
 	}
 
@@ -534,7 +576,6 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		APIVersion:   obj.GetAPIVersion(),
 		ResourceName: obj.GetName(),
 		Namespace:    obj.GetNamespace(),
-		UID:          string(obj.GetUID()),
 		Source:       "podTemplateString",
 		Created:      true,
 	}
@@ -548,7 +589,6 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		Kind:       obj.GetKind(),
 		Name:       obj.GetName(),
 		Namespace:  obj.GetNamespace(),
-		UID:        string(obj.GetUID()),
 		Source:     "pod-template",
 	})
 
@@ -770,7 +810,15 @@ func (c *DebugSessionController) buildVarsFromSession(
 		vars[name] = extractJSONValueForPod(jsonVal.Raw)
 	}
 
-	// Preserve input; the renderer requires serialization at output.
+	// Escape at the boundary: these values are end-user controlled and are
+	// substituted into YAML documents, so they must not be able to inject
+	// sibling keys. See template_vars_sanitize.go.
+	vars, changed := sanitizeTemplateVarsReportingChanges(vars)
+	if len(changed) > 0 {
+		c.log.Warnw("Sanitized YAML-unsafe characters in extraDeployValues before pod template rendering",
+			"session", ds.Name, "variables", changed)
+	}
+
 	return vars
 }
 

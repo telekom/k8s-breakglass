@@ -1,6 +1,9 @@
 # Example: Simple stdout audit configuration
 # This is the simplest possible audit setup - outputs all audit events to stdout/logs
 # Great for development, debugging, or quick testing
+# WARNING: Logs are not durable audit receipts. This example cannot acknowledge
+# session.termination_intent, so duplicate cleanup stays pending. Do not use it
+# alone in production. Add a synchronous webhook or acknowledged Kafka sink.
 # NOTE: AuditConfig is cluster-scoped (no namespace in metadata)
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: AuditConfig

@@ -19,8 +19,11 @@ updates: no target-cluster validating webhook is deployed for that subresource,
 and such writes are governed solely by the target cluster's RBAC. Use the
 authenticated DebugSession API injection operation for Breakglass-mediated
 ephemeral-container debugging; it performs the session, policy, and target-Pod
-identity checks before updating the target Pod and records the resulting
-operation in the session status.
+identity checks before updating the target Pod. PR
+[#1277](https://github.com/telekom/k8s-breakglass/pull/1277) records ephemeral
+operation evidence after the effect. Durable pre-effect intent and
+interrupted-write recovery depend on the operation outbox in PR
+[#1278](https://github.com/telekom/k8s-breakglass/pull/1278).
 
 ## Architecture
 

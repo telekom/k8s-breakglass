@@ -59,6 +59,14 @@ func (f *failingClientProvider) GetClient(_ context.Context, _ string) (ctrlclie
 	return nil, f.err
 }
 
+func (f *failingClientProvider) GetClientForPrivilegedOperation(_ context.Context, _ string) (ctrlclient.Client, *breakglassv1alpha1.ClusterConfig, error) {
+	return nil, nil, f.err
+}
+
+func (f *failingClientProvider) ValidatePrivilegedOperationClusterConfig(_ context.Context, _ *breakglassv1alpha1.ClusterConfig) error {
+	return f.err
+}
+
 // =============================================================================
 // Finding 006 — an empty allowedNamespaces must mean "defaultNamespace only"
 // =============================================================================

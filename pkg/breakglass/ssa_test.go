@@ -3,6 +3,7 @@ package breakglass
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,6 +36,96 @@ func TestPatchDebugSessionStatusWithOptimisticLockRequiresResourceVersion(t *tes
 	assert.Contains(t, err.Error(), "missing resourceVersion")
 	assert.False(t, mutateCalled)
 	assert.Equal(t, "unchanged", session.Status.Message)
+}
+
+func TestPatchDebugSessionStatusWithOptimisticLockKeepsTerminalState(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "terminal", Namespace: "default", ResourceVersion: "1"},
+		Status:     breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateExpired},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+
+	err := PatchDebugSessionStatusWithOptimisticLock(context.Background(), fakeClient, session.DeepCopy(), func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.State = breakglassv1alpha1.DebugSessionStateActive
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "terminal state")
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &stored))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, stored.Status.State)
+}
+
+func TestPatchDebugSessionStatusWithOptimisticLockCannotRenewAtExpiry(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	expiredAt := metav1.NewTime(time.Now().Add(-time.Second).Truncate(time.Second))
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "expired-renewal", Namespace: "default", ResourceVersion: "1"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &expiredAt,
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+
+	err := PatchDebugSessionStatusWithOptimisticLock(context.Background(), fakeClient, session.DeepCopy(), func(status *breakglassv1alpha1.DebugSessionStatus) {
+		renewed := metav1.NewTime(expiredAt.Add(time.Hour))
+		status.ExpiresAt = &renewed
+		status.RenewalCount++
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "active and unexpired")
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &stored))
+	require.NotNil(t, stored.Status.ExpiresAt)
+	assert.True(t, stored.Status.ExpiresAt.Equal(&expiredAt))
+}
+
+func TestPatchDebugSessionStatusRejectsMissingExpiryResurrection(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "missing-expiry", Namespace: "default", ResourceVersion: "1"},
+		Status:     breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+
+	err := PatchDebugSessionStatusWithOptimisticLock(context.Background(), fakeClient, session.DeepCopy(), func(status *breakglassv1alpha1.DebugSessionStatus) {
+		expiresAt := metav1.NewTime(time.Now().Add(time.Hour))
+		status.ExpiresAt = &expiresAt
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must become terminal")
+
+	err = PatchDebugSessionStatusWithOptimisticLock(context.Background(), fakeClient, session.DeepCopy(), func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.State = breakglassv1alpha1.DebugSessionStateFailed
+	})
+	require.NoError(t, err)
+}
+
+func TestApplyDebugSessionStatusRejectsMissingExpiryResurrection(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	current := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "missing-expiry-apply", Namespace: "default"},
+		Status:     breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(current).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	desired := current.DeepCopy()
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	desired.Status.ExpiresAt = &future
+
+	err := ApplyDebugSessionStatus(context.Background(), fakeClient, desired)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must become terminal")
 }
 
 func TestPatchDebugSessionStatusWithOptimisticLockLeavesInputUnchangedOnConflict(t *testing.T) {

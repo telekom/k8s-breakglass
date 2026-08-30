@@ -62,9 +62,9 @@ spec:
         # Batch settings for high throughput
         batchSize: 100
         batchTimeoutSeconds: 1
-        requiredAcks: -1  # Wait for all replicas
+        requiredAcks: -1  # Required audit delivery needs a nonzero acknowledgement
         compression: snappy
-        async: false  # Ensure delivery
+        async: false  # Required audit events must use synchronous Kafka writes
     
     # Secondary: Local logs as backup
     - name: log-backup
@@ -111,6 +111,7 @@ spec:
       - session.requested
       - session.approved
       - session.denied
+      - session.termination_intent
       - session.revoked
       - access.denied
       - access.denied.policy
@@ -129,7 +130,7 @@ spec:
   sinks:
     - name: siem-splunk
       type: webhook
-      minSeverity: warning  # Only warnings and critical
+      minSeverity: info  # Includes required duplicate-cleanup intents
       webhook:
         url: https://splunk.example.com/services/collector/event
         headers:
@@ -173,6 +174,7 @@ spec:
       - session.requested
       - session.approved
       - session.denied
+      - session.termination_intent
       - access.denied
       - policy.violation
       - secret.accessed
@@ -199,17 +201,20 @@ spec:
             name: kafka-creds  # Create this secret before applying
             namespace: breakglass-system
         compression: zstd
+        requiredAcks: -1
+        async: false
     
     # Webhook for security events only
     - name: security-webhook
       type: webhook
       eventTypes:
+        - session.termination_intent
         - session.revoked
         - access.denied
         - policy.violation
         - secret.deleted
         - auth.failure
-      minSeverity: warning
+      minSeverity: info
       webhook:
         url: https://security-alerts.example.com/webhook
         authSecretRef:
@@ -221,6 +226,7 @@ spec:
     - name: k8s-events
       type: kubernetes
       eventTypes:
+        - session.termination_intent
         - session.requested
         - session.approved
         - session.denied
@@ -229,6 +235,7 @@ spec:
         - session.revoked
       kubernetes:
         eventTypes:
+          - session.termination_intent
           - session.requested
           - session.approved
           - session.denied

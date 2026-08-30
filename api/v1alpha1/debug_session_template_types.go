@@ -257,7 +257,8 @@ type DebugSessionTemplateSpec struct {
 	DeprecationMessage string `json:"deprecationMessage,omitempty"`
 
 	// expirationBehavior controls what happens when a session expires.
-	// Options: "terminate" (default) or "notify-only".
+	// "notify-only" is a deprecated alias that requests an expiry notification;
+	// it still expires the session, revokes access, and starts resource cleanup.
 	// +optional
 	// +kubebuilder:default="terminate"
 	// +kubebuilder:validation:Enum=terminate;notify-only

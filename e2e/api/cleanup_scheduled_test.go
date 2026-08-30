@@ -23,7 +23,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -251,62 +250,32 @@ func TestDebugSessionCleanupFlow(t *testing.T) {
 	cli := helpers.GetClient(t)
 	cleanup := helpers.NewCleanup(t, cli)
 	namespace := helpers.GetTestNamespace()
+	clusterName := helpers.GetTestClusterName()
 
 	t.Run("DebugSessionExpirationState", func(t *testing.T) {
-		// NOTE: Direct creation is intentional here for testing cleanup controller behavior.
-		// We need to create a session with an already-expired timestamp, which cannot be
-		// done via the API. This tests the cleanup controller's ability to detect and
-		// mark expired sessions, not the user workflow.
-		sessionName := helpers.GenerateUniqueName("e2e-debug-cleanup")
-		expiresAt := metav1.NewTime(time.Now().Add(-1 * time.Hour)) // Already expired
-
-		ds := &breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      sessionName,
-				Namespace: namespace,
-				Labels:    helpers.E2ELabelsWithFeature("cleanup"),
-			},
-			Spec: breakglassv1alpha1.DebugSessionSpec{
-				RequestedBy: helpers.TestUsers.SchedulingTestRequester.Email,
-				Cluster:     helpers.GetTestClusterName(),
-				TemplateRef: "default-template",
-				Reason:      "Testing cleanup flow",
-			},
-		}
+		template := helpers.NewValidDebugSessionTemplate(
+			helpers.GenerateUniqueName("e2e-debug-cleanup-template"), "Short-lived cleanup fixture", clusterName,
+			breakglassv1alpha1.DebugSessionModeKubectlDebug, "")
+		template.Spec.Constraints.MaxDuration = "15s"
+		template.Spec.Constraints.DefaultDuration = "15s"
+		cleanup.Add(template)
+		require.NoError(t, cli.Create(ctx, template))
+		tc := helpers.NewTestContext(t, ctx).WithClient(cli, namespace)
+		ds, err := tc.ClientForUser(helpers.TestUsers.SchedulingTestRequester).CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
+			TemplateRef: template.Name, Cluster: clusterName, Namespace: namespace,
+			RequestedDuration: "15s", Reason: "Testing natural debug-session cleanup",
+		})
+		require.NoError(t, err)
 		cleanup.Add(ds)
-		require.NoError(t, cli.Create(ctx, ds), "Failed to create debug session")
+		ds = helpers.WaitForDebugSessionState(t, ctx, cli, ds.Name, ds.Namespace,
+			breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+		require.NotNil(t, ds.Status.ExpiresAt)
+		require.True(t, ds.Status.ExpiresAt.After(time.Now()), "active fixture must start with a live lease")
 
-		// Set initial active state with expired timestamp
-		// Use retry loop to handle potential conflicts from controller reconciliation
-		var updateErr error
-		for retry := 0; retry < 3; retry++ {
-			err := cli.Get(ctx, types.NamespacedName{Name: sessionName, Namespace: namespace}, ds)
-			require.NoError(t, err)
-			ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
-			ds.Status.ExpiresAt = &expiresAt
-			ds.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
-				{Name: "test-pod", Namespace: "default"},
-			}
-			updateErr = cli.Status().Update(ctx, ds)
-			if updateErr == nil {
-				break
-			}
-			if apierrors.IsConflict(updateErr) {
-				t.Logf("Retry %d: status update conflict, retrying...", retry+1)
-				time.Sleep(100 * time.Millisecond)
-				continue
-			}
-			break
-		}
-		require.NoError(t, updateErr, "Failed to update debug session status")
-
-		t.Logf("Created debug session with state=%s, expiresAt=%v", ds.Status.State, ds.Status.ExpiresAt)
-
-		// The cleanup routine should mark this as expired
-		// Wait up to 2 minutes for cleanup to run (default interval is 5m, may be shorter in e2e)
-		err := helpers.WaitForConditionSimple(ctx, func() bool {
+		// The controller should mark this as expired at the persisted boundary.
+		err = helpers.WaitForConditionSimple(ctx, func() bool {
 			var fetched breakglassv1alpha1.DebugSession
-			if err := cli.Get(ctx, types.NamespacedName{Name: sessionName, Namespace: namespace}, &fetched); err != nil {
+			if err := cli.Get(ctx, types.NamespacedName{Name: ds.Name, Namespace: ds.Namespace}, &fetched); err != nil {
 				return false
 			}
 			return fetched.Status.State == breakglassv1alpha1.DebugSessionStateExpired
@@ -315,64 +284,10 @@ func TestDebugSessionCleanupFlow(t *testing.T) {
 		if err != nil {
 			// Log current state if wait failed
 			var fetched breakglassv1alpha1.DebugSession
-			_ = cli.Get(ctx, types.NamespacedName{Name: sessionName, Namespace: namespace}, &fetched)
+			_ = cli.Get(ctx, types.NamespacedName{Name: ds.Name, Namespace: ds.Namespace}, &fetched)
 			t.Logf("Debug session state after wait: %s (message: %s)", fetched.Status.State, fetched.Status.Message)
 		}
-		// Note: This test may be skipped if cleanup interval is too long
-		// The important thing is that we tested the flow
-		t.Logf("Debug session cleanup flow tested")
-	})
-
-	t.Run("DebugSessionTerminalStates", func(t *testing.T) {
-		// NOTE: Direct creation is intentional here for testing controller behavior.
-		// We need to set specific terminal states directly (Expired, Terminated, Failed)
-		// which cannot be achieved via the normal API workflow. This tests that the
-		// controller properly handles and preserves terminal states.
-		for _, state := range []breakglassv1alpha1.DebugSessionState{
-			breakglassv1alpha1.DebugSessionStateExpired,
-			breakglassv1alpha1.DebugSessionStateTerminated,
-			breakglassv1alpha1.DebugSessionStateFailed,
-		} {
-			sessionName := helpers.GenerateUniqueName("e2e-debug-term")
-
-			ds := &breakglassv1alpha1.DebugSession{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      sessionName,
-					Namespace: namespace,
-					Labels:    helpers.E2ELabelsWithFeature("terminal-states"),
-				},
-				Spec: breakglassv1alpha1.DebugSessionSpec{
-					RequestedBy: helpers.TestUsers.SchedulingTestRequester.Email,
-					Cluster:     helpers.GetTestClusterName(),
-					TemplateRef: "default-template",
-					Reason:      "Testing terminal states",
-				},
-			}
-			cleanup.Add(ds)
-			require.NoError(t, cli.Create(ctx, ds), "Failed to create debug session")
-
-			// Set terminal state with retry loop to handle concurrent controller updates
-			// (the controller may also be updating the object at the same time).
-			var updateErr error
-			for retries := 0; retries < 5; retries++ {
-				err := cli.Get(ctx, types.NamespacedName{Name: sessionName, Namespace: namespace}, ds)
-				require.NoError(t, err)
-				ds.Status.State = state
-				ds.Status.Message = "Test terminal state"
-				ds.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
-					{Name: "test-pod", Namespace: "default"},
-				}
-				updateErr = cli.Status().Update(ctx, ds)
-				if updateErr == nil {
-					break
-				}
-				t.Logf("Retry %d: status update conflict, retrying...", retries+1)
-				time.Sleep(100 * time.Millisecond)
-			}
-			require.NoError(t, updateErr, "Failed to update debug session status after retries")
-
-			t.Logf("Created debug session with terminal state: %s", state)
-		}
+		require.NoError(t, err, "short-lived debug session must naturally reach Expired")
 	})
 }
 

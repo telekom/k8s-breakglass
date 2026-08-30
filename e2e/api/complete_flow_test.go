@@ -29,6 +29,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
 
 // TestCompleteBreakglassFlow tests the COMPLETE authorization flow:
@@ -145,7 +146,8 @@ func TestCompleteBreakglassFlow(t *testing.T) {
 		require.NoError(t, err)
 
 		toExpire.Status.State = breakglassv1alpha1.SessionStateExpired
-		toExpire.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Minute))
+		toExpire.Status.ReasonEnded = "testCleanup"
+		toExpire.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(toExpire.Status.ExpiresAt, time.Now())
 		err = cli.Status().Update(ctx, &toExpire)
 		require.NoError(t, err, "Failed to expire session")
 

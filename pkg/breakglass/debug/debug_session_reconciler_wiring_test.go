@@ -26,8 +26,17 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+func TestDebugSessionController_WithLiveReaderWiresUncachedReader(t *testing.T) {
+	hub := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	live := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithLiveReader(live)
+	var reader ctrlclient.Reader = live
+	assert.Same(t, reader, controller.reader)
+}
 
 func TestDebugSessionController_WithAuditServiceUsesReloadedManager(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
