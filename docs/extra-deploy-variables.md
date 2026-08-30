@@ -5,9 +5,12 @@ customizable parameters that users may provide as values in
 `DebugSession.spec.extraDeployValues` when requesting a debug session. The
 template owns the variable names, types, defaults, and constraints. A declared
 value can select an administrator-approved variant and change fields that the
-template deliberately interpolates, but cannot add variables or bypass template
-validation, group restrictions, or provider admission. This enables a single
-template to support multiple use cases with different bounded configurations.
+template deliberately interpolates. The current renderer also carries
+additional request keys into `.vars`; only declared variables are validated and
+subject to group restrictions, so templates must not use undeclared values for
+sensitive interpolation. Provider admission remains authoritative. This enables
+a single template to support multiple use cases with different bounded
+configurations.
 
 ## Overview
 

@@ -32,8 +32,10 @@ variables in `DebugSession.spec.extraDeployValues` when creating a session.
 Those values may select an explicitly declared, administrator-approved variant
 and therefore may change fields that the template deliberately interpolates
 (for example, a host-network or capture variant). They cannot add undeclared
-variables or bypass the template's validation, allowed groups, or provider
-admission constraints.
+validated variables or bypass validation and allowed-group checks for declared
+variables. The current renderer can carry additional request keys into
+`.vars`; template authors must not use undeclared keys for sensitive
+interpolation, and provider admission remains authoritative.
 
 The upstream API exposes kubectl-debug operation fields for compatibility. The
 upstream controller validates session state and the template's namespace/image
