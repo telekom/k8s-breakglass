@@ -825,47 +825,6 @@ func resourceOwnedByDebugSession(obj *unstructured.Unstructured, ds *breakglassv
 		obj.GetAnnotations()[DebugSessionUIDAnnotationKey] == identity
 }
 
-func hasDebugSessionUIDMarker(obj *unstructured.Unstructured) bool {
-	if obj == nil {
-		return false
-	}
-	_, labelUID := obj.GetLabels()[DebugSessionUIDLabelKey]
-	_, annotationUID := obj.GetAnnotations()[DebugSessionUIDAnnotationKey]
-	return labelUID || annotationUID
-}
-
-func hasDebugSessionLegacyMarker(obj *unstructured.Unstructured) bool {
-	if obj == nil {
-		return false
-	}
-	_, labelSession := obj.GetLabels()["breakglass.t-caas.telekom.com/session"]
-	_, annotationSession := obj.GetAnnotations()["breakglass.t-caas.telekom.com/source-session"]
-	return labelSession || annotationSession
-}
-
-// resourceMayBeDeletedByDebugSession distinguishes the current UID-fenced
-// marker format from the pre-UID marker format. Legacy resources are safe to
-// remove only when both their historical session name and namespace markers
-// match; a partial or mismatched marker is treated as a replacement/forgery.
-func resourceMayBeDeletedByDebugSession(obj *unstructured.Unstructured, ds *breakglassv1alpha1.DebugSession) bool {
-	switch {
-	case hasDebugSessionUIDMarker(obj):
-		return resourceOwnedByDebugSession(obj, ds)
-	case hasDebugSessionLegacyMarker(obj):
-		return resourceOwnedByLegacyDebugSession(obj, ds)
-	default:
-		return true
-	}
-}
-
-func resourceOwnedByLegacyDebugSession(obj *unstructured.Unstructured, ds *breakglassv1alpha1.DebugSession) bool {
-	if obj == nil || ds == nil {
-		return false
-	}
-	return obj.GetLabels()["breakglass.t-caas.telekom.com/session"] == ds.Name &&
-		obj.GetAnnotations()["breakglass.t-caas.telekom.com/source-session"] == fmt.Sprintf("%s/%s", ds.Namespace, ds.Name)
-}
-
 // debugSessionIdentity returns the immutable identity used to fence a Job's
 // manual selector. UID is preferred because a deleted and recreated
 // DebugSession may legitimately reuse the same name; unit-created sessions do
