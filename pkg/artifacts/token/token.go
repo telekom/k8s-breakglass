@@ -189,7 +189,13 @@ func (keyring *Keyring) Sign(claims Claims) (string, error) {
 	encodedPayload := base64.RawURLEncoding.EncodeToString(payloadBytes)
 	unsigned := encodedHeader + "." + encodedPayload
 	signature := sign(keyring.keys[keyring.signer], unsigned)
-	encoded := unsigned + "." + base64.RawURLEncoding.EncodeToString(signature)
+	encodedSignature := base64.RawURLEncoding.EncodeToString(signature)
+	for _, segment := range [...]string{encodedHeader, encodedPayload, encodedSignature} {
+		if len(segment) > keyring.limits.MaxSegmentBytes {
+			return "", errors.New("artifact token exceeds its bounded wire size")
+		}
+	}
+	encoded := unsigned + "." + encodedSignature
 	if len(encoded) > keyring.limits.MaxTokenBytes {
 		return "", errors.New("artifact token exceeds its bounded wire size")
 	}

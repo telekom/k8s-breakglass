@@ -122,6 +122,52 @@ func TestSignRejectsSubsecondTokenTimes(t *testing.T) {
 	}
 }
 
+func TestSignEnforcesEncodedSegmentLimit(t *testing.T) {
+	key := Key{ID: "active", Secret: bytesOf('k', minimumKeyBytes)}
+	claims := testClaims(t)
+	baseline := testKeyring(t, "active", []Key{key})
+	encoded, err := baseline.Sign(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maxSegmentBytes := 0
+	for _, segment := range strings.Split(encoded, ".") {
+		if len(segment) > maxSegmentBytes {
+			maxSegmentBytes = len(segment)
+		}
+	}
+
+	atBoundary, err := NewKeyring("https://breakglass.example", "artifact-upload", "active", []Key{key}, Limits{
+		MaxTokenBytes: len(encoded), MaxSegmentBytes: maxSegmentBytes, MaxTTL: 10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bounded, err := atBoundary.Sign(claims)
+	if err != nil {
+		t.Fatalf("Sign() at exact segment boundary error = %v", err)
+	}
+	if bounded != encoded {
+		t.Fatal("Sign() changed the token wire encoding at the exact segment boundary")
+	}
+	if _, err := atBoundary.Verify(bounded, claims.NotBefore); err != nil {
+		t.Fatalf("Verify() at exact segment boundary error = %v", err)
+	}
+
+	belowBoundary, err := NewKeyring("https://breakglass.example", "artifact-upload", "active", []Key{key}, Limits{
+		MaxTokenBytes: len(encoded), MaxSegmentBytes: maxSegmentBytes - 1, MaxTTL: 10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := belowBoundary.Verify(encoded, claims.NotBefore); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Verify() oversized segment error = %v, want ErrInvalid", err)
+	}
+	if _, err := belowBoundary.Sign(claims); err == nil {
+		t.Fatal("Sign() accepted an oversized segment even though the complete token fit MaxTokenBytes")
+	}
+}
+
 func TestKeyAndJTICryptographicFloors(t *testing.T) {
 	if _, err := NewKeyring("issuer", "audience", "weak", []Key{{ID: "weak", Secret: bytesOf('x', minimumKeyBytes-1)}}, Limits{MaxTTL: time.Hour}); err == nil {
 		t.Fatal("NewKeyring() accepted a weak key")
