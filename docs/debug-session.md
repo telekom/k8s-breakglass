@@ -670,7 +670,7 @@ schedulingOptions:
       description: "Deploy on regular worker nodes"
       default: true  # Pre-selected in UI
       schedulingConstraints:
-      nodeSelector: {}
+        nodeSelector: {}
     
     - name: any
       displayName: "Any Worker Node"

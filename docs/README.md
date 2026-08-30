@@ -50,7 +50,9 @@ Complete documentation for the breakglass privilege escalation system.
 
 ## Resources
 
-- **Debug utility images** - Every utility is published as an immutable,
+### Debug utility images
+
+Every utility is published as an immutable,
   reviewed image and has a generic in-image runbook. Choose the least
   powerful intent that answers the incident question:
   - **[Workload diagnostics](../utils/workload-debug/README.md)** - Bounded

@@ -1372,8 +1372,8 @@ GET /api/debugSessions/podTemplates
   "templates": [
     {
       "name": "workload-diagnostics",
-      "displayName": "Netshoot Debug Pod",
-      "description": "Network troubleshooting tools",
+      "displayName": "Workload Diagnostics",
+      "description": "Bounded workload diagnostic tools",
       "containers": 1
     }
   ],

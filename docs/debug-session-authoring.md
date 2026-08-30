@@ -160,7 +160,7 @@ metadata:
 automountServiceAccountToken: false
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
   name: "debug-{{ .session.name }}-read"
 rules:
@@ -179,7 +179,7 @@ subjects:
     namespace: "{{ .target.namespace }}"
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
+  kind: Role
   name: "debug-{{ .session.name }}-read"
 ```
 
@@ -227,7 +227,7 @@ than relying on a successful delete request alone.
 At `status.expiresAt`, authorization is no longer valid even if cleanup has
 not yet completed. A provider should therefore stop new operations at expiry,
 retain enough session/status evidence to finish cleanup, and use a bounded
-reconciliation retry. The upstream e975 controller does not install a
+reconciliation retry. The upstream controller does not install a
 DebugSession finalizer. Deleting the hub object directly can therefore remove
 the controller's resource inventory before spoke cleanup; providers that need
 deletion-triggered cleanup must add and test their own finalizer/retention
