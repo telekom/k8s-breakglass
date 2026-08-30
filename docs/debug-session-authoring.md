@@ -163,6 +163,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: "debug-{{ .session.name }}-read"
+  namespace: "{{ .target.namespace }}"
 rules:
   - apiGroups: [""]
     resources: [pods, pods/log]
