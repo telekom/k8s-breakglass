@@ -378,13 +378,6 @@ func registerPath(registry *pathRegistry, name string, directory bool) error {
 	if _, exists := registry.seen[name]; exists {
 		return errors.New("artifact contains a duplicate member")
 	}
-	parts := strings.Split(name, "/")
-	for index := 1; index < len(parts); index++ {
-		ancestor := strings.Join(parts[:index], "/")
-		if isDirectory, found := registry.seen[ancestor]; found && !isDirectory {
-			return errors.New("artifact contains a file/directory prefix collision")
-		}
-	}
 	registry.seen[name] = directory
 	return nil
 }

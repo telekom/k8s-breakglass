@@ -309,8 +309,11 @@ func TestRegisterPathScalesAndPreservesPrefixRejection(t *testing.T) {
 	if err := registerPath(&registry, "files/coredumps/"+strings.Repeat("a", 4)+"/entry-0", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := registerPath(&registry, "files/coredumps/"+strings.Repeat("a", 4)+"/entry-0/child", false); err == nil {
-		t.Fatal("registerPath() accepted a descendant of an existing file")
+	if err := registerPath(&registry, "files/coredumps/"+strings.Repeat("a", 4)+"/entry-0/child", false); err != nil {
+		t.Fatalf("registerPath() error = %v", err)
+	}
+	if err := validatePathCollisions(registry.seen); err == nil {
+		t.Fatal("validatePathCollisions() accepted a descendant of an existing file")
 	}
 }
 
@@ -347,6 +350,29 @@ func TestValidatePathCollisionsRejectsInterposedPath(t *testing.T) {
 				t.Fatalf("validatePathCollisions() error = %v, want error = %t", err, test.want)
 			}
 		})
+	}
+}
+
+func TestValidateHandlesDeepUniquePAXPathsWithinAllocationBound(t *testing.T) {
+	expected := crashExpected()
+	entries := crashEntries()
+	deep := strings.Repeat("deep/", 800)
+	for index := 0; index < 64; index++ {
+		entries = append(entries, fixtureEntry{
+			name:    "files/coredumps/" + deep + fmt.Sprintf("%04d", index),
+			content: []byte("core"),
+		})
+	}
+	compressed, _ := archiveFixture(t, expected, entries, nil)
+	var resultErr error
+	allocations := testing.AllocsPerRun(1, func() {
+		_, resultErr = Validate(context.Background(), bytes.NewReader(compressed), int64(len(compressed)), expected, Limits{})
+	})
+	if resultErr != nil {
+		t.Fatalf("Validate() deep PAX paths error = %v", resultErr)
+	}
+	if allocations > 100_000 {
+		t.Fatalf("Validate() deep PAX paths allocations = %.0f, want <= 100000", allocations)
 	}
 }
 
