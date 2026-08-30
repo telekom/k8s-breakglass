@@ -28,7 +28,7 @@ pwru_wait_for_event() {
 
 pwru_stop_gracefully() {
 	local container=$1 timeout_seconds=$2
-	local state exit_code iterations
+	local state exit_code iterations settle_seconds settle_iterations
 	case "$timeout_seconds" in
 		''|*[!0-9]*) return 1 ;;
 	esac
@@ -45,9 +45,7 @@ pwru_stop_gracefully() {
 	# source of truth because docker wait's own status is the container's
 	# status on some Docker versions.
 	if command -v timeout >/dev/null 2>&1 && [ "${PWRU_DISABLE_TIMEOUT:-false}" != true ]; then
-		if ! timeout --foreground "${timeout_seconds}s" docker wait "$container" >/dev/null 2>&1; then
-			:
-		fi
+		timeout --foreground "${timeout_seconds}s" docker wait "$container" >/dev/null 2>&1 || true
 	else
 		# Keep the helper usable in minimal test environments without silently
 		# turning this into an unbounded wait.
@@ -57,7 +55,24 @@ pwru_stop_gracefully() {
 			sleep 0.5
 		done
 	fi
-	state=$(pwru_docker inspect --format '{{.State.Status}}' "$container") || return 1
+
+	# A real pwru process can acknowledge SIGINT while its BPF detach is still
+	# completing. If docker wait is killed at exactly the timeout boundary, an
+	# immediate inspect can therefore observe the old running state even though
+	# the container is about to exit. Reconcile that race for a separate,
+	# explicitly bounded settle window. A genuinely stuck container still fails
+	# closed once this window expires.
+	settle_seconds=${PWRU_STOP_SETTLE_SECONDS:-5}
+	case "$settle_seconds" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	settle_iterations=$((10#$settle_seconds * 10))
+	[ "$settle_iterations" -gt 0 ] || return 1
+	for _ in $(seq 1 "$settle_iterations"); do
+		state=$(pwru_docker inspect --format '{{.State.Status}}' "$container") || return 1
+		[ "$state" = exited ] && break
+		sleep 0.1
+	done
 	[ "$state" = exited ] || return 2
 	exit_code=$(pwru_docker inspect --format '{{.State.ExitCode}}' "$container") || return 1
 	case "$exit_code" in

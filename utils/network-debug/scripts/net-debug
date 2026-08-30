@@ -4,6 +4,564 @@
 
 set -eu
 
+# The image-owned commands intentionally have a small, fixed surface.  Keep
+# all evidence below /work (the only path normally mounted by a debug session)
+# and never interpolate a command through a shell.
+WORK_DIR=${NETWORK_DEBUG_WORK_DIR:-/work}
+STAGING_DIR=''
+MAX_FILTER_LENGTH=256
+MAX_CAPTURE_PACKETS=10000
+MAX_TRACE_EVENTS=10000
+
+usage_error() {
+	printf 'net-debug: %s\n' "$*" >&2
+	exit 2
+}
+
+bounded_integer() {
+	value=$1 minimum=$2 maximum=$3 label=$4
+	case "$value" in
+		''|*[!0-9]*) usage_error "$label must be an integer between $minimum and $maximum" ;;
+	esac
+	if [ "$value" -lt "$minimum" ] || [ "$value" -gt "$maximum" ]; then
+		usage_error "$label must be an integer between $minimum and $maximum"
+	fi
+}
+
+validate_filter() {
+	filter=$1
+	[ "${#filter}" -le "$MAX_FILTER_LENGTH" ] || usage_error 'filter is too long'
+newline='
+'
+	carriage_return=$(printf '\rX')
+	carriage_return=${carriage_return%X}
+	case "$filter" in
+		*"$newline"*|*"$carriage_return"*) usage_error 'filter must not contain CR or LF' ;;
+	esac
+}
+
+validate_output() {
+	output=$1
+	case "$output" in
+		''|.|..|*/*|*\\*) usage_error 'output must be a filename in the work directory' ;;
+		*[!A-Za-z0-9._-]*) usage_error 'output contains unsupported characters' ;;
+		?????????????????????????????????????????????????????????????????*) usage_error 'output filename is too long' ;;
+	esac
+	if [ ! -d "$WORK_DIR" ] || [ -L "$WORK_DIR" ]; then
+		usage_error 'work directory is not available'
+	fi
+	destination=$WORK_DIR/$output
+	if [ -e "$destination" ] || [ -L "$destination" ]; then
+		usage_error 'output already exists'
+	fi
+}
+
+validate_interface() {
+	interface=$1
+	case "$interface" in
+		any) ;;
+		''|????????????????*) usage_error 'interface must be any or at most 15 characters' ;;
+		*[!A-Za-z0-9._-]*) usage_error 'interface contains unsupported characters' ;;
+	esac
+}
+
+cleanup_child() {
+	if [ -n "${ACTIVE_PID:-}" ]; then
+		kill_process_group INT "$ACTIVE_PID"
+		kill_process_group TERM "$ACTIVE_PID"
+		kill_process_group KILL "$ACTIVE_PID"
+	fi
+	# setsid can return a short-lived parent while the owned session leader
+	# continues in the background. If startup failed before its PID handshake,
+	# still terminate that exact launcher process during trap cleanup.
+	if [ -n "${LAUNCH_PID:-}" ]; then
+		kill -KILL "$LAUNCH_PID" 2>/dev/null || true
+	fi
+	if [ -n "${WATCHDOG_PID:-}" ]; then
+		kill "$WATCHDOG_PID" 2>/dev/null || true
+	fi
+	if [ -n "${TEMP_EVIDENCE:-}" ]; then
+		rm -f "$TEMP_EVIDENCE" "$TEMP_EVIDENCE.err"
+	fi
+	if [ -n "${READY_FILE:-}" ]; then
+		rm -f "$READY_FILE"
+	fi
+	cleanup_stage
+}
+
+cleanup_stage() {
+	if [ -n "${STAGING_DIR:-}" ]; then
+		rm -f "$STAGING_DIR"/* 2>/dev/null || true
+		rmdir "$STAGING_DIR" 2>/dev/null || true
+		STAGING_DIR=''
+	fi
+}
+
+process_alive() {
+	pid=$1
+	kill -0 "$pid" 2>/dev/null || return 1
+	# A child which has exited but has not yet been waited for may be a zombie;
+	# it no longer needs to be waited for and must not make a stop timeout fail closed.
+	if [ -r "/proc/$pid/stat" ]; then
+		state=$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null || true)
+		[ "$state" = Z ] && return 1
+	fi
+	return 0
+}
+
+process_group_alive() {
+	pid=$1
+	# A session leader can become a zombie after its group is killed while a
+	# shell parent has not reaped it yet. `kill -0 -PGID` reports that zombie as
+	# alive and would hold the public wrapper until its whole polling bound.
+	# On Linux, inspect every process in the owned group and count only live
+	# members; a surviving descendant still keeps the group alive and therefore
+	# remains subject to the watchdog's KILL and fail-closed checks.
+	if [ -d /proc ]; then
+		for stat_file in /proc/[0-9]*/stat; do
+			[ -r "$stat_file" ] || continue
+			stat_tail=$(awk -F') ' '{print $NF}' "$stat_file" 2>/dev/null || true)
+			state=$(printf '%s\n' "$stat_tail" | awk '{print $1}')
+			process_group=$(printf '%s\n' "$stat_tail" | awk '{print $3}')
+			[ "$process_group" = "$pid" ] && [ "$state" != Z ] && return 0
+		done
+		return 1
+	fi
+	# Non-Linux platforms without /proc cannot expose adopted descendants;
+	# retain the direct check there for portability of the image helper tests.
+	process_alive "$pid"
+}
+
+kill_process_group() {
+	signal=$1 pid=$2
+	# setsid gives the owned trace a distinct process group, so this cannot
+	# signal the wrapper or unrelated work in the caller's namespace.
+	kill -"$signal" "-$pid" 2>/dev/null && return 0
+	# Retry the long option separator for shells that require it when a
+	# negative process-group ID follows a signal option.
+	kill -"$signal" -- "-$pid" 2>/dev/null && return 0
+	# This direct signal is only a last-resort cleanup; process_group_alive keeps
+	# Linux callers fail-closed if descendants remain after it.
+	kill -"$signal" "$pid" 2>/dev/null || true
+}
+
+capture_command() {
+	umask 077
+	interface=any duration=30 packets=1000 snaplen=128 filter='' output=capture.pcap
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+			--interface|-i) [ "$#" -ge 2 ] || usage_error 'missing interface'; interface=$2; shift 2 ;;
+			--duration|-d) [ "$#" -ge 2 ] || usage_error 'missing duration'; duration=$2; shift 2 ;;
+			--packets|--count|--max-packets|-c) [ "$#" -ge 2 ] || usage_error 'missing packet limit'; packets=$2; shift 2 ;;
+			--snaplen|-s) [ "$#" -ge 2 ] || usage_error 'missing snaplen'; snaplen=$2; shift 2 ;;
+			--filter|-f) [ "$#" -ge 2 ] || usage_error 'missing filter'; filter=$2; shift 2 ;;
+			--output|--output-file|-o) [ "$#" -ge 2 ] || usage_error 'missing output'; output=$2; shift 2 ;;
+			--help|-h)
+				printf '%s\n' 'Usage: net-debug capture [--interface IF] [--duration SEC] [--packets N] [--snaplen BYTES] [--filter EXPR] [--output FILE]'
+				return 0 ;;
+			*) usage_error "unknown capture option: $1" ;;
+		esac
+	done
+	bounded_integer "$duration" 1 300 duration
+	bounded_integer "$packets" 1 "$MAX_CAPTURE_PACKETS" packets
+	bounded_integer "$snaplen" 64 256 snaplen
+	validate_interface "$interface"
+	validate_filter "$filter"
+	validate_output "$output"
+	command -v tcpdump >/dev/null 2>&1 || usage_error 'tcpdump is unavailable'
+
+	destination=$WORK_DIR/$output
+	# mktemp creates a private, mode-700 staging directory with O_EXCL.  Keep
+	# all intermediate files there, then publish with a no-clobber hard link.
+	STAGING_DIR=$(mktemp -d "$WORK_DIR/.net-debug.XXXXXX") || usage_error 'cannot create private staging directory'
+	TEMP_EVIDENCE=$STAGING_DIR/evidence
+	trap cleanup_child EXIT
+	trap 'cleanup_child; exit 130' HUP INT TERM
+	if [ -n "$filter" ]; then
+		# -d asks libpcap to compile the expression without opening the device.
+		tcpdump -d -- "$filter" >/dev/null 2>"$TEMP_EVIDENCE.err" || {
+			printf 'net-debug: filter rejected by libpcap\n' >&2
+			return 1
+		}
+	fi
+
+	# Keep this argv literal and reviewable: in particular, -p prevents
+	# tcpdump from enabling promiscuous mode on the target interface. Open the
+	# root-owned 0600 evidence file through the shell before tcpdump drops to
+	# its packaged capture user; -w - makes tcpdump write through that inherited
+	# descriptor and avoids granting any shared-directory write permission or
+	# CAP_SETUID merely to request `-Z root`.
+	tcpdump -p -i "$interface" -s "$snaplen" -c "$packets" -w - -- ${filter:+"$filter"} >"$TEMP_EVIDENCE" 2>"$TEMP_EVIDENCE.err" &
+	ACTIVE_PID=$!
+	(
+		sleep "$duration"
+		kill -INT "$ACTIVE_PID" 2>/dev/null || true
+		sleep 2
+		kill -TERM "$ACTIVE_PID" 2>/dev/null || true
+		sleep 1
+		kill -KILL "$ACTIVE_PID" 2>/dev/null || true
+	) &
+	WATCHDOG_PID=$!
+	status=0
+	wait "$ACTIVE_PID" || status=$?
+	ACTIVE_PID=''
+	kill "$WATCHDOG_PID" 2>/dev/null || true
+	wait "$WATCHDOG_PID" 2>/dev/null || true
+	WATCHDOG_PID=''
+	case "$status" in 0|130|143) ;; *) cat "$TEMP_EVIDENCE.err" >&2; return 1 ;; esac
+	[ -s "$TEMP_EVIDENCE" ] || usage_error 'tcpdump produced no capture'
+	readback=$TEMP_EVIDENCE.readback
+	# As with -w -, feed the root-owned private file through an inherited
+	# descriptor: reopening its 0600 pathname after tcpdump's privilege drop
+	# would fail for the packaged capture UID.
+	tcpdump -nn -tt -r - -c "$packets" <"$TEMP_EVIDENCE" >"$readback" 2>/dev/null || return 1
+	count=$(wc -l <"$readback" | tr -d ' ')
+	bytes=$(wc -c <"$TEMP_EVIDENCE" | tr -d ' ')
+	max_bytes=$((packets * (snaplen + 16) + 24))
+	[ "$bytes" -le "$max_bytes" ] || usage_error 'capture exceeds its bounded file size'
+	hash=$(sha256sum "$TEMP_EVIDENCE" | awk '{print $1}')
+	ln "$TEMP_EVIDENCE" "$destination" || usage_error 'output was created concurrently'
+	rm -f "$TEMP_EVIDENCE"
+	cleanup_stage
+	printf 'capture\ninterface %s\nduration %s\npacket_limit %s\nsnaplen %s\npacket_count %s\nbytes %s\nsha256 %s\nfile %s\n' \
+		"$interface" "$duration" "$packets" "$snaplen" "$count" "$bytes" "$hash" "$output"
+}
+
+capability_present() {
+	status_file=${NETWORK_DEBUG_CAPABILITY_FILE:-/proc/self/status}
+	cap=$1
+	case "$cap" in
+		NET_RAW) bit=13 ;; NET_ADMIN) bit=12 ;; SYS_PTRACE) bit=19 ;; SYS_RESOURCE) bit=24 ;; PERFMON) bit=38 ;; BPF) bit=39 ;;
+		*) return 1 ;;
+	esac
+	hex=$(awk '/^CapEff:/ {print $2}' "$status_file" 2>/dev/null || true)
+	[ -n "$hex" ] || return 1
+	nibble_index=$((bit / 4))
+	while [ "$nibble_index" -gt 0 ]; do
+		hex=${hex%?}
+		nibble_index=$((nibble_index - 1))
+	done
+	nibble=$(printf '%s' "$hex" | tail -c 1 | tr 'A-F' 'a-f')
+	case "$((bit % 4)):$nibble" in
+		0:[13579bdf]|1:[2367abef]|2:[4567cdef]|3:[89abcdef]) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+trace_prerequisites() {
+	btf=${NETWORK_DEBUG_BTF_PATH:-/sys/kernel/btf/vmlinux}
+	debugfs=${NETWORK_DEBUG_DEBUGFS_PATH:-/sys/kernel/debug}
+	tracefs=${NETWORK_DEBUG_TRACEFS_PATH:-/sys/kernel/tracing}
+	securityfs=${NETWORK_DEBUG_SECURITYFS_PATH:-/sys/kernel/security}
+	mounts=${NETWORK_DEBUG_MOUNTINFO_PATH:-/proc/self/mountinfo}
+	[ -r "$btf" ] || usage_error 'kernel BTF is unavailable or unreadable'
+	if [ ! -d "$debugfs" ] || [ ! -r "$debugfs" ]; then
+		usage_error 'debugfs is unavailable or unreadable'
+	fi
+	if [ ! -d "$tracefs" ] || [ ! -r "$tracefs" ]; then
+		usage_error 'tracefs is unavailable or unreadable'
+	fi
+	if [ ! -d "$securityfs" ] || [ ! -r "$securityfs" ]; then
+		usage_error 'securityfs is unavailable or unreadable'
+	fi
+	[ -r "$securityfs/lsm" ] || usage_error 'LSM policy information is unavailable'
+	[ -r "$mounts" ] || usage_error 'mount information is unavailable'
+	for mountpoint in "$debugfs" "$tracefs" "$securityfs"; do
+		# mountinfo field 5 stores spaces, tabs, and backslashes as octal
+		# escapes. Keep the escaped value in the environment because awk -v
+		# interprets backslash escapes in assignment values.
+		escaped_mountpoint=$(printf '%s' "$mountpoint" | sed 's/[\\]/\\134/g; s/ /\\040/g; s/	/\\011/g')
+		if ! NETWORK_DEBUG_MOUNTPOINT="$escaped_mountpoint" awk '
+			$5 == ENVIRON["NETWORK_DEBUG_MOUNTPOINT"] { found=1 }
+			END { exit(found ? 0 : 1) }
+		' "$mounts"; then
+			usage_error "$mountpoint is not mounted"
+		fi
+	done
+	# Reading /proc/1/ns/net is the kernel-enforced host-PID identity check.
+	# Yama and other ptrace policies require CAP_SYS_PTRACE for that read even
+	# when the process is root; request only this capability rather than a broad
+	# SYS_ADMIN or privileged fallback.
+	for capability in NET_ADMIN BPF PERFMON SYS_RESOURCE SYS_PTRACE; do
+		capability_present "$capability" || usage_error "required capability $capability is unavailable"
+	done
+	# /proc/1 is the host init only when the trace pod uses hostPID. Requiring
+	# the namespace identity to match is an actual kernel check; a caller cannot
+	# satisfy it by setting an environment variable. Trace runbooks therefore
+	# require hostPID=true together with hostNetwork=true.
+	self_netns=$(readlink /proc/self/ns/net 2>/dev/null || true)
+	host_netns=$(readlink /proc/1/ns/net 2>/dev/null || true)
+	if [ -z "$self_netns" ] || [ "$self_netns" != "$host_netns" ]; then
+		usage_error 'trace requires the host network namespace (hostPID=true and hostNetwork=true)'
+	fi
+	# A private PID namespace makes /proc/1 the container's own init, so the
+	# network comparison above would otherwise succeed for an ordinary
+	# hostNetwork pod. In a hostPID workload, /proc/1 is the node init and its
+	# mount namespace/root are distinct from this container's view. Both checks
+	# are kernel-derived and do not trust an environment boolean. Reading
+	# /proc/1/root does not mount or write the host filesystem.
+	self_mntns=$(readlink /proc/self/ns/mnt 2>/dev/null || true)
+	host_mntns=$(readlink /proc/1/ns/mnt 2>/dev/null || true)
+	self_root=$(stat -Lc '%d:%i' / 2>/dev/null || true)
+	host_root=$(stat -Lc '%d:%i' /proc/1/root 2>/dev/null || true)
+	if [ -z "$self_mntns" ] || [ -z "$host_mntns" ] || [ "$self_mntns" = "$host_mntns" ] || \
+		[ -z "$self_root" ] || [ -z "$host_root" ] || [ "$self_root" = "$host_root" ]; then
+		usage_error 'trace requires a host PID namespace (hostPID=true)'
+	fi
+}
+
+trace_command() {
+	umask 077
+	duration=60 events=1000 filter='' output=trace.log
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+			--duration|-d) [ "$#" -ge 2 ] || usage_error 'missing duration'; duration=$2; shift 2 ;;
+			--events|--lines|--max-events|--max-lines|--line-limit|--limit|-e) [ "$#" -ge 2 ] || usage_error 'missing event limit'; events=$2; shift 2 ;;
+			--filter|-f) [ "$#" -ge 2 ] || usage_error 'missing filter'; filter=$2; shift 2 ;;
+			--output|--output-file|-o) [ "$#" -ge 2 ] || usage_error 'missing output'; output=$2; shift 2 ;;
+			--help|-h)
+				printf '%s\n' 'Usage: net-debug trace [--duration SEC] [--events N] [--filter EXPR] [--output FILE]'
+				return 0 ;;
+			*) usage_error "unknown trace option: $1" ;;
+		esac
+	done
+	bounded_integer "$duration" 1 60 duration
+	bounded_integer "$events" 1 "$MAX_TRACE_EVENTS" events
+	validate_filter "$filter"
+	validate_output "$output"
+	trace_prerequisites
+	command -v pwru >/dev/null 2>&1 || usage_error 'pwru is unavailable'
+	stop_timeout=${NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS:-15}
+	bounded_integer "$stop_timeout" 1 60 stop-timeout
+	ready_required=${NETWORK_DEBUG_PWRU_REQUIRE_READY:-false}
+	case "$ready_required" in
+		true|false) ;;
+		*) usage_error 'NETWORK_DEBUG_PWRU_REQUIRE_READY must be true or false' ;;
+	esac
+	startup_timeout=${NETWORK_DEBUG_PWRU_STARTUP_TIMEOUT_SECONDS:-30}
+	if [ "$ready_required" = true ]; then
+		bounded_integer "$startup_timeout" 1 120 startup-timeout
+	fi
+	command -v setsid >/dev/null 2>&1 || usage_error 'setsid is unavailable'
+	# Use the same private O_EXCL staging directory as capture. Evidence is
+	# written directly to an owned regular file; a FIFO can deadlock when either
+	# endpoint is waiting for the other during startup or shutdown.
+	destination=$WORK_DIR/$output
+	STAGING_DIR=$(mktemp -d "$WORK_DIR/.net-debug.XXXXXX") || usage_error 'cannot create private staging directory'
+	TEMP_EVIDENCE=$STAGING_DIR/evidence
+	trap cleanup_child EXIT
+	trap 'cleanup_child; exit 130' HUP INT TERM
+
+	# pwru has a native line bound. The file-size limit is an independent kernel
+	# bound for malformed or unexpectedly large event records (512-byte units).
+	max_trace_bytes=$((events * 4097))
+	max_trace_blocks=$(((max_trace_bytes + 511) / 512))
+	TRACE_PID_FILE=$STAGING_DIR/trace.pid
+	TRACE_STATUS_FILE=$TRACE_PID_FILE.status
+	TRACE_TIMED_OUT_FILE=$TRACE_PID_FILE.timed-out
+	TEMP_DIAGNOSTICS=$STAGING_DIR/diagnostics
+	# pwru v1.0.12 creates this marker only after kprobes are attached and it is
+	# ready to receive events. It is removed by the EXIT trap and is never a
+	# user-selected output path. The integration proof opts into waiting for it
+	# before starting its generated traffic, while hermetic fixtures retain the
+	# historical no-handshake path. Keep the marker inside the private staging
+	# directory so a workload sharing /work cannot forge readiness by creating a
+	# predictable top-level file.
+	READY_FILE=$STAGING_DIR/ready
+	# Interface metadata is optional for this tuple-only contract. Disabling it
+	# avoids pwru's best-effort walk of every host PID/netns, which requires
+	# broader namespace privileges and can consume the complete trace duration
+	# before the kprobes begin listening.
+	if [ -n "$filter" ]; then
+		# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
+		setsid sh -c 'pid_file=$1; status_file=$2; max_blocks=$3; printf "%s\\n" "$$" >"$pid_file"; ulimit -f "$max_blocks"; shift 3; "$@"; status=$?; printf "%s\\n" "$status" >"$status_file"; exit "$status"' sh "$TRACE_PID_FILE" "$TRACE_STATUS_FILE" "$max_trace_blocks" pwru \
+			--backend kprobe --output-meta=false --output-tuple --timestamp none --output-limit-lines "$events" --ready-file "$READY_FILE" -- "$filter" \
+			>"$TEMP_EVIDENCE" 2>"$TEMP_DIAGNOSTICS" &
+	else
+		# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
+		setsid sh -c 'pid_file=$1; status_file=$2; max_blocks=$3; printf "%s\\n" "$$" >"$pid_file"; ulimit -f "$max_blocks"; shift 3; "$@"; status=$?; printf "%s\\n" "$status" >"$status_file"; exit "$status"' sh "$TRACE_PID_FILE" "$TRACE_STATUS_FILE" "$max_trace_blocks" pwru \
+			--backend kprobe --output-meta=false --output-tuple --timestamp none --output-limit-lines "$events" --ready-file "$READY_FILE" \
+			>"$TEMP_EVIDENCE" 2>"$TEMP_DIAGNOSTICS" &
+	fi
+	LAUNCH_PID=$!
+	TRACE_PID=''
+	# setsid may fork when its caller is already a process-group leader. The
+	# owned wrapper records the actual session leader PID so the watchdog never
+	# mistakes a short-lived setsid parent for the trace process.
+	for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+		if [ -r "$TRACE_PID_FILE" ]; then
+			candidate=$(cat "$TRACE_PID_FILE" 2>/dev/null || true)
+			case "$candidate" in
+				''|*[!0-9]*) ;;
+				*) TRACE_PID=$candidate; break ;;
+			esac
+		fi
+		sleep 0.1
+	done
+	[ -n "$TRACE_PID" ] || {
+		printf '%s\n' 'net-debug: setsid did not start the trace process' >&2
+		if [ -r "$TRACE_PID_FILE" ]; then
+			candidate=$(cat "$TRACE_PID_FILE" 2>/dev/null || true)
+			case "$candidate" in
+				''|*[!0-9]*) ;;
+				*) ACTIVE_PID=$candidate; kill_process_group KILL "$ACTIVE_PID" ;;
+			esac
+		fi
+		wait "$LAUNCH_PID" 2>/dev/null || true
+		return 1
+	}
+	ACTIVE_PID=$TRACE_PID
+	if [ "$ready_required" = true ]; then
+		ready_iterations=$((startup_timeout * 10))
+		while [ "$ready_iterations" -gt 0 ] && [ ! -e "$READY_FILE" ] && process_group_alive "$ACTIVE_PID"; do
+			sleep 0.1
+			ready_iterations=$((ready_iterations - 1))
+		done
+		if [ ! -e "$READY_FILE" ]; then
+			kill_process_group KILL "$ACTIVE_PID"
+			for _ in 1 2 3 4 5 6 7 8 9 10; do
+				process_group_alive "$ACTIVE_PID" || break
+				sleep 0.1
+			done
+			printf 'net-debug: pwru did not become ready within %s seconds\n' "$startup_timeout" >&2
+			if [ -s "$TEMP_DIAGNOSTICS" ]; then
+				sed '/->/d' "$TEMP_DIAGNOSTICS" | sed -n '1,40p' >&2
+			fi
+			return 1
+		fi
+	fi
+	# Own the complete process group. BusyBox timeout only signals its
+	# immediate child and can leave a tracing descendant alive; group-directed
+	# INT then KILL makes the bound apply to pwru and any children. The duration
+	# starts after the optional native readiness handshake, so callers can
+	# attribute generated traffic to the actual listening interval.
+	(
+		sleep "$duration"
+		if process_group_alive "$ACTIVE_PID"; then
+			: >"$TRACE_TIMED_OUT_FILE"
+			kill_process_group INT "$ACTIVE_PID"
+			sleep "$stop_timeout"
+			if process_group_alive "$ACTIVE_PID"; then
+				kill_process_group KILL "$ACTIVE_PID"
+			fi
+		fi
+	) &
+	WATCHDOG_PID=$!
+	status=0
+	# Poll the recorded session leader because it may not be a direct child when
+	# setsid had to fork. The watchdog supplies the hard duration+grace bound.
+	wait_iterations=$(((duration + stop_timeout + 5) * 10))
+	while [ "$wait_iterations" -gt 0 ] && process_group_alive "$ACTIVE_PID"; do
+		sleep 0.1
+		wait_iterations=$((wait_iterations - 1))
+	done
+	if process_group_alive "$ACTIVE_PID"; then
+		kill_process_group KILL "$ACTIVE_PID"
+		for _ in 1 2 3 4 5 6 7 8 9 10; do
+			process_group_alive "$ACTIVE_PID" || break
+			sleep 0.1
+		done
+	fi
+	process_group_alive "$ACTIVE_PID" && status=137
+	if [ -r "$TRACE_STATUS_FILE" ]; then
+		candidate_status=$(cat "$TRACE_STATUS_FILE" 2>/dev/null || true)
+		case "$candidate_status" in
+			''|*[!0-9]*) status=1 ;;
+			*) status=$candidate_status ;;
+		esac
+	elif [ -e "$TRACE_TIMED_OUT_FILE" ]; then
+		# A group KILL can prevent the wrapper from publishing its child status.
+		# Treat that expected bounded termination as 137, but fail closed for any
+		# other missing status file.
+		status=137
+	else
+		status=1
+	fi
+	# When setsid had to fork, the session leader is reparented to this shell
+	# after the short-lived launcher exits. Reap it when it has stopped so a
+	# killed trace cannot remain as an owned zombie in a container without init.
+	if ! process_alive "$ACTIVE_PID"; then
+		wait "$ACTIVE_PID" 2>/dev/null || true
+	fi
+	ACTIVE_PID=''
+	kill "$WATCHDOG_PID" 2>/dev/null || true
+	wait "$WATCHDOG_PID" 2>/dev/null || true
+	WATCHDOG_PID=''
+	# Reap the direct setsid child when it did not fork, and otherwise reap the
+	# short-lived setsid parent. This also prevents a launcher zombie from
+	# surviving the public command.
+	wait "$LAUNCH_PID" 2>/dev/null || true
+	LAUNCH_PID=''
+	# pwru v1.0.12 returns status 1 when its native output-line limit is reached.
+	# Accept that one bounded-completion case only when its exact slog marker
+	# names this request's limit; ordinary status-1 failures remain fatal.
+	limit_completed=false
+	case "$status" in
+	0|130|141|143) ;;
+		1)
+			completion_count=$(sed -n 's/^[0-9][0-9][0-9][0-9]\/[0-9][0-9]\/\([0-9][0-9]\) [0-9][0-9]:[0-9][0-9]:[0-9][0-9] INFO Printed events, exiting program\.\. count=\([0-9][0-9]*\)$/\2/p' "$TEMP_DIAGNOSTICS" 2>/dev/null || true)
+			if [ "$completion_count" = "$events" ]; then
+				limit_completed=true
+			else
+				printf 'net-debug: pwru status 1 lacked the exact bounded-completion marker for %s events\n' "$events" >&2
+				if [ -s "$TEMP_DIAGNOSTICS" ]; then
+					sed '/->/d' "$TEMP_DIAGNOSTICS" | sed -n '1,40p' >&2
+				fi
+				return 1
+			fi
+			;;
+		137)
+			# A forced process-group KILL can prevent the launcher from publishing
+			# pwru's status. Treat it as a successful bounded stop only when the
+			# watchdog marker is ours, pwru proved its attach/signal/detach
+			# lifecycle, and diagnostics contain no error-level record. Evidence
+			# is still required below, so a timeout cannot turn an empty trace into
+			# a successful result.
+			if [ ! -e "$TRACE_TIMED_OUT_FILE" ] || \
+				! grep -E ' INFO Attaching kprobes via=kprobe$' "$TEMP_DIAGNOSTICS" >/dev/null 2>&1 || \
+				! grep -E ' INFO Received signal, exiting program\.\.$' "$TEMP_DIAGNOSTICS" >/dev/null 2>&1 || \
+				! grep -E ' INFO Detaching kprobes\.\.\.$' "$TEMP_DIAGNOSTICS" >/dev/null 2>&1 || \
+				grep -E -i '(^|[[:space:]])(error|erro|fatal)([[:space:]:]|$)|level=(error|fatal)|panic:' "$TEMP_DIAGNOSTICS" >/dev/null 2>&1; then
+				printf 'net-debug: pwru exited with status %s\n' "$status" >&2
+				if [ -s "$TEMP_DIAGNOSTICS" ]; then
+					sed '/->/d' "$TEMP_DIAGNOSTICS" | sed -n '1,40p' >&2
+				fi
+				return 1
+			fi
+			;;
+		*)
+			# Preserve actionable startup diagnostics before the EXIT trap removes
+			# private evidence. Drop packet-tuple lines so failure logs cannot
+			# become an alternate packet-content output channel.
+			printf 'net-debug: pwru exited with status %s\n' "$status" >&2
+			if [ -s "$TEMP_DIAGNOSTICS" ]; then
+				sed '/->/d' "$TEMP_DIAGNOSTICS" | sed -n '1,40p' >&2
+			fi
+			return 1
+		;;
+	esac
+	# pwru's text mode writes a fixed header before tuple records. Publish only
+	# the tuple records promised by this image contract so the header cannot
+	# consume an event bound or be mistaken for packet evidence.
+	TEMP_TUPLES=$STAGING_DIR/tuples
+	sed -n '/->/p' "$TEMP_EVIDENCE" >"$TEMP_TUPLES" || true
+	count=$(wc -l <"$TEMP_TUPLES" | tr -d ' ')
+	[ "$count" -le "$events" ] || usage_error 'trace evidence exceeded event limit'
+	if [ "$limit_completed" = true ] && [ "$count" -ne "$events" ]; then
+		printf 'net-debug: bounded-completion marker claimed %s events but evidence contained %s\n' "$events" "$count" >&2
+		return 1
+	fi
+	bytes=$(wc -c <"$TEMP_TUPLES" | tr -d ' ')
+	[ "$bytes" -le "$max_trace_bytes" ] || usage_error 'trace evidence exceeds its bounded file size'
+	[ "$count" -gt 0 ] || usage_error 'trace produced no packet tuple evidence'
+	hash=$(sha256sum "$TEMP_TUPLES" | awk '{print $1}')
+	ln "$TEMP_TUPLES" "$destination" || usage_error 'output was created concurrently'
+	rm -f "$TEMP_EVIDENCE" "$TEMP_TUPLES"
+	cleanup_stage
+	printf 'trace\nduration %s\nevent_limit %s\nevent_count %s\nsha256 %s\nfile %s\n' \
+		"$duration" "$events" "$count" "$hash" "$output"
+}
+
 help() {
 	cat <<'EOF'
 network-debug - a portable network troubleshooting toolbox
@@ -12,6 +570,8 @@ Usage:
   net-debug shell [COMMAND ...]   Start a shell (the default)
   net-debug report                Print a stable, redaction-friendly report
   net-debug tools                 List installed troubleshooting tools
+  net-debug capture               Run a bounded tcpdump capture under /work
+  net-debug trace                 Run a bounded pwru trace under /work
   net-debug --help                Show this help
   net-debug --version             Show the image version
 
@@ -26,9 +586,11 @@ case "${1:-shell}" in
 	--version|-V|version) printf 'network-debug %s\n' "${NETWORK_DEBUG_VERSION:-unknown}" ;;
 	report) exec /usr/local/bin/net-report ;;
 	tools) exec /usr/local/bin/net-report --tools ;;
+	capture) shift; capture_command "$@" ;;
+	trace) shift; trace_command "$@" ;;
 	shell)
 		shift || true
-		if [ "$#" -gt 0 ]; then exec /bin/sh -c "$*"; fi
+		if [ "$#" -gt 0 ]; then exec "$@"; fi
 		if [ -t 0 ] && [ -t 1 ]; then
 			# /etc/profile prints the short MOTD for interactive shells.
 			exec /bin/sh -l

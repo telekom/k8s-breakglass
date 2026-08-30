@@ -7,18 +7,29 @@ set -Eeuo pipefail
 IMAGE=${NETWORK_DEBUG_IMAGE:-network-debug:integration}
 EXEC_TIMEOUT=${NETWORK_DEBUG_EXEC_TIMEOUT_SECONDS:-20}
 DOCKER_TIMEOUT=${NETWORK_DEBUG_DOCKER_TIMEOUT_SECONDS:-30}
-PWRU_TIMEOUT=${NETWORK_DEBUG_PWRU_TIMEOUT_SECONDS:-20}
 PWRU_REQUIRED=${NETWORK_DEBUG_REQUIRE_PWRU:-true}
-# BPF detach is asynchronous on some kernels; keep graceful shutdown bounded
-# while allowing the daemon a short, evidence-backed detach window.
+TRACE_DURATION=10
+TRACE_EVENTS=10000
+# BPF detach is asynchronous on some kernels; keep graceful shutdown bounded.
 PWRU_STOP_TIMEOUT=${NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS:-15}
-KUBESTR_TIMEOUT=${NETWORK_DEBUG_KUBESTR_TIMEOUT_SECONDS:-60}
-KUBESTR_FIXTURE_IMAGE=${NETWORK_DEBUG_KUBESTR_FIXTURE_IMAGE:-network-debug-kubestr-fio:integration}
+# Loading and attaching pwru's kprobes can take substantially longer than
+# the trace itself on a busy CI kernel. Keep that startup allowance separate
+# from the bounded shutdown windows so the outer wait remains auditable.
+PWRU_STARTUP_MARGIN=${NETWORK_DEBUG_PWRU_STARTUP_MARGIN_SECONDS:-30}
+# The outer Docker wait must cover the trace duration and both bounded pwru
+# startup and shutdown windows. A fixed 20-second wait expired while
+# net-debug was still attaching or within its documented stop contract. Keep a
+# small explicit scheduling allowance outside those operation bounds so a
+# valid wrapper completion at the boundary is not killed by the harness.
+PWRU_TIMEOUT=${NETWORK_DEBUG_PWRU_TIMEOUT_SECONDS:-$((TRACE_DURATION + PWRU_STARTUP_MARGIN + PWRU_STOP_TIMEOUT + 5))}
 RUN_ID="network-debug-proof-${RANDOM}-${RANDOM}"
 NETWORK=${RUN_ID}-network
 CONTAINER=${RUN_ID}-tools
 PWRU_CONTAINER=${RUN_ID}-pwru
-KUBESTR_NAMESPACE=${RUN_ID}-storage
+TRACE_TRAFFIC_CONTAINER=${RUN_ID}-trace-traffic
+TRACE_FIXTURE_CONTAINER=${RUN_ID}-trace-fixture
+NETWORK_NAMESPACE=${RUN_ID}-network
+NETWORK_HOST_POD_NAME=${RUN_ID}-host-network
 # Never accept a caller-selected cluster name: the random run ID is the only
 # name this invocation can own after its absent-name preflight.
 KIND_CLUSTER_NAME=$RUN_ID
@@ -28,14 +39,13 @@ KIND_BIN=${NETWORK_DEBUG_KIND_BIN:-kind}
 DOCKER_BIN=${NETWORK_DEBUG_DOCKER_BIN:-docker}
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/network-debug-proof.XXXXXX")
 KUBECONFIG_FILE=${WORK_DIR}/kubeconfig
-KUBESTR_PV_NAME=${RUN_ID}-pv
-KUBESTR_STORAGE_CLASS=${RUN_ID}-storage-class
 KIND_CLUSTER_CREATED=false
-KUBESTR_NAMESPACE_CREATED=false
+NETWORK_NAMESPACE_CREATED=false
 NETWORK_CREATED=false
 CONTAINER_CREATED=false
 PWRU_CONTAINER_CREATED=false
-KUBESTR_KUBECONFIG_FILE=${WORK_DIR}/kubestr-kubeconfig
+TRACE_TRAFFIC_CONTAINER_CREATED=false
+TRACE_FIXTURE_CONTAINER_CREATED=false
 DOCKER_OWNER_LABEL=com.telekom.network-debug.run
 # shellcheck disable=SC2034 # consumed by the sourced pwru lifecycle helper
 PWRU_OWNER_LABEL=$DOCKER_OWNER_LABEL
@@ -48,13 +58,15 @@ PWRU_USE_DOCKER_TIMEOUT=true
 . "$(dirname -- "$0")/kind-ownership.sh"
 # shellcheck disable=SC1091
 . "$(dirname -- "$0")/pwru-lifecycle.sh"
+# shellcheck disable=SC1091
+. "$(dirname -- "$0")/docker-preflight.sh"
 
 requirement() {
 	printf 'REQUIREMENT: %s\n' "$*" >&2
 	exit 2
 }
 
-for timeout_value in "$EXEC_TIMEOUT" "$DOCKER_TIMEOUT" "$PWRU_TIMEOUT" "$PWRU_STOP_TIMEOUT" "$KUBESTR_TIMEOUT"; do
+for timeout_value in "$EXEC_TIMEOUT" "$DOCKER_TIMEOUT" "$PWRU_TIMEOUT" "$PWRU_STARTUP_MARGIN" "$PWRU_STOP_TIMEOUT"; do
 	case "$timeout_value" in
 		''|*[!0-9]*) requirement "timeout settings must be positive integers" ;;
 	esac
@@ -64,33 +76,16 @@ case "$PWRU_REQUIRED" in
 	true|false) ;;
 	*) requirement "NETWORK_DEBUG_REQUIRE_PWRU must be true or false" ;;
 esac
-
 cleanup() {
 	status=$?
 	set +e
 	cleanup_failed=false
 	if [ "$KIND_CLUSTER_CREATED" = true ]; then
-		if [ "$KUBESTR_NAMESPACE_CREATED" = true ] && command -v kubectl >/dev/null 2>&1; then
-			if ! kubectl --kubeconfig "$KUBECONFIG_FILE" delete namespace "$KUBESTR_NAMESPACE" --ignore-not-found --wait=true --timeout=60s >/dev/null 2>&1; then
+		if [ "$NETWORK_NAMESPACE_CREATED" = true ] && command -v kubectl >/dev/null 2>&1; then
+			if ! kubectl --kubeconfig "$KUBECONFIG_FILE" delete namespace "$NETWORK_NAMESPACE" --ignore-not-found --wait=true --timeout=60s >/dev/null 2>&1; then
 				cleanup_failed=true
 			fi
-			if kubectl --kubeconfig "$KUBECONFIG_FILE" get namespace "$KUBESTR_NAMESPACE" >/dev/null 2>&1; then
-				cleanup_failed=true
-			fi
-		fi
-		if kubectl --kubeconfig "$KUBECONFIG_FILE" get persistentvolume "$KUBESTR_PV_NAME" >/dev/null 2>&1; then
-			if ! kubectl --kubeconfig "$KUBECONFIG_FILE" delete persistentvolume "$KUBESTR_PV_NAME" --ignore-not-found >/dev/null 2>&1; then
-				cleanup_failed=true
-			fi
-			if kubectl --kubeconfig "$KUBECONFIG_FILE" get persistentvolume "$KUBESTR_PV_NAME" >/dev/null 2>&1; then
-				cleanup_failed=true
-			fi
-		fi
-		if kubectl --kubeconfig "$KUBECONFIG_FILE" get storageclass "$KUBESTR_STORAGE_CLASS" >/dev/null 2>&1; then
-			if ! kubectl --kubeconfig "$KUBECONFIG_FILE" delete storageclass "$KUBESTR_STORAGE_CLASS" --ignore-not-found >/dev/null 2>&1; then
-				cleanup_failed=true
-			fi
-			if kubectl --kubeconfig "$KUBECONFIG_FILE" get storageclass "$KUBESTR_STORAGE_CLASS" >/dev/null 2>&1; then
+			if kubectl --kubeconfig "$KUBECONFIG_FILE" get namespace "$NETWORK_NAMESPACE" >/dev/null 2>&1; then
 				cleanup_failed=true
 			fi
 		fi
@@ -98,9 +93,13 @@ cleanup() {
 	if ! kind_cleanup_owned_cluster; then
 			cleanup_failed=true
 	fi
-	for docker_container in "$PWRU_CONTAINER" "$CONTAINER"; do
+	for docker_container in "$PWRU_CONTAINER" "$TRACE_TRAFFIC_CONTAINER" "$TRACE_FIXTURE_CONTAINER" "$CONTAINER"; do
 		container_owned=false
 		if [ "$docker_container" = "$PWRU_CONTAINER" ] && [ "$PWRU_CONTAINER_CREATED" = true ]; then
+			container_owned=true
+		elif [ "$docker_container" = "$TRACE_TRAFFIC_CONTAINER" ] && [ "$TRACE_TRAFFIC_CONTAINER_CREATED" = true ]; then
+			container_owned=true
+		elif [ "$docker_container" = "$TRACE_FIXTURE_CONTAINER" ] && [ "$TRACE_FIXTURE_CONTAINER_CREATED" = true ]; then
 			container_owned=true
 		elif [ "$docker_container" = "$CONTAINER" ] && [ "$CONTAINER_CREATED" = true ]; then
 			container_owned=true
@@ -201,10 +200,9 @@ docker_resource_present() {
 command -v docker >/dev/null 2>&1 || requirement "docker is required to run disposable integration containers"
 command -v "$KIND_BIN" >/dev/null 2>&1 || requirement "kind is required to run the disposable Kubernetes integration cluster"
 command -v kubectl >/dev/null 2>&1 || requirement "kubectl is required to run the disposable Kubernetes integration cluster"
-command -v jq >/dev/null 2>&1 || requirement "jq is required to validate the structured kubestr fio result"
+command -v jq >/dev/null 2>&1 || requirement "jq is required to validate structured Kubernetes resources"
 command -v timeout >/dev/null 2>&1 || requirement "GNU timeout is required for bounded integration commands"
 docker_call image inspect "$IMAGE" >/dev/null 2>&1 || requirement "image $IMAGE is unavailable; build it before running integration proofs"
-docker_call image inspect "$KUBESTR_FIXTURE_IMAGE" >/dev/null 2>&1 || requirement "fixture image $KUBESTR_FIXTURE_IMAGE is unavailable; build it before running integration proofs"
 
 # Never mutate a caller-selected Kubernetes context. The proof owns the kind
 # cluster and its kubeconfig from creation through cleanup, so invoking this
@@ -221,27 +219,30 @@ if [ "$create_status" -ne 0 ]; then
 fi
 export KUBECONFIG="$KUBECONFIG_FILE"
 kubectl wait --for=condition=Ready nodes --all --timeout=180s >/dev/null || requirement "disposable kind nodes did not become ready"
-"$KIND_BIN" load docker-image "$KUBESTR_FIXTURE_IMAGE" --name "$KIND_CLUSTER_NAME" || requirement "could not load the disposable fio fixture into kind"
+"$KIND_BIN" load docker-image "$IMAGE" --name "$KIND_CLUSTER_NAME" || requirement "could not load the network-debug image into kind"
+
+# Keep the Kubernetes fixture in the run-scoped namespace. Creating it before
+# the network proof exercises the same image and host-network contract that
+# the catalogue deploys, rather than a Docker analogue of a pod namespace.
+kubectl create namespace "$NETWORK_NAMESPACE" >/dev/null || requirement "could not create disposable network diagnostics namespace"
+NETWORK_NAMESPACE_CREATED=true
 
 # Refuse collisions before claiming ownership. A daemon-reachable absent
-# result is the only safe state in which to proceed.
-if docker_resource_present network "$NETWORK"; then
-	requirement "refusing to reuse an existing network named $NETWORK"
-else
-	resource_status=$?
-	[ "$resource_status" -eq 1 ] || requirement "could not inspect the Docker network before creating it"
-fi
+# result is the only safe state in which to proceed. Status 3 means a resource
+# exists but is owned by another run; it is a collision, not an inspection
+# failure, and must never be deleted or reused.
+docker_require_resource_absent network "$NETWORK" \
+	"refusing to reuse an existing network named $NETWORK" \
+	"could not inspect the Docker network before creating it"
 NETWORK_CREATED=true
 docker_call network create --label "$DOCKER_OWNER_LABEL=$RUN_ID" "$NETWORK" >/dev/null || requirement "Docker could not create an ephemeral network"
-if docker_resource_present container "$CONTAINER"; then
-	requirement "refusing to reuse an existing fixture container named $CONTAINER"
-else
-	resource_status=$?
-	[ "$resource_status" -eq 1 ] || requirement "could not inspect the fixture container before creating it"
-fi
+docker_require_resource_absent container "$CONTAINER" \
+	"refusing to reuse an existing fixture container named $CONTAINER" \
+	"could not inspect the fixture container before creating it"
 CONTAINER_CREATED=true
 docker_call run --detach --name "$CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" --network "$NETWORK" \
-	--cap-add NET_RAW --cap-add NET_ADMIN \
+	--cap-drop ALL --security-opt no-new-privileges=true \
+	--cap-add NET_RAW \
 	"$IMAGE" sh -c '
 		mkdir -p /work/www
 		openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
@@ -329,13 +330,16 @@ if exec_in net-report --unexpected >/dev/null 2>&1; then
 	requirement "net-report accepted an unknown option"
 fi
 tools_output=$(exec_in net-debug tools)
-for tool in curl dig host nslookup nc ping tracepath traceroute mtr ip ss tcpdump ethtool kubestr pwru; do
+for tool in curl dig host nslookup nc ping tracepath traceroute mtr ip ss tcpdump ethtool pwru; do
 	case "$tool" in
-		kubestr|pwru) tool_pattern="^${tool}[[:space:]]+${tool} v[0-9]+" ;;
+		pwru) tool_pattern="^${tool}[[:space:]]+${tool} v[0-9]+" ;;
 		*) tool_pattern="^${tool}[[:space:]]+installed$" ;;
 	esac
 	printf '%s\n' "$tools_output" | grep -E "$tool_pattern" >/dev/null || requirement "$tool is not installed according to net-debug tools"
 done
+if exec_in kubestr --help >/dev/null 2>&1; then
+	requirement "kubestr is present in network-debug; storage tooling belongs to storage-debug"
+fi
 
 printf '%s\n' 'Checking generated tcpdump capture' >&2
 timeout --foreground 15 docker exec "$CONTAINER" sh -c \
@@ -351,14 +355,154 @@ capture_size=$(exec_in stat -c '%s' /work/capture.pcap)
 [ "$capture_size" -gt 24 ] || requirement "tcpdump produced an empty capture"
 exec_in tcpdump -nn -r /work/capture.pcap 'tcp port 18080' 2>/dev/null | grep -F '18080' >/dev/null || requirement "captured pcap did not contain the generated HTTP endpoint"
 
+printf '%s\n' 'Checking bounded tcpdump in the host-network context' >&2
+kubectl apply -f - >/dev/null <<YAML || requirement "could not create disposable network diagnostics pods"
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${NETWORK_HOST_POD_NAME}
+  namespace: ${NETWORK_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: network-debug-proof
+    app.kubernetes.io/instance: ${RUN_ID}
+spec:
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  containers:
+    - name: debug
+      image: ${IMAGE}
+      imagePullPolicy: Never
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          while :; do
+            printf 'HTTP/1.1 200 OK\r\nContent-Length: 21\r\nConnection: close\r\n\r\nhost-network-fixture\n' | nc -l -p 18080 -s 127.0.0.1
+          done
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        seccompProfile:
+          type: RuntimeDefault
+        capabilities:
+          drop: [ALL]
+          add: [NET_RAW]
+      volumeMounts:
+        - name: work
+          mountPath: /work
+  volumes:
+    - name: work
+      emptyDir: {}
+YAML
+
+network_pod=$NETWORK_HOST_POD_NAME
+if ! kubectl wait --for=jsonpath='{.status.phase}'=Running \
+	--namespace "$NETWORK_NAMESPACE" "pod/$network_pod" --timeout=120s >/dev/null; then
+	kubectl describe pod "$network_pod" --namespace "$NETWORK_NAMESPACE" >&2 || true
+	requirement "network diagnostics pod $network_pod did not become ready"
+fi
+host_network=$(kubectl get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" \
+	-o jsonpath='{.spec.hostNetwork}')
+[ "$host_network" = true ] || requirement "host-network capture pod was not assigned the host network"
+kubectl get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" -o json | jq -e '
+		.spec.automountServiceAccountToken == false and
+		(.spec.containers | length == 1) and
+		(.spec.containers[0].securityContext.privileged // false) == false and
+		.spec.containers[0].securityContext.allowPrivilegeEscalation == false and
+		.spec.containers[0].securityContext.capabilities.drop == ["ALL"] and
+		.spec.containers[0].securityContext.capabilities.add == ["NET_RAW"] and
+		(.spec.hostPID // false) == false and
+		(.spec.volumes | length == 1 and .[0].name == "work" and .[0].emptyDir != null and all(.[]; (.hostPath // null) == null)) and
+		(.spec.containers[0].volumeMounts | all(.[]; .mountPath == "/work")) and
+		all(.spec.containers[]; all(.volumeMounts[]?; (.mountPath | IN("/run/containerd/containerd.sock", "/var/run/containerd/containerd.sock", "/var/run/docker.sock") | not)))
+	' >/dev/null || requirement "host-network capture pod security boundary was not retained by the cluster"
+
+capture_pod_traffic() {
+	local pod=$1 expected=$2 capture_log=$3 capture_pid capture_size reported_hash actual_hash packet_count
+
+	for _ in $(seq 1 40); do
+		if kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+			nc -z -w 1 127.0.0.1 18080 >/dev/null 2>&1; then
+			break
+		fi
+		sleep 0.25
+	done
+	kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		sh -c "rm -f /work/${expected}.pcap /work/${expected}.log" || \
+		requirement "could not prepare $pod capture evidence"
+	# Exercise the image-owned bounded wrapper, not a raw tcpdump invocation.
+	timeout --foreground 25 kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		sh -c "net-debug capture --interface lo --duration 15 --packets 2 --snaplen 128 --filter 'tcp port 18080' --output ${expected}.pcap >/work/${expected}.log 2>&1" \
+		>"$capture_log" 2>&1 &
+	capture_pid=$!
+	sleep 1
+	kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18080/ >/dev/null || \
+		requirement "$pod HTTP traffic generator failed"
+	if ! wait "$capture_pid"; then
+		kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+			sh -c "cat /work/${expected}.log" >&2 || true
+		requirement "$pod tcpdump did not capture generated HTTP packets"
+	fi
+	grep -Fx 'capture' <(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		cat "/work/${expected}.log") >/dev/null || requirement "$pod wrapper summary missing capture marker"
+	grep -Fx 'packet_limit 2' <(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		cat "/work/${expected}.log") >/dev/null || requirement "$pod wrapper summary missing packet bound"
+	packet_count=$(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		sed -n 's/^packet_count //p' "/work/${expected}.log")
+	case "$packet_count" in ''|*[!0-9]*) requirement "$pod wrapper summary has an invalid packet count" ;; esac
+	if [ "$packet_count" -le 0 ] || [ "$packet_count" -gt 2 ]; then
+		requirement "$pod wrapper exceeded its packet bound"
+	fi
+	reported_hash=$(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		sed -n 's/^sha256 //p' "/work/${expected}.log")
+	printf '%s\n' "$reported_hash" | grep -E '^[0-9a-f]{64}$' >/dev/null || requirement "$pod wrapper summary has an invalid hash"
+	actual_hash=$(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		sha256sum "/work/${expected}.pcap" | awk '{print $1}')
+	[ "$reported_hash" = "$actual_hash" ] || requirement "$pod wrapper hash did not match its pcap"
+	capture_size=$(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		stat -c '%s' "/work/${expected}.pcap")
+	[ "$capture_size" -gt 24 ] || requirement "$pod tcpdump produced an empty capture"
+	[ "$capture_size" -le $((2 * (128 + 16) + 24)) ] || requirement "$pod wrapper exceeded its byte bound"
+	kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		tcpdump -nn -r "/work/${expected}.pcap" 'tcp port 18080' 2>/dev/null | \
+		grep -F '18080' >/dev/null || requirement "$pod pcap omitted the generated HTTP endpoint"
+	before_hash=$actual_hash
+	if kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		sh -c "net-debug capture --interface lo --duration 1 --packets 1 --snaplen 128 --filter 'tcp port 18080' --output ${expected}.pcap" >/dev/null 2>&1; then
+		requirement "$pod wrapper overwrote an existing capture"
+	fi
+	actual_hash=$(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		sha256sum "/work/${expected}.pcap" | awk '{print $1}')
+	[ "$before_hash" = "$actual_hash" ] || requirement "$pod wrapper changed an existing capture"
+	staging_residue=$(kubectl exec --namespace "$NETWORK_NAMESPACE" "$pod" -- \
+		find /work -maxdepth 1 -name '.net-debug.*' -print -quit) || \
+		requirement "$pod wrapper staging inspection failed"
+	[ -z "$staging_residue" ] || requirement "$pod wrapper left staging residue"
+}
+
+capture_pod_traffic "$NETWORK_HOST_POD_NAME" host-network "$WORK_DIR/host-network-tcpdump.log"
+
+kubectl delete pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" --wait=true --timeout=60s >/dev/null || \
+	requirement "network diagnostics pod cleanup failed"
+if kubectl get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" >/dev/null 2>&1; then
+	requirement "network diagnostics pod survived cleanup"
+fi
+
 printf '%s\n' 'Checking pwru packet events on an ephemeral capability-bounded namespace' >&2
 PWRU_RUN_ARGS=(
+	--cap-drop ALL
 	--cap-add BPF
 	--cap-add PERFMON
 	--cap-add NET_ADMIN
 	--cap-add SYS_RESOURCE
+	--cap-add SYS_PTRACE
 	--security-opt seccomp=unconfined
 	--security-opt apparmor=unconfined
+	--security-opt no-new-privileges=true
 	--pid host
 )
 PWRU_READY=true
@@ -370,7 +514,7 @@ for kernel_path in /sys/kernel/btf/vmlinux /sys/kernel/debug /sys/kernel/tracing
 	PWRU_RUN_ARGS+=(--mount "type=bind,src=$kernel_path,dst=$kernel_path,readonly")
 done
 if [ "$PWRU_READY" = true ]; then
-	btf_check=$(docker_call run --rm "${PWRU_RUN_ARGS[@]}" --network "container:$CONTAINER" "$IMAGE" sh -c \
+	btf_check=$(docker_call run --rm "${PWRU_RUN_ARGS[@]}" --network host "$IMAGE" sh -c \
 		'test -r /sys/kernel/btf/vmlinux && test -d /sys/kernel/debug && test -d /sys/kernel/tracing && test -d /sys/kernel/security && echo ready' 2>&1) || \
 		PWRU_READY=false
 	if [ "$PWRU_READY" = true ] && [ "$btf_check" != ready ]; then
@@ -379,6 +523,34 @@ if [ "$PWRU_READY" = true ]; then
 	fi
 fi
 if [ "$PWRU_READY" = true ]; then
+	# Keep this proof endpoint in the same host network namespace as pwru. The
+	# general connectivity fixture above intentionally uses a published bridge
+	# port, whose post-NAT tuple is not a deterministic loopback proof. This
+	# dedicated server is owner-labelled, capability-bounded, and removed by
+	# the same failure cleanup as the trace.
+	if docker_call inspect "$TRACE_FIXTURE_CONTAINER" >/dev/null 2>&1; then
+		requirement "refusing to reuse an existing trace fixture named $TRACE_FIXTURE_CONTAINER"
+	fi
+	if docker_call run --rm --network host --cap-drop ALL --security-opt no-new-privileges=true \
+		"$IMAGE" nc -z -w 1 127.0.0.1 18080 >/dev/null 2>&1; then
+		requirement "refusing to reuse an occupied host trace fixture port"
+	fi
+	TRACE_FIXTURE_CONTAINER_CREATED=true
+	docker_call run --detach --name "$TRACE_FIXTURE_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" \
+		--network host --cap-drop ALL --security-opt no-new-privileges=true "$IMAGE" sh -ec '
+			while :; do
+				printf "HTTP/1.1 200 OK\\r\\nContent-Length: 19\\r\\nConnection: close\\r\\n\\r\\nhost-trace-fixture\\n" | nc -l -p 18080 -s 127.0.0.1
+			done
+		' >/dev/null 2>&1 || requirement "could not start owned host trace fixture"
+	for _ in $(seq 1 40); do
+		if docker_call run --rm --network host --cap-drop ALL --security-opt no-new-privileges=true \
+			"$IMAGE" nc -z -w 1 127.0.0.1 18080 >/dev/null 2>&1; then
+			break
+		fi
+		sleep 0.25
+	done
+	docker_call run --rm --network host --cap-drop ALL --security-opt no-new-privileges=true \
+		"$IMAGE" nc -z -w 1 127.0.0.1 18080 >/dev/null 2>&1 || requirement "host trace fixture did not become ready"
 	# A generated name is expected to be absent. Refuse a collision before
 	# claiming ownership so cleanup can never remove another run's container.
 	if docker_call inspect "$PWRU_CONTAINER" >/dev/null 2>&1; then
@@ -389,101 +561,122 @@ if [ "$PWRU_READY" = true ]; then
 	# return an error (or be interrupted), and EXIT cleanup must still force
 	# remove that exact run-scoped name and verify it is gone.
 	PWRU_CONTAINER_CREATED=true
-	docker_call run --detach --name "$PWRU_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" "${PWRU_RUN_ARGS[@]}" --network "container:$CONTAINER" \
-		"$IMAGE" pwru --output-tuple --output-file /work/pwru.log --timestamp none \
-				host 127.0.0.1 \
-		>"$WORK_DIR/pwru-start.log" 2>&1 || requirement "could not start pwru proof container"
-	sleep 2
-	exec_in curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18080/ >/dev/null || requirement "pwru HTTP traffic generator failed"
-	exec_in ping -n -c 1 -W 1 127.0.0.1 >/dev/null || requirement "pwru traffic generator failed"
-	# --output-limit-lines only exits after enough events have been observed;
-	# sparse traffic can therefore leave pwru running indefinitely. Poll the
-	# output file for a real tuple from the generated traffic, then explicitly
-	# stop pwru. This gives the proof a bounded observation window independent of
-	# pwru's event loop and proves that the graceful signal was honoured.
-	pwru_wait_for_event "$PWRU_CONTAINER" "$WORK_DIR/pwru.log" "$PWRU_TIMEOUT" \
-		'127\.0\.0\.1.*->.*127\.0\.0\.1|127\.0\.0\.1.*18080' || {
-		pwru_state=$(docker_call inspect --format '{{.State.Status}}' "$PWRU_CONTAINER" || true)
-		if [ "$pwru_state" = exited ]; then
-			requirement "pwru exited before controlled shutdown"
+	# Exercise the public bounded operation. This is deliberately not a raw
+	# pwru command: net-debug performs the host-netns check, event/file bounds,
+	# Native event/file bounds, graceful stop, pcap-free summary, and hash publication.
+	trace_start_status=0
+	docker_call run --detach --name "$PWRU_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" \
+		-e NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS="$PWRU_STOP_TIMEOUT" \
+		-e NETWORK_DEBUG_PWRU_REQUIRE_READY=true \
+		-e NETWORK_DEBUG_PWRU_STARTUP_TIMEOUT_SECONDS="$PWRU_STARTUP_MARGIN" \
+		"${PWRU_RUN_ARGS[@]}" --network host "$IMAGE" trace \
+			--duration "$TRACE_DURATION" --events "$TRACE_EVENTS" --filter 'tcp port 18080' --output trace.log \
+		>"$WORK_DIR/trace-start.log" 2>&1 || trace_start_status=$?
+	[ "$trace_start_status" -eq 0 ] || requirement "could not start public net-debug trace operation"
+	# The public wrapper defers its duration watchdog until pwru has attached
+	# kprobes and created its native readiness marker. Start a small, fixed
+	# number of successful requests only after that handshake, so every observed
+	# tuple is attributable to traffic generated during the bounded listening
+	# interval without allowing the native event limit to end the proof early.
+	trace_ready=false
+	for _ in $(seq 1 $((PWRU_STARTUP_MARGIN * 4))); do
+		trace_ready_marker=$(docker_call exec "$PWRU_CONTAINER" sh -c \
+			'find /work -mindepth 2 -maxdepth 2 -type f -name ready -path "/work/.net-debug.*/ready" -print -quit' 2>/dev/null || true)
+		if [ -n "$trace_ready_marker" ]; then
+			trace_ready=true
+			break
 		fi
-		requirement "pwru produced no packet tuple for generated traffic within ${PWRU_TIMEOUT}s"
-	}
-	pwru_stop_gracefully "$PWRU_CONTAINER" "$PWRU_STOP_TIMEOUT" || {
-		pwru_exit=$(docker_call inspect --format '{{.State.ExitCode}}' "$PWRU_CONTAINER" || true)
+		trace_state=$(docker_call inspect --format '{{.State.Status}}' "$PWRU_CONTAINER" 2>/dev/null || true)
+		[ "$trace_state" = exited ] && break
+		sleep 0.25
+	done
+	if [ "$trace_ready" != true ]; then
 		docker_call logs "$PWRU_CONTAINER" >&2 || true
-		requirement "pwru did not cleanly exit after SIGINT (exit ${pwru_exit:-unknown}); the compatible runner needs BTF, BPF, and PERFMON support"
-	}
-	docker_call cp "$PWRU_CONTAINER:/work/pwru.log" "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru did not produce an event log"
-	[ -s "$WORK_DIR/pwru.log" ] || requirement "pwru event log is empty after generated traffic"
-	grep -F -- '->' "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru produced no packet tuple after generated traffic"
-	grep -E -- '127\.0\.0\.1.*->.*127\.0\.0\.1|127\.0\.0\.1.*18080' "$WORK_DIR/pwru.log" >/dev/null || requirement "pwru did not observe the generated loopback HTTP traffic"
+		requirement "public net-debug trace did not reach pwru readiness"
+	fi
+	if docker_call inspect "$TRACE_TRAFFIC_CONTAINER" >/dev/null 2>&1; then
+		requirement "refusing to reuse an existing trace traffic container named $TRACE_TRAFFIC_CONTAINER"
+	fi
+	TRACE_TRAFFIC_CONTAINER_CREATED=true
+	docker_call run --detach --name "$TRACE_TRAFFIC_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" \
+		--network host --cap-drop ALL --security-opt no-new-privileges=true "$IMAGE" sh -ec '
+			curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18080/ >/dev/null
+			curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18080/ >/dev/null
+		' >/dev/null 2>&1 || requirement "could not start owned trace traffic generator"
+	trace_traffic_state=running
+	for _ in $(seq 1 40); do
+		trace_traffic_state=$(docker_call inspect --format '{{.State.Status}}' "$TRACE_TRAFFIC_CONTAINER" 2>/dev/null || true)
+		[ "$trace_traffic_state" = exited ] && break
+		sleep 0.25
+	done
+	[ "$trace_traffic_state" = exited ] || requirement "trace HTTP traffic generator exceeded its bounded request run"
+	trace_traffic_exit=$(docker_call inspect --format '{{.State.ExitCode}}' "$TRACE_TRAFFIC_CONTAINER" 2>/dev/null || true)
+	[ "$trace_traffic_exit" = 0 ] || requirement "trace HTTP traffic generator request failed"
+	# The wrapper's duration is itself bounded. Wait only through a separate
+	# bounded Docker wait, then validate its public summary and evidence file.
+	trace_wait_status=0
+	trace_wait_started=$(date +%s)
+	trace_exit=$(timeout --foreground "${PWRU_TIMEOUT}s" docker wait "$PWRU_CONTAINER" 2>/dev/null) || trace_wait_status=$?
+	trace_wait_finished=$(date +%s)
+	if [ "$trace_wait_status" -ne 0 ]; then
+		# Keep the bounded failure actionable and terminate only this owned
+		# invocation. The EXIT trap repeats ownership-checked cleanup.
+		docker_call logs "$PWRU_CONTAINER" >&2 || true
+		docker_call top "$PWRU_CONTAINER" >&2 || true
+		if pwru_validate_owner "$PWRU_CONTAINER"; then
+			docker_call kill --signal KILL "$PWRU_CONTAINER" >/dev/null 2>&1 || true
+		fi
+		requirement "public net-debug trace exceeded its bounded wait"
+	fi
+	trace_wait_elapsed=$((trace_wait_finished - trace_wait_started))
+	if [ "$trace_wait_elapsed" -gt "$PWRU_TIMEOUT" ]; then
+		docker_call logs "$PWRU_CONTAINER" >&2 || true
+		requirement "public net-debug trace exceeded its startup, duration, and shutdown bound (${trace_wait_elapsed}s > ${PWRU_TIMEOUT}s)"
+	fi
+	trace_state=$(docker_call inspect --format '{{.State.Status}}' "$PWRU_CONTAINER" 2>/dev/null) || requirement "could not inspect completed trace container"
+	[ "$trace_state" = exited ] || requirement "public net-debug trace container did not exit"
+	trace_summary=$(docker_call logs "$PWRU_CONTAINER") || requirement "could not read public trace summary"
+	case "$trace_exit" in 0|130|141|143) ;; *)
+		printf '%s\n' 'public net-debug trace logs (owned invocation):' >&2
+		printf '%s\n' "$trace_summary" >&2
+		requirement "public net-debug trace exited unsuccessfully: $trace_exit"
+		;;
+	esac
+	printf '%s\n' "$trace_summary" >"$WORK_DIR/trace-summary.txt"
+	grep -Fx 'trace' "$WORK_DIR/trace-summary.txt" >/dev/null || requirement "public trace summary missing operation marker"
+	grep -Fx "duration $TRACE_DURATION" "$WORK_DIR/trace-summary.txt" >/dev/null || requirement "public trace summary missing duration bound"
+	grep -Fx "event_limit $TRACE_EVENTS" "$WORK_DIR/trace-summary.txt" >/dev/null || requirement "public trace summary missing event bound"
+	trace_count=$(sed -n 's/^event_count //p' "$WORK_DIR/trace-summary.txt")
+	case "$trace_count" in ''|*[!0-9]*) requirement "public trace summary has an invalid event count" ;; esac
+	[ "$trace_count" -le "$TRACE_EVENTS" ] || requirement "public trace exceeded its event bound"
+	grep -E '^sha256 [0-9a-f]{64}$' "$WORK_DIR/trace-summary.txt" >/dev/null || requirement "public trace summary missing SHA-256"
+	grep -Fx 'file trace.log' "$WORK_DIR/trace-summary.txt" >/dev/null || requirement "public trace summary missing output name"
+	docker_call cp "$PWRU_CONTAINER:/work/trace.log" "$WORK_DIR/trace.log" >/dev/null || requirement "public trace did not produce evidence"
+	[ -s "$WORK_DIR/trace.log" ] || requirement "public trace evidence is empty"
+	trace_bytes=$(wc -c <"$WORK_DIR/trace.log" | tr -d ' ')
+	[ "$trace_bytes" -le $((TRACE_EVENTS * 4097)) ] || requirement "public trace evidence exceeds its size bound"
+	grep -F -- '->' "$WORK_DIR/trace.log" >/dev/null || requirement "public trace evidence has no packet tuple"
+	if ! grep -E -- '127\.0\.0\.1.*->.*127\.0\.0\.1|127\.0\.0\.1.*18080' "$WORK_DIR/trace.log" >/dev/null; then
+		# Do not print packet tuples in CI logs. These booleans preserve enough
+		# evidence to distinguish an endpoint mismatch from an empty/non-tuple
+		# trace without turning the failure path into a packet-content channel.
+		tuple_lines=$(grep -Fc -- '->' "$WORK_DIR/trace.log" || true)
+		loopback_lines=$(grep -Ec -- '127\.0\.0\.1' "$WORK_DIR/trace.log" || true)
+		endpoint_lines=$(grep -Ec -- '(^|[^0-9])18080([^0-9]|$)' "$WORK_DIR/trace.log" || true)
+		printf 'public trace tuple diagnostics: tuples=%s loopback_lines=%s endpoint_port_lines=%s bytes=%s\n' \
+			"$tuple_lines" "$loopback_lines" "$endpoint_lines" "$trace_bytes" >&2
+		requirement "public trace missed generated loopback HTTP traffic"
+	fi
+	pwru_force_remove "$PWRU_CONTAINER" 15 || requirement "public trace container cleanup failed"
+	PWRU_CONTAINER_CREATED=false
+	if docker_resource_present container "$PWRU_CONTAINER"; then
+		requirement "public trace container survived cleanup"
+	else
+		resource_status=$?
+		[ "$resource_status" -eq 1 ] || requirement "could not verify public trace container cleanup"
+	fi
 fi
 
-# Use a static, disposable PV so this proof does not depend on a cluster-wide
-# storage provisioner. Both objects live only in the kind cluster owned above.
-kubectl apply -f - >/dev/null <<YAML || requirement "could not create disposable standard storage"
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: ${KUBESTR_STORAGE_CLASS}
-provisioner: kubernetes.io/no-provisioner
-volumeBindingMode: Immediate
----
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: ${KUBESTR_PV_NAME}
-spec:
-  capacity:
-    storage: 1Gi
-  accessModes: [ReadWriteOnce]
-  persistentVolumeReclaimPolicy: Delete
-  storageClassName: ${KUBESTR_STORAGE_CLASS}
-  hostPath:
-    path: /var/local/${RUN_ID}
-    type: DirectoryOrCreate
-YAML
-kubectl create namespace "$KUBESTR_NAMESPACE" >/dev/null || requirement "could not create disposable kubestr namespace"
-KUBESTR_NAMESPACE_CREATED=true
-kubectl config view --raw --minify > "$KUBESTR_KUBECONFIG_FILE"
-timeout --foreground "${KUBESTR_TIMEOUT}s" docker run --rm --network host \
-	--env KUBECONFIG=/work/kubeconfig \
-	--volume "$KUBESTR_KUBECONFIG_FILE:/work/kubeconfig:ro" \
-	--volume "$WORK_DIR:/work/results" \
-	"$IMAGE" kubestr fio \
-		--storageclass "$KUBESTR_STORAGE_CLASS" --size 1Mi --testname default-fio \
-		--namespace "$KUBESTR_NAMESPACE" --image "$KUBESTR_FIXTURE_IMAGE" \
-		--output json \
-		--outfile /work/results/kubestr.out \
-	|| requirement "kubestr fio failed; kind needs a functional disposable StorageClass and the loaded fio fixture image"
-[ -s "$WORK_DIR/kubestr.out" ] || requirement "kubestr completed without a result file"
-if ! jq -e '
-  type == "array" and length > 0 and
-  any(.[];
-    type == "object" and
-    (.Raw.result["fio version"] | type == "string" and startswith("fio-")) and
-    (.Raw.result.jobs | type == "array" and length == 4) and
-    all(.Raw.result.jobs[];
-      (.jobname | type == "string" and length > 0) and
-      (((.read.iops // .write.iops) | type == "number" and . > 0))
-    )
-  )
-' "$WORK_DIR/kubestr.out" >/dev/null; then
-	printf '%s\n' 'kubestr output:' >&2
-	cat "$WORK_DIR/kubestr.out" >&2
-	requirement "kubestr result did not contain a structured fio result"
-fi
-kubectl delete namespace "$KUBESTR_NAMESPACE" --wait=true --timeout=60s >/dev/null || requirement "kubestr namespace cleanup failed"
-if kubectl get namespace "$KUBESTR_NAMESPACE" >/dev/null 2>&1; then
-	requirement "kubestr namespace still exists after cleanup"
-fi
-KUBESTR_NAMESPACE_CREATED=false
-kubectl delete persistentvolume "$KUBESTR_PV_NAME" --ignore-not-found >/dev/null || requirement "disposable storage PV cleanup failed"
-if kubectl get persistentvolume "$KUBESTR_PV_NAME" >/dev/null 2>&1; then
-	requirement "disposable storage PV still exists after cleanup"
-fi
-kubectl delete storageclass "$KUBESTR_STORAGE_CLASS" --ignore-not-found >/dev/null || requirement "disposable storage class cleanup failed"
 
 if [ "$PWRU_REQUIRED" = true ] && [ "$PWRU_READY" != true ]; then
 	requirement "pwru was not exercised; run this integration target on the required Linux BPF runner"
