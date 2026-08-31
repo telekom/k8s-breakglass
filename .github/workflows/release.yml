@@ -131,14 +131,26 @@ jobs:
             --destination chart-dist \
             --app-version "${{ github.ref_name }}"
           # The standalone catalogue is introduced by the foundation stack.
-          # Keep the base release valid before that chart lands. Utility image
-          # publication and digest injection are owned by the follow-up dev
-          # publication workflow, so this foundation release only packages the
-          # chart's generic defaults.
+          # Utility image references are release inputs, not chart defaults.
+          # Refuse to package mutable tags when the catalogue is present.
           if [ -d charts/debug-session-catalogue ]; then
-            helm lint charts/debug-session-catalogue --strict
-            helm template release-proof charts/debug-session-catalogue >/dev/null
-            helm package charts/debug-session-catalogue \
+            refs_dir="release-refs"
+            [ -d "${refs_dir}" ] || {
+              echo "::error::${refs_dir} is required when packaging debug-session-catalogue; provide one .ref per utility with immutable digest, signature, SBOM, and provenance evidence."
+              exit 1
+            }
+            hack/generate-release-values.sh "${refs_dir}" catalogue-release-values.yaml
+            packaged_catalogue="${RUNNER_TEMP}/debug-session-catalogue"
+            cp -R charts/debug-session-catalogue "${packaged_catalogue}"
+            ruby -ryaml -e '
+              chart = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+              release = YAML.safe_load(File.read(ARGV.fetch(1)), aliases: false)
+              chart["images"] = release.fetch("images")
+              File.write(ARGV.fetch(2), chart.to_yaml)
+            ' charts/debug-session-catalogue/values.yaml catalogue-release-values.yaml "${packaged_catalogue}/values.yaml"
+            helm lint "${packaged_catalogue}" --strict
+            helm template release-proof "${packaged_catalogue}" >/dev/null
+            helm package "${packaged_catalogue}" \
               --destination chart-dist \
               --app-version "${{ github.ref_name }}"
           fi
