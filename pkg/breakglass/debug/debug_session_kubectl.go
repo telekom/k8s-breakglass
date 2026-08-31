@@ -258,16 +258,18 @@ func ephemeralContainerDigest(ephemeralContainer *corev1.EphemeralContainer) str
 	// EphemeralContainerCommon fields on read-back; those defaults must not turn
 	// an already-applied operation into Unknown.
 	canonical := struct {
-		Name            string   `json:"name"`
-		Image           string   `json:"image"`
-		Command         []string `json:"command,omitempty"`
-		TTY             bool     `json:"tty"`
-		Stdin           bool     `json:"stdin"`
-		SecurityContext string   `json:"securityContextDigest"`
+		Name            string            `json:"name"`
+		Image           string            `json:"image"`
+		Command         []string          `json:"command,omitempty"`
+		ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy"`
+		TTY             bool              `json:"tty"`
+		Stdin           bool              `json:"stdin"`
+		SecurityContext string            `json:"securityContextDigest"`
 	}{
 		Name:            ephemeralContainer.Name,
 		Image:           ephemeralContainer.Image,
 		Command:         ephemeralContainer.Command,
+		ImagePullPolicy: ephemeralContainer.ImagePullPolicy,
 		TTY:             ephemeralContainer.TTY,
 		Stdin:           ephemeralContainer.Stdin,
 		SecurityContext: securityContextDigest(ephemeralContainer.SecurityContext),

@@ -1193,6 +1193,9 @@ func TestEphemeralContainerDigestIgnoresAPIDefaultedFields(t *testing.T) {
 	}
 
 	assert.True(t, ephemeralContainerIntentEqual(intent, readBack.Name, readBack.Image, readBack.Command, readBack.TTY, readBack.Stdin, readBack.SecurityContext, ephemeralContainerDigest(&readBack)))
+	readBack.ImagePullPolicy = corev1.PullAlways
+	assert.False(t, ephemeralContainerIntentEqual(intent, readBack.Name, readBack.Image, readBack.Command, readBack.TTY, readBack.Stdin, readBack.SecurityContext, ephemeralContainerDigest(&readBack)))
+	readBack.ImagePullPolicy = requested.ImagePullPolicy
 	readBack.Image = "busybox:other"
 	assert.False(t, ephemeralContainerIntentEqual(intent, readBack.Name, readBack.Image, readBack.Command, readBack.TTY, readBack.Stdin, readBack.SecurityContext, ephemeralContainerDigest(&readBack)))
 }
