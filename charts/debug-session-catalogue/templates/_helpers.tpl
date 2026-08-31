@@ -101,6 +101,9 @@ securityContext:
 {{- end -}}
 {{- define "debug-session-catalogue.validatePodOverrides" -}}
 {{- $profile := .profile -}}
+{{- if and $profile.enabled (has (default "" $profile.intent) (list "network-repair" "node-recovery")) }}
+{{- fail (printf "profiles[%s] cannot be enabled: node-maintenance requires controller-issued BREAKGLASS_NODE_NAME, BREAKGLASS_OPERATION_ID, BREAKGLASS_RECORDING_ID, BREAKGLASS_APPROVAL_ID, BREAKGLASS_APPROVED_ACTION, and (for network-repair) BREAKGLASS_APPROVED_NETWORK_REQUEST; the catalogue contract does not provide these trusted inputs" $profile.name) }}
+{{- end }}
 {{- $elevatedNode := and (default false $profile.elevated) (eq (default "restricted" $profile.preset) "elevated-node") -}}
 {{- $dumpAccess := eq (default "" $profile.intent) "dump-access" -}}
 {{- $dumpInputReadOnly := false -}}

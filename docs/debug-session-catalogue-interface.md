@@ -98,8 +98,14 @@ and target-cluster permissions before enabling any elevated profile.
 ## Image contract
 
 Each profile selects `images.<profile imageKey>` or supplies a direct `image`
-reference and runs its `command`/`args`. Images are configurable and should be
-pinned by digest in production. The storage and dump mounts match the
+reference and runs its `command`/`args`. The chart's checked-in image values
+are non-runnable zero-digest placeholders. The five public utility names use
+the canonical `ghcr.io/telekom/k8s-breakglass/utils/<intent-image>` path;
+dump-access and internal cluster-validation remain non-public placeholders
+until separately approved. Replace public images with independently verified
+release digests before enabling access; release packaging injects validated
+values from `release-refs/*.ref`. Mutable tags are not release inputs. The
+storage and dump mounts match the
 `/scratch`, `/reports`, `/input`, and `/output` paths consumed by their images.
 The elevated network, dump, repair, and recovery profiles are disabled by
 default and must not be treated as shipping node tooling until explicitly

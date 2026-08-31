@@ -31,7 +31,13 @@ helm install debug-catalogue \
 ```
 
 The default empty requester, approver, and target lists intentionally make the
-catalogue unusable until an administrator supplies local policy. This prevents
+catalogue unusable until an administrator supplies local policy. The checked-in
+utility image references are also non-runnable zero-digest placeholders. The
+five public utility names use the canonical `utils/<intent-image>` path;
+`dump-access` and internal `cluster-validation` deliberately retain non-public
+placeholders until their separate contracts are approved. Replace public
+images with verified release digests before enabling access; release packaging
+injects those values from `release-refs/*.ref`. This prevents
 a chart installation from accidentally granting access to every user or
 cluster. `failMode: closed`, mandatory request reasons, one-hour maximum
 duration, no renewal, no attach/port-forward, no service-account token, and
@@ -72,15 +78,14 @@ helm template catalogue charts/debug-session-catalogue \
 ```
 
 The chart fails closed when an elevated profile is enabled without
-`elevated: true`. Replace the default public utility images with organization-
-approved images, ideally by digest:
+`elevated: true`. Replace every placeholder with an organization-approved
+immutable image digest:
 
 ```yaml
 images:
   dumpAccess:
-    repository: registry.example.invalid/debug-tools
-    tag: "2026.01"
-    digest: sha256:...
+    repository: ghcr.io/telekom/k8s-breakglass/utils/workload-debug
+    digest: sha256:<64 lowercase hexadecimal characters>
 ```
 
 Images are an interface, not a dependency of this chart: each image must
@@ -89,7 +94,8 @@ reviewed for the capabilities requested by that profile. Restricted profiles
 run as UID/GID 65532 with a read-only root filesystem and no added
 capabilities. The network utility is therefore elevated and disabled by
 default because its packet and node inspection tools require root/capability
-access. Pin each image to its release digest in production.
+access. Mutable tags are not valid release inputs and must not be used in
+production.
 
 The `storage-diagnostics` profile mounts the image's `/scratch`, `/reports`,
 and writable `/tmp` paths. The `dump-access` profile mounts the approved source

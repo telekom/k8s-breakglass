@@ -31,6 +31,7 @@ end
   image_payload = JSON.generate(image)
   image_digest = Digest::SHA256.hexdigest(image_payload)
   File.write(File.join(blob_dir, image_digest), image_payload)
+  File.write(File.join(root, "#{architecture}-image-digest"), image_digest)
   descriptors << { "mediaType" => image["mediaType"], "digest" => "sha256:#{image_digest}", "size" => image_payload.bytesize, "platform" => { "os" => "linux", "architecture" => architecture } }
 
   %w[sbom provenance].each do |kind|
@@ -77,18 +78,45 @@ write_index.call("bad-index.json", descriptors.reject { |descriptor| descriptor.
 write_index.call("missing-sbom-index.json", descriptors.reject { |descriptor| descriptor["digest"] == attestation_descriptors.fetch(["amd64", "sbom"])["digest"] })
 write_index.call("missing-provenance-index.json", descriptors.reject { |descriptor| descriptor["digest"] == attestation_descriptors.fetch(["arm64", "provenance"])["digest"] })
 write_index.call("empty-provenance-index.json", empty_descriptors)
+bad_media_type_descriptors = descriptors.map do |descriptor|
+  if descriptor.dig("platform", "architecture") == "amd64"
+    descriptor.merge("mediaType" => "application/vnd.oci.image.config.v1+json")
+  else
+    descriptor
+  end
+end
+write_index.call("bad-image-media-type-index.json", bad_media_type_descriptors)
+malformed_image_payload = JSON.generate("schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.manifest.v1+json")
+malformed_image_digest = Digest::SHA256.hexdigest(malformed_image_payload)
+File.write(File.join(blob_dir, malformed_image_digest), malformed_image_payload)
+malformed_image_descriptors = descriptors.map do |descriptor|
+  if descriptor.dig("platform", "architecture") == "amd64"
+    descriptor.merge("digest" => "sha256:#{malformed_image_digest}", "size" => malformed_image_payload.bytesize)
+  else
+    descriptor
+  end
+end
+write_index.call("malformed-image-index.json", malformed_image_descriptors)
 RUBY
 
 (cd "$test_root" && tar -cf "$test_root/good.tar" index.json blobs)
-for variant in bad missing-sbom missing-provenance empty-provenance; do
+for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image; do
     mkdir "$test_root/$variant"
-    cp "$test_root/$variant-index.json" "$test_root/$variant/index.json"
+    index_variant="$variant"
+    if [ "$variant" = missing-image ]; then
+        cp "$test_root/index.json" "$test_root/$variant/index.json"
+    else
+        cp "$test_root/$index_variant-index.json" "$test_root/$variant/index.json"
+    fi
     cp -R "$test_root/blobs" "$test_root/$variant/"
+    if [ "$variant" = missing-image ]; then
+        rm "$test_root/$variant/blobs/sha256/$(cat "$test_root/amd64-image-digest")"
+    fi
     (cd "$test_root/$variant" && tar -cf "$test_root/$variant.tar" index.json blobs)
 done
 
 ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/good.tar" >/dev/null
-for variant in bad missing-sbom missing-provenance empty-provenance; do
+for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image; do
     if ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/$variant.tar" >/dev/null 2>&1; then
         echo "invalid $variant archive was accepted" >&2
         exit 1

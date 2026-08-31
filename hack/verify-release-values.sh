@@ -18,11 +18,10 @@ for record in \
   "workload|ghcr.io/telekom/k8s-breakglass/workload-debug|${digest}" \
   "network|ghcr.io/telekom/k8s-breakglass/network-debug|${digest}" \
   "storage|ghcr.io/telekom/k8s-breakglass/storage-debug|${digest}" \
-  "dump|ghcr.io/telekom/k8s-breakglass/dump-reader|${digest}" \
   "node|ghcr.io/telekom/k8s-breakglass/node-maintenance|${digest}" \
-  "validator|ghcr.io/telekom/k8s-breakglass/cluster-validator|${digest}"; do
+  "diagnostic-artifact-collector|ghcr.io/telekom/k8s-breakglass/diagnostic-artifact-collector|${digest}"; do
   name="${record%%|*}"
-  printf '%s\n' "${record}" >"${test_dir}/refs/${name}.ref"
+  printf '%s|verified|verified|verified\n' "${record}" >"${test_dir}/refs/${name}.ref"
 done
 
 output="${test_dir}/release-values.yaml"
@@ -30,7 +29,7 @@ output="${test_dir}/release-values.yaml"
 ruby -ryaml -e '
   values = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
   images = values.fetch("images")
-  abort("unexpected image count") unless images.size == 7
+  abort("unexpected image count") unless images.size == 6
   images.each_value do |image|
     abort("unresolved image digest") unless image.fetch("digest").match?(/\Asha256:[0-9a-f]{64}\z/i)
   end
@@ -39,6 +38,12 @@ ruby -ryaml -e '
 printf '%s\n' 'workload|ghcr.io/telekom/k8s-breakglass/workload-debug|not-a-digest' >"${test_dir}/refs/workload.ref"
 if "${script_dir}/generate-release-values.sh" "${test_dir}/refs" "${output}" >/dev/null 2>&1; then
   echo "invalid utility digest was accepted" >&2
+  exit 1
+fi
+
+printf '%s\n' "workload|ghcr.io/telekom/k8s-breakglass/workload-debug|${digest}|missing|verified|verified" >"${test_dir}/refs/workload.ref"
+if "${script_dir}/generate-release-values.sh" "${test_dir}/refs" "${output}" >/dev/null 2>&1; then
+  echo "missing utility signature evidence was accepted" >&2
   exit 1
 fi
 

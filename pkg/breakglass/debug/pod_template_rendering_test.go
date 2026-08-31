@@ -2877,6 +2877,23 @@ spec:
 		"session nodeSelector should be applied to full DaemonSet template's PodSpec")
 }
 
+func TestBuildPodSpec_RejectsSessionNodeSelectorOverride(t *testing.T) {
+	controller := newBuildWorkloadController()
+	ds := newBuildWorkloadSession("node-selector-conflict")
+	ds.Spec.NodeSelector = map[string]string{"kubernetes.io/hostname": "requester-node"}
+	template := &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+		PodTemplateString: `containers:
+  - name: debug
+    image: busybox:latest
+nodeSelector:
+  kubernetes.io/hostname: admin-node
+`,
+	}}
+
+	_, err := controller.buildPodSpec(ds, template, nil)
+	require.ErrorContains(t, err, `session nodeSelector "kubernetes.io/hostname"="requester-node" conflicts with the template selector value "admin-node"`)
+}
+
 func TestBuildWorkload_FullDeploymentWithPodOverrides(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("pod-overrides")

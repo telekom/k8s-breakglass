@@ -28,9 +28,22 @@ copy=$(DUMP_INPUT_DIR="$test_dir" DUMP_OUTPUT_DIR="$test_dir/output" $reader cop
 printf '%s\n' "$copy" | grep -F 'name=source.dump' >/dev/null
 cmp "$test_dir/source.dump" "$test_dir/output/source.dump"
 test -r "$test_dir/output/source.dump"
-if su nobody -s /bin/sh -c "test -r '$test_dir/output/source.dump'" 2>/dev/null; then
-    echo "dump artifact was readable by a different UID" >&2
+mode=$(stat -c '%a' "$test_dir/output/source.dump" 2>/dev/null || stat -f '%Lp' "$test_dir/output/source.dump")
+if [ "$mode" != 600 ]; then
+    echo "dump artifact mode was $mode, want 600" >&2
     exit 1
+fi
+if [ "$(id -u)" -eq 0 ]; then
+    if ! command -v su >/dev/null 2>&1; then
+        echo "cannot prove cross-UID denial: su is unavailable" >&2
+        exit 1
+    fi
+    if su nobody -s /bin/sh -c "test -r '$test_dir/output/source.dump'" 2>/dev/null; then
+        echo "dump artifact was readable by a different UID" >&2
+        exit 1
+    fi
+else
+    echo "cross-UID denial check skipped when tests are not run as root"
 fi
 
 if DUMP_INPUT_DIR="$test_dir" $reader copy "$test_dir/source.dump" >/dev/null 2>&1; then
