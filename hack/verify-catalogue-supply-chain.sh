@@ -58,22 +58,30 @@ command -v cosign >/dev/null 2>&1 || die "cosign is required"
 command -v docker >/dev/null 2>&1 || die "docker is required"
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
-IDENTITY_REGEXP="${SUPPLY_CHAIN_IDENTITY_REGEXP:-https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*}"
+if [[ -n "${SUPPLY_CHAIN_IDENTITY:-}" ]]; then
+  identity_args=(--certificate-identity "${SUPPLY_CHAIN_IDENTITY}")
+else
+  release_tag="${SUPPLY_CHAIN_RELEASE_TAG:-}"
+  [[ "${release_tag}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]] || \
+    die "SUPPLY_CHAIN_RELEASE_TAG must be a semver release tag when no identity override is supplied"
+  identity="https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/${release_tag}"
+  identity_args=(--certificate-identity "${identity}")
+fi
 OIDC_ISSUER="${SUPPLY_CHAIN_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
 
 verify_attestations() {
   local subject="$1" label="$2"
   printf 'Verifying %s signature: %s\n' "$label" "$subject"
   cosign verify "$subject" \
-    --certificate-identity-regexp="$IDENTITY_REGEXP" \
+    "${identity_args[@]}" \
     --certificate-oidc-issuer="$OIDC_ISSUER" >/dev/null
   printf 'Verifying %s SPDX SBOM attestation\n' "$label"
   cosign verify-attestation "$subject" --type spdxjson \
-    --certificate-identity-regexp="$IDENTITY_REGEXP" \
+    "${identity_args[@]}" \
     --certificate-oidc-issuer="$OIDC_ISSUER" >/dev/null
   printf 'Verifying %s SLSA provenance attestation\n' "$label"
   cosign verify-attestation "$subject" --type slsaprovenance1 \
-    --certificate-identity-regexp="$IDENTITY_REGEXP" \
+    "${identity_args[@]}" \
     --certificate-oidc-issuer="$OIDC_ISSUER" >/dev/null
 }
 

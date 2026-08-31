@@ -22,7 +22,12 @@ command -v ruby >/dev/null 2>&1 || { echo "ruby is required" >&2; exit 1; }
 command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 1; }
 command -v cosign >/dev/null 2>&1 || { echo "cosign is required" >&2; exit 1; }
 
-identity_regexp="${SUPPLY_CHAIN_IDENTITY_REGEXP:-https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*}"
+if [[ -n "${SUPPLY_CHAIN_IDENTITY:-}" ]]; then
+  identity_args=(--certificate-identity "${SUPPLY_CHAIN_IDENTITY}")
+else
+  identity="https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/${release_tag}"
+  identity_args=(--certificate-identity "${identity}")
+fi
 oidc_issuer="${SUPPLY_CHAIN_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
 
 records=()
@@ -77,13 +82,13 @@ for record in "${records[@]}"; do
   }
   subject="${repository}@${digest}"
   cosign verify "${subject}" \
-    --certificate-identity-regexp="${identity_regexp}" \
+    "${identity_args[@]}" \
     --certificate-oidc-issuer="${oidc_issuer}" >/dev/null
   cosign verify-attestation "${subject}" --type spdxjson \
-    --certificate-identity-regexp="${identity_regexp}" \
+    "${identity_args[@]}" \
     --certificate-oidc-issuer="${oidc_issuer}" >/dev/null
   cosign verify-attestation "${subject}" --type slsaprovenance1 \
-    --certificate-identity-regexp="${identity_regexp}" \
+    "${identity_args[@]}" \
     --certificate-oidc-issuer="${oidc_issuer}" >/dev/null
   printf '%s|%s|%s|verified|verified|verified\n' "${name}" "${repository}" "${digest}" >"${tmp_dir}/${name}.ref"
   chmod 600 "${tmp_dir}/${name}.ref"
