@@ -44,7 +44,11 @@ PATH="${test_dir}/bin:${PATH}" "${script_dir}/resolve-release-refs.sh" \
   "${test_dir}/values.yaml" "${test_dir}/refs"
 [ "$(find "${test_dir}/refs" -name '*.ref' | wc -l | tr -d ' ')" -eq 5 ]
 while IFS= read -r ref; do
-  [[ "$(cat "${ref}")" =~ ^[a-z][a-z-]*\|ghcr\.io/telekom/k8s-breakglass/utils/(workload-debug|network-debug|storage-debug|node-maintenance|diagnostic-artifact-collector)\|sha256:[a-f0-9]{64}$ ]]
+  IFS='|' read -r name repository digest sbom provenance signature <"${ref}"
+  [[ "${name}" =~ ^[a-z][a-z-]*$ ]]
+  [[ "${repository}" =~ ^ghcr\.io/telekom/k8s-breakglass/utils/(workload-debug|network-debug|storage-debug|node-maintenance|diagnostic-artifact-collector)$ ]]
+  [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]]
+  [[ "${sbom}" == verified && "${provenance}" == verified && "${signature}" == verified ]]
 done < <(find "${test_dir}/refs" -name '*.ref' -print | sort)
 
 cat >"${test_dir}/bin/docker" <<'EOF'
@@ -60,7 +64,7 @@ if PATH="${test_dir}/bin:${PATH}" "${script_dir}/resolve-release-refs.sh" \
 fi
 
 cp "${test_dir}/values.yaml" "${test_dir}/wrong-path-values.yaml"
-sed -i '' 's#ghcr.io/telekom/k8s-breakglass/utils/workload-debug#ghcr.io/telekom/k8s-breakglass/workload-debug#' "${test_dir}/wrong-path-values.yaml"
+ruby -pi -e 'gsub("ghcr.io/telekom/k8s-breakglass/utils/workload-debug", "ghcr.io/telekom/k8s-breakglass/workload-debug")' "${test_dir}/wrong-path-values.yaml"
 if PATH="${test_dir}/bin:${PATH}" "${script_dir}/resolve-release-refs.sh" \
   "${test_dir}/wrong-path-values.yaml" "${test_dir}/refs" >/dev/null 2>&1; then
   echo "legacy sibling utility repository was accepted" >&2

@@ -35,6 +35,23 @@ ruby -ryaml -e '
   end
 ' "${output}"
 
+refs_output="${test_dir}/catalogue-image-refs.txt"
+render_values="${test_dir}/render-values.yaml"
+ruby -ryaml -e '
+  base = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+  release = YAML.safe_load(File.read(ARGV.fetch(1)), aliases: false)
+  base["images"] = release.fetch("images")
+  File.write(ARGV.fetch(2), base.to_yaml)
+' "${script_dir}/../charts/debug-session-catalogue/values.yaml" "${output}" "${render_values}"
+helm lint "${script_dir}/../charts/debug-session-catalogue" --strict --values "${render_values}" >/dev/null
+helm template release-proof "${script_dir}/../charts/debug-session-catalogue" --values "${render_values}" >/dev/null
+"${script_dir}/extract-catalogue-image-refs.sh" "${render_values}" "${refs_output}"
+[ "$(wc -l <"${refs_output}" | tr -d ' ')" -eq 5 ] || { echo "unexpected public utility image count" >&2; exit 1; }
+if rg -q 'example\.invalid|:0\.1\.0$' "${refs_output}"; then
+  echo "non-public placeholder or mutable image leaked into supply-chain refs" >&2
+  exit 1
+fi
+
 printf '%s\n' 'workload|ghcr.io/telekom/k8s-breakglass/workload-debug|not-a-digest' >"${test_dir}/refs/workload.ref"
 if "${script_dir}/generate-release-values.sh" "${test_dir}/refs" "${output}" >/dev/null 2>&1; then
   echo "invalid utility digest was accepted" >&2

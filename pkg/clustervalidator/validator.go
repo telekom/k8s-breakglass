@@ -220,7 +220,6 @@ func (v *Validator) ValidateWithPodIdentity(ctx context.Context, client kubernet
 		}
 		if result.Status != StatusReady {
 			status = StatusNotReady
-			break
 		}
 	}
 	if mode != ModeOneTime && mode != ModePostUpgrade {
