@@ -41,13 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bridge-fdb-replace` for one exact FDB tuple, and read-only `node-recovery`
   evidence when mutation is not required.
 
-### Fixed
+### Changed
 
 - **Frontend Node.js engine baseline**: Raised the frontend package, lockfile,
   documentation, and all `setup-node` CI pins to Node.js 24.15.0, the minimum
   Node 24 release line accepted by the updated transitive `abbrev` and `nopt`
   dependencies. Added a contract test to keep dependency engines and CI pins
   aligned.
+
+### Fixed
 
 - **Diagnostic collector traversal bound**: Crashdump enumeration now uses
   bounded NUL spools and fixed directory/regular-file filters while retaining
