@@ -11,36 +11,30 @@ ARG VERSION=0.1.0
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 
-# pwru is rebuilt from an immutable release tag and verified commit in the tool
-# stage. The digest-pinned builder uses build-only Debian compiler packages
-# from its security repositories; those packages and the compiler never enter
-# the runtime image.
-# Storage tooling is intentionally excluded; kubestr belongs to storage-debug.
+# pwru is fetched from an immutable release asset with the tested downloader
+# in this repository. The digest-pinned builder and its compiler never enter
+# the runtime image. Storage tooling is intentionally excluded; kubestr belongs
+# to storage-debug.
 FROM golang:1.27@sha256:c5b07c17f54c5f22230c4b4da6e90249165cf55368e01a52808cb92064e18836 AS tools
 ARG TARGETARCH
 ARG PWRU_VERSION=v1.0.12
-ARG PWRU_COMMIT=f1d6cf8898953ac1560401e181f3ac5f0e33b486
+ARG PWRU_SHA256_AMD64=1ccaea22d97c283b09d2e2f0329789727c4f1b19aa99723e32b2e12d3a5e6dba
+ARG PWRU_SHA256_ARM64=997516721a58b4f8ffe3504994cada472c9bcd78f1e819862bf61f1081684378
 
-ENV CGO_ENABLED=1 GOOS=linux GOARCH=${TARGETARCH:-amd64} GOPROXY=https://proxy.golang.org GOFLAGS=-mod=mod
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-# Build-only compiler packages follow the digest-pinned builder's Debian
-# security repositories and are removed from the runtime image.
-# hadolint ignore=DL3003,DL3008
+COPY tools/fetch.go /src/fetch.go
 RUN set -eux; \
-	apt-get update; \
-	apt-get install --no-install-recommends --yes clang llvm make gcc flex bison; \
-	rm -rf /var/lib/apt/lists/*; \
-	git clone --depth=1 --branch "${PWRU_VERSION}" https://github.com/cilium/pwru.git /src/pwru; \
-	test "$(git -C /src/pwru rev-parse HEAD)" = "${PWRU_COMMIT}"; \
-	go -C /src/pwru mod edit -require=golang.org/x/crypto@v0.53.0 -require=golang.org/x/net@v0.56.0 -require=golang.org/x/text@v0.39.0; \
-	go -C /src/pwru mod tidy; \
-	TARGET_GOARCH="${TARGETARCH:-amd64}" go -C /src/pwru generate; \
-	cd /src/pwru/libpcap; \
-	./configure --disable-protochain --disable-rdma --disable-shared --disable-usb --disable-netmap --disable-bluetooth --disable-dbus --without-libnl --without-dpdk --host="$(uname -m)-unknown-linux-gnu"; \
-	make; \
-	cd /src/pwru; \
-	go -C /src/pwru build -mod=mod -trimpath -ldflags="-s -w -linkmode external -extldflags '-static' -X github.com/cilium/pwru/internal/pwru.Version=${PWRU_VERSION}" -o /go/bin/pwru .; \
-	test -x /go/bin/pwru
+	go build -trimpath -o /usr/local/bin/verified-fetch /src/fetch.go; \
+	case "${TARGETARCH:-amd64}" in \
+		amd64) asset_arch=amd64; asset_sha256="${PWRU_SHA256_AMD64}" ;; \
+		arm64) asset_arch=arm64; asset_sha256="${PWRU_SHA256_ARM64}" ;; \
+		*) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+	esac; \
+	/usr/local/bin/verified-fetch \
+		"https://github.com/cilium/pwru/releases/download/${PWRU_VERSION}/pwru-linux-${asset_arch}.tar.gz" \
+		/out/pwru.tar.gz "${asset_sha256}"; \
+	tar -xzf /out/pwru.tar.gz -C /out; \
+	test -x /out/pwru; \
+	rm /out/pwru.tar.gz
 
 FROM runtime
 
@@ -48,16 +42,15 @@ ARG VERSION=0.1.0
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 ARG PWRU_VERSION=v1.0.12
+ARG NETSHOOT_ALPINE_VERSION=3.24.1
 
-# Refresh inherited Alpine packages from the pinned release repository.
-# netshoot contains several optional Go utilities unrelated to the supported
-# network-debug contract. Remove them so stale upstream binaries cannot be
-# shipped or scanned as part of this image; tcpdump, pwru, and the documented
-# network tools remain available.
-RUN apk upgrade --no-cache \
-	--repository https://dl-cdn.alpinelinux.org/alpine/v3.24/main \
-	--repository https://dl-cdn.alpinelinux.org/alpine/v3.24/community \
-	&& rm -f /usr/local/bin/calicoctl /usr/local/bin/ctop /usr/local/bin/fortio \
+# The pinned netshoot image owns the runtime package set. Prove the expected
+# Alpine runtime before removing optional inherited binaries; do not mix a
+# separately selected Alpine repository into the unknown base release.
+RUN set -eux; \
+	test "$(cat /etc/alpine-release)" = "${NETSHOOT_ALPINE_VERSION}"; \
+	test -x /usr/bin/tcpdump; \
+	rm -f /usr/local/bin/calicoctl /usr/local/bin/ctop /usr/local/bin/fortio \
 	/usr/local/bin/grpcurl /usr/local/bin/termshark
 
 LABEL org.opencontainers.image.title="Network Debug Utility" \
@@ -76,7 +69,7 @@ LABEL org.opencontainers.image.title="Network Debug Utility" \
 	io.telekom.breakglass.image.role="debug-network" \
 	io.telekom.breakglass.security.capabilities="NET_RAW,NET_ADMIN,BPF,PERFMON,SYS_RESOURCE,SYS_PTRACE"
 
-COPY --from=tools /go/bin/pwru /usr/local/bin/pwru
+COPY --from=tools /out/pwru /usr/local/bin/pwru
 COPY scripts/net-debug /usr/local/bin/net-debug
 COPY scripts/net-report /usr/local/bin/net-report
 COPY scripts/network-debug-profile.sh /etc/profile.d/network-debug.sh

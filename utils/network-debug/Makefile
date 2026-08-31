@@ -7,7 +7,7 @@ VCS_REF ?= $(shell git rev-parse --short HEAD 2>/dev/null || printf 'unknown')
 BUILD_DATE ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 PLATFORMS ?= linux/amd64,linux/arm64
 
-.PHONY: help build build-multiarch test fetch-test integration pod-capture-integration sbom sign
+.PHONY: help build build-multiarch test fetch-test fetch-contract-test integration pod-capture-integration sbom sign
 
 OCI_ARCHIVE ?= network-debug.oci.tar
 
@@ -36,6 +36,7 @@ sign: ## Sign an immutable image digest with keyless cosign.
 
 test: ## Run hermetic image behavior checks.
 	$(MAKE) fetch-test
+	$(MAKE) fetch-contract-test
 	./tests/test.sh
 	./tests/test-docker-preflight.sh
 	./tests/test-kind-ownership.sh
@@ -43,6 +44,9 @@ test: ## Run hermetic image behavior checks.
 
 fetch-test: ## Test the immutable build-input downloader.
 	go test ./tools
+
+fetch-contract-test: ## Verify the production Dockerfile uses immutable downloader inputs.
+	./tests/test-fetch-contract.sh
 
 integration: ## Run real tool proofs in disposable Docker and kind resources.
 	./tests/integration.sh
