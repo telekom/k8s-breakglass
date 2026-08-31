@@ -25,6 +25,8 @@ export KIND_CLUSTER_NAME="$cluster" KIND_NODE_IMAGE="$kind_node_image" KUBECONFI
 script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck disable=SC1091
 . "${script_dir}/../../../hack/kind-ownership.sh"
+# shellcheck disable=SC1091
+. "${script_dir}/../../../hack/kubernetes-delete-uid.sh"
 cluster_create_attempted=false
 
 fail() { printf 'node-maintenance host-network proof: %s\n' "$*" >&2; exit 1; }
@@ -208,6 +210,7 @@ spec:
       emptyDir:
         sizeLimit: 64Mi
 YAML
+	pod_uid="$(kubectl get pod -n "${namespace}" "${pod}" -o jsonpath='{.metadata.uid}')" || fail "${pod} UID could not be captured for cleanup"
 	assert_security "${pod}" "${caps}"
 	printf 'Security contract passed: %s\n' "${pod}"
 	kubectl wait -n "${namespace}" --for=jsonpath='{.status.phase}'=Running "pod/${pod}" --timeout=120s >/dev/null || { kubectl logs -n "${namespace}" "${pod}" >&2 || true; fail "${pod} did not start"; }
@@ -263,7 +266,10 @@ YAML
 		printf 'Evidence metadata:\n%s\nEvidence events:\n%s\n' "${metadata_content}" "${events_content}" >&2
 		fail "${pod} evidence does not contain exactly one terminal status ${terminal_event}"
 	fi
-	kubectl delete pod -n "${namespace}" "${pod}" --wait=true --timeout=60s >/dev/null || fail "${pod} cleanup failed"
+	kubernetes_delete_uid "${KUBECONFIG_FILE}" \
+		"/api/v1/namespaces/${namespace}/pods/${pod}" "${pod_uid}" >/dev/null || fail "${pod} UID-fenced cleanup failed"
+	kubectl --kubeconfig "${KUBECONFIG_FILE}" wait --for=delete \
+		pod/"${pod}" --namespace "${namespace}" --timeout=60s >/dev/null || fail "${pod} deletion did not complete"
 	kubectl get pod -n "${namespace}" "${pod}" >/dev/null 2>&1 && fail "${pod} survived cleanup"
 	printf 'Pod cleanup passed: %s\n' "${pod}"
 }

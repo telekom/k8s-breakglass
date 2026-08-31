@@ -5,7 +5,10 @@
 set -eu
 
 root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+# shellcheck disable=SC1091
+. "$(cd -- "$root/../../../.." && pwd)/hack/docker-image-ownership.sh"
 image=diagnostic-artifact-collector:test
+image_id=
 test_dir=$(mktemp -d /tmp/diagnostic-artifact-test.XXXXXX)
 root_volume=diagnostic-artifact-test-${test_dir##*/}
 upload_volume=diagnostic-artifact-upload-${test_dir##*/}
@@ -24,7 +27,7 @@ cleanup() {
 	fi
 	rm -rf "$test_dir"
 	docker volume rm "$root_volume" "$upload_volume" >/dev/null 2>&1 || true
-	docker image rm "$image" >/dev/null 2>&1 || true
+	if [ -n "$image_id" ]; then docker_remove_image_if_id docker "$image" "$image_id" >/dev/null 2>&1 || true; fi
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -41,6 +44,7 @@ command -v openssl >/dev/null 2>&1 || {
 	exit 1
 }
 docker build --tag "$image" "$root"
+image_id=$(docker image inspect --format '{{.Id}}' "$image") || exit 1
 
 run_image() {
 	output=$1

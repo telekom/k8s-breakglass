@@ -124,6 +124,14 @@ written. The helper never falls back to the overwrite-capable
 intentionally mutable and use the overwrite-capable path with post-write
 verification.
 
+Release-matrix integration harnesses use the same ownership boundary. A Kind
+cluster is removable only through the exact Docker node IDs captured after a
+successful create; failed creates and same-name node replacement are leaked
+for inspection. Kubernetes Pod, PVC, PV, namespace, and fixture cleanup uses
+the API server's UID precondition on DELETE, so a replacement between
+observation and cleanup is preserved. Locally built image tags are removed
+only while they still resolve to the captured immutable image ID.
+
 ## Release Checklist
 
 - Verify CI success on the release commit.

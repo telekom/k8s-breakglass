@@ -20,11 +20,14 @@ export KIND_CLUSTER_NAME="$cluster" KUBECONFIG_FILE="$KUBECONFIG" KIND_CLUSTER_C
 script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck disable=SC1091
 . "${script_dir}/../../../../hack/kind-ownership.sh"
+# shellcheck disable=SC1091
+. "${script_dir}/../../../../hack/docker-image-ownership.sh"
 image_owned=false
+image_owned_id=
 cleanup() {
 	kind_cleanup_owned_cluster >/dev/null 2>&1 || true
 	if [ "$image_owned" = true ]; then
-		"$DOCKER_BIN" image rm "$image" >/dev/null 2>&1 || true
+		docker_remove_image_if_id "$DOCKER_BIN" "$image" "$image_owned_id" || true
 	fi
 	rm -f "$KUBECONFIG"
 }
@@ -51,6 +54,10 @@ else
 fi
 "$DOCKER_BIN" build --tag "$image" "$root"
 image_owned=true
+image_owned_id=$("$DOCKER_BIN" image inspect --format '{{.Id}}' "$image") || {
+		echo 'could not capture immutable ID of built image' >&2
+	exit 1
+}
 if ! existing_clusters=$("$KIND_BIN" get clusters 2>/dev/null); then
 	echo 'could not list Kind clusters before creating the disposable cluster' >&2
 	exit 1

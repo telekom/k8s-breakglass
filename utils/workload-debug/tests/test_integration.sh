@@ -6,6 +6,10 @@ set -Eeuo pipefail
 root=$(cd -- "$(dirname "$0")/.." && pwd)
 # shellcheck disable=SC1091
 source "$root/tests/kind-lifecycle.sh"
+# shellcheck disable=SC1091
+source "$root/../../hack/docker-image-ownership.sh"
+# shellcheck disable=SC1091
+source "$root/../../hack/kubernetes-delete-uid.sh"
 image=${WORKLOAD_DEBUG_IMAGE:-ghcr.io/telekom/k8s-breakglass/utils/workload-debug:integration-$$}
 fixture_image=workload-debug-fixture:integration-$$
 fixture_dir=$(mktemp -d "${TMPDIR:-/tmp}/workload-debug.XXXXXX")
@@ -16,8 +20,11 @@ runner=workload-debug-runner
 dns_fixture_name=fixture.workload-debug.test
 kind_node_image=${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}
 image_built=0
+image_id=
 fixture_image_built=0
+fixture_image_id=
 auth_secret_created=0
+auth_secret_uid=
 
 fail() { echo "integration-test: $*" >&2; exit 1; }
 assert_contains() { [[ "$1" == *"$2"* ]] || fail "expected '$2' in output"; }
@@ -43,13 +50,16 @@ cleanup() {
   if (( KIND_LIFECYCLE_OWNED )); then
     if (( status != 0 )); then diagnose; fi
     if (( auth_secret_created )); then
-      kubectl --kubeconfig "$kubeconfig" -n "$namespace" delete secret "${auth_secret_name}" \
-        --ignore-not-found >/dev/null 2>&1 || status=1
+      if [ -n "$auth_secret_uid" ]; then
+        kubernetes_delete_uid "$kubeconfig" \
+          "/api/v1/namespaces/$namespace/secrets/$auth_secret_name" "$auth_secret_uid" \
+          >/dev/null 2>&1 || status=1
+      fi
     fi
     kind_lifecycle_cleanup "$kind_name" "$kubeconfig" || status=1
   fi
   if (( image_built )); then
-    docker image rm "$image" >/dev/null 2>&1 || status=1
+    docker_remove_image_if_id docker "$image" "$image_id" >/dev/null 2>&1 || status=1
     if docker image inspect "$image" >/dev/null 2>&1; then
       echo "integration-test: built image tag still exists after cleanup: $image" >&2
       status=1
@@ -60,7 +70,7 @@ cleanup() {
     fi
   fi
   if (( fixture_image_built )); then
-    docker image rm "$fixture_image" >/dev/null 2>&1 || status=1
+    docker_remove_image_if_id docker "$fixture_image" "$fixture_image_id" >/dev/null 2>&1 || status=1
     if docker image inspect "$fixture_image" >/dev/null 2>&1; then
       echo "integration-test: fixture image tag still exists after cleanup: $fixture_image" >&2
       status=1
@@ -191,6 +201,7 @@ chmod 600 "$runner_token_file"
 auth_secret_name=http-fixture-auth
 kubectl -n "$namespace" create secret generic "$auth_secret_name" --from-file=token="$runner_token_file"
 auth_secret_created=1
+auth_secret_uid=$(kubectl --kubeconfig "$kubeconfig" -n "$namespace" get secret "$auth_secret_name" -o jsonpath='{.metadata.uid}') || fail "unable to capture fixture Secret UID"
 
 cat >"$fixture_dir/fixtures.yaml" <<EOF
 apiVersion: v1

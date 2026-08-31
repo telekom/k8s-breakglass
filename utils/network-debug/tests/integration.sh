@@ -61,6 +61,8 @@ PWRU_USE_DOCKER_TIMEOUT=true
 # shellcheck disable=SC1091
 . "$(dirname -- "$0")/pwru-lifecycle.sh"
 # shellcheck disable=SC1091
+. "$(dirname -- "$0")/../../../hack/kubernetes-delete-uid.sh"
+# shellcheck disable=SC1091
 . "$(dirname -- "$0")/docker-preflight.sh"
 
 requirement() {
@@ -84,12 +86,12 @@ cleanup() {
 	cleanup_failed=false
 	if [ "$KIND_CLUSTER_CREATED" = true ]; then
 		if [ "$NETWORK_NAMESPACE_CREATED" = true ] && command -v kubectl >/dev/null 2>&1; then
-			current_namespace_uid=$(kubectl --kubeconfig "$KUBECONFIG_FILE" get namespace "$NETWORK_NAMESPACE" -o jsonpath='{.metadata.uid}' 2>/dev/null) || current_namespace_uid=
-			if [ -n "$NETWORK_NAMESPACE_UID" ] && [ "$current_namespace_uid" = "$NETWORK_NAMESPACE_UID" ]; then
-				kubectl --kubeconfig "$KUBECONFIG_FILE" delete namespace "$NETWORK_NAMESPACE" --ignore-not-found --wait=true --timeout=60s >/dev/null 2>&1 || cleanup_failed=true
+			if [ -n "$NETWORK_NAMESPACE_UID" ]; then
+				kubernetes_delete_uid "$KUBECONFIG_FILE" \
+					"/api/v1/namespaces/$NETWORK_NAMESPACE" "$NETWORK_NAMESPACE_UID" >/dev/null 2>&1 || cleanup_failed=true
+				kubectl --kubeconfig "$KUBECONFIG_FILE" wait --for=delete \
+					namespace/"$NETWORK_NAMESPACE" --timeout=60s >/dev/null 2>&1 || cleanup_failed=true
 				if kubectl --kubeconfig "$KUBECONFIG_FILE" get namespace "$NETWORK_NAMESPACE" >/dev/null 2>&1; then cleanup_failed=true; fi
-			elif [ -n "$current_namespace_uid" ]; then
-				cleanup_failed=true
 			fi
 		fi
 	fi
@@ -493,12 +495,16 @@ capture_pod_traffic() {
 
 capture_pod_traffic "$NETWORK_HOST_POD_NAME" host-network "$WORK_DIR/host-network-tcpdump.log"
 
-current_host_pod_uid=$(kubectl get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" -o jsonpath='{.metadata.uid}') || \
-	requirement "network diagnostics Pod disappeared before UID-fenced cleanup"
-[ "$current_host_pod_uid" = "$NETWORK_HOST_POD_UID" ] || requirement "network diagnostics Pod was replaced before cleanup"
-kubectl delete pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" --wait=true --timeout=60s >/dev/null || \
+if [ -z "$NETWORK_HOST_POD_UID" ]; then
+	requirement "network diagnostics Pod UID was not captured for cleanup"
+fi
+kubernetes_delete_uid "$KUBECONFIG_FILE" \
+	"/api/v1/namespaces/$NETWORK_NAMESPACE/pods/$NETWORK_HOST_POD_NAME" "$NETWORK_HOST_POD_UID" >/dev/null || \
 	requirement "network diagnostics pod cleanup failed"
-if kubectl get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" >/dev/null 2>&1; then
+kubectl --kubeconfig "$KUBECONFIG_FILE" wait --for=delete \
+	pod/"$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" --timeout=60s >/dev/null || \
+	requirement "network diagnostics pod deletion did not complete"
+if kubectl --kubeconfig "$KUBECONFIG_FILE" get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" >/dev/null 2>&1; then
 	requirement "network diagnostics pod survived cleanup"
 fi
 

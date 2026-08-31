@@ -2,77 +2,47 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-# Small, testable ownership boundary for the disposable Kind cluster used by
-# the integration proof. A name is checked before create. If create fails
-# after Kind has registered the previously absent name, the partial cluster
-# is owned by this invocation and may be cleaned up. A pre-existing name is
-# never marked as owned.
+# Compatibility wrapper for the workload integration proof. Ownership is
+# established by the shared helper from exact Docker node IDs after a
+# successful create; cluster names and Kind's partial state are never enough.
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+KIND_BIN=${KIND_BIN:-kind}
+DOCKER_BIN=${DOCKER_BIN:-docker}
+KIND_CLUSTER_CREATED=${KIND_CLUSTER_CREATED:-false}
+KIND_CLUSTER_OWNER_IDS=${KIND_CLUSTER_OWNER_IDS:-}
+# shellcheck disable=SC1091
+. "${script_dir}/../../../hack/kind-ownership.sh"
 
 KIND_LIFECYCLE_OWNED=0
 
-kind_lifecycle_cluster_exists() {
-    local cluster_name=$1
-    local clusters
-
-    clusters=$(kind get clusters) || return 2
-    grep -Fxq -- "$cluster_name" <<<"$clusters"
-}
-
 kind_lifecycle_create() {
     [ "$#" -eq 3 ] || return 2
-    local cluster_name=$1
-    local node_image=$2
-    local kubeconfig=$3
-    local create_status=0
-    local kubeconfig_preexisting=0
-
-    KIND_LIFECYCLE_OWNED=0
-    [ -e "$kubeconfig" ] && kubeconfig_preexisting=1
-    if kind_lifecycle_cluster_exists "$cluster_name"; then
-        return 3
-    elif [ "$?" -eq 2 ]; then
-        return 2
-    fi
-
-    if kind create cluster --name "$cluster_name" --image "$node_image" \
-        --kubeconfig "$kubeconfig" --wait 120s; then
+    local cluster_name=$1 node_image=$2 kubeconfig=$3 status=0
+    export KIND_CLUSTER_NAME="$cluster_name" KIND_NODE_IMAGE="$node_image" \
+        KUBECONFIG_FILE="$kubeconfig" KIND_CLUSTER_CREATED=false KIND_CLUSTER_OWNER_IDS=
+    if kind_create_owned_cluster; then
         KIND_LIFECYCLE_OWNED=1
         return 0
     else
-        create_status=$?
+        status=$?
     fi
-
-    # The preflight established that this name was absent. If Kind left a
-    # cluster behind after a timeout or partial bootstrap, it belongs to this
-    # invocation and must be cleaned up by the EXIT trap. A collision detected
-    # during preflight never reaches this branch and remains caller-owned.
-    if kind_lifecycle_cluster_exists "$cluster_name" && [ "$kubeconfig_preexisting" -eq 0 ]; then
-        KIND_LIFECYCLE_OWNED=1
-    fi
-    return "$create_status"
+    KIND_LIFECYCLE_OWNED=0
+    case "$status" in
+        2) return 3 ;;
+        3) return 2 ;;
+        *) return "$status" ;;
+    esac
 }
 
 kind_lifecycle_cleanup() {
     [ "$#" -eq 2 ] || return 2
-    local cluster_name=$1
-    local kubeconfig=$2
-    local remaining
-    local status=0
-
-    if (( ! KIND_LIFECYCLE_OWNED )); then
-        return 0
-    fi
-    if [ -e "$kubeconfig" ]; then
-        kind delete cluster --name "$cluster_name" --kubeconfig "$kubeconfig" >/dev/null 2>&1 || status=1
+    local cluster_name=$1 kubeconfig=$2 status=0
+    export KIND_CLUSTER_NAME="$cluster_name" KUBECONFIG_FILE="$kubeconfig"
+    if [ "$KIND_LIFECYCLE_OWNED" -eq 1 ]; then
+        kind_cleanup_owned_cluster || status=$?
     else
-        kind delete cluster --name "$cluster_name" >/dev/null 2>&1 || status=1
-    fi
-    if ! remaining=$(kind get clusters 2>/dev/null); then
-        status=1
-        remaining=
-    fi
-    if grep -Fxq -- "$cluster_name" <<<"$remaining"; then
-        status=1
+        return 0
     fi
     KIND_LIFECYCLE_OWNED=0
     return "$status"
