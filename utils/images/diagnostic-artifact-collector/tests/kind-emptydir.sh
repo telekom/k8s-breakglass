@@ -18,11 +18,13 @@ image_owned=false
 partial_cluster_is_owned() {
 	[ "${cluster_create_attempted}" = true ] || return 1
 	[ -s "${KUBECONFIG}" ] || return 1
-	awk -v expected="kind-${cluster}" '
+	if ! awk -v expected="kind-${cluster}" '
 		($1 == "name:" && $2 == expected) || ($1 == "-" && $2 == "name:" && $3 == expected) { found_name = 1 }
 		$1 == "current-context:" && $2 == expected { found_context = 1 }
 		END { exit !(found_name && found_context) }
-	' "${KUBECONFIG}"
+	' "${KUBECONFIG}"; then
+		return 1
+	fi
 	kubectl --kubeconfig "${KUBECONFIG}" get --raw=/version >/dev/null 2>&1
 }
 cleanup() {

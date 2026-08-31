@@ -24,6 +24,7 @@ ARG PWRU_SHA256_ARM64=997516721a58b4f8ffe3504994cada472c9bcd78f1e819862bf61f1081
 COPY tools/fetch.go /src/fetch.go
 RUN set -eux; \
 	go build -trimpath -o /usr/local/bin/verified-fetch /src/fetch.go; \
+	mkdir -p /out; \
 	case "${TARGETARCH:-amd64}" in \
 		amd64) asset_arch=amd64; asset_sha256="${PWRU_SHA256_AMD64}" ;; \
 		arm64) asset_arch=arm64; asset_sha256="${PWRU_SHA256_ARM64}" ;; \

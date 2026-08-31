@@ -29,6 +29,7 @@ assert_contains "if [[ \"\${cluster_create_attempted}\" == true ]]"
 assert_contains 'cluster_owned=false'
 assert_contains "if [[ \"\${cluster_owned}\" == true ]] || partial_cluster_is_owned"
 assert_contains 'found_context = 1'
+assert_contains 'if ! awk -v expected='
 assert_contains 'cluster_owned=true'
 assert_contains "kubectl --kubeconfig \"\${kubeconfig}\" get --raw=/version"
 create_line=$(rg -n '^if kind create cluster ' "${script}" | cut -d: -f1)
@@ -56,4 +57,79 @@ assert_contains "rm -f \"\${load_log}\""
 if grep -F 'kind load docker-image' "${script}" >/dev/null; then
 	exit 1
 fi
+
+# Exercise both ownership dimensions with a failed Kind create. The fake
+# kubectl deliberately succeeds even for a foreign kubeconfig; cleanup must
+# still refuse deletion when either the cluster name or current context does
+# not match the newly requested cluster.
+fixture="$(mktemp -d)"
+trap 'rm -rf "${fixture}"' EXIT HUP INT TERM
+mkdir -p "${fixture}/bin"
+cat >"${fixture}/bin/docker" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  "image inspect")
+    if [[ "$*" == *"--format"* ]]; then printf '%s\n' 'linux/amd64'; fi
+    exit 0
+    ;;
+  "version") printf '%s\n' '28.0.0'; exit 0 ;;
+  *) exit 0 ;;
+esac
+EOF
+cat >"${fixture}/bin/kind" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  get) exit 0 ;;
+  create)
+    cluster_name=
+    kubeconfig=
+    while [[ $# -gt 0 ]]; do
+      case "${1:-}" in
+        --name) cluster_name="${2:?}"; shift 2 ;;
+        --kubeconfig) kubeconfig="${2:?}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    case "${KIND_KUBECONFIG_MODE:?}" in
+      wrong-name) name=kind-foreign-cluster; context=kind-foreign-cluster ;;
+      wrong-context) name="kind-${cluster_name}"; context=kind-foreign-cluster ;;
+      *) exit 2 ;;
+    esac
+    printf 'clusters:\n- name: %s\ncurrent-context: %s\n' "${name}" "${context}" >"${kubeconfig}"
+    exit 1
+    ;;
+  delete) touch "${KIND_DELETE_MARKER:?}"; exit 0 ;;
+  export) exit 0 ;;
+  *) exit 0 ;;
+esac
+EOF
+cat >"${fixture}/bin/kubectl" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+cat >"${fixture}/bin/jq" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+cat >"${fixture}/bin/uname" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' Linux
+EOF
+chmod +x "${fixture}/bin/docker" "${fixture}/bin/kind" "${fixture}/bin/kubectl" "${fixture}/bin/jq" "${fixture}/bin/uname"
+
+for mode in wrong-name wrong-context; do
+	delete_marker="${fixture}/${mode}.deleted"
+	if PATH="${fixture}/bin:${PATH}" \
+		NODE_MAINTENANCE_TEST_IMAGE=node-maintenance:test \
+		NODE_MAINTENANCE_KIND_NODE_IMAGE=kindest/node:test \
+		KIND_KUBECONFIG_MODE="${mode}" KIND_DELETE_MARKER="${delete_marker}" \
+		"${script}" >"${fixture}/${mode}.log" 2>&1; then
+		printf 'foreign %s kubeconfig unexpectedly succeeded\n' "${mode}" >&2
+		exit 1
+	fi
+	[[ ! -e "${delete_marker}" ]] || {
+		printf 'foreign %s kubeconfig authorized Kind deletion\n' "${mode}" >&2
+		exit 1
+	}
+done
 printf '%s\n' 'node-maintenance exact-platform archive load contract passed'

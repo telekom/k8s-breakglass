@@ -28,7 +28,15 @@ case "${1:-}" in
     ;;
   create)
     touch "${KIND_CREATE_MARKER:?}"
-    if [[ "${KIND_PARTIAL_KUBECONFIG:-}" == 1 ]]; then
+    if [[ "${KIND_WRONG_KUBECONFIG:-}" == 1 ]]; then
+      while [[ $# -gt 0 ]]; do
+        if [[ "${1:-}" == --kubeconfig ]]; then
+          printf 'clusters:\n- name: kind-foreign-cluster\ncurrent-context: kind-foreign-cluster\n' >"${2:?}"
+          break
+        fi
+        shift
+      done
+    elif [[ "${KIND_PARTIAL_KUBECONFIG:-}" == 1 ]]; then
       while [[ $# -gt 0 ]]; do
         if [[ "${1:-}" == --kubeconfig ]]; then
           printf 'clusters:\n- name: kind-diagnostic-artifact-collector\ncurrent-context: kind-diagnostic-artifact-collector\n' >"${2:?}"
@@ -87,6 +95,20 @@ if PATH="${tmp}/bin:${PATH}" KIND_CREATE_MARKER="${create_marker}" KIND_DELETE_M
 fi
 [[ -e "${create_marker}" && -e "${delete_marker}" ]] || {
   echo 'verified partial Kind create did not clean its owned cluster' >&2
+  exit 1
+}
+
+rm -f "${create_marker}" "${delete_marker}"
+if PATH="${tmp}/bin:${PATH}" KIND_CREATE_MARKER="${create_marker}" KIND_DELETE_MARKER="${delete_marker}" \
+  KIND_WRONG_KUBECONFIG=1 \
+  KIND_EXISTING_CLUSTERS='' \
+  KIND_IMAGE_NAME=diagnostic-artifact-collector:test \
+  "${root}/tests/kind-emptydir.sh" >/dev/null 2>&1; then
+  echo 'wrong-name Kind create unexpectedly succeeded' >&2
+  exit 1
+fi
+[[ -e "${create_marker}" && ! -e "${delete_marker}" ]] || {
+  echo 'wrong-name Kind kubeconfig authorized cleanup' >&2
   exit 1
 }
 
