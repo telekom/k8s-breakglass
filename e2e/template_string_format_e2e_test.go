@@ -263,7 +263,7 @@ func TestTemplateStringFormat_E2E_WebhookRejectsUnsupportedKind(t *testing.T) {
 		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
 			DisplayName: "E2E Unsupported Kind",
 			TemplateString: `apiVersion: batch/v1
-kind: Job
+kind: CronJob
 metadata:
   name: test-job
 spec:
@@ -280,7 +280,7 @@ spec:
 	defer func() { _ = cli.Delete(ctx, podTemplate) }()
 
 	err := cli.Create(ctx, podTemplate)
-	require.Error(t, err, "Expected webhook to reject unsupported kind Job")
+	require.Error(t, err, "Expected webhook to reject unsupported kind CronJob")
 	assert.Contains(t, err.Error(), "unsupported kind")
 }
 
