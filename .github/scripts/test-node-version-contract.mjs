@@ -44,6 +44,9 @@ function parseRange(engine) {
   if (!text) {
     return [];
   }
+  if (/-\s*$/.test(text) || /\b(?:v?\d+)\.(?:x|X|\*)\.\d+\b/.test(text)) {
+    throw new Error(`unsupported Node.js engine range ${engine}: malformed range syntax`);
+  }
   try {
     return new semver.Range(text).set;
   } catch (error) {
