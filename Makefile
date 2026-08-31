@@ -2,6 +2,7 @@ include versions.env
 
 # Image URL to use all building/pushing image targets
 IMG ?= ghcr.io/telekom/k8s-breakglass:latest
+VALIDATOR_IMG ?= ghcr.io/telekom/k8s-breakglass/cluster-validator:dev
 
 # ENVTEST_K8S_VERSION is defined as a Make variable in versions.env (included above)
 
@@ -71,6 +72,15 @@ lint-strict: golangci-lint ## Run golangci-lint with extended timeout (CI-friend
 .PHONY: verify-release-provenance
 verify-release-provenance: ## Verify release image provenance signs the registry digest.
 	bash hack/verify-release-provenance.sh
+	bash hack/verify-release-values.sh
+	bash hack/verify-release-refs.sh
+
+.PHONY: test-release-security
+test-release-security: ## Run release and OCI security behavioral tests.
+	bash hack/test-chart-sbom.sh
+	bash hack/test-slsa-provenance.sh
+	bash hack/verify-catalogue-supply-chain-test.sh
+	bash utils/images/tests/verify-oci-attestations-test.sh
 
 .PHONY: verify-generated
 verify-generated: generate manifests ## Verify generated API and manifest artifacts are checked in.
@@ -121,6 +131,14 @@ prepare-test: ## Regenerate code/manifests, format Go files, and run vet before 
 test: vet ## Run all unit tests (controller + CLI) without mutating generated or formatted files.
 	go test $(GO_TEST_FLAGS) $$(go list ./... | $(E2E_EXCLUDE)) -coverprofile cover.out
 
+.PHONY: test-validator
+test-validator: ## Run the standalone cluster-validator unit tests.
+	go test $(GO_TEST_FLAGS) ./pkg/clustervalidator ./cmd/cluster-validator ./hack/cluster-validator-extension
+
+.PHONY: test-validator-integration
+test-validator-integration: ## Build and run the validator against a disposable real kind cluster.
+	bash hack/cluster-validator-integration.sh
+
 .PHONY: test-controller
 test-controller: vet ## Run controller unit tests (excludes bgctl and e2e) without mutating generated or formatted files.
 	go test $(GO_TEST_FLAGS) $$(go list ./... | $(E2E_EXCLUDE) | grep -v bgctl) -coverprofile cover-controller.out
@@ -148,7 +166,7 @@ validate-fixtures: manifests ## Validate all e2e YAML fixtures decode and pass G
 	@echo "Fixture validation passed"
 
 .PHONY: verify
-verify: fmt vet lint-strict test verify-release-provenance vulncheck ## Run all verification checks (fmt, vet, lint, test, release workflow, vulncheck).
+verify: fmt vet lint-strict test verify-release-provenance test-release-security vulncheck ## Run all verification checks (fmt, vet, lint, test, release workflow, vulncheck).
 	go build ./...
 	@echo "All verification checks passed!"
 
@@ -217,6 +235,26 @@ docker-build-telekom: ## Build Telekom branded UI image
 .PHONY: docker-build-dev
 docker-build-dev: ## Build docker image with controller.
 	docker build -t breakglass:dev .
+
+.PHONY: docker-build-validator
+docker-build-validator: ## Build the provider-neutral cluster-validator image for the host architecture.
+	docker build \
+		-f utils/cluster-validator/Dockerfile \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t $(VALIDATOR_IMG) .
+
+.PHONY: docker-build-validator-multiarch
+docker-build-validator-multiarch: ## Build the cluster-validator image for amd64 and arm64 (no push).
+	docker buildx build \
+		--platform linux/amd64,linux/arm64 \
+		-f utils/cluster-validator/Dockerfile \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		--output=type=oci,dest=cluster-validator-multiarch.tar \
+		-t $(VALIDATOR_IMG) .
 
 ##@ Deployment
 
@@ -303,9 +341,11 @@ $(ENVTEST): $(LOCALBIN)
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
 
 .PHONY: helm-validate
-helm-validate: ## Validate Helm chart syntax and templates for escalation-config
+helm-validate: ## Validate Helm chart syntax and templates
 	helm lint charts/escalation-config --strict --values charts/escalation-config/ci/test-values.yaml
 	helm template escalation-config charts/escalation-config --values charts/escalation-config/ci/test-values.yaml > /dev/null
+	helm lint charts/debug-session-catalogue --strict --values charts/debug-session-catalogue/ci/test-values.yaml
+	helm template debug-session-catalogue charts/debug-session-catalogue --values charts/debug-session-catalogue/ci/test-values.yaml > /dev/null
 	@echo "Helm chart validation passed"
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist

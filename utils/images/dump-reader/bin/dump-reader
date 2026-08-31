@@ -1,0 +1,214 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+set -eu
+
+INPUT_DIR=${DUMP_INPUT_DIR:-/input}
+MAX_COPY_BYTES=${DUMP_MAX_COPY_BYTES:-1073741824}
+
+usage() {
+    cat <<'EOF'
+dump-reader: inspect existing dump files without generating or modifying them
+
+Usage:
+  dump-reader inspect FILE
+  dump-reader checksum FILE
+  dump-reader copy FILE [OUTPUT_NAME]
+  dump-reader help
+
+FILE must be an existing regular file and may not be a symbolic link. `copy`
+writes only beneath DUMP_OUTPUT_DIR (default: /output), refuses to overwrite,
+accepts a basename only, and limits copied files to DUMP_MAX_COPY_BYTES
+(default: 1073741824). FILE must resolve beneath DUMP_INPUT_DIR (default:
+/input). Mount source files read-only and mount a separate output volume when
+copying an artifact out.
+EOF
+}
+
+fail() {
+    echo "dump-reader: $1" >&2
+    exit 2
+}
+
+reject_symlink_components() {
+    path=$1
+    current=/
+    remainder=${path#/}
+    while [ -n "$remainder" ]; do
+        component=${remainder%%/*}
+        if [ "$remainder" = "$component" ]; then
+            remainder=
+        else
+            remainder=${remainder#*/}
+        fi
+        [ -n "$component" ] || continue
+        current=$current$component
+        if [ -L "$current" ]; then
+            case "$current" in
+                /var|/tmp) ;;
+                *) fail "path may not contain symbolic links: $path" ;;
+            esac
+        fi
+        current=$current/
+    done
+}
+
+is_uint() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+validate_input_dir() {
+    input_dir_check=${INPUT_DIR%/}
+    [ -n "$input_dir_check" ] || input_dir_check=/
+    case "$INPUT_DIR" in
+        /*) ;;
+        *) fail "DUMP_INPUT_DIR must be an absolute path" ;;
+    esac
+    [ -d "$INPUT_DIR" ] || fail "DUMP_INPUT_DIR does not exist: $INPUT_DIR"
+    reject_symlink_components "$INPUT_DIR"
+    [ ! -L "$input_dir_check" ] || fail "DUMP_INPUT_DIR may not be a symbolic link: $INPUT_DIR"
+}
+
+validate_source() {
+    source=$1
+    validate_input_dir
+    case "$source" in
+        /*) ;;
+        *) fail "FILE must be an absolute path" ;;
+    esac
+    [ -e "$source" ] || fail "FILE does not exist: $source"
+    [ ! -L "$source" ] || fail "symbolic links are not accepted: $source"
+    [ -f "$source" ] || fail "FILE is not a regular file: $source"
+    [ -r "$source" ] || fail "FILE is not readable: $source"
+
+    input_real=$(realpath "$INPUT_DIR") || fail "cannot resolve DUMP_INPUT_DIR: $INPUT_DIR"
+    source_real=$(realpath "$source") || fail "cannot resolve FILE: $source"
+    case "$source_real" in
+        "$input_real"/*) ;;
+        *) fail "FILE must be beneath DUMP_INPUT_DIR: $INPUT_DIR" ;;
+    esac
+}
+
+basename_safe() {
+    source=$1
+    name=${source##*/}
+    [ -n "$name" ] || fail "FILE must have a basename"
+    printf '%s\n' "$name"
+}
+
+stat_field() {
+    field=$1
+    source=$2
+    case "$field" in
+        size) format='%s'; bsd_format='%z' ;;
+        mode) format='%A'; bsd_format='%Sp' ;;
+        uid) format='%u'; bsd_format='%u' ;;
+        gid) format='%g'; bsd_format='%g' ;;
+        mtime) format='%Y'; bsd_format='%m' ;;
+        *) fail "unsupported metadata field: $field" ;;
+    esac
+    stat -c "$format" "$source" 2>/dev/null || stat -f "$bsd_format" "$source"
+}
+
+inspect() {
+    source=$1
+    validate_source "$source"
+    name=$(basename_safe "$source")
+    printf '%s\n' \
+        "schema_version=dump-reader/v1" \
+        "name=$name" \
+        "size_bytes=$(stat_field size "$source")" \
+        "mode=$(stat_field mode "$source")" \
+        "uid=$(stat_field uid "$source")" \
+        "gid=$(stat_field gid "$source")" \
+        "mtime_epoch=$(stat_field mtime "$source")"
+}
+
+checksum() {
+    source=$1
+    validate_source "$source"
+    name=$(basename_safe "$source")
+    digest=$(sha256sum "$source" | awk '{print $1}')
+    printf '%s\n' \
+        "schema_version=dump-reader/v1" \
+        "name=$name" \
+        "sha256=$digest"
+}
+
+copy_out() {
+    source=$1
+    validate_source "$source"
+    output_dir=${DUMP_OUTPUT_DIR:-/output}
+    case "$output_dir" in
+        /*) ;;
+        *) fail "DUMP_OUTPUT_DIR must be an absolute path" ;;
+    esac
+    [ -d "$output_dir" ] || fail "DUMP_OUTPUT_DIR does not exist: $output_dir"
+    reject_symlink_components "$output_dir"
+    output_dir_check=${output_dir%/}
+    [ -n "$output_dir_check" ] || output_dir_check=/
+    [ ! -L "$output_dir_check" ] || fail "DUMP_OUTPUT_DIR may not be a symbolic link: $output_dir"
+    [ -w "$output_dir" ] || fail "DUMP_OUTPUT_DIR is not writable: $output_dir"
+    is_uint "$MAX_COPY_BYTES" || fail "DUMP_MAX_COPY_BYTES must be a non-negative integer"
+    name=$(basename_safe "$source")
+    if [ "$#" -eq 2 ] && [ -n "$2" ]; then
+        name=$2
+    fi
+    case "$name" in
+        ''|.|..|*/*) fail "OUTPUT_NAME must be a basename" ;;
+    esac
+    source_size=$(stat_field size "$source")
+    [ "$source_size" -le "$MAX_COPY_BYTES" ] || fail "FILE exceeds DUMP_MAX_COPY_BYTES ($MAX_COPY_BYTES): $source"
+    destination=$output_dir/$name
+    if [ -e "$destination" ] || [ -L "$destination" ]; then
+        fail "refusing to overwrite existing output: $destination"
+    fi
+    umask 077
+    temporary=$(mktemp "$output_dir/.dump-reader.XXXXXX") || fail "cannot create temporary output in: $output_dir"
+    # Incident artifacts remain private to the image UID and an explicitly
+    # authorized collector.
+    chmod 0600 "$temporary" || fail "cannot set output permissions: $temporary"
+    if ! cat "$source" >"$temporary"; then
+        rm -f "$temporary"
+        fail "copy failed: $source"
+    fi
+    if ! ln "$temporary" "$destination"; then
+        rm -f "$temporary"
+        fail "refusing to overwrite existing output: $destination"
+    fi
+    rm -f "$temporary"
+    printf '%s\n' \
+        "schema_version=dump-reader/v1" \
+        "name=$name" \
+        "destination=$destination" \
+        "bytes=$(stat_field size "$destination")" \
+        "sha256=$(sha256sum "$destination" | awk '{print $1}')"
+}
+
+[ "$#" -gt 0 ] || { usage; exit 0; }
+case "$1" in
+    help|--help|-h)
+        usage
+        ;;
+    inspect)
+        [ "$#" -eq 2 ] || fail "inspect requires exactly one FILE"
+        inspect "$2"
+        ;;
+    checksum)
+        [ "$#" -eq 2 ] || fail "checksum requires exactly one FILE"
+        checksum "$2"
+        ;;
+    copy)
+        if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+            fail "copy requires FILE and optional OUTPUT_NAME"
+        fi
+        copy_out "$2" "${3-}"
+        ;;
+    *)
+        fail "unknown command: $1 (use help)"
+        ;;
+esac

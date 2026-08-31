@@ -1843,9 +1843,10 @@ func TestDebugPodSpecOverridesFrom(t *testing.T) {
 		hostPID := false
 		hostIPC := true
 		overrides := &breakglassv1alpha1.DebugPodSpecOverrides{
-			HostNetwork: &hostNetwork,
-			HostPID:     &hostPID,
-			HostIPC:     &hostIPC,
+			NodeSelector: map[string]string{"kubernetes.io/hostname": "debug-node"},
+			HostNetwork:  &hostNetwork,
+			HostPID:      &hostPID,
+			HostIPC:      &hostIPC,
 			Containers: []breakglassv1alpha1.DebugContainerOverride{
 				{Name: "debug-container"},
 			},
@@ -1857,6 +1858,7 @@ func TestDebugPodSpecOverridesFrom(t *testing.T) {
 		assert.True(t, *result.HostNetwork)
 		assert.False(t, *result.HostPID)
 		assert.True(t, *result.HostIPC)
+		assert.Equal(t, map[string]string{"kubernetes.io/hostname": "debug-node"}, result.NodeSelector)
 		require.Len(t, result.Containers, 1)
 	})
 }
@@ -1870,7 +1872,9 @@ func TestDebugContainerOverrideFrom(t *testing.T) {
 
 	t.Run("converts full override", func(t *testing.T) {
 		override := &breakglassv1alpha1.DebugContainerOverride{
-			Name: "debug-container",
+			Name:    "debug-container",
+			Command: []string{"/bin/sh", "-c"},
+			Args:    []string{"echo", "debug"},
 			SecurityContext: &corev1.SecurityContext{
 				Privileged: func() *bool { b := true; return &b }(),
 			},
@@ -1884,7 +1888,23 @@ func TestDebugContainerOverrideFrom(t *testing.T) {
 
 		require.NotNil(t, result)
 		assert.Equal(t, "debug-container", *result.Name)
+		assert.Equal(t, []string{"/bin/sh", "-c"}, result.Command)
+		assert.Equal(t, []string{"echo", "debug"}, result.Args)
 		require.NotNil(t, result.SecurityContext)
 		assert.Len(t, result.Env, 1)
+	})
+
+	t.Run("preserves nil versus explicitly empty command and args", func(t *testing.T) {
+		nilResult := DebugContainerOverrideFrom(&breakglassv1alpha1.DebugContainerOverride{Name: "nil"})
+		emptyResult := DebugContainerOverrideFrom(&breakglassv1alpha1.DebugContainerOverride{
+			Name: "empty", Command: []string{}, Args: []string{},
+		})
+
+		assert.Nil(t, nilResult.Command)
+		assert.Nil(t, nilResult.Args)
+		assert.NotNil(t, emptyResult.Command)
+		assert.NotNil(t, emptyResult.Args)
+		assert.Empty(t, emptyResult.Command)
+		assert.Empty(t, emptyResult.Args)
 	})
 }

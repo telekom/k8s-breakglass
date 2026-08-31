@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Cluster-validator pod checks now exclude only the exact in-cluster validator
+  pod when both Downward API identity values match; incomplete identity fails
+  safe by excluding nothing.
+- Cluster-validator pod readiness now uses bounded continuation-token pages and
+  stops at the first unhealthy active pod, while preserving exact validator
+  self-pod exclusion and fail-closed list errors.
+- Pod-template cleanup now migrates pre-UID auxiliary resources only when their
+  legacy session name and source-session markers both identify the terminating
+  session; partial or mismatched markers remain protected.
+- Network-debug integration now requires the pwru proof in CI, allows a bounded
+  BPF-detach window after SIGINT, and deletes only resources carrying this run's
+  exact ownership label after daemon-reachable checks.
+- Cluster-validator reports now reject traversal and symlink escapes, use
+  owner-only report permissions, and preserve post-upgrade diagnostics in a
+  credential-free CI artifact on failure.
+- Security CI now fails closed on malformed or incomplete gosec SARIF output
+  and reports analyzer/load errors instead of treating skipped packages as a
+  clean scan.
+- **Network debug image**: Rebased the runtime on the immutable netshoot v0.16
+  multi-architecture manifest. The inherited netshoot toolset now supplies all
+  overlapping network commands; the image retains only its bounded helpers,
+  pinned `pwru` addition, and signed SBOM/provenance workflow. Tool
+  inventory normalizes upstream version-banner formats while the integration
+  proof exercises the network image's connectivity, packet-capture, and
+  kernel-tracing operations.
+- The standalone debug-session catalogue now uses an ordered, extensible
+  profile list with DNS-safe names and stable generic intent names. Existing
+  map-shaped profile values must be converted before upgrading; the chart
+  rejects duplicate/invalid names, unresolved image references, and missing
+  explicit elevated opt-in.
+
 ### Added
 
 - **DebugSession authoring guidance**: Added provider-neutral documentation for
@@ -28,6 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Storage diagnostics utility image**: Added the bounded `storage-debug`
   image with mounted-volume fio/ioping checks and controller-owned kubestr
   storage workflows.
+- **Standalone debug-session catalogue**: Added the OCI-ready
+  `debug-session-catalogue` Helm chart with neutral workload, network,
+  storage, dump-access, network-repair, node-recovery, and cluster-validation
+  profiles. Requesters, approvers, targets, images, and the target namespace are
+  configurable; elevated profiles are disabled and require explicit opt-in.
 - **Node-maintenance utility image**: Added the generic, digest-pinnable
   `node-maintenance` intent image with read-only node recovery evidence, exact
   controller-approved link, auto-negotiation, neighbor, and bridge-FDB repair,
@@ -55,6 +93,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Debug-session pod-template cleanup now preserves live unmarked resources
+  whose names were reused, requiring exact UID ownership markers or both
+  valid legacy session markers before deletion.
+
 - **Diagnostic collector traversal bound**: Crashdump enumeration now uses
   bounded NUL spools and fixed directory/regular-file filters while retaining
   the 30-second process-group deadline, exact entry/candidate diagnostics, and
@@ -75,10 +117,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now accepts both explicit and implicit `:latest` containerd references and
   deduplicates by manifest digest before creating the immutable local image
   reference.
-- **Node-maintenance recovery verification outcome**: Recovery evidence now
-  distinguishes a verified-file digest mismatch from failure to capture, read,
-  or parse a digest. Both outcomes fail closed without executing kexec, while
-  preserving the truthful outcome for incident handling.
+- Debug-session workload rendering now applies selector ownership labels to
+  DaemonSet pod templates, matching Deployment and Job behavior and preserving
+  Kubernetes selector validity.
+- `debug-kube-api` now writes a valid bearer Authorization header and workload-
+  debug helper tests validate authenticated calls without leaking credentials.
+- Workload-debug integration diagnostics now always use the fixture kubeconfig,
+  preventing accidental fallback to a developer's ambient cluster context.
+- Debug-session catalogue chart docs now show valid list-based profile override
+  patterns and point to complete fixture values for Helm rendering.
+- Debug-session docs now include `workloadType: Job` behavior and bounded
+  one-shot execution semantics.
+- Debug-session catalogue schema now uses the same grouped duration grammar as
+  the CRD (`^([0-9]+(ns|us|ms|s|m|h|d))+$`) for `defaultDuration` and
+  `maxDuration`.
+- Catalogue utility integration now runs storage image mounted-volume checks
+  through the `storage-diagnostics` dispatcher and removes a stale network job
+  build reference to a non-existent kubestr fixture path.
 
 ## [0.1.0-rc.8] - 2026-08-22
 

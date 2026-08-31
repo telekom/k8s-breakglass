@@ -24,6 +24,20 @@
 - **Automatic Cluster Cache Invalidation** - Watches ClusterConfig and kubeconfig Secret changes to refresh connectivity instantly
 - **Rich Prometheus Signals** - API endpoints expose dedicated request/error/duration metrics for fine-grained SLOs
 
+## Standalone cluster-validator image
+
+This repository also contains a provider-neutral, read-only
+`cluster-validator` image definition for one-time and post-upgrade Kubernetes
+readiness reports. It uses only public Kubernetes APIs, has no T-CaaS-specific
+checks or assumptions, and supports `linux/amd64` and `linux/arm64`. This tree
+builds the image and local OCI archive but does not publish a release image;
+follow the deployment pipeline's signing and registry instructions before use.
+See the
+[cluster-validator contract and image guide](./docs/cluster-validator.md) and
+the [post-upgrade runbook](./docs/runbooks/cluster-validator.md). The image's
+in-container operator bundle is in
+[`utils/cluster-validator`](./utils/cluster-validator/).
+
 ## 🎬 User-flow recordings
 
 The repository includes real E2E recordings of the Breakglass user journey:
@@ -91,6 +105,7 @@ Complete documentation is available in the [docs/](./docs/) directory:
 - **[AuditConfig](./docs/audit-config.md)** - Configure audit sinks (Kafka, webhooks, logs)
 - **[MailProvider](./docs/mail-provider.md)** - Email notification configuration
 - **[Debug Session](./docs/debug-session.md)** - Debug sessions and templates
+- **[Workload diagnostics image runbook](./docs/runbooks/workload-debug.md)** - Restricted standalone DNS/TLS/HTTP/Kubernetes API diagnostics (`workload-diagnostics` intent)
 
 **Integration & Advanced Topics:**
 

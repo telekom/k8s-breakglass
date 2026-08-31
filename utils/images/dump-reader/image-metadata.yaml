@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+---
+
+image: dump-reader
+context: utils/images/dump-reader
+platforms:
+  - linux/amd64
+  - linux/arm64
+base:
+  image: busybox:1.37
+  digest: sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
+runtime:
+  user: "65532:65532"
+  writable_paths:
+    - /output
+  read_only_paths:
+    - /input
+  limits:
+    max_copy_bytes: 1073741824
+  capabilities: []
+  privileged: false
+  network_required: false
+dependencies:
+  - name: busybox
+    version: 1.37
+    digest: sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
+    license: GPL-2.0-only
+contract:
+  schema_version: dump-reader/v1
+  executable: /usr/local/bin/dump-reader
+  intents:
+    - existing-file-metadata
+    - existing-file-checksum
+    - approved-existing-file-copy
+  commands:
+    - inspect
+    - checksum
+    - copy
+  restrictions:
+    input: existing-regular-files-only
+    copy_overwrite: denied
+    copy_max_bytes: 1073741824
+attestations:
+  sbom: required
+  provenance: required
+  signature: cosign-keyless
+signing:
+  tool: cosign
+  identity: keyless
+  verify_command: cosign verify IMAGE@DIGEST

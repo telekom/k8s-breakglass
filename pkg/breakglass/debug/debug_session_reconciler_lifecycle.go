@@ -13,6 +13,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -520,6 +521,13 @@ func (c *DebugSessionController) cleanupDeployedResources(
 					Namespace: ref.Namespace,
 				},
 			}
+		case "Job":
+			obj = &batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ref.Name,
+					Namespace: ref.Namespace,
+				},
+			}
 		case "ResourceQuota":
 			obj = &corev1.ResourceQuota{
 				ObjectMeta: metav1.ObjectMeta{
@@ -639,7 +647,44 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 		obj.SetName(status.ResourceName)
 		obj.SetNamespace(status.Namespace)
 
-		if err := targetClient.Delete(ctx, obj); err != nil {
+		existing := &unstructured.Unstructured{}
+		existing.SetGroupVersionKind(gvk)
+		existing.SetName(status.ResourceName)
+		existing.SetNamespace(status.Namespace)
+		if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(existing), existing); err != nil {
+			if apierrors.IsNotFound(err) {
+				log.Debugw("Pod template resource already deleted",
+					"kind", status.Kind,
+					"name", status.ResourceName)
+				status.Deleted = true
+				now := time.Now().UTC().Format(time.RFC3339)
+				status.DeletedAt = &now
+				continue
+			}
+			status.Error = fmt.Sprintf("get failed: %v", err)
+			remainingStatuses = append(remainingStatuses, *status)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("get pod template resource %s %s/%s: %w", status.Kind, status.Namespace, status.ResourceName, err))
+			continue
+		}
+		// UID-bearing resources are fenced against replacement by an exact
+		// session identity. Resources written by older releases predate the UID
+		// marker, but their session name/namespace markers still provide safe
+		// ownership proof and must remain cleanable during an upgrade. Resources
+		// without recognized ownership metadata are retained; status alone is not
+		// sufficient proof that a replacement resource belongs to this session.
+		if !resourceMayBeDeletedByDebugSession(existing, ds) {
+			status.Error = "ownership precondition failed: resource was replaced or belongs to another session"
+			remainingStatuses = append(remainingStatuses, *status)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("refusing to delete pod template resource %s %s/%s: ownership precondition failed", status.Kind, status.Namespace, status.ResourceName))
+			continue
+		}
+
+		deleteOptions := []ctrlclient.DeleteOption{}
+		if existing.GetUID() != "" {
+			uid := existing.GetUID()
+			deleteOptions = append(deleteOptions, ctrlclient.Preconditions{UID: &uid})
+		}
+		if err := targetClient.Delete(ctx, obj, deleteOptions...); err != nil {
 			if apierrors.IsNotFound(err) {
 				log.Debugw("Pod template resource already deleted",
 					"kind", status.Kind,

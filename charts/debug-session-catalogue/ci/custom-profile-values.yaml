@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+requesters:
+  groups: [custom-requesters]
+  users: []
+approvers:
+  groups: [custom-approvers]
+  users: []
+targets:
+  clusters: [custom-cluster]
+targetNamespace: custom-debug
+images:
+  custom:
+    repository: busybox
+    tag: "1.36.1"
+profiles:
+  - name: custom-readonly
+    intent: workload-diagnostics
+    displayName: Custom read-only profile
+    description: A custom restricted profile proving list extensibility.
+    enabled: true
+    elevated: false
+    imageKey: custom
+    command: ["sh", "-c"]
+    args: ["sleep 3600"]
+    capabilities: []
+  - name: direct-image
+    intent: cluster-validation
+    displayName: Direct image profile
+    description: A custom profile using a direct image reference.
+    enabled: true
+    elevated: false
+    image:
+      repository: busybox
+      tag: "1.36.1"
+    command: ["sh"]
+    args: []

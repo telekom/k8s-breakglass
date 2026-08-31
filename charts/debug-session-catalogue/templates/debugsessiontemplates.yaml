@@ -1,0 +1,46 @@
+{{/*
+SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+SPDX-License-Identifier: Apache-2.0
+*/}}
+{{- if .Values.enabled }}
+{{- $seenProfiles := dict }}
+{{- range $index, $profile := .Values.profiles }}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $profile.name) }}{{ fail (printf "profiles[%d].name must be DNS-safe" $index) }}{{ end }}
+{{- if hasKey $seenProfiles $profile.name }}{{ fail (printf "profiles contains duplicate name %s" $profile.name) }}{{ end }}
+{{- $_ := set $seenProfiles $profile.name true }}
+{{- $_ := include "debug-session-catalogue.image" (dict "root" $ "profile" $profile) }}
+{{- $_ := include "debug-session-catalogue.validatePodOverrides" (dict "profile" $profile) }}
+{{- $_ := include "debug-session-catalogue.serviceAccount" (dict "profile" $profile) }}
+{{- if and $profile.enabled $profile.requiredElevation (not $profile.elevated) }}{{ fail (printf "profiles[%s] requires explicit elevated: true when enabled" $profile.name) }}{{ end }}
+{{- if $profile.enabled }}
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: {{ include "debug-session-catalogue.profileName" (dict "root" $ "profile" $profile) }}
+  labels:
+    {{- include "debug-session-catalogue.labels" $ | nindent 4 }}
+    breakglass.t-caas.telekom.com/catalogue-profile: {{ $profile.name | quote }}
+    breakglass.t-caas.telekom.com/catalogue-intent: {{ $profile.intent | quote }}
+    breakglass.t-caas.telekom.com/elevated: {{ default false $profile.elevated | quote }}
+spec:
+  displayName: {{ required (printf "profiles[%s].displayName is required" $profile.name) $profile.displayName | quote }}
+  description: {{ required (printf "profiles[%s].description is required" $profile.name) $profile.description | quote }}
+  mode: workload
+  podTemplateRef:
+    name: {{ include "debug-session-catalogue.profileName" (dict "root" $ "profile" $profile) }}
+  {{- with $profile.podOverridesTemplate }}
+  podOverridesTemplate: |
+{{ . | nindent 4 }}
+  {{- end }}
+  {{- with $profile.extraDeployVariables }}
+  extraDeployVariables:
+{{ toYaml . | nindent 4 }}
+  {{- end }}
+  {{- include "debug-session-catalogue.workload" (dict "profile" $profile) | nindent 2 }}
+  {{- include "debug-session-catalogue.authorization" (dict "root" $ "profile" $profile) | nindent 2 }}
+  {{- include "debug-session-catalogue.lifecycle" (dict "root" $ "profile" $profile) | nindent 2 }}
+  {{- include "debug-session-catalogue.audit" (dict "root" $ "profile" $profile) | nindent 2 }}
+---
+{{- end }}
+{{- end }}
+{{- end }}

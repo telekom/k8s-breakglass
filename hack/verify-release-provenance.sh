@@ -3,86 +3,162 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-set -euo pipefail
+# Behavioral regression tests for rerun-safe Helm publication. The release
+# workflow delegates to the tested script; this test intentionally does not
+# inspect workflow source text.
 
-release_workflow="${1:-.github/workflows/release.yml}"
-failures=0
+set -Eeuo pipefail
 
-if [ ! -f "${release_workflow}" ]; then
-  echo "::error file=${release_workflow}::release workflow not found" >&2
-  exit 1
-fi
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+test_dir="$(mktemp -d)"
+trap 'rm -rf "${test_dir}"' EXIT
 
-deny_pattern() {
-  local pattern="$1"
-  local description="$2"
-
-  if grep -nE -- "${pattern}" "${release_workflow}"; then
-    echo "::error file=${release_workflow}::${description}" >&2
-    failures=$((failures + 1))
+archive_digest() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
   fi
 }
 
-require_pattern() {
-  local pattern="$1"
-  local description="$2"
-
-  if ! grep -qE -- "${pattern}" "${release_workflow}"; then
-    echo "::error file=${release_workflow}::${description}" >&2
-    failures=$((failures + 1))
-  fi
+mkdir -p "${test_dir}/bin" "${test_dir}/charts" \
+  "${test_dir}/local/debug-session-catalogue/templates" \
+  "${test_dir}/timestamp/debug-session-catalogue/templates" \
+  "${test_dir}/changed/debug-session-catalogue/templates"
+printf 'name: debug-session-catalogue\nversion: 0.2.0\n' \
+  >"${test_dir}/local/debug-session-catalogue/Chart.yaml"
+printf '{{ .Values.message }}\n' \
+  >"${test_dir}/local/debug-session-catalogue/templates/config.yaml"
+cp -R "${test_dir}/local/debug-session-catalogue/." "${test_dir}/timestamp/debug-session-catalogue/"
+cp -R "${test_dir}/local/debug-session-catalogue/." "${test_dir}/changed/debug-session-catalogue/"
+printf '{{ .Values.changed }}\n' \
+  >"${test_dir}/changed/debug-session-catalogue/templates/config.yaml"
+touch -t 202001010000 \
+  "${test_dir}/local/debug-session-catalogue/Chart.yaml" \
+  "${test_dir}/local/debug-session-catalogue/templates/config.yaml"
+touch -t 202401010000 \
+  "${test_dir}/timestamp/debug-session-catalogue/Chart.yaml" \
+  "${test_dir}/timestamp/debug-session-catalogue/templates/config.yaml"
+tar -czf "${test_dir}/charts/debug-session-catalogue-0.2.0.tgz" \
+  -C "${test_dir}/local" debug-session-catalogue
+tar -czf "${test_dir}/timestamp.tgz" \
+  -C "${test_dir}/timestamp" debug-session-catalogue
+tar -czf "${test_dir}/changed.tgz" \
+  -C "${test_dir}/changed" debug-session-catalogue
+[ "$(archive_digest "${test_dir}/charts/debug-session-catalogue-0.2.0.tgz")" != \
+  "$(archive_digest "${test_dir}/timestamp.tgz")" ] || {
+  echo "timestamp fixture did not change the package bytes" >&2
+  exit 1
+}
+[ "$(ruby "${script_dir}/canonical-helm-chart-digest.rb" "${test_dir}/charts/debug-session-catalogue-0.2.0.tgz")" = \
+  "$(ruby "${script_dir}/canonical-helm-chart-digest.rb" "${test_dir}/timestamp.tgz")" ] || {
+  echo "timestamp fixture changed canonical chart content" >&2
+  exit 1
+}
+[ "$(ruby "${script_dir}/canonical-helm-chart-digest.rb" "${test_dir}/charts/debug-session-catalogue-0.2.0.tgz")" != \
+  "$(ruby "${script_dir}/canonical-helm-chart-digest.rb" "${test_dir}/changed.tgz")" ] || {
+  echo "changed-content fixture did not change canonical chart content" >&2
+  exit 1
 }
 
-deny_pattern '--raw[[:space:]]*\|[[:space:]]*sha256sum' \
-  "release provenance must not hash raw manifest JSON to derive the signed digest"
-deny_pattern 'RAW_MANIFEST_DIGEST' \
-  "release provenance must not keep a raw-manifest digest fallback"
-deny_pattern 'Digest cross-check mismatch' \
-  "release digest mismatches must fail instead of warning"
-deny_pattern 'DIGEST="\$\{RAW_MANIFEST_DIGEST\}"' \
-  "release provenance must not sign or attest a computed raw-manifest digest"
-deny_pattern 'github\.run_started_at' \
-  "github.run_started_at is not a valid GitHub Actions context property"
-deny_pattern 'helm show chart .*([[:space:]]*2>[[:space:]]*/dev/null|>[[:space:]]*/dev/null[[:space:]]*2>&1)' \
-  "Helm chart publishing must not suppress remote chart lookup errors"
-deny_pattern 'CHART_(VERSION|APP_VERSION)="\$\(helm show chart' \
-  "release workflow must capture packaged Helm chart metadata once before extracting fields"
-deny_pattern 'grep -Eiq .*no such' \
-  "Helm chart missing classifier must not treat DNS/network no-such-host errors as chart-not-present"
-deny_pattern 'already present in GHCR; skipping push' \
-  "Helm chart publishing must not skip existing chart versions without checking appVersion"
+cat >"${test_dir}/bin/helm" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+if [ "$1 $2" = "show chart" ]; then
+  printf '%s\n' "$*" >>"${FAKE_HELM_CALL_LOG:?}"
+  ref="$3"
+  if [[ "${ref}" == *.tgz ]]; then
+    printf 'name: debug-session-catalogue\nversion: 0.2.0\n'
+    [ "${FAKE_LOCAL_METADATA:-complete}" = complete ] && printf 'appVersion: "%s"\n' "${FAKE_LOCAL_APP_VERSION:-v1.2.3}"
+    exit 0
+  fi
+  case "${FAKE_REMOTE_MODE:-missing}" in
+    matching|timestamp-different|different) printf 'name: debug-session-catalogue\nversion: 0.2.0\nappVersion: "%s"\n' "${FAKE_LOCAL_APP_VERSION:-v1.2.3}" ;;
+    mismatch) printf 'name: debug-session-catalogue\nversion: 0.2.0\nappVersion: "v9.9.9"\n' ;;
+    incomplete) printf 'name: debug-session-catalogue\nversion: 0.2.0\n' ;;
+    missing) echo 'Error: manifest unknown' >&2; exit 1 ;;
+    network) echo 'Error: lookup ghcr.io: no such host' >&2; exit 7 ;;
+  esac
+  exit 0
+fi
+if [ "$1" = pull ]; then
+  printf '%s\n' "$*" >>"${FAKE_HELM_CALL_LOG:?}"
+  [ "${FAKE_REMOTE_MODE:-missing}" != pull-failure ] || exit 1
+  destination="${6:?}"
+  mkdir -p "${destination}"
+  case "${FAKE_REMOTE_MODE:-missing}" in
+    timestamp-different) cp "${FAKE_TIMESTAMP_PACKAGE:?}" "${destination}/debug-session-catalogue-0.2.0.tgz" ;;
+    different) cp "${FAKE_CHANGED_PACKAGE:?}" "${destination}/debug-session-catalogue-0.2.0.tgz" ;;
+    *) cp "${FAKE_LOCAL_PACKAGE:?}" "${destination}/debug-session-catalogue-0.2.0.tgz" ;;
+  esac
+  exit 0
+fi
+if [ "$1" = push ]; then
+  printf '%s\n' "$*" >>"${FAKE_HELM_CALL_LOG:?}"
+  printf '%s\n' "$*" >>"${FAKE_HELM_LOG:?}"
+  exit 0
+fi
+exit 64
+EOF
+chmod +x "${test_dir}/bin/helm"
 
-require_pattern 'docker buildx imagetools inspect "\$\{IMG\}"' \
-  "release workflow must inspect the pushed image through the registry"
-require_pattern 'Digest:\[\[:space:\]\][+]sha256:\[0-9a-f\][{]64[}]' \
-  "release workflow must parse a strict sha256 registry Digest line"
-require_pattern 'Could not determine registry digest' \
-  "release workflow must fail when the registry digest cannot be determined"
-require_pattern 'subject-digest: \$\{\{ steps\.inspect\.outputs\.digest \}\}' \
-  "release provenance attestation must use the inspected registry digest output"
-require_pattern 'CHART_APP_VERSION=' \
-  "release workflow must read the packaged Helm chart appVersion"
-require_pattern 'CHART_METADATA="\$\(helm show chart "\$\{CHART_PACKAGE\}"\)"' \
-  "release workflow must capture packaged Helm chart metadata once"
-require_pattern '\[ "\$\{CHART_APP_VERSION\}" != "\$\{RELEASE_TAG\}" \]' \
-  "release workflow must fail when packaged Helm chart appVersion does not match the release tag"
-require_pattern 'REMOTE_APP_VERSION=' \
-  "release workflow must read the remote Helm chart appVersion before skipping an existing chart version"
-require_pattern 'Failed to determine remote escalation-config:\$\{CHART_VERSION\} appVersion from GHCR metadata' \
-  "release workflow must fail clearly when remote chart metadata lacks appVersion"
-require_pattern 'REMOTE_CHART_LOOKUP_STATUS=' \
-  "release workflow must preserve the remote chart lookup exit status"
-require_pattern 'Failed to inspect existing escalation-config' \
-  "release workflow must fail real remote chart lookup errors before publishing"
-require_pattern 'grep -Eiq.*manifest unknown' \
-  "release workflow must classify Helm/GHCR missing-chart errors without broad network-error matches"
-require_pattern '\[ "\$\{REMOTE_APP_VERSION\}" = "\$\{CHART_APP_VERSION\}" \]' \
-  "release workflow must skip chart publication only when remote and packaged appVersion match"
-require_pattern 'Bump charts/escalation-config/Chart.yaml version before releasing' \
-  "release workflow must fail clearly when a chart version already exists with a different appVersion"
+run_publish() {
+  PATH="${test_dir}/bin:${PATH}" FAKE_HELM_LOG="${test_dir}/helm.log" FAKE_HELM_CALL_LOG="${test_dir}/helm-calls.log" \
+    FAKE_LOCAL_PACKAGE="${test_dir}/charts/debug-session-catalogue-0.2.0.tgz" \
+    FAKE_TIMESTAMP_PACKAGE="${test_dir}/timestamp.tgz" FAKE_CHANGED_PACKAGE="${test_dir}/changed.tgz" \
+    "${script_dir}/publish-helm-charts.sh" "${test_dir}/charts" \
+    oci://ghcr.io/example/charts v1.2.3
+}
 
-if [ "${failures}" -ne 0 ]; then
+: >"${test_dir}/helm.log"
+: >"${test_dir}/helm-calls.log"
+FAKE_REMOTE_MODE=missing run_publish >/dev/null
+[ "$(wc -l <"${test_dir}/helm.log" | tr -d ' ')" -eq 1 ] || {
+  echo "missing chart was not pushed exactly once" >&2
+  exit 1
+}
+
+: >"${test_dir}/helm.log"
+: >"${test_dir}/helm-calls.log"
+FAKE_REMOTE_MODE=matching run_publish >/dev/null
+[ ! -s "${test_dir}/helm.log" ] || {
+  echo "matching published chart was pushed again" >&2
+  exit 1
+}
+grep -q '^pull ' "${test_dir}/helm-calls.log" || {
+  echo "matching chart was not pulled for content comparison" >&2
+  exit 1
+}
+
+: >"${test_dir}/helm.log"
+: >"${test_dir}/helm-calls.log"
+FAKE_REMOTE_MODE=timestamp-different run_publish >/dev/null
+[ ! -s "${test_dir}/helm.log" ] || {
+  echo "same chart repackaged with different timestamps was pushed again" >&2
+  exit 1
+}
+
+for mode in mismatch incomplete network different pull-failure; do
+  : >"${test_dir}/helm.log"
+  if FAKE_REMOTE_MODE="${mode}" run_publish >/dev/null 2>&1; then
+    echo "remote ${mode} condition did not fail closed" >&2
+    exit 1
+  fi
+  [ ! -s "${test_dir}/helm.log" ] || {
+    echo "remote ${mode} condition attempted a push" >&2
+    exit 1
+  }
+done
+
+bash "${script_dir}/test-slsa-provenance.sh"
+
+if FAKE_REMOTE_MODE=missing FAKE_LOCAL_APP_VERSION=v2.0.0 run_publish >/dev/null 2>&1; then
+  echo "release/appVersion mismatch did not fail closed" >&2
+  exit 1
+fi
+if FAKE_REMOTE_MODE=missing FAKE_LOCAL_METADATA=incomplete run_publish >/dev/null 2>&1; then
+  echo "incomplete packaged chart metadata did not fail closed" >&2
   exit 1
 fi
 
-echo "Release provenance workflow guard passed"
+echo "Release publication behavior passed"

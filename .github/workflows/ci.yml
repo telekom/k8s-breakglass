@@ -32,6 +32,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Verify release provenance workflow
         run: make verify-release-provenance
+      - name: Run release security behavioral tests
+        run: make test-release-security
       - name: Verify documentation snippets
         run: make verify-docs-snippets
       - name: Verify PR gate contract behavior
@@ -389,10 +391,74 @@ jobs:
       - name: Lint Helm charts
         run: |
           helm lint charts/escalation-config --values charts/escalation-config/ci/test-values.yaml
+          helm lint charts/debug-session-catalogue --strict --values charts/debug-session-catalogue/ci/test-values.yaml
+          charts/debug-session-catalogue/ci/validate.sh
       - name: Template validation
         run: |
           helm template test-release charts/escalation-config --values charts/escalation-config/ci/test-values.yaml --debug
+          helm template test-release charts/debug-session-catalogue --values charts/debug-session-catalogue/ci/test-values.yaml --debug
 
+  utility-image-tests:
+    name: Utility image checks (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep this as one matrix so new utility images do not add duplicate
+        # workflows or diverging lint/build contracts.
+        include:
+          - name: network-diagnostics
+            make_dir: utils/network-debug
+            target: test
+            dockerfile: utils/network-debug/Dockerfile
+            shell_paths: utils/network-debug/scripts/*.sh utils/network-debug/scripts/net-debug utils/network-debug/scripts/net-report utils/network-debug/tests/*.sh
+            metadata: utils/network-debug/IMAGE-METADATA.yaml
+          - name: node-recovery-and-network-repair
+            make_dir: utils/node-maintenance
+            target: test
+            dockerfile: utils/node-maintenance/Dockerfile
+            shell_paths: utils/node-maintenance/bin/* utils/node-maintenance/lib/*.sh utils/node-maintenance/tests/*.sh
+            metadata: ""
+          - name: workload-diagnostics
+            make_dir: utils/workload-debug
+            target: test
+            dockerfile: utils/workload-debug/Dockerfile
+            shell_paths: utils/workload-debug/scripts/* utils/workload-debug/tests/*.sh
+            metadata: utils/workload-debug/IMAGE-METADATA.yaml
+          - name: storage-diagnostics
+            make_dir: utils/images
+            target: storage-test
+            dockerfile: utils/images/storage-debug/Dockerfile
+            shell_paths: utils/images/storage-debug/bin/* utils/images/storage-debug/tests/*.sh
+            metadata: utils/images/storage-debug/image-metadata.yaml
+          - name: dump-access
+            make_dir: utils/images
+            target: dump-test
+            dockerfile: utils/images/dump-reader/Dockerfile
+            shell_paths: utils/images/dump-reader/bin/* utils/images/dump-reader/tests/*.sh
+            metadata: utils/images/dump-reader/image-metadata.yaml
+          - name: diagnostic-artifact-collector
+            make_dir: utils/images/diagnostic-artifact-collector
+            target: test
+            dockerfile: utils/images/diagnostic-artifact-collector/Dockerfile
+            shell_paths: utils/images/diagnostic-artifact-collector/bin/* utils/images/diagnostic-artifact-collector/tests/*.sh
+            metadata: utils/images/diagnostic-artifact-collector/image-metadata.yaml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run helper tests
+        run: make -C "${{ matrix.make_dir }}" "${{ matrix.target }}"
+      - name: ShellCheck helpers
+        run: shellcheck ${{ matrix.shell_paths }}
+      - name: Hadolint Dockerfile
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: ${{ matrix.dockerfile }}
+      - name: Validate image metadata
+        if: matrix.metadata != ''
+        env:
+          IMAGE_METADATA: ${{ matrix.metadata }}
+        run: |
+          ruby hack/validate-image-metadata.rb "$IMAGE_METADATA"
   build-image:
     name: Build Image
     runs-on: ubuntu-latest
@@ -511,6 +577,7 @@ jobs:
       - manifest-validation
       - frontend-tests
       - helm-lint
+      - utility-image-tests
       - single-cluster-e2e
       - oidc-comprehensive-e2e
       - ui-e2e
@@ -720,7 +787,7 @@ jobs:
     name: Single-Cluster E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
+    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint, utility-image-tests]
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1298,7 +1365,7 @@ jobs:
     # above the Go test timeout so the test process, not the runner, owns
     # suite-level timeout failures.
     timeout-minutes: 75
-    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
+    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint, utility-image-tests]
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1606,7 +1673,7 @@ jobs:
     name: UI E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
+    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint, utility-image-tests]
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -2292,7 +2359,7 @@ jobs:
     name: Multi-Cluster E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 75
-    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
+    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint, utility-image-tests]
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

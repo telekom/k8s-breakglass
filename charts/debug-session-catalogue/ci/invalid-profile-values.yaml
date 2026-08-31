@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+profiles:
+  - name: Invalid_Name
+    intent: workload-diagnostics
+    displayName: Invalid name test
+    description: Profile name violates DNS-safe naming.
+    enabled: true
+    elevated: false
+    imageKey: workload
+    command: ["sh"]
+    args: []

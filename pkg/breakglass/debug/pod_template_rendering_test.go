@@ -26,11 +26,14 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -1469,7 +1472,7 @@ spec:
 	assert.True(t, result.PodSpec.HostNetwork)
 }
 
-func TestRenderPodTemplateStringMultiDoc_UnsupportedKind(t *testing.T) {
+func TestRenderPodTemplateStringMultiDoc_KindJob(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	controller := &DebugSessionController{log: logger}
 
@@ -1485,10 +1488,13 @@ spec:
           image: busybox
 `
 
-	_, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported manifest kind")
-	assert.Contains(t, err.Error(), "Job")
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
+	require.NoError(t, err)
+	job, ok := result.Workload.(*batchv1.Job)
+	require.True(t, ok, "expected *batchv1.Job")
+	assert.Equal(t, "job", job.Name)
+	require.Len(t, result.PodSpec.Containers, 1)
+	assert.Equal(t, "test", result.PodSpec.Containers[0].Name)
 }
 
 func TestRenderPodTemplateStringMultiDoc_EmptyContainersError(t *testing.T) {
@@ -1799,6 +1805,140 @@ spec:
 	assert.Equal(t, int32(3), *deploy.Spec.Replicas)
 	assert.Equal(t, "pod-to-deploy", deploy.Name)
 	assert.Equal(t, corev1.RestartPolicyAlways, deploy.Spec.Template.Spec.RestartPolicy)
+}
+
+func TestBuildWorkload_JobEnforcesBoundedSessionOwnership(t *testing.T) {
+	controller := newBuildWorkloadController()
+	ds := newBuildWorkloadSession("one-shot")
+	template := &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+		WorkloadType: breakglassv1alpha1.DebugWorkloadJob,
+		Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+			DefaultDuration: "15m",
+			MaxDuration:     "30m",
+		},
+		PodTemplateString: `apiVersion: batch/v1
+kind: Job
+metadata:
+  name: attacker-controlled
+spec:
+  manualSelector: true
+  selector:
+    matchLabels:
+      unrelated: workload
+  parallelism: 20
+  completions: 20
+  backoffLimit: 10
+  activeDeadlineSeconds: 86400
+  ttlSecondsAfterFinished: 1
+  suspend: true
+  template:
+    metadata:
+      labels:
+        unrelated: workload
+    spec:
+      restartPolicy: Always
+      containers:
+        - name: debug
+          image: busybox:1.36
+          command: ["/bin/true"]
+`,
+	}}
+
+	workload, _, err := controller.buildWorkload(ds, template, nil, nil, "target-ns")
+	require.NoError(t, err)
+	job, ok := workload.(*batchv1.Job)
+	require.True(t, ok, "bounded diagnostics must be represented by a Job")
+	assert.Equal(t, corev1.RestartPolicyNever, job.Spec.Template.Spec.RestartPolicy)
+	require.NotNil(t, job.Spec.ManualSelector)
+	assert.True(t, *job.Spec.ManualSelector)
+	require.NotNil(t, job.Spec.Selector)
+	assert.Equal(t, map[string]string{
+		DebugSessionLabelKey:    ds.Name,
+		DebugSessionUIDLabelKey: ds.Name,
+	}, job.Spec.Selector.MatchLabels)
+	assert.Equal(t, ds.Name, job.Spec.Template.Labels[DebugSessionLabelKey])
+	assert.Equal(t, ds.Name, job.Spec.Template.Labels[DebugSessionUIDLabelKey])
+	require.NotNil(t, job.Spec.Parallelism)
+	assert.Equal(t, int32(1), *job.Spec.Parallelism)
+	require.NotNil(t, job.Spec.Completions)
+	assert.Equal(t, int32(1), *job.Spec.Completions)
+	require.NotNil(t, job.Spec.BackoffLimit)
+	assert.Zero(t, *job.Spec.BackoffLimit)
+	require.NotNil(t, job.Spec.ActiveDeadlineSeconds)
+	assert.Equal(t, int64(15*60), *job.Spec.ActiveDeadlineSeconds)
+	assert.Nil(t, job.Spec.TTLSecondsAfterFinished)
+	assert.Nil(t, job.Spec.Suspend)
+}
+
+func TestBuildWorkload_JobPreservesSupportedOnFailureRestartPolicy(t *testing.T) {
+	controller := newBuildWorkloadController()
+	ds := newBuildWorkloadSession("on-failure")
+	template := &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+		WorkloadType: breakglassv1alpha1.DebugWorkloadJob,
+		Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+			DefaultDuration: "15m",
+			MaxDuration:     "30m",
+		},
+		PodTemplateString: `apiVersion: batch/v1
+kind: Job
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: debug
+          image: busybox:1.36
+          command: ["/bin/true"]
+`,
+	}}
+
+	workload, _, err := controller.buildWorkload(ds, template, nil, nil, "target-ns")
+	require.NoError(t, err)
+	job, ok := workload.(*batchv1.Job)
+	require.True(t, ok)
+	assert.Equal(t, corev1.RestartPolicyOnFailure, job.Spec.Template.Spec.RestartPolicy)
+	require.NotNil(t, job.Spec.BackoffLimit)
+	assert.Zero(t, *job.Spec.BackoffLimit)
+}
+
+func TestBuildWorkload_BareJobUsesBindingEffectiveDeadlineAndImmutableSelector(t *testing.T) {
+	controller := newBuildWorkloadController()
+	ds := newBuildWorkloadSession("bare-job")
+	ds.UID = "session-uid-123"
+	template := &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+		WorkloadType: breakglassv1alpha1.DebugWorkloadJob,
+		Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+			DefaultDuration: "20m",
+			MaxDuration:     "1h",
+		},
+		PodTemplateString: `containers:
+  - name: debug
+    image: busybox:1.36
+    command: ["/bin/true"]
+`,
+	}}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+		Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+			DefaultDuration: "45s",
+			MaxDuration:     "2m",
+		},
+	}}
+	ds.Spec.RequestedDuration = "1h"
+
+	workload, _, err := controller.buildWorkload(ds, template, binding, nil, "target-ns")
+	require.NoError(t, err)
+	job := workload.(*batchv1.Job)
+	require.NotNil(t, job.Spec.Selector)
+	assert.Equal(t, map[string]string{
+		DebugSessionLabelKey:    ds.Name,
+		DebugSessionUIDLabelKey: string(ds.UID),
+	}, job.Spec.Selector.MatchLabels)
+	assert.Equal(t, string(ds.UID), job.Labels[DebugSessionUIDLabelKey])
+	assert.Equal(t, int64(2*60), *job.Spec.ActiveDeadlineSeconds,
+		"the binding's maximum duration must bound the Job even when the request exceeds it")
+	assert.Equal(t, int32(1), *job.Spec.Parallelism)
+	assert.Equal(t, int32(1), *job.Spec.Completions)
+	assert.Zero(t, *job.Spec.BackoffLimit)
 }
 
 func TestBuildWorkload_FullDeploymentTemplate(t *testing.T) {
@@ -2112,6 +2252,376 @@ spec:
 	assert.True(t, result.PodSpec.HostNetwork)
 }
 
+func TestBuildPodSpec_RestrictedCatalogueOverridesStayWithinDeclaredBoundary(t *testing.T) {
+	controller := newBuildWorkloadController()
+	ds := newBuildWorkloadSession("restricted-catalogue")
+	labels := map[string]string{
+		catalogueProfileLabel:  "workload-diagnostics",
+		catalogueIntentLabel:   "workload-diagnostics",
+		catalogueElevatedLabel: "false",
+	}
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{Labels: labels},
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{TemplateString: `apiVersion: v1
+kind: Pod
+spec:
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: debug
+      image: busybox:1.36
+      command: ["/bin/true"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+`},
+	}
+
+	tests := []struct {
+		name      string
+		overrides string
+		wantError string
+	}{
+		{
+			name:      "host namespace",
+			overrides: "hostPID: true\n",
+			wantError: "cannot enable host namespaces",
+		},
+		{
+			name: "container security context",
+			overrides: `containers:
+  - name: debug
+    securityContext:
+      privileged: true
+`,
+			wantError: "may override only command and args",
+		},
+		{
+			name: "external environment source",
+			overrides: `containers:
+  - name: debug
+    env:
+      - name: TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: credentials
+            key: token
+`,
+			wantError: "may override only command and args",
+		},
+		{
+			name: "bounded command arguments",
+			overrides: `containers:
+  - name: debug
+    args: ["--mode", "summary"]
+`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			template := &breakglassv1alpha1.DebugSessionTemplate{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+					PodOverridesTemplate: tc.overrides,
+				},
+			}
+			result, err := controller.buildPodSpec(ds, template, podTemplate)
+			if tc.wantError != "" {
+				require.ErrorContains(t, err, tc.wantError)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, result.PodSpec.Containers, 1)
+			assert.Equal(t, []string{"--mode", "summary"}, result.PodSpec.Containers[0].Args)
+		})
+	}
+}
+
+func TestBuildPodSpec_RestrictedCatalogueRejectsIncompletePodSecurity(t *testing.T) {
+	controller := newBuildWorkloadController()
+	ds := newBuildWorkloadSession("restricted-security")
+	labels := map[string]string{
+		catalogueProfileLabel:  "workload-diagnostics",
+		catalogueIntentLabel:   "workload-diagnostics",
+		catalogueElevatedLabel: "false",
+	}
+
+	base := func(securityContext string, containerSecurity string, extra string) *breakglassv1alpha1.DebugPodTemplate {
+		return &breakglassv1alpha1.DebugPodTemplate{
+			ObjectMeta: metav1.ObjectMeta{Labels: labels},
+			Spec:       breakglassv1alpha1.DebugPodTemplateSpec{TemplateString: "apiVersion: v1\nkind: Pod\nspec:\n  automountServiceAccountToken: false\n  securityContext:\n" + securityContext + "  containers:\n    - name: debug\n      image: busybox:1.36\n      command: [\"/bin/true\"]\n      securityContext:\n" + containerSecurity + extra},
+		}
+	}
+
+	tests := []struct {
+		name string
+		pod  *breakglassv1alpha1.DebugPodTemplate
+		want string
+	}{
+		{
+			name: "missing seccomp",
+			pod:  base("    runAsNonRoot: true\n", "        allowPrivilegeEscalation: false\n        readOnlyRootFilesystem: true\n        capabilities:\n          drop: [\"ALL\"]\n", ""),
+			want: "confined seccomp",
+		},
+		{
+			name: "missing drop all",
+			pod:  base("    runAsNonRoot: true\n    seccompProfile:\n      type: RuntimeDefault\n", "        allowPrivilegeEscalation: false\n        readOnlyRootFilesystem: true\n        capabilities: {}\n", ""),
+			want: "security boundary",
+		},
+		{
+			name: "container root override",
+			pod:  base("    runAsNonRoot: true\n    seccompProfile:\n      type: RuntimeDefault\n", "        allowPrivilegeEscalation: false\n        readOnlyRootFilesystem: true\n        runAsUser: 0\n        capabilities:\n          drop: [\"ALL\"]\n", ""),
+			want: "run as root",
+		},
+		{
+			name: "envFrom source",
+			pod:  base("    runAsNonRoot: true\n    seccompProfile:\n      type: RuntimeDefault\n", "        allowPrivilegeEscalation: false\n        readOnlyRootFilesystem: true\n        capabilities:\n          drop: [\"ALL\"]\n", "      envFrom:\n        - configMapRef:\n            name: external\n"),
+			want: "envFrom",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			template := &breakglassv1alpha1.DebugSessionTemplate{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+			}
+			_, err := controller.buildPodSpec(ds, template, tc.pod)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+}
+
+func TestValidateRestrictedCataloguePodSpec_DumpInputRequiresReadOnlyMount(t *testing.T) {
+	trueValue := true
+	base := func(readOnly bool) corev1.PodSpec {
+		return corev1.PodSpec{
+			AutomountServiceAccountToken: &[]bool{false}[0],
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot:   &trueValue,
+				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+			},
+			Containers: []corev1.Container{{
+				Name: "debug",
+				SecurityContext: &corev1.SecurityContext{
+					AllowPrivilegeEscalation: &[]bool{false}[0],
+					ReadOnlyRootFilesystem:   &[]bool{true}[0],
+					Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+				},
+				VolumeMounts: []corev1.VolumeMount{{Name: "input", MountPath: "/input", ReadOnly: readOnly}},
+			}},
+			Volumes: []corev1.Volume{{Name: "input", VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{Path: "/var/lib/approved-dump"},
+			}}},
+		}
+	}
+
+	readOnlyPod := base(true)
+	notReadOnlyPod := base(false)
+	require.NoError(t, validateRestrictedCataloguePodSpec(&readOnlyPod, "dump-access"))
+	require.ErrorContains(t, validateRestrictedCataloguePodSpec(&notReadOnlyPod, "dump-access"), "exactly one")
+	disallowedSourcePod := base(true)
+	disallowedSourcePod.Volumes = append(disallowedSourcePod.Volumes, corev1.Volume{
+		Name: "secret", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "sensitive"}},
+	})
+	require.ErrorContains(t, validateRestrictedCataloguePodSpec(&disallowedSourcePod, "dump-access"), "disallowed source")
+	duplicateMountPod := base(true)
+	duplicateMountPod.Containers[0].VolumeMounts = append(duplicateMountPod.Containers[0].VolumeMounts,
+		corev1.VolumeMount{Name: "input", MountPath: "/alternate-input", ReadOnly: true})
+	require.ErrorContains(t, validateRestrictedCataloguePodSpec(&duplicateMountPod, "dump-access"), "exactly one")
+	writableAlternatePod := base(true)
+	writableAlternatePod.Containers[0].VolumeMounts = append(writableAlternatePod.Containers[0].VolumeMounts,
+		corev1.VolumeMount{Name: "input", MountPath: "/alternate-input"})
+	require.ErrorContains(t, validateRestrictedCataloguePodSpec(&writableAlternatePod, "dump-access"), "exactly one")
+	require.ErrorContains(t, validateRestrictedCataloguePodSpec(&readOnlyPod, "workload-diagnostics"), "disallowed source")
+}
+
+func TestBuildPodSpec_RestrictedCatalogueRejectsArbitraryAdditionalResources(t *testing.T) {
+	controller := newBuildWorkloadController()
+	ds := newBuildWorkloadSession("restricted-resource")
+	labels := map[string]string{
+		catalogueProfileLabel:  "workload-diagnostics",
+		catalogueIntentLabel:   "workload-diagnostics",
+		catalogueElevatedLabel: "false",
+	}
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{Labels: labels},
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{TemplateString: `apiVersion: v1
+kind: Pod
+spec:
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: debug
+      image: busybox:1.36
+      command: ["/bin/true"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: attacker
+rules: []
+`},
+	}
+
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Labels: labels},
+	}
+	_, err := controller.buildPodSpec(ds, template, podTemplate)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "may only carry core/v1 ConfigMap")
+}
+
+func TestValidateRestrictedCatalogueRejectsPSSSurfaces(t *testing.T) {
+	trueValue := true
+	falseValue := false
+	baselineSecurity := &corev1.SecurityContext{
+		AllowPrivilegeEscalation: &falseValue,
+		ReadOnlyRootFilesystem:   &trueValue,
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+	}
+	baseline := func() corev1.PodSpec {
+		return corev1.PodSpec{
+			AutomountServiceAccountToken: &falseValue,
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot:   &trueValue,
+				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+			},
+			Containers: []corev1.Container{{Name: "debug", SecurityContext: baselineSecurity.DeepCopy()}},
+		}
+	}
+	tests := []struct {
+		name   string
+		mutate func(*corev1.PodSpec)
+		want   string
+	}{
+		{
+			name: "host port",
+			mutate: func(spec *corev1.PodSpec) {
+				spec.Containers[0].Ports = []corev1.ContainerPort{{ContainerPort: 8080, HostPort: 8080}}
+			},
+			want: "hostPort",
+		},
+		{
+			name: "unconfined AppArmor",
+			mutate: func(spec *corev1.PodSpec) {
+				spec.Containers[0].SecurityContext.AppArmorProfile = &corev1.AppArmorProfile{Type: corev1.AppArmorProfileTypeUnconfined}
+			},
+			want: "unconfined AppArmor",
+		},
+		{
+			name: "SELinux user",
+			mutate: func(spec *corev1.PodSpec) {
+				spec.SecurityContext.SELinuxOptions = &corev1.SELinuxOptions{User: "unconfined_u"}
+			},
+			want: "SELinux user or role",
+		},
+		{
+			name: "unsafe SELinux type",
+			mutate: func(spec *corev1.PodSpec) {
+				spec.Containers[0].SecurityContext.SELinuxOptions = &corev1.SELinuxOptions{Type: "malicious_t"}
+			},
+			want: "SELinux type",
+		},
+		{
+			name: "unsafe sysctl",
+			mutate: func(spec *corev1.PodSpec) {
+				spec.SecurityContext.Sysctls = []corev1.Sysctl{{Name: "kernel.kptr_restrict", Value: "0"}}
+			},
+			want: "unsafe sysctl",
+		},
+		{
+			name: "probe host",
+			mutate: func(spec *corev1.PodSpec) {
+				spec.Containers[0].ReadinessProbe = &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Host: "tenant.internal", Port: intstr.FromInt(8080)}}}
+			},
+			want: "host in readiness probe",
+		},
+		{
+			name: "lifecycle host",
+			mutate: func(spec *corev1.PodSpec) {
+				spec.Containers[0].Lifecycle = &corev1.Lifecycle{PreStop: &corev1.LifecycleHandler{HTTPGet: &corev1.HTTPGetAction{Host: "tenant.internal", Port: intstr.FromInt(8080)}}}
+			},
+			want: "host in preStop lifecycle hook",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := baseline()
+			tc.mutate(&spec)
+			err := validateRestrictedCataloguePodSpec(&spec, "workload-diagnostics")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+}
+
+func TestBuildWorkload_RestrictedCatalogueRejectsLegacyAppArmorAnnotationAfterMerge(t *testing.T) {
+	controller := newBuildWorkloadController()
+	ds := newBuildWorkloadSession("restricted-apparmor-annotation")
+	labels := map[string]string{
+		catalogueProfileLabel:  "workload-diagnostics",
+		catalogueIntentLabel:   "workload-diagnostics",
+		catalogueElevatedLabel: "false",
+	}
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Labels: labels},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Annotations:  map[string]string{"container.apparmor.security.beta.kubernetes.io/debug": "unconfined"},
+			WorkloadType: breakglassv1alpha1.DebugWorkloadJob,
+		},
+	}
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{Labels: labels},
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{TemplateString: `apiVersion: v1
+kind: Pod
+spec:
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: debug
+      image: busybox:1.36
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+`},
+	}
+	_, _, err := controller.buildWorkload(ds, template, nil, podTemplate, "target-ns")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "legacy AppArmor annotations")
+}
+
+func TestValidateRestrictedWorkloadAnnotationsRejectsFinalPodTemplateAnnotation(t *testing.T) {
+	workload := &batchv1.Job{
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+				"container.apparmor.security.beta.kubernetes.io/debug": "unconfined",
+			}}},
+		},
+	}
+
+	err := validateRestrictedWorkloadAnnotations(workload)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "legacy AppArmor annotations")
+}
+
 // ==================== Error Path Tests ====================
 
 func TestRenderPodTemplateStringMultiDoc_PodMissingSpec(t *testing.T) {
@@ -2411,17 +2921,36 @@ spec:
 		"session nodeSelector should be applied to full DaemonSet template's PodSpec")
 }
 
+func TestBuildPodSpec_RejectsSessionNodeSelectorOverride(t *testing.T) {
+	controller := newBuildWorkloadController()
+	ds := newBuildWorkloadSession("node-selector-conflict")
+	ds.Spec.NodeSelector = map[string]string{"kubernetes.io/hostname": "requester-node"}
+	template := &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+		PodTemplateString: `containers:
+  - name: debug
+    image: busybox:latest
+nodeSelector:
+  kubernetes.io/hostname: admin-node
+`,
+	}}
+
+	_, err := controller.buildPodSpec(ds, template, nil)
+	require.ErrorContains(t, err, `session nodeSelector "kubernetes.io/hostname"="requester-node" conflicts with the template selector value "admin-node"`)
+}
+
 func TestBuildWorkload_FullDeploymentWithPodOverrides(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("pod-overrides")
 
 	hostNetTrue := true
+	nodeSelector := map[string]string{"node-pool": "debug"}
 	template := &breakglassv1alpha1.DebugSessionTemplate{
 		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment,
 			PodOverrides: &breakglassv1alpha1.DebugPodOverrides{
 				Spec: &breakglassv1alpha1.DebugPodSpecOverrides{
-					HostNetwork: &hostNetTrue,
+					HostNetwork:  &hostNetTrue,
+					NodeSelector: nodeSelector,
 				},
 			},
 			PodTemplateString: `apiVersion: apps/v1
@@ -2454,6 +2983,8 @@ spec:
 	// Verify podOverrides were applied (hostNetwork=true)
 	assert.True(t, deploy.Spec.Template.Spec.HostNetwork,
 		"podOverrides hostNetwork=true should be applied to full Deployment template's PodSpec")
+	assert.Equal(t, "debug", deploy.Spec.Template.Spec.NodeSelector["node-pool"],
+		"podOverrides nodeSelector should be applied to full Deployment template's PodSpec")
 }
 
 func TestBuildWorkload_FullDeploymentLabelMerging(t *testing.T) {
@@ -3544,7 +4075,7 @@ spec:
 	assert.Contains(t, err.Error(), "StatefulSet")
 }
 
-func TestRenderPodTemplateStringMultiDoc_UnsupportedKindJob(t *testing.T) {
+func TestRenderPodTemplateStringMultiDoc_KindJobAtReconcilerLevel(t *testing.T) {
 	controller := newTestController()
 
 	templateStr := `apiVersion: batch/v1
@@ -3559,10 +4090,11 @@ spec:
           image: busybox:latest
 `
 	ctx := newTestRenderContext()
-	_, err := controller.renderPodTemplateStringMultiDoc(templateStr, ctx)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported manifest kind")
-	assert.Contains(t, err.Error(), "Job")
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, ctx)
+	require.NoError(t, err)
+	job, ok := result.Workload.(*batchv1.Job)
+	require.True(t, ok, "expected *batchv1.Job")
+	assert.Equal(t, "test", job.Name)
 }
 
 func TestRenderPodTemplateStringMultiDoc_AdditionalResourceInvalidYAML(t *testing.T) {
@@ -3907,6 +4439,28 @@ func TestDeployPodTemplateResource_MergesExistingAnnotations(t *testing.T) {
 	annotations := obj.GetAnnotations()
 	assert.Equal(t, "should-be-kept", annotations["existing-annotation"])
 	assert.Contains(t, annotations, "breakglass.t-caas.telekom.com/source-session")
+}
+
+func TestDeployPodTemplateResource_RejectsTenantConfigMapCollisionWithoutMutation(t *testing.T) {
+	ds := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "collision-session", Namespace: "breakglass-system", UID: "session-uid"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+	}
+	existing := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "tenant-config", Namespace: "target-ns"}, Data: map[string]string{"tenant": "must-remain"}}
+	targetClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(existing).Build()
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("ConfigMap"))
+	obj.SetName(existing.Name)
+	obj.SetNamespace(existing.Namespace)
+	obj.Object["data"] = map[string]interface{}{"controller": "must-not-apply"}
+
+	err := (&DebugSessionController{log: zap.NewNop().Sugar()}).deployPodTemplateResource(context.Background(), targetClient, ds, obj, existing.Namespace)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "refusing to overwrite pre-existing")
+
+	var unchanged corev1.ConfigMap
+	require.NoError(t, targetClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(existing), &unchanged))
+	assert.Equal(t, map[string]string{"tenant": "must-remain"}, unchanged.Data)
 }
 
 func TestDeployPodTemplateResource_UpdatesSessionStatus(t *testing.T) {

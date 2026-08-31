@@ -3804,6 +3804,20 @@ spec:
                               description: DebugContainerOverride allows overriding
                                 container settings.
                               properties:
+                                args:
+                                  description: |-
+                                    args replaces the container arguments when an administrator-authored
+                                    podOverridesTemplate deliberately binds them to session variables.
+                                  items:
+                                    type: string
+                                  type: array
+                                command:
+                                  description: |-
+                                    command replaces the container command when an administrator-authored
+                                    podOverridesTemplate deliberately binds it to a session variable.
+                                  items:
+                                    type: string
+                                  type: array
                                 env:
                                   description: env adds environment variables to the
                                     container.
@@ -4237,6 +4251,12 @@ spec:
                           hostPID:
                             description: hostPID overrides the hostPID setting.
                             type: boolean
+                          nodeSelector:
+                            additionalProperties:
+                              type: string
+                            description: nodeSelector adds mandatory scheduling constraints
+                              to the pod.
+                            type: object
                         type: object
                     type: object
                   podOverridesTemplate:
@@ -4275,7 +4295,7 @@ spec:
                     default: 1
                     description: |-
                       replicas specifies the number of replicas for Deployment workloads.
-                      Defaults to 1. Ignored for DaemonSet workloads.
+                      Defaults to 1. Ignored for DaemonSet and Job workloads.
                     format: int32
                     minimum: 1
                     type: integer
@@ -5974,11 +5994,12 @@ spec:
                     type: object
                   workloadType:
                     description: |-
-                      workloadType specifies the type of workload to create (DaemonSet or Deployment).
+                      workloadType specifies the type of workload to create (DaemonSet, Deployment, or Job).
                       Required when mode is "workload" or "hybrid".
                     enum:
                     - DaemonSet
                     - Deployment
+                    - Job
                     type: string
                 type: object
               startsAt:

@@ -1,0 +1,283 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+# Cluster-scoped templates only; this chart does not create namespaces, RBAC,
+# ClusterConfig resources, or images. Pre-create targetNamespace.
+enabled: true
+
+# Empty lists intentionally grant no access and target no clusters.
+requesters:
+  groups: []
+  users: []
+approvers:
+  groups: []
+  users: []
+targets:
+  clusters: []
+  clusterSelector: {}
+
+targetNamespace: breakglass-debug
+defaultDuration: 30m
+maxDuration: 1h
+maxConcurrentSessions: 1
+imagePullPolicy: IfNotPresent
+
+# Image defaults are deliberately non-runnable placeholders. Public image
+# references use the canonical utility paths; internal hooks remain non-public
+# until separately approved. Release packaging injects verified refs.
+images:
+  workload: {repository: ghcr.io/telekom/k8s-breakglass/utils/workload-debug, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
+  network: {repository: ghcr.io/telekom/k8s-breakglass/utils/network-debug, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
+  storage: {repository: ghcr.io/telekom/k8s-breakglass/utils/storage-debug, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
+  dumpAccess: {repository: example.invalid/breakglass/dump-reader-not-published, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
+  networkRepair: {repository: ghcr.io/telekom/k8s-breakglass/utils/node-maintenance, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
+  nodeRecovery: {repository: ghcr.io/telekom/k8s-breakglass/utils/node-maintenance, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
+  clusterValidation: {repository: example.invalid/breakglass/cluster-validator-internal, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
+  diagnosticArtifactCollector: {repository: ghcr.io/telekom/k8s-breakglass/utils/diagnostic-artifact-collector, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
+
+# Ordered, extensible profile list. Map-shaped profiles from versions before
+# 0.2.0 must be converted to list items (see the chart README).
+profiles:
+  - name: workload-diagnostics
+    intent: workload-diagnostics
+    displayName: Workload diagnostics
+    description: Inspect a workload from an isolated, non-privileged pod.
+    enabled: true
+    elevated: false
+    imageKey: workload
+    workloadType: Job
+    command: ["/usr/local/bin/workload-debug"]
+    args: ["report"]
+  - name: network-diagnostics
+    intent: network-diagnostics
+    displayName: Network diagnostics
+    description: Inspect node network connectivity with explicit elevation.
+    enabled: false
+    elevated: false
+    hostNetwork: false
+    requiredElevation: true
+    imageKey: network
+    command: ["/usr/local/bin/net-debug"]
+    args: ["report"]
+    preset: elevated-node
+    capabilities: [NET_ADMIN, NET_RAW, BPF, PERFMON]
+    workloadType: Job
+    pod:
+      volumeMounts:
+        - name: work
+          mountPath: /work
+      volumes:
+        - name: work
+          emptyDir: {}
+  - name: storage-diagnostics
+    intent: storage-diagnostics
+    displayName: Storage diagnostics
+    description: Inspect ephemeral storage from an isolated pod.
+    enabled: true
+    elevated: false
+    imageKey: storage
+    workloadType: Job
+    command: ["/usr/local/bin/storage-report"]
+    args: ["--path", "/scratch"]
+    pod:
+      volumeMounts:
+        - name: scratch
+          mountPath: /scratch
+        - name: reports
+          mountPath: /reports
+        - name: tmp
+          mountPath: /tmp
+      env:
+        - name: TMPDIR
+          value: /tmp
+      volumes:
+        - name: scratch
+          emptyDir: {}
+        - name: reports
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+  - name: dump-access
+    intent: dump-access
+    displayName: Dump access (opt-in)
+    description: >-
+      Copy one approved existing dump file to a bounded output volume.
+    enabled: false
+    elevated: false
+    hostNetwork: false
+    imageKey: dumpAccess
+    workloadType: Job
+    command: ["/usr/local/bin/dump-reader"]
+    # Supply sourcePath and the input/output volumes in an enabled deployment
+    # overlay; the generic catalogue has no implicit host filesystem source.
+    args: []
+    allowExec: false
+    capabilities: []
+    pod:
+      volumeMounts:
+        - name: input
+          mountPath: /input
+          readOnly: true
+        - name: output
+          mountPath: /output
+  - name: network-repair
+    intent: network-repair
+    displayName: Network repair (opt-in)
+    description: >-
+      Perform network repair actions on a target node; requires explicit
+      elevated opt-in.
+    enabled: false
+    elevated: false
+    hostNetwork: false
+    requiredElevation: true
+    imageKey: networkRepair
+    workloadType: Job
+    command: ["/usr/local/bin/node-maintenance"]
+    args: ["network-repair"]
+    preset: elevated-node
+    capabilities: [NET_ADMIN]
+    allowExec: false
+    extraDeployVariables:
+      - name: targetNode
+        displayName: Target node
+        description: Exact Kubernetes node name to inspect and schedule onto.
+        inputType: text
+        required: true
+        validation:
+          pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+          maxLength: 253
+      - name: interface
+        displayName: Network interface
+        description: Exact interface name on the target node.
+        inputType: text
+        required: true
+        validation:
+          pattern: '^[a-zA-Z0-9_.-]{1,15}$'
+      - name: action
+        displayName: Repair action
+        description: One allowlisted, reversible network repair action.
+        inputType: select
+        required: true
+        options:
+          - value: link-cycle
+          - value: restart-autonegotiation
+      - name: confirmation
+        displayName: Confirmation
+        description: Type NETWORK-REPAIR to authorize the selected operation.
+        inputType: text
+        required: true
+        validation:
+          pattern: '^NETWORK-REPAIR$'
+    podOverridesTemplate: |
+      nodeSelector:
+        kubernetes.io/hostname: {{ .vars.targetNode | yamlQuote }}
+      containers:
+        - name: debug
+          args:
+            - network-repair
+            - --target-node
+            - {{ .vars.targetNode | yamlQuote }}
+            - --interface
+            - {{ .vars.interface | yamlQuote }}
+            - --action
+            - {{ .vars.action | yamlQuote }}
+            - --evidence-dir
+            - /evidence
+            - --confirm
+            - {{ .vars.confirmation | yamlQuote }}
+    pod:
+      env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      volumeMounts:
+        - name: evidence
+          mountPath: /evidence
+      volumes:
+        - name: evidence
+          emptyDir: {}
+  - name: node-recovery
+    intent: node-recovery
+    displayName: Node recovery (opt-in)
+    description: Inspect and recover a node; requires explicit elevated opt-in.
+    enabled: false
+    elevated: false
+    hostNetwork: false
+    requiredElevation: true
+    imageKey: nodeRecovery
+    workloadType: Job
+    command: ["/usr/local/bin/node-maintenance"]
+    args: ["node-recovery"]
+    preset: elevated-node
+    capabilities: [NET_ADMIN]
+    hostPID: true
+    allowExec: false
+    extraDeployVariables:
+      - name: targetNode
+        displayName: Target node
+        description: Exact Kubernetes node name to inspect and schedule onto.
+        inputType: text
+        required: true
+        validation:
+          pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+          maxLength: 253
+      - name: interface
+        displayName: Network interface
+        description: Exact interface name on the target node.
+        inputType: text
+        required: true
+        validation:
+          pattern: '^[a-zA-Z0-9_.-]{1,15}$'
+      - name: confirmation
+        displayName: Confirmation
+        description: Type NODE-RECOVERY-PREFLIGHT to authorize read-only collection.
+        inputType: text
+        required: true
+        validation:
+          pattern: '^NODE-RECOVERY-PREFLIGHT$'
+    podOverridesTemplate: |
+      nodeSelector:
+        kubernetes.io/hostname: {{ .vars.targetNode | yamlQuote }}
+      containers:
+        - name: debug
+          args:
+            - node-recovery
+            - --target-node
+            - {{ .vars.targetNode | yamlQuote }}
+            - --interface
+            - {{ .vars.interface | yamlQuote }}
+            - --evidence-dir
+            - /evidence
+            - --confirm
+            - {{ .vars.confirmation | yamlQuote }}
+    pod:
+      env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      volumeMounts:
+        - name: evidence
+          mountPath: /evidence
+      volumes:
+        - name: evidence
+          emptyDir: {}
+  - name: cluster-validation
+    intent: cluster-validation
+    displayName: Cluster validation
+    description: Run read-only cluster validation checks from an isolated pod.
+    enabled: false
+    elevated: false
+    hostNetwork: false
+    imageKey: clusterValidation
+    workloadType: Job
+    command: ["/cluster-validator"]
+    args: ["--mode", "one-time"]
+    pod:
+      volumeMounts:
+        - name: reports
+          mountPath: /reports
+      volumes:
+        - name: reports
+          emptyDir: {}

@@ -886,6 +886,18 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugContainerOverride
   map:
     fields:
+    - name: args
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: command
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
     - name: env
       type:
         list:
@@ -1071,6 +1083,11 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: hostPID
       type:
         scalar: boolean
+    - name: nodeSelector
+      type:
+        map:
+          elementType:
+            scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodTemplate
   map:
     fields:

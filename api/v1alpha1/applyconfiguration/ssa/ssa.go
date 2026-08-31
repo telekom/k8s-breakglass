@@ -880,6 +880,9 @@ func DebugPodSpecOverridesFrom(s *breakglassv1alpha1.DebugPodSpecOverrides) *ac.
 		return nil
 	}
 	result := ac.DebugPodSpecOverrides()
+	if len(s.NodeSelector) > 0 {
+		result.WithNodeSelector(s.NodeSelector)
+	}
 	if s.HostNetwork != nil {
 		result.WithHostNetwork(*s.HostNetwork)
 	}
@@ -901,6 +904,14 @@ func DebugContainerOverrideFrom(c *breakglassv1alpha1.DebugContainerOverride) *a
 		return nil
 	}
 	result := ac.DebugContainerOverride().WithName(c.Name)
+	if c.Command != nil {
+		result.Command = make([]string, len(c.Command))
+		copy(result.Command, c.Command)
+	}
+	if c.Args != nil {
+		result.Args = make([]string, len(c.Args))
+		copy(result.Args, c.Args)
+	}
 	if c.SecurityContext != nil {
 		result.WithSecurityContext(*c.SecurityContext)
 	}
