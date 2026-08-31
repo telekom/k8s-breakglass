@@ -198,7 +198,8 @@ function main() {
   const packageEngine = packageJson.engines?.node;
   const lockfileEngine = lockfile.packages?.[""]?.engines?.node;
   const packageFloor = minimumVersionInMajor(packageEngine ?? "", 24);
-  if (!packageFloor || !includesVersion(packageEngine, [26, 0, 0]) || includesVersion(packageEngine, [25, 0, 0])) {
+  const packageNode25Floor = minimumVersionInMajor(packageEngine ?? "", 25);
+  if (!packageFloor || packageNode25Floor || !includesVersion(packageEngine, [26, 0, 0])) {
     throw new Error(
       `frontend/package.json must support Node 24 from its dependency floor, exclude Node 25, and support Node 26+, got ${packageEngine}`,
     );

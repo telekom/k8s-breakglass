@@ -21,6 +21,8 @@ test("Node range semantics exclude Node 25 while retaining Node 26", () => {
   assert.equal(includesVersion(engine, [24, 99, 99]), true);
   assert.equal(includesVersion(engine, [25, 0, 0]), false);
   assert.equal(includesVersion(engine, [26, 0, 0]), true);
+  assert.equal(minimumVersionInMajor(engine, 25), null);
+  assert.deepEqual(minimumVersionInMajor(">=24.15.0", 25), [25, 0, 0]);
 });
 
 test("comparator ranges and spaced operators are evaluated semantically", () => {
