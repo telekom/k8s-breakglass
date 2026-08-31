@@ -57,9 +57,11 @@ Every utility is published as an immutable,
   powerful intent that answers the incident question:
   - **[Workload diagnostics](../utils/workload-debug/README.md)** - Bounded
     DNS, TLS, HTTP(S), read-only Kubernetes API, and report helpers
-  - **[Network diagnostics](../utils/network-debug/README.md)** - Pod/network
-    troubleshooting, bounded tcpdump, and separately approved host `pwru`
-    tracing
+  - **[Network diagnostics](../utils/network-debug/README.md)** - Public
+    report/bounded-capture-only pod/network troubleshooting; this catalogue
+    profile does not authorize full host `pwru` tracing. Full host tracing is
+    an image capability that requires a separate custom template/profile with
+    independent privilege review and approval.
   - **[Node maintenance](../utils/node-maintenance/README.md)** - Read-only
     node recovery evidence and independently approved exact-entry repair
   - **[Storage diagnostics](../utils/images/storage-debug/README.md)** -

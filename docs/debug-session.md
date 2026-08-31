@@ -1602,11 +1602,13 @@ spec:
 ### Network Debug Template
 
 Use the [network-debug utility contract](../utils/network-debug/README.md)
-and the [DebugSession authoring guide](./debug-session-authoring.md). Keep
-ordinary pod-network diagnostics separate from the advanced host-network/
-host-PID `pwru` profile; the latter requires a distinct approval and a
-provider-enforced security context. Do not copy a privileged or all-node
-template into a general-purpose session.
+and the [DebugSession authoring guide](./debug-session-authoring.md). The
+public `network-diagnostics` catalogue profile is report/bounded-capture-only
+for ordinary pod-network diagnostics; it does not authorize full host `pwru`
+tracing. Full host-network/host-PID `pwru` tracing is an image capability only
+and requires a separate custom DebugSessionTemplate/profile with independent
+privilege review and approval plus a provider-enforced security context. Do
+not copy a privileged or all-node template into a general-purpose session.
 
 ### Ephemeral Container Debug Template
 

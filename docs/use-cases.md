@@ -484,12 +484,16 @@ nc -zv database-host 5432
 ### Configuration Example
 
 Use the [network-debug utility](../utils/network-debug/README.md) through an
-administrator-authored DebugSessionTemplate. Its standard mode captures in a
-pod network namespace with bounded `tcpdump`; its advanced `pwru` mode needs a
-separate host-network/host-PID profile, Linux BPF prerequisites, and explicit
-capabilities. The controller must choose the immutable image, fixed command,
-interface, filter, duration, packet bound, and node policy. Never expose a
-free-form image, command, node name, or privileged pod spec to the requester.
+administrator-authored DebugSessionTemplate. The public `network-diagnostics`
+catalogue profile is report/bounded-capture-only: its standard mode captures
+in a pod network namespace with bounded `tcpdump` and does not authorize full
+host `pwru` tracing. Full host-network/host-PID `pwru` tracing is an image
+capability that must be bound through a separate custom template/profile with
+independent privilege review and approval, Linux BPF prerequisites, and
+explicit capabilities. The controller must choose the immutable image, fixed
+command, interface, filter, duration, packet bound, and node policy. Never
+expose a free-form image, command, node name, or privileged pod spec to the
+requester.
 
 Do not solve a host-capture requirement by broadly overriding Pod Security.
 Use a separately approved profile with only the capabilities documented by
