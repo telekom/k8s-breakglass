@@ -20,7 +20,19 @@ ROLE=${RUN_ID}-role
 CLUSTER_ROLE=${RUN_ID}-cluster-role
 JOB=${RUN_ID}-performance
 KUBECONFIG_FILE=$(mktemp "${TMPDIR:-/tmp}/storage-kubestr-kubeconfig.XXXXXX")
-CLUSTER_CREATED=false
+KIND_BIN=${KIND_BIN:-kind}
+DOCKER_BIN=${DOCKER_BIN:-docker}
+KUBECTL_BIN=${KUBECTL_BIN:-kubectl}
+export KIND_CLUSTER_NAME="$CLUSTER" KIND_NODE_IMAGE="$KIND_NODE_IMAGE" KUBECONFIG_FILE="$KUBECONFIG_FILE"
+export KIND_CLUSTER_CREATED=false KIND_CLUSTER_OWNER_IDS=''
+script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck disable=SC1091
+. "${script_dir}/../../../../hack/kind-ownership.sh"
+# shellcheck disable=SC1091
+. "${script_dir}/../../../../hack/kubernetes-delete-uid.sh"
+ATTACHED_PV_UID=
+ATTACHED_PVC_UID=
+ATTACHED_POD_UID=
 
 fail() {
     printf 'storage kubestr Kind proof: %s\n' "$1" >&2
@@ -30,14 +42,28 @@ fail() {
 cleanup() {
     status=$?
     set +e
-    if [ "$CLUSTER_CREATED" = true ]; then
-        docker exec "${CLUSTER}-control-plane" sh -c \
+    if [ "$KIND_CLUSTER_CREATED" = true ]; then
+        "$DOCKER_BIN" exec "${CLUSTER}-control-plane" sh -c \
             "rm -rf -- /var/local/${RUN_ID} /var/local/${RUN_ID}-attached" >/dev/null 2>&1 || status=1
-        kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || status=1
-        if kind get clusters 2>/dev/null | grep -Fx -- "$CLUSTER" >/dev/null; then
-            printf 'storage kubestr Kind proof: owned cluster survived cleanup: %s\n' "$CLUSTER" >&2
-            status=1
+        if [ -n "$ATTACHED_POD_UID" ]; then
+            kubernetes_delete_uid "$KUBECONFIG_FILE" \
+                "/api/v1/namespaces/$NAMESPACE/pods/$ATTACHED_POD_NAME" "$ATTACHED_POD_UID" >/dev/null 2>&1 || status=1
+			"$KUBECTL_BIN" --kubeconfig "$KUBECONFIG_FILE" wait --for=delete \
+				pod/"$ATTACHED_POD_NAME" --namespace "$NAMESPACE" --timeout=120s >/dev/null 2>&1 || status=1
         fi
+        if [ -n "$ATTACHED_PVC_UID" ]; then
+            kubernetes_delete_uid "$KUBECONFIG_FILE" \
+                "/api/v1/namespaces/$NAMESPACE/persistentvolumeclaims/$ATTACHED_PVC_NAME" "$ATTACHED_PVC_UID" >/dev/null 2>&1 || status=1
+			"$KUBECTL_BIN" --kubeconfig "$KUBECONFIG_FILE" wait --for=delete \
+				pvc/"$ATTACHED_PVC_NAME" --namespace "$NAMESPACE" --timeout=120s >/dev/null 2>&1 || status=1
+        fi
+        if [ -n "$ATTACHED_PV_UID" ]; then
+            kubernetes_delete_uid "$KUBECONFIG_FILE" \
+                "/api/v1/persistentvolumes/$ATTACHED_PV_NAME" "$ATTACHED_PV_UID" >/dev/null 2>&1 || status=1
+			"$KUBECTL_BIN" --kubeconfig "$KUBECONFIG_FILE" wait --for=delete \
+				pv/"$ATTACHED_PV_NAME" --timeout=120s >/dev/null 2>&1 || status=1
+        fi
+        kind_cleanup_owned_cluster || status=1
     fi
     rm -f "$KUBECONFIG_FILE"
     exit "$status"
@@ -45,17 +71,12 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
-for command_name in docker kind kubectl jq timeout; do
+for command_name in "$DOCKER_BIN" "$KIND_BIN" "$KUBECTL_BIN" jq timeout; do
     command -v "$command_name" >/dev/null 2>&1 || fail "$command_name is required"
 done
-docker image inspect "$IMAGE" >/dev/null 2>&1 || fail "local image is unavailable: $IMAGE"
-if kind get clusters 2>/dev/null | grep -Fx -- "$CLUSTER" >/dev/null; then
-    fail "refusing to reuse existing cluster $CLUSTER"
-fi
-
-kind create cluster --name "$CLUSTER" --image "$KIND_NODE_IMAGE" --kubeconfig "$KUBECONFIG_FILE" --wait 180s >/dev/null
-CLUSTER_CREATED=true
-kind load docker-image "$IMAGE" --name "$CLUSTER" >/dev/null
+"$DOCKER_BIN" image inspect "$IMAGE" >/dev/null 2>&1 || fail "local image is unavailable: $IMAGE"
+kind_create_owned_cluster || fail "could not create disposable Kind cluster with provable Docker-node ownership"
+"$KIND_BIN" load docker-image "$IMAGE" --name "$CLUSTER" >/dev/null
 export KUBECONFIG=$KUBECONFIG_FILE
 
 image_with_default_tag="${IMAGE}:latest"
@@ -174,6 +195,7 @@ roleRef:
   kind: ClusterRole
   name: ${CLUSTER_ROLE}
 YAML
+ATTACHED_PV_UID=$(kubectl get pv "$ATTACHED_PV_NAME" -o jsonpath='{.metadata.uid}') || fail "attached PV UID was unavailable"
 
 runner_identity="system:serviceaccount:${NAMESPACE}:${RUNNER_SA}"
 kubectl auth can-i --as "$runner_identity" list nodes | grep -Fx yes >/dev/null || fail "runner cannot perform required node discovery"
@@ -315,7 +337,8 @@ spec:
       emptyDir:
         sizeLimit: 64Mi
 YAML
-
+ATTACHED_PVC_UID=$(kubectl get pvc "$ATTACHED_PVC_NAME" --namespace "$NAMESPACE" -o jsonpath='{.metadata.uid}') || fail "attached PVC UID was unavailable"
+ATTACHED_POD_UID=$(kubectl get pod "$ATTACHED_POD_NAME" --namespace "$NAMESPACE" -o jsonpath='{.metadata.uid}') || fail "attached Pod UID was unavailable"
 kubectl wait --namespace "$NAMESPACE" --for=jsonpath='{.status.phase}'=Bound pvc/"$ATTACHED_PVC_NAME" --timeout=120s >/dev/null
 attached_phase=
 for _ in $(seq 1 120); do
@@ -335,11 +358,14 @@ printf '%s\n' "$attached_report" | grep -Fx 'fio_status=pass' >/dev/null || fail
 printf '%s\n' "$attached_report" | grep -Fx 'ioping_status=pass' >/dev/null || fail "attached PVC ioping did not pass"
 printf '%s\n' "$attached_report" | grep -Fx 'overall_status=pass' >/dev/null || fail "attached PVC report did not pass"
 
-kubectl delete pod "$ATTACHED_POD_NAME" --namespace "$NAMESPACE" --wait --timeout=120s >/dev/null
-kubectl delete pvc "$ATTACHED_PVC_NAME" --namespace "$NAMESPACE" --wait --timeout=120s >/dev/null
+kubernetes_delete_uid "$KUBECONFIG_FILE" \
+    "/api/v1/namespaces/$NAMESPACE/pods/$ATTACHED_POD_NAME" "$ATTACHED_POD_UID" >/dev/null
+kubernetes_delete_uid "$KUBECONFIG_FILE" \
+    "/api/v1/namespaces/$NAMESPACE/persistentvolumeclaims/$ATTACHED_PVC_NAME" "$ATTACHED_PVC_UID" >/dev/null
 kubectl get pod "$ATTACHED_POD_NAME" --namespace "$NAMESPACE" >/dev/null 2>&1 && fail "attached PVC proof Pod survived cleanup"
 kubectl get pvc "$ATTACHED_PVC_NAME" --namespace "$NAMESPACE" >/dev/null 2>&1 && fail "attached PVC survived cleanup"
-kubectl delete pv "$ATTACHED_PV_NAME" --wait --timeout=120s >/dev/null
+kubernetes_delete_uid "$KUBECONFIG_FILE" \
+    "/api/v1/persistentvolumes/$ATTACHED_PV_NAME" "$ATTACHED_PV_UID" >/dev/null
 kubectl get pv "$ATTACHED_PV_NAME" >/dev/null 2>&1 && fail "attached PVC proof PV survived cleanup"
 docker exec "${CLUSTER}-control-plane" sh -c \
     "rm -rf -- /var/local/${RUN_ID}-attached"

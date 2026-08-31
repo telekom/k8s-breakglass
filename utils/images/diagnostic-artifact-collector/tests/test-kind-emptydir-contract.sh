@@ -16,8 +16,11 @@ mkdir -p "${tmp}/bin"
 cat >"${tmp}/bin/docker" <<'EOF'
 #!/usr/bin/env bash
 case "${1:-} ${2:-}" in
-  "image inspect") exit 1 ;;
-  build) exit 0 ;;
+  "image inspect")
+    if [[ -e "${FAKE_IMAGE_STATE:?}" ]]; then printf '%s\n' 'sha256:owned'; exit 0; fi
+    exit 1
+    ;;
+  build*) touch "${FAKE_IMAGE_STATE:?}"; exit 0 ;;
   "image rm") exit 0 ;;
   *) exit 0 ;;
 esac
@@ -63,7 +66,7 @@ chmod +x "${tmp}/bin/docker" "${tmp}/bin/kind" "${tmp}/bin/kubectl"
 
 create_marker="${tmp}/created"
 delete_marker="${tmp}/deleted"
-if PATH="${tmp}/bin:${PATH}" KIND_CREATE_MARKER="${create_marker}" KIND_DELETE_MARKER="${delete_marker}" \
+if PATH="${tmp}/bin:${PATH}" FAKE_IMAGE_STATE="${tmp}/image" KIND_CREATE_MARKER="${create_marker}" KIND_DELETE_MARKER="${delete_marker}" \
   KIND_GET_FAIL=1 \
   KIND_IMAGE_NAME=diagnostic-artifact-collector:test \
   "${root}/tests/kind-emptydir.sh" >/dev/null 2>&1; then
@@ -76,7 +79,7 @@ fi
 }
 
 rm -f "${create_marker}" "${delete_marker}"
-if PATH="${tmp}/bin:${PATH}" KIND_CREATE_MARKER="${create_marker}" KIND_DELETE_MARKER="${delete_marker}" \
+if PATH="${tmp}/bin:${PATH}" FAKE_IMAGE_STATE="${tmp}/image" KIND_CREATE_MARKER="${create_marker}" KIND_DELETE_MARKER="${delete_marker}" \
   KIND_EXISTING_CLUSTERS='' \
   KIND_IMAGE_NAME=diagnostic-artifact-collector:test \
   "${root}/tests/kind-emptydir.sh" >/dev/null 2>&1; then
@@ -89,7 +92,7 @@ fi
 }
 
 rm -f "${create_marker}" "${delete_marker}"
-if PATH="${tmp}/bin:${PATH}" KIND_CREATE_MARKER="${create_marker}" KIND_DELETE_MARKER="${delete_marker}" \
+if PATH="${tmp}/bin:${PATH}" FAKE_IMAGE_STATE="${tmp}/image" KIND_CREATE_MARKER="${create_marker}" KIND_DELETE_MARKER="${delete_marker}" \
   KIND_SAME_NAME_TAKEOVER=1 \
   KIND_EXISTING_CLUSTERS='' \
   KIND_IMAGE_NAME=diagnostic-artifact-collector:test \
@@ -103,7 +106,7 @@ fi
 }
 
 rm -f "${create_marker}" "${delete_marker}"
-if PATH="${tmp}/bin:${PATH}" KIND_CREATE_MARKER="${create_marker}" KIND_DELETE_MARKER="${delete_marker}" \
+if PATH="${tmp}/bin:${PATH}" FAKE_IMAGE_STATE="${tmp}/image" KIND_CREATE_MARKER="${create_marker}" KIND_DELETE_MARKER="${delete_marker}" \
   KIND_WRONG_KUBECONFIG=1 \
   KIND_EXISTING_CLUSTERS='' \
   KIND_IMAGE_NAME=diagnostic-artifact-collector:test \

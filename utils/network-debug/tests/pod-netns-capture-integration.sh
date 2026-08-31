@@ -21,16 +21,16 @@ namespace_uid=; target_uid=; decoy_uid=
 script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
 # shellcheck disable=SC1091
 . "${script_dir}/kind-ownership.sh"
+# shellcheck disable=SC1091
+. "${script_dir}/../../../hack/kubernetes-delete-uid.sh"
 cleanup() {
   status=$?; set +e
   if [ "$namespace_created" = true ] && [ -s "$kubeconfig" ]; then
-    current_namespace_uid=$(KUBECONFIG="$kubeconfig" kubectl get namespace "$namespace" -o jsonpath='{.metadata.uid}' 2>/dev/null) || current_namespace_uid=
-    if [ -n "$namespace_uid" ] && [ "$current_namespace_uid" = "$namespace_uid" ]; then
-      KUBECONFIG="$kubeconfig" kubectl delete namespace "$namespace" --wait=true --timeout=90s >/dev/null 2>&1 || status=1
-      KUBECONFIG="$kubeconfig" kubectl get namespace "$namespace" >/dev/null 2>&1 && status=1
-    elif [ -n "$current_namespace_uid" ]; then
-      status=1
-    fi
+	if [ "$namespace_created" = true ] && [ -n "$namespace_uid" ]; then
+		kubernetes_delete_uid "$kubeconfig" "/api/v1/namespaces/$namespace" "$namespace_uid" >/dev/null 2>&1 || status=1
+		KUBECONFIG="$kubeconfig" kubectl wait --for=delete namespace/"$namespace" --timeout=90s >/dev/null 2>&1 || status=1
+		KUBECONFIG="$kubeconfig" kubectl get namespace "$namespace" >/dev/null 2>&1 && status=1
+	fi
   fi
   kind_cleanup_owned_cluster >/dev/null 2>&1 || status=1
   case "$work_dir" in "${temp_parent%/}"/network-debug-pod-capture-proof.*) rm -rf -- "$work_dir" ;; *) status=1 ;; esac
@@ -154,10 +154,8 @@ printf '%s\n' "$capture_log" | grep -E '^bytes [1-9][0-9]*$' >/dev/null || {
   printf '%s\n' "$capture_log" >&2
   requirement 'ephemeral capture produced no bounded evidence'
 }
-current_target_uid=$(kubectl -n "$namespace" get pod target -o jsonpath='{.metadata.uid}') || requirement 'target Pod disappeared before UID-fenced cleanup'
-current_decoy_uid=$(kubectl -n "$namespace" get pod decoy -o jsonpath='{.metadata.uid}') || requirement 'decoy Pod disappeared before UID-fenced cleanup'
-[ "$current_target_uid" = "$target_uid" ] || requirement 'target Pod was replaced before cleanup'
-[ "$current_decoy_uid" = "$decoy_uid" ] || requirement 'decoy Pod was replaced before cleanup'
-kubectl -n "$namespace" delete pod target decoy --wait=true --timeout=90s >/dev/null
-if kubectl -n "$namespace" get pod target decoy >/dev/null 2>&1; then requirement 'selected-pod target or decoy survived exact cleanup'; fi
+kubernetes_delete_uid "$kubeconfig" "/api/v1/namespaces/$namespace/pods/target" "$target_uid" || requirement 'target Pod UID-fenced cleanup failed'
+kubernetes_delete_uid "$kubeconfig" "/api/v1/namespaces/$namespace/pods/decoy" "$decoy_uid" || requirement 'decoy Pod UID-fenced cleanup failed'
+kubectl --kubeconfig "$kubeconfig" wait --for=delete pod/target pod/decoy --namespace "$namespace" --timeout=90s >/dev/null || requirement 'selected-pod deletion did not complete'
+if KUBECONFIG="$kubeconfig" kubectl -n "$namespace" get pod target decoy >/dev/null 2>&1; then requirement 'selected-pod target or decoy survived exact cleanup'; fi
 printf 'selected-pod ephemeral capture behavior passed\ntarget_uid %s\n' "$target_uid"

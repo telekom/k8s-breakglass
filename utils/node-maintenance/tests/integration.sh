@@ -18,6 +18,7 @@ prefix="node-maintenance-it-$$"
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/node-maintenance-integration.XXXXXX")
 built_image=0
 image_owned=0
+image_owned_id=
 container_name=
 volume_name=
 holder_name=
@@ -56,7 +57,7 @@ cleanup() {
 		fi
 	fi
 	if [ "$built_image" -eq 1 ] && [ "$image_owned" -eq 1 ] && [ "$keep_image" != 1 ]; then
-		"$docker_bin" image rm "$image" >/dev/null 2>&1 || true
+		docker_remove_image_if_id "$docker_bin" "$image" "$image_owned_id" >/dev/null 2>&1 || true
 	fi
 	rm -rf "$tmp_dir"
 	if [ "$cleanup_failed" -ne 0 ] && [ "$exit_code" -eq 0 ]; then
@@ -65,6 +66,9 @@ cleanup() {
 	exit "$exit_code"
 }
 trap cleanup EXIT
+
+# shellcheck disable=SC1091
+. "$root_dir/../../hack/docker-image-ownership.sh"
 
 require_command() {
 	command -v "$1" >/dev/null 2>&1 || fail "required command '$1' is not installed"
@@ -94,6 +98,7 @@ if [ "$build_image" = 1 ]; then
 	printf 'Building integration image %s\n' "$image"
 	"$docker_bin" build --pull=false -t "$image" "$root_dir" || fail "image build failed; integration cannot be skipped"
 	built_image=1
+	image_owned_id=$("$docker_bin" image inspect --format '{{.Id}}' "$image") || fail "could not capture built image ID"
 else
 	"$docker_bin" image inspect "$image" >/dev/null 2>&1 || fail "requested image '$image' is unavailable"
 fi
