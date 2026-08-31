@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,6 +132,23 @@ func TestFetchAllowsGitHubObjectsCDNRedirect(t *testing.T) {
 	output := filepath.Join(t.TempDir(), "pwru.tar.gz")
 	if err := fetchWithClient(client, testReleaseURL, output, hex.EncodeToString(hash[:])); err != nil {
 		t.Fatalf("fetchWithClient() returned error: %v", err)
+	}
+}
+
+func TestRedirectPolicyAllowsThreeAndRejectsFourth(t *testing.T) {
+	assetURL, err := url.Parse("https://release-assets.githubusercontent.com/github-production-release-asset/cilium/pwru/archive.tar.gz?sig=opaque")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := &http.Request{URL: assetURL}
+
+	// net/http includes the initial request in via. Therefore len(via)==3 is
+	// the third redirect and remains allowed; the fourth has len(via)==4.
+	if err := redirectPolicy(request, make([]*http.Request, maxRedirectHops)); err != nil {
+		t.Fatalf("third redirect rejected: %v", err)
+	}
+	if err := redirectPolicy(request, make([]*http.Request, maxRedirectHops+1)); err == nil {
+		t.Fatal("fourth redirect was accepted")
 	}
 }
 

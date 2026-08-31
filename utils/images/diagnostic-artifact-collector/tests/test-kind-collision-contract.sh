@@ -12,9 +12,11 @@ if grep -E 'docker (pull|tag) alpine:3\.24([[:space:]]|$)' "${script}" >/dev/nul
 fi
 grep -F 'cluster_owned=false' "${script}" >/dev/null
 grep -F 'image_owned=false' "${script}" >/dev/null
-grep -F 'partial_cluster_is_owned' "${script}" >/dev/null
-grep -F 'if ! awk -v expected=' "${script}" >/dev/null
-grep -F "if [ \"\$cluster_owned\" = true ] || partial_cluster_is_owned" "${script}" >/dev/null
+if grep -F 'partial_cluster_is_owned' "${script}" >/dev/null; then
+	printf '%s\n' 'collision proof trusts unproven partial cluster ownership' >&2
+	exit 1
+fi
+grep -F "if [ \"\$cluster_owned\" = true ]; then" "${script}" >/dev/null
 grep -F "if [ \"\$image_owned\" = true ]; then" "${script}" >/dev/null
 if grep -E "delete cluster --name \\\"\$cluster\\\"( |\$)" "${script}" | grep -v -- '--kubeconfig' >/dev/null; then
 	printf '%s\n' 'collision proof can delete a cluster without ownership kubeconfig' >&2
@@ -58,7 +60,7 @@ case "${1:-}" in
           fi
           shift
         done
-      elif [[ "${FAKE_PARTIAL_KUBECONFIG:-0}" == 1 ]]; then
+      elif [[ "${FAKE_SAME_NAME_TAKEOVER:-0}" == 1 ]]; then
         while [[ $# -gt 0 ]]; do
           if [[ "${1:-}" == --kubeconfig ]]; then
             printf 'clusters:\n- name: kind-dac-collision\ncurrent-context: kind-dac-collision\n' >"${2:?}"
@@ -81,12 +83,12 @@ EOF
 chmod +x "${fixture}/bin/docker" "${fixture}/bin/kind" "${fixture}/bin/kubectl"
 
 run_collision_failure() {
-	local name=$1 image_present=$2 get_fail=$3 create_fail=$4 partial=$5 wrong=${6:-0}
+	local name=$1 image_present=$2 get_fail=$3 create_fail=$4 takeover=$5 wrong=${6:-0}
 	local image_state="${fixture}/${name}.image" image_removed="${fixture}/${name}.image-removed"
 	local create_attempted="${fixture}/${name}.create" cluster_deleted="${fixture}/${name}.deleted"
 	FAKE_IMAGE_PRESENT="$image_present" FAKE_IMAGE_STATE="$image_state" \
 	FAKE_IMAGE_REMOVED="$image_removed" FAKE_KIND_GET_FAIL="$get_fail" \
-	FAKE_CLUSTER_CREATE_FAIL="$create_fail" FAKE_PARTIAL_KUBECONFIG="$partial" \
+	FAKE_CLUSTER_CREATE_FAIL="$create_fail" FAKE_SAME_NAME_TAKEOVER="$takeover" \
 	FAKE_WRONG_KUBECONFIG="$wrong" \
 	FAKE_CLUSTER_CREATE_ATTEMPTED="$create_attempted" FAKE_CLUSTER_DELETED="$cluster_deleted" \
 	DOCKER_BIN="${fixture}/bin/docker" KIND_BIN="${fixture}/bin/kind" KUBECTL_BIN="${fixture}/bin/kubectl" \
@@ -105,10 +107,10 @@ run_collision_failure image-owned 0 1 0 0
 	exit 1
 }
 
-run_collision_failure partial-cluster 0 0 1 1
-[[ -e "${fixture}/partial-cluster.image-removed" && \
-	-e "${fixture}/partial-cluster.create" && -e "${fixture}/partial-cluster.deleted" ]] || {
-	printf '%s\n' 'verified partial create did not clean its owned resources' >&2
+run_collision_failure same-name-takeover 0 0 1 1
+[[ -e "${fixture}/same-name-takeover.image-removed" && \
+	-e "${fixture}/same-name-takeover.create" && ! -e "${fixture}/same-name-takeover.deleted" ]] || {
+	printf '%s\n' 'same-name takeover authorized collision cleanup' >&2
 	exit 1
 }
 
