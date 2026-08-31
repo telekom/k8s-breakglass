@@ -2365,6 +2365,35 @@ func TestBuildPodSpec_RestrictedCatalogueRejectsIncompletePodSecurity(t *testing
 	}
 }
 
+func TestValidateRestrictedCataloguePodSpec_DumpInputRequiresReadOnlyMount(t *testing.T) {
+	trueValue := true
+	base := func(readOnly bool) corev1.PodSpec {
+		return corev1.PodSpec{
+			AutomountServiceAccountToken: &[]bool{false}[0],
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot:   &trueValue,
+				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+			},
+			Containers: []corev1.Container{{
+				Name: "debug",
+				SecurityContext: &corev1.SecurityContext{
+					AllowPrivilegeEscalation: &[]bool{false}[0],
+					ReadOnlyRootFilesystem:   &[]bool{true}[0],
+					Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+				},
+				VolumeMounts: []corev1.VolumeMount{{Name: "input", MountPath: "/input", ReadOnly: readOnly}},
+			}},
+			Volumes: []corev1.Volume{{Name: "input", VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{Path: "/var/lib/approved-dump"},
+			}}},
+		}
+	}
+
+	require.NoError(t, validateRestrictedCataloguePodSpec(base(true), "dump-access"))
+	require.ErrorContains(t, validateRestrictedCataloguePodSpec(base(false), "dump-access"), "disallowed source")
+	require.ErrorContains(t, validateRestrictedCataloguePodSpec(base(true), "workload-diagnostics"), "disallowed source")
+}
+
 func TestBuildPodSpec_RestrictedCatalogueRejectsArbitraryAdditionalResources(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("restricted-resource")

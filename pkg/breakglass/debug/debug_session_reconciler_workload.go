@@ -1037,9 +1037,22 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 	} else if spec.ServiceAccountName != "" || spec.AutomountServiceAccountToken == nil || *spec.AutomountServiceAccountToken {
 		return fmt.Errorf("restricted catalogue profiles cannot receive a Kubernetes service account identity")
 	}
+	dumpInputReadOnly := false
+	if intent == "dump-access" {
+		containers := append(append([]corev1.Container{}, spec.InitContainers...), spec.Containers...)
+		for _, container := range containers {
+			for _, mount := range container.VolumeMounts {
+				if mount.Name == "input" && mount.MountPath == "/input" && mount.ReadOnly {
+					dumpInputReadOnly = true
+				}
+			}
+		}
+	}
 	for _, volume := range spec.Volumes {
 		source := volume.VolumeSource
-		if source.EmptyDir == nil && source.ConfigMap == nil && source.DownwardAPI == nil {
+		approvedDumpInput := intent == "dump-access" && volume.Name == "input" && dumpInputReadOnly &&
+			(source.HostPath != nil || source.PersistentVolumeClaim != nil)
+		if source.EmptyDir == nil && source.ConfigMap == nil && source.DownwardAPI == nil && !approvedDumpInput {
 			return fmt.Errorf("restricted catalogue profile volume %q uses a disallowed source", volume.Name)
 		}
 	}
