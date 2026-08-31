@@ -731,17 +731,13 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	}
 	ds = live
 
-	// Get target cluster client
-	if h.ccProvider == nil {
-		return kubectlDebugInternalErrorf("target cluster client provider is not configured")
-	}
-	targetClient, err := h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
+	// Resolve the target client together with the exact live ClusterConfig that
+	// produced it. The same snapshot is checked again at the final write boundary.
+	targetClient, configuredCluster, err := h.privilegedOperationClient(ctx, ds.Spec.Cluster)
 	if err != nil {
-		return fmt.Errorf("failed to get client for cluster %s: %w", ds.Spec.Cluster, err)
+		return err
 	}
-	if targetClient == nil {
-		return kubectlDebugInternalErrorf("target client for cluster %s is not configured", ds.Spec.Cluster)
-	}
+	defer releasePrivilegedOperationSnapshot(h.ccProvider, configuredCluster)
 
 	// A previous request may have successfully changed the target Pod but lost
 	// the follow-up status write. Resolve that durable intent before accepting a
@@ -770,6 +766,19 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	}
 	if pod.ResourceVersion != "" && freshPod.ResourceVersion != "" && freshPod.ResourceVersion != pod.ResourceVersion {
 		return kubectlDebugPolicyErrorf("target pod %s/%s changed during injection authorization", namespace, podName)
+	}
+	// Namespace labels and policy may change while the target Pod is read.
+	template := ds.Status.ResolvedTemplate
+	if template == nil || template.KubectlDebug == nil || template.KubectlDebug.EphemeralContainers == nil {
+		return kubectlDebugPolicyErrorf("ephemeral container policy is no longer available")
+	}
+	ecPolicy := template.KubectlDebug.EphemeralContainers
+	namespaceAllowed, err := h.isNamespaceAllowedForEphemeral(ctx, ds, namespace, ecPolicy.AllowedNamespaces, ecPolicy.DeniedNamespaces)
+	if err != nil {
+		return err
+	}
+	if !namespaceAllowed {
+		return kubectlDebugPolicyErrorf("namespace %s is no longer allowed for ephemeral container injection", namespace)
 	}
 	// Create ephemeral container spec
 	ephemeralContainer := desiredEphemeralContainerForIntent(containerName, image, command, securityContext)
@@ -818,6 +827,9 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 		return err
 	}
 	ds = live
+	if err := h.fencePrivilegedOperationClusterConfig(ctx, configuredCluster); err != nil {
+		return err
+	}
 
 	// Update the pod using SubResource for ephemeral containers
 	if err := targetClient.SubResource("ephemeralcontainers").Update(ctx, freshPod); err != nil {
