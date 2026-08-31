@@ -11,19 +11,24 @@ set -Eeuo pipefail
 
 values_file="${1:?catalogue values file is required}"
 output_dir="${2:?release reference directory is required}"
+release_tag="${3:?utility release tag is required}"
 
 [[ -f "${values_file}" ]] || { echo "catalogue values file is missing: ${values_file}" >&2; exit 1; }
+[[ "${release_tag}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]] || {
+  echo "utility release tag must be a semver release tag: ${release_tag}" >&2
+  exit 1
+}
 command -v ruby >/dev/null 2>&1 || { echo "ruby is required" >&2; exit 1; }
 command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 1; }
 command -v cosign >/dev/null 2>&1 || { echo "cosign is required" >&2; exit 1; }
 
-identity_regexp="${SUPPLY_CHAIN_IDENTITY_REGEXP:-https://github.com/telekom/k8s-breakglass/.github/workflows/.*}"
+identity_regexp="${SUPPLY_CHAIN_IDENTITY_REGEXP:-https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*}"
 oidc_issuer="${SUPPLY_CHAIN_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
 
 records=()
 while IFS= read -r record; do
   records+=("${record}")
-done < <(ruby -ryaml -e '
+done < <(UTILITY_RELEASE_TAG="${release_tag}" ruby -ryaml -e '
   values = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false) || {}
   images = values.fetch("images")
   expected = {
@@ -36,8 +41,8 @@ done < <(ruby -ryaml -e '
   expected.each do |key, expected_repository|
     image = images.fetch(key)
     repository = image.fetch("repository").to_s
-    tag = image.fetch("tag", "").to_s
-    digest = image.fetch("digest", "").to_s
+    tag = ENV.fetch("UTILITY_RELEASE_TAG")
+    digest = ""
     abort("#{key} repository must be exactly #{expected_repository}") unless repository == expected_repository
     abort("#{key} must specify either a tag or digest") if tag.empty? && digest.empty?
     abort("#{key} cannot specify both tag and digest") unless tag.empty? || digest.empty?

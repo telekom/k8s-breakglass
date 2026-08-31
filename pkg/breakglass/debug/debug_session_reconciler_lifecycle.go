@@ -669,8 +669,9 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 		// UID-bearing resources are fenced against replacement by an exact
 		// session identity. Resources written by older releases predate the UID
 		// marker, but their session name/namespace markers still provide safe
-		// ownership proof and must remain cleanable during an upgrade. A resource
-		// with no ownership metadata retains the historical status-based cleanup.
+		// ownership proof and must remain cleanable during an upgrade. Resources
+		// without recognized ownership metadata are retained; status alone is not
+		// sufficient proof that a replacement resource belongs to this session.
 		if !resourceMayBeDeletedByDebugSession(existing, ds) {
 			status.Error = "ownership precondition failed: resource was replaced or belongs to another session"
 			remainingStatuses = append(remainingStatuses, *status)

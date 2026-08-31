@@ -433,6 +433,12 @@ jobs:
             dockerfile: utils/images/dump-reader/Dockerfile
             shell_paths: utils/images/dump-reader/bin/* utils/images/dump-reader/tests/*.sh
             metadata: utils/images/dump-reader/image-metadata.yaml
+          - name: diagnostic-artifact-collector
+            make_dir: utils/images/diagnostic-artifact-collector
+            target: test
+            dockerfile: utils/images/diagnostic-artifact-collector/Dockerfile
+            shell_paths: utils/images/diagnostic-artifact-collector/bin/* utils/images/diagnostic-artifact-collector/tests/*.sh
+            metadata: utils/images/diagnostic-artifact-collector/image-metadata.yaml
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run helper tests

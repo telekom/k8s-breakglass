@@ -9,9 +9,9 @@ SPDX-License-Identifier: Apache-2.0
 {{- if .Values.fullnameOverride -}}{{ .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}{{- else -}}{{ printf "%s-%s" .Release.Name (include "debug-session-catalogue.name" .) | trunc 63 | trimSuffix "-" -}}{{- end -}}
 {{- end -}}
 {{- define "debug-session-catalogue.labels" -}}
-app.kubernetes.io/name: {{ include "debug-session-catalogue.name" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/name: {{ include "debug-session-catalogue.name" . | quote }}
+app.kubernetes.io/instance: {{ .Release.Name | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | quote }}
 {{- end -}}
 {{- define "debug-session-catalogue.profileName" -}}

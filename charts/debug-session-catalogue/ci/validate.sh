@@ -13,8 +13,10 @@ elevated_rendered="$(mktemp)"
 release_a_rendered="$(mktemp)"
 release_b_rendered="$(mktemp)"
 override_rendered="$(mktemp)"
+numeric_release_rendered="$(mktemp)"
+boolean_release_rendered="$(mktemp)"
 duration_rendered=
-trap 'rm -f "${rendered}" "${custom_rendered}" "${all_rendered}" "${failure_output}" "${digest_rendered}" "${elevated_rendered}" "${release_a_rendered}" "${release_b_rendered}" "${override_rendered}" "${duration_rendered}"' EXIT
+trap 'rm -f "${rendered}" "${custom_rendered}" "${all_rendered}" "${failure_output}" "${digest_rendered}" "${elevated_rendered}" "${release_a_rendered}" "${release_b_rendered}" "${override_rendered}" "${numeric_release_rendered}" "${boolean_release_rendered}" "${duration_rendered}"' EXIT
 
 fail() {
   echo "::error::debug-session-catalogue validation failed: $*" >&2
@@ -71,6 +73,28 @@ helm template release-override "${chart_dir}" --values "${chart_dir}/ci/test-val
   --set fullnameOverride=managed-catalogue >"${override_rendered}"
 override_name=$(yq -r 'select(.kind == "DebugPodTemplate") | .metadata.name' "${override_rendered}" | sed -n '1p')
 [[ "${override_name}" == managed-catalogue-workload-diagnostics ]] || fail "fullnameOverride was not preserved"
+
+# Kubernetes label values must remain strings even when Helm receives a
+# numeric- or boolean-looking release name. Parse the rendered objects rather
+# than asserting quoted YAML syntax, so this checks the actual API values.
+validate_release_label_types() {
+  local release_name="$1"
+  local output="$2"
+  ruby -ryaml -e '
+    release = ARGV.fetch(1)
+    documents = YAML.load_stream(File.read(ARGV.fetch(0))).compact
+    documents.each do |object|
+      labels = object.dig("metadata", "labels")
+      next unless labels
+      abort("#{release}: generated label is not a string") unless labels.values.all? { |value| value.is_a?(String) }
+      abort("#{release}: instance label mismatch") unless labels.fetch("app.kubernetes.io/instance") == release
+    end
+  ' "${output}" "${release_name}" || fail "${release_name} release labels were not string-valued"
+}
+helm template 123 "${chart_dir}" --values "${chart_dir}/ci/test-values.yaml" >"${numeric_release_rendered}"
+validate_release_label_types 123 "${numeric_release_rendered}"
+helm template true "${chart_dir}" --values "${chart_dir}/ci/test-values.yaml" >"${boolean_release_rendered}"
+validate_release_label_types true "${boolean_release_rendered}"
 
 helm template debug-catalogue "${chart_dir}" \
   --values "${chart_dir}/ci/custom-profile-values.yaml" >"${custom_rendered}"

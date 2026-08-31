@@ -904,11 +904,13 @@ func DebugContainerOverrideFrom(c *breakglassv1alpha1.DebugContainerOverride) *a
 		return nil
 	}
 	result := ac.DebugContainerOverride().WithName(c.Name)
-	if len(c.Command) > 0 {
-		result.WithCommand(c.Command...)
+	if c.Command != nil {
+		result.Command = make([]string, len(c.Command))
+		copy(result.Command, c.Command)
 	}
-	if len(c.Args) > 0 {
-		result.WithArgs(c.Args...)
+	if c.Args != nil {
+		result.Args = make([]string, len(c.Args))
+		copy(result.Args, c.Args)
 	}
 	if c.SecurityContext != nil {
 		result.WithSecurityContext(*c.SecurityContext)
