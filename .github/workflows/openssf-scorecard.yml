@@ -21,7 +21,7 @@ on:
   pull_request:
     branches:
       - main
-      
+
   schedule:
     # Weekly on Saturdays.
     - cron:  '30 1 * * 6'
@@ -37,7 +37,9 @@ jobs:
       security-events: write
       # Needed for GitHub OIDC token if publish_results is true
       id-token: write
-      
+      # Needed to read workflow metadata for SARIF upload
+      actions: read
+
     steps:
       - name: "Checkout code"
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
