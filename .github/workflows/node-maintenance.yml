@@ -9,6 +9,10 @@ on:
   pull_request:
     paths:
       - "utils/node-maintenance/**"
+      - "hack/docker-image-ownership.sh"
+      - "hack/docker-resource-ownership.sh"
+      - "hack/kind-ownership.sh"
+      - "hack/kubernetes-delete-uid.sh"
       - "docs/node-maintenance.md"
       - ".github/workflows/node-maintenance.yml"
   push:

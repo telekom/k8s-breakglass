@@ -11,7 +11,7 @@ command -v ruby >/dev/null 2>&1 || {
 
 ruby -ryaml - "${root}" <<'RUBY'
 root = ARGV.fetch(0)
-required = %w[
+all_helpers = %w[
   hack/docker-image-ownership.sh
   hack/docker-resource-ownership.sh
   hack/kind-ownership.sh
@@ -21,12 +21,46 @@ required = %w[
   hack/test-utility-image-security-contract.sh
 ]
 
-%w[utility-release.yml utility-image-security.yml].each do |workflow_name|
+expected_helpers = {
+  "utility-release.yml" => all_helpers,
+  "utility-image-security.yml" => all_helpers,
+  "diagnostic-artifact-collector-image.yml" => %w[
+    hack/docker-image-ownership.sh
+    hack/docker-resource-ownership.sh
+    hack/kind-ownership.sh
+  ],
+  "network-debug-pod-capture-integration.yml" => %w[
+    hack/docker-resource-ownership.sh
+    hack/kind-ownership.sh
+    hack/kubernetes-delete-uid.sh
+  ],
+  "node-maintenance.yml" => %w[
+    hack/docker-image-ownership.sh
+    hack/docker-resource-ownership.sh
+    hack/kind-ownership.sh
+    hack/kubernetes-delete-uid.sh
+  ],
+  "storage-image-behavior.yml" => %w[
+    hack/docker-image-ownership.sh
+    hack/kind-ownership.sh
+    hack/kubernetes-delete-uid.sh
+    hack/kubernetes-storage-cleanup.sh
+  ],
+  "workload-debug.yml" => %w[
+    hack/docker-image-ownership.sh
+    hack/kind-ownership.sh
+    hack/kubernetes-delete-uid.sh
+  ]
+}
+
+expected_helpers.each do |workflow_name, required|
   workflow = YAML.safe_load(File.read(File.join(root, ".github/workflows", workflow_name)), aliases: false)
   trigger = workflow.fetch(true).fetch("pull_request")
   paths = trigger.fetch("paths")
   missing = required.reject { |path| paths.include?(path) }
   abort "#{workflow_name} is missing release-gate path filters: #{missing.join(', ')}" unless missing.empty?
+  unexpected = (paths & all_helpers) - required
+  abort "#{workflow_name} has unrelated shared-helper path filters: #{unexpected.join(', ')}" unless unexpected.empty?
 end
 RUBY
 
