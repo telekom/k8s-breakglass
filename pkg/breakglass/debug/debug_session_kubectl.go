@@ -93,6 +93,8 @@ const kubectlDebugOperationKindEphemeralContainer = "ephemeral-container"
 // ClientProviderInterface abstracts the cluster.ClientProvider for testing
 type ClientProviderInterface interface {
 	GetClient(ctx context.Context, clusterName string) (ctrlclient.Client, error)
+	GetClientForPrivilegedOperation(ctx context.Context, clusterName string) (ctrlclient.Client, *breakglassv1alpha1.ClusterConfig, error)
+	ValidatePrivilegedOperationClusterConfig(ctx context.Context, configured *breakglassv1alpha1.ClusterConfig) error
 }
 
 type kubectlDebugOperationErrorKind string
@@ -588,6 +590,41 @@ func (h *KubectlDebugHandler) liveSessionForMutation(
 	return live, nil
 }
 
+func (h *KubectlDebugHandler) privilegedOperationClient(
+	ctx context.Context,
+	clusterName string,
+) (ctrlclient.Client, *breakglassv1alpha1.ClusterConfig, error) {
+	if h.ccProvider == nil {
+		return nil, nil, kubectlDebugInternalErrorf("target cluster client provider is not configured")
+	}
+	targetClient, configured, err := h.ccProvider.GetClientForPrivilegedOperation(ctx, clusterName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get client for cluster %s: %w", clusterName, err)
+	}
+	if targetClient == nil || configured == nil || configured.UID == "" {
+		return nil, nil, kubectlDebugInternalErrorf("privileged target client for cluster %s is incomplete", clusterName)
+	}
+	return targetClient, configured, nil
+}
+
+func (h *KubectlDebugHandler) fencePrivilegedOperationClusterConfig(
+	ctx context.Context,
+	configured *breakglassv1alpha1.ClusterConfig,
+) error {
+	if err := h.ccProvider.ValidatePrivilegedOperationClusterConfig(ctx, configured); err != nil {
+		return kubectlDebugPolicyErrorf("target cluster configuration changed during mutation authorization: %w", err)
+	}
+	return nil
+}
+
+func releasePrivilegedOperationSnapshot(provider ClientProviderInterface, configured *breakglassv1alpha1.ClusterConfig) {
+	if releaser, ok := provider.(interface {
+		ReleasePrivilegedOperationClusterConfig(*breakglassv1alpha1.ClusterConfig)
+	}); ok {
+		releaser.ReleasePrivilegedOperationClusterConfig(configured)
+	}
+}
+
 // ValidateEphemeralContainerRequest validates an ephemeral container injection request
 func (h *KubectlDebugHandler) ValidateEphemeralContainerRequest(
 	ctx context.Context,
@@ -788,6 +825,11 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	debugImage string,
 	user string,
 ) (*corev1.Pod, error) {
+	live, err := h.liveSessionForMutation(ctx, ds, user)
+	if err != nil {
+		return nil, err
+	}
+	ds = live
 	template := ds.Status.ResolvedTemplate
 	if template == nil || template.KubectlDebug == nil || template.KubectlDebug.PodCopy == nil {
 		return nil, kubectlDebugRequestErrorf("pod copy not configured in template")
@@ -798,11 +840,12 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		return nil, kubectlDebugRequestErrorf("pod copy is not enabled for this template")
 	}
 
-	// Get target cluster client (needed before namespace validation to fetch labels)
-	targetClient, err := h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
+	// Resolve the target client and retain the exact live ClusterConfig used.
+	targetClient, configuredCluster, err := h.privilegedOperationClient(ctx, ds.Spec.Cluster)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get client for cluster %s: %w", ds.Spec.Cluster, err)
+		return nil, err
 	}
+	defer releasePrivilegedOperationSnapshot(h.ccProvider, configuredCluster)
 
 	nsLabels, err := h.fetchNamespaceLabels(ctx, targetClient, originalNamespace)
 	if err != nil {
@@ -832,6 +875,9 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 			return nil, kubectlDebugRequestErrorf("target namespace %s does not exist", targetNs)
 		}
 		return nil, fmt.Errorf("failed to check namespace: %w", err)
+	}
+	if ns.UID == "" {
+		return nil, kubectlDebugPolicyErrorf("target namespace %s has no UID", targetNs)
 	}
 
 	// Create copy name
@@ -892,15 +938,39 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	if originalPod.ResourceVersion != "" && freshOriginalPod.ResourceVersion != "" && freshOriginalPod.ResourceVersion != originalPod.ResourceVersion {
 		return nil, kubectlDebugPolicyErrorf("source pod %s/%s changed during copy authorization", originalNamespace, originalPodName)
 	}
+	freshNamespaceLabels, err := h.fetchNamespaceLabels(ctx, targetClient, originalNamespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to re-read namespace labels for %s before copy: %w", originalNamespace, err)
+	}
+	if !matcher.IsAllowedWithLabels(originalNamespace, freshNamespaceLabels) {
+		return nil, kubectlDebugPolicyErrorf("namespace %s is no longer allowed for pod copy", originalNamespace)
+	}
 
-	// This must be the last slow operation before the privileged target create.
-	live, err := h.liveSessionForMutation(ctx, ds, user)
+	// Re-read the destination namespace at the privileged boundary as well. The
+	// source policy above answers who may be copied; this identity check answers
+	// where the privileged copy is about to be created.
+	freshTargetNamespace := &corev1.Namespace{}
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: targetNs}, freshTargetNamespace); err != nil {
+		return nil, fmt.Errorf("failed to re-read target namespace %s before copy: %w", targetNs, err)
+	}
+	if freshTargetNamespace.UID == "" || freshTargetNamespace.UID != ns.UID {
+		return nil, kubectlDebugPolicyErrorf("target namespace %s changed during copy authorization", targetNs)
+	}
+
+	// Validate all target configuration and policy inputs first. The uncached
+	// session fence below is then the last slow operation before the create.
+	if err := h.fencePrivilegedOperationClusterConfig(ctx, configuredCluster); err != nil {
+		return nil, err
+	}
+	live, err = h.liveSessionForMutation(ctx, ds, user)
 	if err != nil {
 		return nil, err
 	}
 	ds = live
 
-	// Create the copy pod using Create (not SSA) because each pod copy must be unique
+	// Create the copy pod using Create (not SSA). An admission-time namespace
+	// label change can still race this call; the target cluster's admission
+	// policy remains the final authority for that unavoidable API boundary.
 	if err := targetClient.Create(ctx, copyPod); err != nil {
 		return nil, fmt.Errorf("failed to create pod copy: %w", err)
 	}
@@ -964,6 +1034,11 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	nodeName string,
 	user string,
 ) (*corev1.Pod, error) {
+	live, err := h.liveSessionForMutation(ctx, ds, user)
+	if err != nil {
+		return nil, err
+	}
+	ds = live
 	template := ds.Status.ResolvedTemplate
 	if template == nil || template.KubectlDebug == nil || template.KubectlDebug.NodeDebug == nil {
 		return nil, kubectlDebugRequestErrorf("node debug not configured in template")
@@ -977,10 +1052,11 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	// Get the target cluster client and node before evaluating the selector. The
 	// node UID is retained for the final identity fence immediately before Pod
 	// creation, including when no selector is configured.
-	targetClient, err := h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
+	targetClient, configuredCluster, err := h.privilegedOperationClient(ctx, ds.Spec.Cluster)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get client for cluster %s: %w", ds.Spec.Cluster, err)
+		return nil, err
 	}
+	defer releasePrivilegedOperationSnapshot(h.ccProvider, configuredCluster)
 	node := &corev1.Node{}
 	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: nodeName}, node); err != nil {
 		return nil, fmt.Errorf("failed to get node %s: %w", nodeName, err)
@@ -1025,6 +1101,16 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	}
 	if namespace == "" {
 		namespace = "breakglass-debug"
+	}
+	targetNamespace := &corev1.Namespace{}
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: namespace}, targetNamespace); err != nil {
+		return nil, fmt.Errorf("failed to get node debug namespace %s: %w", namespace, err)
+	}
+	if targetNamespace.UID == "" {
+		return nil, kubectlDebugPolicyErrorf("node debug namespace %s has no UID", namespace)
+	}
+	if !namespaceAllowedForDebugPod(namespace, targetNamespace.Labels, template.NamespaceConstraints) {
+		return nil, kubectlDebugPolicyErrorf("namespace %s is not allowed for node debug", namespace)
 	}
 
 	debugPod := &corev1.Pod{
@@ -1093,15 +1179,35 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	if node.ResourceVersion != "" && freshNode.ResourceVersion != "" && freshNode.ResourceVersion != node.ResourceVersion {
 		return nil, kubectlDebugPolicyErrorf("node %s changed during debug pod authorization", nodeName)
 	}
+	for k, v := range nd.NodeSelector {
+		if nodeVal, exists := freshNode.Labels[k]; !exists || nodeVal != v {
+			return nil, kubectlDebugPolicyErrorf("node %s no longer matches required selector %s=%s", nodeName, k, v)
+		}
+	}
+	freshTargetNamespace := &corev1.Namespace{}
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: namespace}, freshTargetNamespace); err != nil {
+		return nil, fmt.Errorf("failed to re-read node debug namespace %s before pod creation: %w", namespace, err)
+	}
+	if freshTargetNamespace.UID == "" || freshTargetNamespace.UID != targetNamespace.UID {
+		return nil, kubectlDebugPolicyErrorf("node debug namespace %s changed during pod authorization", namespace)
+	}
+	if !namespaceAllowedForDebugPod(namespace, freshTargetNamespace.Labels, template.NamespaceConstraints) {
+		return nil, kubectlDebugPolicyErrorf("namespace %s is no longer allowed for node debug", namespace)
+	}
 
-	// This must be the last slow operation before the privileged target create.
-	live, err := h.liveSessionForMutation(ctx, ds, user)
+	// Validate all target configuration and policy inputs first. The uncached
+	// session fence below is then the last slow operation before the create.
+	if err := h.fencePrivilegedOperationClusterConfig(ctx, configuredCluster); err != nil {
+		return nil, err
+	}
+	live, err = h.liveSessionForMutation(ctx, ds, user)
 	if err != nil {
 		return nil, err
 	}
 	ds = live
 
-	// Create the pod using Create (not SSA) because each debug pod must be unique
+	// Create the pod using Create (not SSA). The explicit NodeName binds this
+	// mutation to the re-read node identity; target admission remains authoritative.
 	if err := targetClient.Create(ctx, debugPod); err != nil {
 		return nil, fmt.Errorf("failed to create node debug pod: %w", err)
 	}
@@ -1132,6 +1238,21 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	}
 
 	return debugPod, nil
+}
+
+func namespaceAllowedForDebugPod(namespace string, labels map[string]string, constraints *breakglassv1alpha1.NamespaceConstraints) bool {
+	if constraints == nil {
+		return true
+	}
+	if constraints.AllowedNamespaces.IsEmpty() {
+		if namespace != constraints.DefaultNamespace {
+			return false
+		}
+	} else if !utils.NewNamespaceMatcher(constraints.AllowedNamespaces).MatchesWithLabels(namespace, labels) {
+		return false
+	}
+	return constraints.DeniedNamespaces.IsEmpty() ||
+		!utils.NewNamespaceMatcher(constraints.DeniedNamespaces).MatchesWithLabels(namespace, labels)
 }
 
 // CleanupKubectlDebugResources cleans up kubectl-debug resources
