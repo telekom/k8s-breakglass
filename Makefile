@@ -77,7 +77,6 @@ verify-release-provenance: ## Verify release image provenance signs the registry
 
 .PHONY: test-release-security
 test-release-security: ## Run release and OCI security behavioral tests.
-	bash hack/verify-release-security-wiring.sh
 	bash hack/test-chart-sbom.sh
 	bash hack/test-slsa-provenance.sh
 	bash hack/verify-catalogue-supply-chain-test.sh

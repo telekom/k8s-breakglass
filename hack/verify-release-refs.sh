@@ -41,7 +41,7 @@ EOF
 chmod 700 "${test_dir}/bin/docker"
 
 PATH="${test_dir}/bin:${PATH}" "${script_dir}/resolve-release-refs.sh" \
-  "${test_dir}/values.yaml" "${test_dir}/refs"
+  "${test_dir}/values.yaml" "${test_dir}/refs" v0.1.0
 [ "$(find "${test_dir}/refs" -name '*.ref' | wc -l | tr -d ' ')" -eq 5 ]
 while IFS= read -r ref; do
   IFS='|' read -r name repository digest sbom provenance signature <"${ref}"
@@ -58,7 +58,7 @@ printf 'Name: %s\nDigest: not-a-digest\n' "$4"
 EOF
 chmod 700 "${test_dir}/bin/docker"
 if PATH="${test_dir}/bin:${PATH}" "${script_dir}/resolve-release-refs.sh" \
-  "${test_dir}/values.yaml" "${test_dir}/refs"; then
+  "${test_dir}/values.yaml" "${test_dir}/refs" v0.1.0; then
   echo "malformed registry digest was accepted" >&2
   exit 1
 fi
@@ -66,7 +66,7 @@ fi
 cp "${test_dir}/values.yaml" "${test_dir}/wrong-path-values.yaml"
 ruby -pi -e 'gsub("ghcr.io/telekom/k8s-breakglass/utils/workload-debug", "ghcr.io/telekom/k8s-breakglass/workload-debug")' "${test_dir}/wrong-path-values.yaml"
 if PATH="${test_dir}/bin:${PATH}" "${script_dir}/resolve-release-refs.sh" \
-  "${test_dir}/wrong-path-values.yaml" "${test_dir}/refs" >/dev/null 2>&1; then
+  "${test_dir}/wrong-path-values.yaml" "${test_dir}/refs" v0.1.0 >/dev/null 2>&1; then
   echo "legacy sibling utility repository was accepted" >&2
   exit 1
 fi

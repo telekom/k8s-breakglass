@@ -1870,6 +1870,37 @@ spec:
 	assert.Nil(t, job.Spec.Suspend)
 }
 
+func TestBuildWorkload_JobPreservesSupportedOnFailureRestartPolicy(t *testing.T) {
+	controller := newBuildWorkloadController()
+	ds := newBuildWorkloadSession("on-failure")
+	template := &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+		WorkloadType: breakglassv1alpha1.DebugWorkloadJob,
+		Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+			DefaultDuration: "15m",
+			MaxDuration:     "30m",
+		},
+		PodTemplateString: `apiVersion: batch/v1
+kind: Job
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: debug
+          image: busybox:1.36
+          command: ["/bin/true"]
+`,
+	}}
+
+	workload, _, err := controller.buildWorkload(ds, template, nil, nil, "target-ns")
+	require.NoError(t, err)
+	job, ok := workload.(*batchv1.Job)
+	require.True(t, ok)
+	assert.Equal(t, corev1.RestartPolicyOnFailure, job.Spec.Template.Spec.RestartPolicy)
+	require.NotNil(t, job.Spec.BackoffLimit)
+	assert.Zero(t, *job.Spec.BackoffLimit)
+}
+
 func TestBuildWorkload_BareJobUsesBindingEffectiveDeadlineAndImmutableSelector(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("bare-job")
@@ -2392,7 +2423,12 @@ func TestValidateRestrictedCataloguePodSpec_DumpInputRequiresReadOnlyMount(t *te
 	readOnlyPod := base(true)
 	notReadOnlyPod := base(false)
 	require.NoError(t, validateRestrictedCataloguePodSpec(&readOnlyPod, "dump-access"))
-	require.ErrorContains(t, validateRestrictedCataloguePodSpec(&notReadOnlyPod, "dump-access"), "disallowed source")
+	require.ErrorContains(t, validateRestrictedCataloguePodSpec(&notReadOnlyPod, "dump-access"), "exactly one")
+	disallowedSourcePod := base(true)
+	disallowedSourcePod.Volumes = append(disallowedSourcePod.Volumes, corev1.Volume{
+		Name: "secret", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "sensitive"}},
+	})
+	require.ErrorContains(t, validateRestrictedCataloguePodSpec(&disallowedSourcePod, "dump-access"), "disallowed source")
 	duplicateMountPod := base(true)
 	duplicateMountPod.Containers[0].VolumeMounts = append(duplicateMountPod.Containers[0].VolumeMounts,
 		corev1.VolumeMount{Name: "input", MountPath: "/alternate-input", ReadOnly: true})

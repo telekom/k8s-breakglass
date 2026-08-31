@@ -1893,4 +1893,18 @@ func TestDebugContainerOverrideFrom(t *testing.T) {
 		require.NotNil(t, result.SecurityContext)
 		assert.Len(t, result.Env, 1)
 	})
+
+	t.Run("preserves nil versus explicitly empty command and args", func(t *testing.T) {
+		nilResult := DebugContainerOverrideFrom(&breakglassv1alpha1.DebugContainerOverride{Name: "nil"})
+		emptyResult := DebugContainerOverrideFrom(&breakglassv1alpha1.DebugContainerOverride{
+			Name: "empty", Command: []string{}, Args: []string{},
+		})
+
+		assert.Nil(t, nilResult.Command)
+		assert.Nil(t, nilResult.Args)
+		assert.NotNil(t, emptyResult.Command)
+		assert.NotNil(t, emptyResult.Args)
+		assert.Empty(t, emptyResult.Command)
+		assert.Empty(t, emptyResult.Args)
+	})
 }

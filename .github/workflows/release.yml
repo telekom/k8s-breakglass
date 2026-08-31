@@ -84,7 +84,8 @@ jobs:
           rm -rf "${RUNNER_TEMP}/release-refs"
           hack/resolve-release-refs.sh \
             charts/debug-session-catalogue/values.yaml \
-            "${RUNNER_TEMP}/release-refs"
+            "${RUNNER_TEMP}/release-refs" \
+            "${{ github.ref_name }}"
       - name: Upload immutable utility references
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
