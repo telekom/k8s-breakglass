@@ -180,6 +180,10 @@ when "all"
   dump_mounts = value_at(pod_by_profile.fetch("dump-access"), "spec", "template", "spec", "containers").first.fetch("volumeMounts")
   dump_input = dump_mounts.find { |mount| mount["mountPath"] == "/input" }
   expect(dump_input && dump_input["readOnly"].is_a?(TrueClass), "dump input must be read-only")
+  dump_output_mounts = dump_mounts.select { |mount| mount["mountPath"] == "/output" }
+  expect(dump_output_mounts == [{"name" => "output", "mountPath" => "/output"}], "dump output must have exactly one writable mount backed by the output volume")
+  dump_output = value_at(pod_by_profile.fetch("dump-access"), "spec", "template", "spec", "volumes").find { |volume| volume["name"] == "output" }
+  expect(dump_output && dump_output.dig("emptyDir", "sizeLimit") == "1Gi", "dump output volume must remain size-limited")
 when "digest"
   expect(pods.length == 1 && sessions.length == 1, "digest fixture must render one paired profile")
   image = value_at(pods.first, "spec", "template", "spec", "containers").first["image"]

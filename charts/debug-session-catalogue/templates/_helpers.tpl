@@ -110,6 +110,9 @@ securityContext:
 {{- $dumpInputMounts := 0 -}}
 {{- $dumpInputSource := false -}}
 {{- $dumpOutputBounded := false -}}
+{{- $dumpOutputMounts := 0 -}}
+{{- $dumpOutputWritableMounts := 0 -}}
+{{- $dumpOutputVolumes := 0 -}}
 {{- with $profile.pod }}
 {{- range $mount := (default (list) .volumeMounts) }}
 {{- if and $dumpAccess (eq $mount.name "input") }}
@@ -117,10 +120,15 @@ securityContext:
 {{- if or (ne (default "" $mount.mountPath) "/input") (not (default false $mount.readOnly)) }}{{ fail (printf "profiles[%s] dump-access input volume mounts must have exactly one read-only mount at /input" $profile.name) }}{{ end }}
 {{- $dumpInputReadOnly = true }}
 {{- end }}
+{{- if and $dumpAccess (eq (default "" $mount.mountPath) "/output") }}
+{{- $dumpOutputMounts = add $dumpOutputMounts 1 -}}
+{{- if and (eq (default "" $mount.name) "output") (not (default false $mount.readOnly)) }}{{ $dumpOutputWritableMounts = add $dumpOutputWritableMounts 1 }}{{ end }}
+{{- end }}
 {{- end }}
 {{- range $volume := (default (list) .volumes) }}
 {{- if and $dumpAccess (eq $volume.name "input") (or (hasKey $volume "hostPath") (hasKey $volume "persistentVolumeClaim") (hasKey $volume "configMap")) }}{{ $dumpInputSource = true }}{{ end }}
 {{- if and $dumpAccess (eq $volume.name "output") (hasKey $volume "emptyDir") $volume.emptyDir.sizeLimit }}{{ $dumpOutputBounded = true }}{{ end }}
+{{- if and $dumpAccess (eq $volume.name "output") }}{{ $dumpOutputVolumes = add $dumpOutputVolumes 1 }}{{ end }}
 {{- if not $elevatedNode }}
 {{- $approvedDumpSource := and $dumpAccess (eq $volume.name "input") $dumpInputReadOnly (or (hasKey $volume "hostPath") (hasKey $volume "persistentVolumeClaim")) }}
 {{- $safe := or (hasKey $volume "emptyDir") (hasKey $volume "configMap") (hasKey $volume "downwardAPI") $approvedDumpSource }}
@@ -134,10 +142,16 @@ securityContext:
 {{- end }}
 {{- if and $serviceAccountToken (not $elevatedNode) }}{{ fail (printf "profiles[%s] projected serviceAccountToken volume overrides require explicit elevated: true and preset elevated-node" $profile.name) }}{{ end }}
 {{- end }}
+{{- range $env := (default (list) .env) }}
+{{- if and $dumpAccess (eq (default "" $env.name) "DUMP_OUTPUT_DIR") }}{{ fail (printf "profiles[%s] dump-access may not override DUMP_OUTPUT_DIR; output is fixed to the bounded /output volume" $profile.name) }}{{ end }}
+{{- end }}
 {{- if and $profile.enabled $dumpAccess (not (regexMatch "^/input/[A-Za-z0-9][A-Za-z0-9._-]{0,254}$" (default "" $profile.sourcePath))) }}{{ fail (printf "profiles[%s].sourcePath must be a path to one input file" $profile.name) }}{{ end }}
 {{- if and $profile.enabled $dumpAccess (ne $dumpInputMounts 1) }}{{ fail (printf "profiles[%s] enabled dump-access requires exactly one read-only input volume mount at /input" $profile.name) }}{{ end }}
 {{- if and $profile.enabled $dumpAccess (not $dumpInputSource) }}{{ fail (printf "profiles[%s] enabled dump-access requires an explicit input source volume" $profile.name) }}{{ end }}
 {{- if and $profile.enabled $dumpAccess (not $dumpOutputBounded) }}{{ fail (printf "profiles[%s] enabled dump-access requires a size-limited output emptyDir" $profile.name) }}{{ end }}
+{{- if and $profile.enabled $dumpAccess (ne $dumpOutputMounts 1) }}{{ fail (printf "profiles[%s] enabled dump-access requires exactly one mount at /output" $profile.name) }}{{ end }}
+{{- if and $profile.enabled $dumpAccess (ne $dumpOutputWritableMounts 1) }}{{ fail (printf "profiles[%s] enabled dump-access requires exactly one writable output volume mount at /output" $profile.name) }}{{ end }}
+{{- if and $profile.enabled $dumpAccess (ne $dumpOutputVolumes 1) }}{{ fail (printf "profiles[%s] enabled dump-access requires exactly one output volume" $profile.name) }}{{ end }}
 {{- end }}
 {{- end -}}
 {{- define "debug-session-catalogue.serviceAccount" -}}

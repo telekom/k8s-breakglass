@@ -46,8 +46,9 @@ tool, not a bounded repair API: commands such as `ip route`, `ip link`, and
 repair workflow for allowlisted repairs.
 
 The repository's `config/samples/debug-pod-template-network.yaml` shows the
-same image in a `DebugPodTemplate`; replace its version tag with the reviewed
-final manifest digest before applying it to a cluster.
+same image in a quarantined `DebugPodTemplate`. Its all-zero digest is a
+non-runnable placeholder, not a version tag; replace it with the reviewed
+final manifest digest before applying the object to a cluster.
 
 ## Reproducible evidence
 

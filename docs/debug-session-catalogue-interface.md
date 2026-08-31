@@ -107,9 +107,11 @@ release digests before enabling access; release packaging injects validated
 values from `release-refs/*.ref`. Mutable tags are not release inputs. The
 storage and dump mounts match the
 `/scratch`, `/reports`, `/input`, and `/output` paths consumed by their images.
-The elevated network, dump, repair, and recovery profiles are disabled by
-default and must not be treated as shipping node tooling until explicitly
-approved.
+The elevated network, repair, and recovery profiles are disabled by default
+and must not be treated as shipping node tooling until explicitly approved.
+The restricted `dump-access` profile is also disabled by default, but does not
+require elevation; it remains a non-public placeholder until its image and
+reviewed source-volume contract are approved.
 
 Profile items are concise: shared authorization, lifecycle, audit, image
 resolution, workload wiring, pod hardening, and resource defaults are named
