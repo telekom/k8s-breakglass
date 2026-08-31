@@ -74,6 +74,7 @@ verify-release-provenance: ## Verify release image provenance signs the registry
 	bash hack/verify-release-provenance.sh
 	bash hack/verify-release-values.sh
 	bash hack/test-chart-sbom.sh
+	bash hack/verify-catalogue-supply-chain-test.sh
 
 .PHONY: verify-generated
 verify-generated: generate manifests ## Verify generated API and manifest artifacts are checked in.
