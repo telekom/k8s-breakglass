@@ -756,6 +756,32 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 		obj.SetGroupVersionKind(gvk)
 		obj.SetName(status.ResourceName)
 		obj.SetNamespace(status.Namespace)
+		// Verify ownership before deleting. Legacy resources are accepted only
+		// when both historical identity markers match; current resources are
+		// fenced by their session identity. This prevents a replacement or
+		// forged marker from being removed by status-based cleanup.
+		existing := &unstructured.Unstructured{}
+		existing.SetGroupVersionKind(gvk)
+		existing.SetName(status.ResourceName)
+		existing.SetNamespace(status.Namespace)
+		if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(existing), existing); err != nil {
+			if apierrors.IsNotFound(err) {
+				status.Deleted = true
+				now := time.Now().UTC().Format(time.RFC3339)
+				status.DeletedAt = &now
+				continue
+			}
+			status.Error = fmt.Sprintf("get failed: %v", err)
+			remainingStatuses = append(remainingStatuses, *status)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("get pod template resource %s %s/%s: %w", status.Kind, status.Namespace, status.ResourceName, err))
+			continue
+		}
+		if !resourceMayBeDeletedByDebugSession(existing, ds) {
+			status.Error = "ownership precondition failed: resource was replaced or belongs to another session"
+			remainingStatuses = append(remainingStatuses, *status)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("refusing to delete pod template resource %s %s/%s: ownership precondition failed", status.Kind, status.Namespace, status.ResourceName))
+			continue
+		}
 		deleteOptions := trackedResourceDeleteOptions(ds, status.APIVersion, status.Kind, status.ResourceName, status.Namespace)
 
 		if err := targetClient.Delete(ctx, obj, deleteOptions...); err != nil {
