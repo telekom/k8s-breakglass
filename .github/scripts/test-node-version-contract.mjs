@@ -9,175 +9,86 @@
  */
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(scriptDirectory, "../..");
 const frontendDirectory = path.join(repositoryRoot, "frontend");
+const requireFromFrontend = createRequire(path.join(frontendDirectory, "package.json"));
+const semver = requireFromFrontend("semver");
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
 function parseVersion(value, label) {
-  const match = String(value).match(/^v?(\d+)\.(\d+)\.(\d+)$/);
-  if (!match) {
+  const text = String(value);
+  if (!/^v?\d+\.\d+\.\d+$/.test(text)) {
     throw new Error(`${label} must be an exact major.minor.patch version, got ${value}`);
   }
-  return match.slice(1).map(Number);
-}
-
-function parseRangeVersion(value, label) {
-  const match = String(value).match(/^v?(\d+)(?:\.(\d+|x|X|\*))?(?:\.(\d+|x|X|\*))?$/);
-  if (!match) {
-    throw new Error(`${label} is not a supported semver version, got ${value}`);
+  const parsed = semver.parse(text);
+  if (!parsed || parsed.prerelease.length || parsed.build.length) {
+    throw new Error(`${label} must be an exact stable semver version, got ${value}`);
   }
-  const parts = match.slice(1);
-  const wildcardComponent =
-    parts[1] !== undefined && /^[xX*]$/.test(parts[1]) ? 0 : parts[2] !== undefined && /^[xX*]$/.test(parts[2]) ? 1 : null;
-  const precision = parts[1] === undefined ? 1 : parts[2] === undefined ? 2 : 3;
-  return {
-    version: parts.map((part) => (part === undefined || /^[xX*]$/.test(part) ? 0 : Number(part))),
-    precision,
-    wildcard: parts.slice(1).some((part) => part !== undefined && /^[xX*]$/.test(part)),
-    wildcardComponent,
-  };
-}
-
-function compareVersions(left, right) {
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index] !== right[index]) {
-      return left[index] - right[index];
-    }
-  }
-  return 0;
+  return [parsed.major, parsed.minor, parsed.patch];
 }
 
 function versionText(version) {
   return version.join(".");
 }
 
-function incrementVersion(version, component) {
-  const next = [...version];
-  next[component] += 1;
-  for (let index = component + 1; index < next.length; index += 1) {
-    next[index] = 0;
-  }
-  return next;
-}
-
-function incrementPatch(version) {
-  return incrementVersion(version, 2);
-}
-
-function updateLower(current, version, inclusive) {
-  if (!current) {
-    return { version, inclusive };
-  }
-  const comparison = compareVersions(version, current.version);
-  return comparison > 0 || (comparison === 0 && !inclusive && current.inclusive)
-    ? { version, inclusive }
-    : current;
-}
-
-function updateUpper(current, version, inclusive) {
-  if (!current) {
-    return { version, inclusive };
-  }
-  const comparison = compareVersions(version, current.version);
-  return comparison < 0 || (comparison === 0 && !inclusive && current.inclusive)
-    ? { version, inclusive }
-    : current;
-}
-
 function parseRange(engine) {
-  const normalized = String(engine)
-    .replace(/([<>]=?|[~^=])\s+/g, "$1")
-    .trim();
-  if (!normalized) {
+  const text = String(engine).trim();
+  if (!text) {
     return [];
   }
-
-  return normalized.split(/\s*\|\|\s*/).map((alternative) => {
-    const tokens = alternative.trim().split(/\s+/).filter(Boolean);
-    let lower;
-    let upper;
-    for (const token of tokens) {
-      const match = token.match(/^(\^|~|>=|<=|>|<|=)?(v?\d+(?:\.(?:\d+|x|X|\*))?(?:\.(?:\d+|x|X|\*))?)$/);
-      if (!match) {
-        throw new Error(`unsupported Node.js engine range token ${token} in ${engine}`);
-      }
-      const operator = match[1] ?? "";
-      const parsed = parseRangeVersion(match[2], `dependency engine ${engine}`);
-      const version = parsed.version;
-      if (operator === "^") {
-        lower = updateLower(lower, version, true);
-        const upperComponent = version[0] > 0 ? 0 : version[1] > 0 ? 1 : 2;
-        upper = updateUpper(upper, incrementVersion(version, upperComponent), false);
-      } else if (operator === "~") {
-        lower = updateLower(lower, version, true);
-        upper = updateUpper(upper, incrementVersion(version, parsed.precision === 1 ? 0 : 1), false);
-      } else if (operator === ">=") {
-        lower = updateLower(lower, version, true);
-      } else if (operator === ">") {
-        lower = updateLower(lower, version, false);
-      } else if (operator === "<=") {
-        upper = updateUpper(upper, version, true);
-      } else if (operator === "<") {
-        upper = updateUpper(upper, version, false);
-      } else if (operator === "=") {
-        lower = updateLower(lower, version, true);
-        upper = updateUpper(upper, version, true);
-      } else if (parsed.precision === 1 || parsed.wildcard) {
-        lower = updateLower(lower, version, true);
-        upper = updateUpper(
-          upper,
-          incrementVersion(version, parsed.wildcardComponent === null ? 0 : parsed.wildcardComponent),
-          false,
-        );
-      } else {
-        lower = updateLower(lower, version, true);
-        upper = updateUpper(upper, version, true);
-      }
-    }
-    return { lower, upper };
-  });
+  try {
+    return new semver.Range(text).set;
+  } catch (error) {
+    throw new Error(`unsupported Node.js engine range ${engine}: ${error.message}`);
+  }
 }
 
-function includesVersionFromBounds(version, { lower, upper }) {
-  const comparisonToLower = lower ? compareVersions(version, lower.version) : 1;
-  const comparisonToUpper = upper ? compareVersions(version, upper.version) : -1;
-  return (
-    (!lower || comparisonToLower > 0 || (comparisonToLower === 0 && lower.inclusive)) &&
-    (!upper || comparisonToUpper < 0 || (comparisonToUpper === 0 && upper.inclusive))
-  );
+function compareVersions(left, right) {
+  return semver.compare(versionText(left), versionText(right));
+}
+
+function includesVersionInComparatorSet(version, comparatorSet) {
+  const parsed = new semver.SemVer(versionText(version));
+  return comparatorSet.every((comparator) => comparator.test(parsed));
 }
 
 function includesVersion(engine, version) {
-  return parseRange(engine).some((bounds) => includesVersionFromBounds(version, bounds));
+  return parseRange(engine).some((comparatorSet) => includesVersionInComparatorSet(version, comparatorSet));
 }
 
 function minimumVersionInMajor(engine, major) {
   const candidateFloor = [major, 0, 0];
   const candidates = [];
-  for (const bounds of parseRange(engine)) {
-    let candidate = candidateFloor;
-    if (bounds.lower) {
-      if (bounds.lower.version[0] > major) {
-        continue;
-      }
-      if (bounds.lower.version[0] === major) {
-        candidate = bounds.lower.inclusive ? bounds.lower.version : incrementPatch(bounds.lower.version);
-      }
+  for (const comparatorSet of parseRange(engine)) {
+    const minimum = semver.minVersion(comparatorSet.map((comparator) => comparator.value).join(" "));
+    if (!minimum || minimum.major > major) {
+      continue;
     }
-    if (candidate[0] === major && includesVersionFromBounds(candidate, bounds)) {
+    const candidate = minimum.major === major ? [minimum.major, minimum.minor, minimum.patch] : candidateFloor;
+    if (includesVersionInComparatorSet(candidate, comparatorSet)) {
       candidates.push(candidate);
     }
   }
   return candidates.reduce(
     (minimum, candidate) => (!minimum || compareVersions(candidate, minimum) < 0 ? candidate : minimum),
     null,
+  );
+}
+
+function hasUnboundedBranchAtMajor(engine, major) {
+  const version = [major, 0, 0];
+  return parseRange(engine).some(
+    (comparatorSet) =>
+      !comparatorSet.some((comparator) => comparator.operator === "<" || comparator.operator === "<=") &&
+      includesVersionInComparatorSet(version, comparatorSet),
   );
 }
 
@@ -206,7 +117,7 @@ function main() {
   const lockfileEngine = lockfile.packages?.[""]?.engines?.node;
   const packageFloor = minimumVersionInMajor(packageEngine ?? "", 24);
   const packageNode25Floor = minimumVersionInMajor(packageEngine ?? "", 25);
-  if (!packageFloor || packageNode25Floor || !includesVersion(packageEngine, [26, 0, 0])) {
+  if (!packageFloor || packageNode25Floor || !hasUnboundedBranchAtMajor(packageEngine ?? "", 26)) {
     throw new Error(
       `frontend/package.json must support Node 24 from its dependency floor, exclude Node 25, and support Node 26+, got ${packageEngine}`,
     );
@@ -216,6 +127,7 @@ function main() {
       `frontend/package-lock.json root engine ${lockfileEngine} does not match package.json ${packageEngine}`,
     );
   }
+  const projectNodeVersions = [packageFloor, [24, 99, 99], [26, 0, 0], [27, 0, 0], [100, 0, 0]];
 
   const dependencyRanges = [];
   const node24DependencyRanges = [];
@@ -245,7 +157,7 @@ function main() {
   }
   for (const { packageName, engine } of dependencyRanges) {
     assert(
-      includesVersion(engine, packageFloor) && includesVersion(engine, [24, 99, 99]) && includesVersion(engine, [26, 0, 0]),
+      projectNodeVersions.every((version) => includesVersion(engine, version)) && hasUnboundedBranchAtMajor(engine, 26),
       `${packageName} engine ${engine} does not support the project Node range ${packageEngine}`,
     );
   }
@@ -278,7 +190,14 @@ function main() {
   );
 }
 
-export { compareVersions, includesVersion, minimumVersionInMajor, parseRange, parseVersion };
+export {
+  compareVersions,
+  hasUnboundedBranchAtMajor,
+  includesVersion,
+  minimumVersionInMajor,
+  parseRange,
+  parseVersion,
+};
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
