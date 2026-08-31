@@ -17,30 +17,29 @@ kubeconfig="$(mktemp "${TMPDIR:-/tmp}/node-maintenance-host-kubeconfig.XXXXXX")"
 image_archive_dir="$(mktemp -d "${TMPDIR:-/tmp}/node-maintenance-host-image.XXXXXX")"
 image_archive="${image_archive_dir}/image.tar"
 load_log="${image_archive_dir}/kind-load.log"
+KIND_BIN=${KIND_BIN:-kind}
+DOCKER_BIN=${DOCKER_BIN:-docker}
+export KIND_CLUSTER_NAME="$cluster" KIND_NODE_IMAGE="$kind_node_image" KUBECONFIG_FILE="$kubeconfig" KIND_CLUSTER_CREATED=false KIND_CLUSTER_OWNER_IDS=''
+# shellcheck source=../../../hack/kind-ownership.sh
+# shellcheck disable=SC1091
+script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
+# shellcheck disable=SC1091
+. "${script_dir}/../../../hack/kind-ownership.sh"
 cluster_create_attempted=false
-cluster_owned=false
 
 fail() { printf 'node-maintenance host-network proof: %s\n' "$*" >&2; exit 1; }
 cleanup() {
 	rc=$?
 	set +e
 	if [[ "${cluster_create_attempted}" == true ]]; then
-		if [[ "${rc}" != 0 ]]; then
+		if [[ "${rc}" != 0 && "${KIND_CLUSTER_CREATED}" == true ]]; then
 			printf 'Failure-state Kind pods:\n'
 			KUBECONFIG="${kubeconfig}" kubectl get pods -A -o wide 2>&1 || true
 			KUBECONFIG="${kubeconfig}" kubectl describe pods -n "${namespace}" 2>&1 || true
 			KUBECONFIG="${kubeconfig}" kubectl get events -A --sort-by=.lastTimestamp 2>&1 || true
 		fi
-		# A failed create does not prove ownership: a same-name foreign cluster may
-		# have won the discovery/create race. Leak an unproven partial cluster rather
-		# than deleting foreign state.
-		if [[ "${cluster_owned}" == true ]]; then
-			KUBECONFIG="${kubeconfig}" kind delete cluster --name "${cluster}" >/dev/null 2>&1 || rc=1
-			if clusters="$(kind get clusters 2>/dev/null)"; then
-				if grep -Fx -- "${cluster}" <<<"${clusters}" >/dev/null; then rc=1; fi
-			else
-				rc=1
-			fi
+		if [[ "${KIND_CLUSTER_CREATED}" == true ]]; then
+			kind_cleanup_owned_cluster || rc=1
 		fi
 	fi
 	rm -f "${kubeconfig}"
@@ -57,39 +56,37 @@ on_error() {
 }
 trap on_error ERR
 
-for command in docker kind kubectl jq; do command -v "${command}" >/dev/null 2>&1 || fail "${command} is required"; done
+for command in "${DOCKER_BIN}" "${KIND_BIN}" kubectl jq; do command -v "${command}" >/dev/null 2>&1 || fail "${command} is required"; done
 [[ "${image}" != *@sha256:* ]] || fail 'NODE_MAINTENANCE_TEST_IMAGE must be a local tag, not a digest reference'
-docker image inspect "${image}" >/dev/null 2>&1 || fail "image is unavailable: ${image}"
+"${DOCKER_BIN}" image inspect "${image}" >/dev/null 2>&1 || fail "image is unavailable: ${image}"
 [[ "$(uname -s)" == Linux ]] || fail "host-network proof requires a Linux runner"
-docker_version="$(docker version --format '{{.Server.Version}}' 2>/dev/null)" || fail 'Docker server version is unavailable'
+docker_version="$(${DOCKER_BIN} version --format '{{.Server.Version}}' 2>/dev/null)" || fail 'Docker server version is unavailable'
 case "${docker_version}" in
 	28.*|29.*|[3-9][0-9].*) ;;
 	*) fail "Docker >= 28 is required for platform-specific image save (found ${docker_version})" ;;
 esac
 printf 'Docker server: %s\n' "${docker_version}"
-[[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${image}")" == "${runner_platform}" ]] || fail "image must be built for ${runner_platform}"
-clusters="$(kind get clusters 2>/dev/null)" || fail 'could not list Kind clusters'
+[[ "$(${DOCKER_BIN} image inspect --format '{{.Os}}/{{.Architecture}}' "${image}")" == "${runner_platform}" ]] || fail "image must be built for ${runner_platform}"
+clusters="$(${KIND_BIN} get clusters 2>/dev/null)" || fail 'could not list Kind clusters'
 grep -Fx -- "${cluster}" <<<"${clusters}" >/dev/null && fail "refusing to reuse cluster ${cluster}"
 cluster_create_attempted=true
-if kind create cluster --name "${cluster}" --image "${kind_node_image}" --kubeconfig "${kubeconfig}" --wait 180s >/dev/null; then
-	cluster_owned=true
-else
+if ! kind_create_owned_cluster >/dev/null; then
 	fail 'could not create disposable Kind cluster'
 fi
 printf 'Saving exact-platform node-maintenance image archive (%s)\n' "${runner_platform}"
-docker save --platform "${runner_platform}" --output "${image_archive}" "${image}" || fail 'could not save exact-platform node-maintenance image'
+"${DOCKER_BIN}" save --platform "${runner_platform}" --output "${image_archive}" "${image}" || fail 'could not save exact-platform node-maintenance image'
 [[ -s "${image_archive}" ]] || fail "Docker produced an empty image archive: ${image_archive}"
 printf 'Exact-platform archive size: %s bytes\n' "$(wc -c <"${image_archive}")"
 tar -tf "${image_archive}" | sed -n '1,8p' >&2 || fail 'Docker produced an unreadable image archive'
 printf 'Loading exact-platform node-maintenance image archive into Kind\n'
 set +e
-timeout --foreground 5m kind load image-archive "${image_archive}" --name "${cluster}" >"${load_log}" 2>&1
+timeout --foreground 5m "${KIND_BIN}" load image-archive "${image_archive}" --name "${cluster}" >"${load_log}" 2>&1
 load_status=$?
 set -e
 printf 'Kind archive load exited with status %s\n' "${load_status}"
 if [[ "${load_status}" != 0 ]]; then
 	cat "${load_log}" >&2 || true
-	kind export logs --name "${cluster}" "${TMPDIR:-/tmp}/node-maintenance-kind-logs-${run_id}" >/dev/null 2>&1 || true
+	"${KIND_BIN}" export logs --name "${cluster}" "${TMPDIR:-/tmp}/node-maintenance-kind-logs-${run_id}" >/dev/null 2>&1 || true
 	if [[ "${load_status}" == 124 ]]; then
 		fail 'kind image archive load timed out after 5m'
 	elif (( load_status >= 128 )); then
@@ -114,7 +111,7 @@ case "${image}" in
     ;;
   *) containerd_image="docker.io/library/${image}" ;;
 esac
-containerd_images="$(docker exec "${cluster}-control-plane" ctr -n k8s.io images ls --quiet)" || fail 'could not inspect Kind containerd images'
+containerd_images="$(${DOCKER_BIN} exec "${cluster}-control-plane" ctr -n k8s.io images ls --quiet)" || fail 'could not inspect Kind containerd images'
 if ! grep -Fx -- "${containerd_image}" <<<"${containerd_images}" >/dev/null; then
 	printf 'Kind containerd images:\n%s\n' "${containerd_images}" >&2
 	fail "Kind node does not contain the exact node-maintenance image (${containerd_image})"

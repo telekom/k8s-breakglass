@@ -10,13 +10,14 @@ if grep -E 'docker (pull|tag) alpine:3\.24([[:space:]]|$)' "${script}" >/dev/nul
 	printf '%s\n' 'collision proof uses an unpinned Alpine reference' >&2
 	exit 1
 fi
-grep -F 'cluster_owned=false' "${script}" >/dev/null
+grep -F 'KIND_CLUSTER_CREATED=false' "${script}" >/dev/null
 grep -F 'image_owned=false' "${script}" >/dev/null
 if grep -F 'partial_cluster_is_owned' "${script}" >/dev/null; then
 	printf '%s\n' 'collision proof trusts unproven partial cluster ownership' >&2
 	exit 1
 fi
-grep -F "if [ \"\$cluster_owned\" = true ]; then" "${script}" >/dev/null
+grep -F 'kind_cleanup_owned_cluster' "${script}" >/dev/null
+grep -F 'KIND_CLUSTER_OWNER_IDS=' "${script}" >/dev/null
 grep -F "if [ \"\$image_owned\" = true ]; then" "${script}" >/dev/null
 if grep -E "delete cluster --name \\\"\$cluster\\\"( |\$)" "${script}" | grep -v -- '--kubeconfig' >/dev/null; then
 	printf '%s\n' 'collision proof can delete a cluster without ownership kubeconfig' >&2

@@ -15,13 +15,22 @@ case "$cluster" in pod-capture-proof-[a-z0-9-]*) ;; *) requirement 'generated ow
 temp_parent=${RUNNER_TEMP:-/tmp}; work_dir=$(mktemp -d "${temp_parent%/}/network-debug-pod-capture-proof.XXXXXX"); kubeconfig=$work_dir/kubeconfig
 export KIND_BIN=kind DOCKER_BIN=docker KIND_CLUSTER_NAME="$cluster" KIND_NODE_IMAGE="$node_image" KUBECONFIG_FILE="$kubeconfig"
 export KIND_CLUSTER_CREATED=false KIND_CLUSTER_OWNER_IDS=''; namespace_created=false
+namespace_uid=; target_uid=; decoy_uid=
 # shellcheck source=kind-ownership.sh
-. "$(dirname -- "$0")/kind-ownership.sh"
+# shellcheck disable=SC1091
+script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
+# shellcheck disable=SC1091
+. "${script_dir}/kind-ownership.sh"
 cleanup() {
   status=$?; set +e
   if [ "$namespace_created" = true ] && [ -s "$kubeconfig" ]; then
-    KUBECONFIG="$kubeconfig" kubectl delete namespace "$namespace" --wait=true --timeout=90s >/dev/null 2>&1
-    KUBECONFIG="$kubeconfig" kubectl get namespace "$namespace" >/dev/null 2>&1 && status=1
+    current_namespace_uid=$(KUBECONFIG="$kubeconfig" kubectl get namespace "$namespace" -o jsonpath='{.metadata.uid}' 2>/dev/null) || current_namespace_uid=
+    if [ -n "$namespace_uid" ] && [ "$current_namespace_uid" = "$namespace_uid" ]; then
+      KUBECONFIG="$kubeconfig" kubectl delete namespace "$namespace" --wait=true --timeout=90s >/dev/null 2>&1 || status=1
+      KUBECONFIG="$kubeconfig" kubectl get namespace "$namespace" >/dev/null 2>&1 && status=1
+    elif [ -n "$current_namespace_uid" ]; then
+      status=1
+    fi
   fi
   kind_cleanup_owned_cluster >/dev/null 2>&1 || status=1
   case "$work_dir" in "${temp_parent%/}"/network-debug-pod-capture-proof.*) rm -rf -- "$work_dir" ;; *) status=1 ;; esac
@@ -33,6 +42,8 @@ if ! kind_create_owned_cluster; then
 fi
 kind load docker-image --name "$cluster" "$image"; export KUBECONFIG="$kubeconfig"
 kubectl create namespace "$namespace"; namespace_created=true
+namespace_uid=$(kubectl get namespace "$namespace" -o jsonpath='{.metadata.uid}')
+[ -n "$namespace_uid" ] || requirement 'Kubernetes returned an empty namespace UID'
 kubectl label namespace "$namespace" pod-security.kubernetes.io/enforce=privileged --overwrite
 cat <<EOF | kubectl -n "$namespace" apply -f -
 apiVersion: v1
@@ -56,7 +67,9 @@ spec:
 EOF
 kubectl -n "$namespace" wait pod/target pod/decoy --for=condition=Ready --timeout=90s
 target_uid=$(kubectl -n "$namespace" get pod target -o jsonpath='{.metadata.uid}')
+decoy_uid=$(kubectl -n "$namespace" get pod decoy -o jsonpath='{.metadata.uid}')
 case "$target_uid" in ????????-????-????-????-????????????) ;; *) requirement 'Kubernetes did not return a canonical target Pod UID' ;; esac
+case "$decoy_uid" in ????????-????-????-????-????????????) ;; *) requirement 'Kubernetes did not return a canonical decoy Pod UID' ;; esac
 
 # The ephemeral container invokes the image-owned bounded wrapper. The
 # read-only checks below inspect its pcap and summary; tcpdump is never used
@@ -141,6 +154,10 @@ printf '%s\n' "$capture_log" | grep -E '^bytes [1-9][0-9]*$' >/dev/null || {
   printf '%s\n' "$capture_log" >&2
   requirement 'ephemeral capture produced no bounded evidence'
 }
+current_target_uid=$(kubectl -n "$namespace" get pod target -o jsonpath='{.metadata.uid}') || requirement 'target Pod disappeared before UID-fenced cleanup'
+current_decoy_uid=$(kubectl -n "$namespace" get pod decoy -o jsonpath='{.metadata.uid}') || requirement 'decoy Pod disappeared before UID-fenced cleanup'
+[ "$current_target_uid" = "$target_uid" ] || requirement 'target Pod was replaced before cleanup'
+[ "$current_decoy_uid" = "$decoy_uid" ] || requirement 'decoy Pod was replaced before cleanup'
 kubectl -n "$namespace" delete pod target decoy --wait=true --timeout=90s >/dev/null
 if kubectl -n "$namespace" get pod target decoy >/dev/null 2>&1; then requirement 'selected-pod target or decoy survived exact cleanup'; fi
 printf 'selected-pod ephemeral capture behavior passed\ntarget_uid %s\n' "$target_uid"

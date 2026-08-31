@@ -115,15 +115,14 @@ deployment reference. A dispatch from another branch, or without the explicit
 input, is rejected. The weekly `nightly` channel has the same mutable-tag
 semantics.
 
-GHCR does not provide a compare-and-swap tag operation. Repository policy
-therefore makes this workflow the only writer for utility version tags, and its
-concurrency group serializes the same release tag. It checks again immediately
-before final assignment and verifies the tag-to-digest binding afterwards, but
-does not claim atomic protection from an out-of-band registry writer. Stable
-release tags are never intentionally overwritten; a competing writer remains a
-residual registry-level race that must be handled by repository permissions and
-the failed post-write verification. `nightly` and `rolling` are intentionally
-mutable and follow the same post-write verification.
+Stable tags use the GHCR registry API with `If-None-Match: *`, so assignment is
+create-only at the registry boundary. Any registry that does not honor that
+conditional request, returns an unsupported manifest media type, or cannot
+authenticate the request causes publication to fail before a stable tag is
+written. The helper never falls back to the overwrite-capable
+`imagetools create` path for stable tags. `nightly` and `rolling` are
+intentionally mutable and use the overwrite-capable path with post-write
+verification.
 
 ## Release Checklist
 
