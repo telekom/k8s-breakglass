@@ -130,7 +130,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		}
 
 		// Create impersonated client
-		targetClient, err = c.createImpersonatedClient(ctx, ds.Spec.Cluster, impConfig)
+		targetClient, err = c.createImpersonatedClientFromRESTConfig(ctx, baseRestCfg, ds.Spec.Cluster, impConfig)
 		if err != nil {
 			return fmt.Errorf("failed to create impersonated client: %w", err)
 		}

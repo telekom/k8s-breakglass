@@ -738,9 +738,25 @@ func (a *clusterClientAdapter) GetClientForPrivilegedOperation(ctx context.Conte
 	}
 	targetClient, err := ctrlclient.New(restCfg, ctrlclient.Options{})
 	if err != nil {
+		// GetRESTConfigForPrivilegedOperation registers the exact input snapshot
+		// before returning.  Client construction is part of the same operation;
+		// release that snapshot on this failure path so a failed request cannot
+		// retain an entry in privilegedInputVersions indefinitely.
+		a.ccProvider.ReleasePrivilegedOperationClusterConfig(configured)
 		return nil, nil, fmt.Errorf("create target cluster client: %w", err)
 	}
 	return targetClient, configured, nil
+}
+
+// ReleasePrivilegedOperationClusterConfig forwards operation cleanup to the
+// underlying provider.  Keeping this adapter method explicit ensures callers
+// using the debug ClientProviderInterface can release snapshots through the
+// optional lifecycle interface as well.
+func (a *clusterClientAdapter) ReleasePrivilegedOperationClusterConfig(configured *breakglassv1alpha1.ClusterConfig) {
+	if a == nil || a.ccProvider == nil {
+		return
+	}
+	a.ccProvider.ReleasePrivilegedOperationClusterConfig(configured)
 }
 
 func (a *clusterClientAdapter) ValidatePrivilegedOperationClusterConfig(ctx context.Context, configured *breakglassv1alpha1.ClusterConfig) error {

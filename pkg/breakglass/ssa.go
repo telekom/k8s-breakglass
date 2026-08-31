@@ -29,6 +29,16 @@ func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *brea
 	if err := c.Get(ctx, client.ObjectKeyFromObject(session), current); err != nil {
 		return fmt.Errorf("read DebugSession %s/%s before status apply: %w", session.Namespace, session.Name, err)
 	}
+	// The status supplied by the caller was computed from a particular object
+	// version.  Reading a newer object here must not turn a stale full-status
+	// snapshot into an authoritative replacement: doing so would erase status
+	// fields written by another controller between the caller's read and this
+	// apply.  Retain the optimistic resource-version precondition explicitly;
+	// the caller can re-read and recompute its complete status on conflict.
+	if session.ResourceVersion != "" && current.ResourceVersion != session.ResourceVersion {
+		return fmt.Errorf("apply DebugSession %s/%s status: %w", session.Namespace, session.Name,
+			apierrors.NewConflict(schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "debugsessions"}, session.Name, nil))
+	}
 	if isTerminalDebugSessionState(current.Status.State) && session.Status.State != current.Status.State {
 		return fmt.Errorf("apply DebugSession %s/%s status: terminal state %q cannot change to %q",
 			session.Namespace, session.Name, current.Status.State, session.Status.State)

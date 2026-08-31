@@ -9,7 +9,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -159,7 +158,7 @@ func TestGetRESTConfig_RewritesLoopbackHostAndCaches(t *testing.T) {
 	assert.Same(t, cfg, cfg2)
 }
 
-func TestGetRESTConfigForPrivilegedOperationCapturesExactLiveClusterConfig(t *testing.T) {
+func TestGetRESTConfigForPrivilegedOperationRejectsStaleClusterConfigCache(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, clientgoscheme.AddToScheme(scheme))
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
@@ -185,12 +184,9 @@ func TestGetRESTConfigForPrivilegedOperationCapturesExactLiveClusterConfig(t *te
 	provider := NewClientProvider(cachedClient, zaptest.NewLogger(t).Sugar()).WithLiveReader(liveReader)
 
 	_, snapshot, err := provider.GetRESTConfigForPrivilegedOperation(context.Background(), "default/privileged")
-	require.NoError(t, err)
-	require.NotNil(t, snapshot)
-	assert.Equal(t, types.UID("cluster-uid"), snapshot.UID)
-	assert.Equal(t, "2", snapshot.ResourceVersion)
-	assert.Equal(t, "uncached", snapshot.Labels["source"])
-	assert.Equal(t, spec, snapshot.Spec)
+	require.Error(t, err)
+	assert.Nil(t, snapshot)
+	assert.Contains(t, err.Error(), "cached ClusterConfig default/privileged is stale")
 }
 
 func TestValidatePrivilegedOperationClusterConfigRejectsCredentialSecretChange(t *testing.T) {

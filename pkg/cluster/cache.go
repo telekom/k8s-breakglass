@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -304,6 +305,10 @@ func (p *ClientProvider) ReleasePrivilegedOperationClusterConfig(configured *bre
 // deliberately used rather than object equality so Secret data and inherited
 // IdentityProvider changes cannot be hidden by an unchanged ClusterConfig.
 func (p *ClientProvider) capturePrivilegedInputVersions(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig) (map[string]string, error) {
+	return p.capturePrivilegedInputVersionsWithReader(ctx, cc, p.liveReaderOrClient())
+}
+
+func (p *ClientProvider) capturePrivilegedInputVersionsWithReader(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig, reader ctrlclient.Reader) (map[string]string, error) {
 	refs := make(map[string]ctrlclient.ObjectKey)
 	addSecret := func(ref *breakglassv1alpha1.SecretKeyReference) {
 		if ref != nil && ref.Name != "" {
@@ -324,7 +329,7 @@ func (p *ClientProvider) capturePrivilegedInputVersions(ctx context.Context, cc 
 	}
 	if ref := cc.Spec.OIDCFromIdentityProvider; ref != nil {
 		idp := &breakglassv1alpha1.IdentityProvider{}
-		if err := p.liveReaderOrClient().Get(ctx, ctrlclient.ObjectKey{Name: ref.Name}, idp); err != nil {
+		if err := reader.Get(ctx, ctrlclient.ObjectKey{Name: ref.Name}, idp); err != nil {
 			return nil, fmt.Errorf("get referenced IdentityProvider %s: %w", ref.Name, err)
 		}
 		refs["identityprovider/"+ref.Name] = ctrlclient.ObjectKey{Name: ref.Name}
@@ -347,7 +352,7 @@ func (p *ClientProvider) capturePrivilegedInputVersions(ctx context.Context, cc 
 		} else {
 			object = &breakglassv1alpha1.IdentityProvider{}
 		}
-		if err := p.liveReaderOrClient().Get(ctx, key, object); err != nil {
+		if err := reader.Get(ctx, key, object); err != nil {
 			return nil, fmt.Errorf("read privileged input %s: %w", identity, err)
 		}
 		versions[identity] = object.GetResourceVersion()
@@ -516,7 +521,11 @@ func (p *ClientProvider) GetRESTConfigForPrivilegedOperation(ctx context.Context
 		}
 		p.mu.Unlock()
 	}
-	cfg, configured, err := p.getRESTConfig(ctx, name)
+	// Resolve once to identify the exact ClusterConfig, then invalidate and
+	// rebuild after taking a live input snapshot. The second build is the one
+	// returned to the caller; the snapshot therefore brackets construction and
+	// catches rotations that happen while the cached REST config is rebuilt.
+	_, configured, err := p.getRESTConfig(ctx, name)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -524,12 +533,41 @@ func (p *ClientProvider) GetRESTConfigForPrivilegedOperation(ctx context.Context
 	if err != nil {
 		return nil, nil, fmt.Errorf("validate privileged operation cluster config: %w", err)
 	}
-	inputs, err := p.capturePrivilegedInputVersions(ctx, live)
+	if configured.ResourceVersion != "" && live.ResourceVersion != configured.ResourceVersion {
+		return nil, nil, fmt.Errorf("cached ClusterConfig %s/%s is stale", configured.Namespace, configured.Name)
+	}
+	cachedInputs, err := p.capturePrivilegedInputVersionsWithReader(ctx, live, p.k8s)
+	if err != nil {
+		return nil, nil, fmt.Errorf("capture cached privileged client inputs: %w", err)
+	}
+	before, err := p.capturePrivilegedInputVersions(ctx, live)
 	if err != nil {
 		return nil, nil, fmt.Errorf("capture privileged client inputs: %w", err)
 	}
+	if !reflect.DeepEqual(cachedInputs, before) {
+		return nil, nil, fmt.Errorf("cached privileged client inputs are stale")
+	}
+	// Force the returned config to be constructed after the first live snapshot
+	// rather than returning the resolving call's possibly cached value.
+	p.Invalidate(live.Namespace, live.Name)
+	cfg, rebuilt, err := p.getRESTConfig(ctx, name)
+	if err != nil {
+		return nil, nil, err
+	}
+	liveAfter, err := p.livePrivilegedOperationClusterConfig(ctx, rebuilt)
+	if err != nil {
+		return nil, nil, fmt.Errorf("validate rebuilt privileged operation cluster config: %w", err)
+	}
+	after, err := p.capturePrivilegedInputVersions(ctx, liveAfter)
+	if err != nil {
+		return nil, nil, fmt.Errorf("capture rebuilt privileged client inputs: %w", err)
+	}
+	if liveAfter.UID != live.UID || liveAfter.ResourceVersion != live.ResourceVersion || !reflect.DeepEqual(before, after) {
+		return nil, nil, fmt.Errorf("privileged client inputs changed while building target config")
+	}
+	live = liveAfter
 	p.mu.Lock()
-	p.privilegedInputVersions[live] = inputs
+	p.privilegedInputVersions[live] = after
 	p.mu.Unlock()
 	return cfg, live, nil
 }

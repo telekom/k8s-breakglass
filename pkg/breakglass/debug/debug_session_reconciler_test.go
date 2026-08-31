@@ -1128,12 +1128,20 @@ func TestDebugSessionReconcilerFailsActiveSessionWithoutExpiry(t *testing.T) {
 	scheme := testScheme()
 	session := newTestDebugSession("missing-expiry", "test-template", "test-cluster", "user@example.com")
 	session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+		Status:     breakglassv1alpha1.DebugSessionTemplateStatus{ActiveSessionCount: 1},
+	}
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(session).
-		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		WithObjects(session, template).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).
 		Build()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar(), client: fakeClient}
+	metrics.DebugSessionsActive.WithLabelValues(session.Spec.Cluster, session.Spec.TemplateRef).Set(1)
+	t.Cleanup(func() {
+		metrics.DebugSessionsActive.DeleteLabelValues(session.Spec.Cluster, session.Spec.TemplateRef)
+	})
 
 	result, err := controller.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{
 		Name: session.Name, Namespace: session.Namespace,
@@ -1146,6 +1154,7 @@ func TestDebugSessionReconcilerFailsActiveSessionWithoutExpiry(t *testing.T) {
 	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, stored.Status.State)
 	assert.Contains(t, stored.Status.Message, "has no expiry")
 	assert.Nil(t, stored.Status.ExpiresAt)
+	assert.Equal(t, float64(0), testutil.ToFloat64(metrics.DebugSessionsActive.WithLabelValues(session.Spec.Cluster, session.Spec.TemplateRef)))
 }
 
 func TestDebugSessionReconciler_HandleActiveDoesNotMarkRenewedSessionExpiringSoonFromStaleSnapshot(t *testing.T) {
