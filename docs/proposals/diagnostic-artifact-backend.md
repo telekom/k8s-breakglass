@@ -22,7 +22,8 @@ storage credential.
 
 This plan covers:
 
-- an S3 adapter behind the existing storage abstraction;
+- an S3 adapter implementing the `storage.Store` interface in
+  `pkg/artifacts/storage/storage.go`;
 - authenticated, resumable-safe upload and download operations;
 - durable artifact metadata and monotonic lifecycle state;
 - a bounded operation outbox for retries and restart recovery;
@@ -147,7 +148,7 @@ the exact test head.
 The rollout is staged: merge the adapter/state primitives, run contract and
 fault tests, deploy with the feature disabled, then enable only for an
 explicit development/rolling cohort. Every published collector and utility
-image must be independently approved and addressed by immutable digest before
+image must be independently approved and pinned by digest before
 an enabled environment consumes it.
 
 Acceptance requires all of the following:
