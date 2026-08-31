@@ -33,3 +33,8 @@ test("comparator ranges and spaced operators are evaluated semantically", () => 
   assert.equal(includesVersion("~24.15", [24, 16, 0]), false);
   assert.equal(parseRange("^24.15 || ^24.16").length, 2);
 });
+
+test("wildcard ranges include full matching major and exclude next major", () => {
+  assert.equal(includesVersion("24.*", [24, 99, 99]), true);
+  assert.equal(includesVersion("24.*", [25, 0, 0]), false);
+});

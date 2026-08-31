@@ -34,11 +34,14 @@ function parseRangeVersion(value, label) {
     throw new Error(`${label} is not a supported semver version, got ${value}`);
   }
   const parts = match.slice(1);
+  const wildcardComponent =
+    parts[1] !== undefined && /^[xX*]$/.test(parts[1]) ? 0 : parts[2] !== undefined && /^[xX*]$/.test(parts[2]) ? 1 : null;
   const precision = parts[1] === undefined ? 1 : parts[2] === undefined ? 2 : 3;
   return {
     version: parts.map((part) => (part === undefined || /^[xX*]$/.test(part) ? 0 : Number(part))),
     precision,
     wildcard: parts.slice(1).some((part) => part !== undefined && /^[xX*]$/.test(part)),
+    wildcardComponent,
   };
 }
 
@@ -128,7 +131,11 @@ function parseRange(engine) {
         upper = updateUpper(upper, version, true);
       } else if (parsed.precision === 1 || parsed.wildcard) {
         lower = updateLower(lower, version, true);
-        upper = updateUpper(upper, incrementVersion(version, parsed.precision === 1 ? 0 : 1), false);
+        upper = updateUpper(
+          upper,
+          incrementVersion(version, parsed.wildcardComponent === null ? 0 : parsed.wildcardComponent),
+          false,
+        );
       } else {
         lower = updateLower(lower, version, true);
         upper = updateUpper(upper, version, true);
@@ -211,19 +218,25 @@ function main() {
   }
 
   const dependencyRanges = [];
+  const node24DependencyRanges = [];
   for (const [packageName, packageMetadata] of Object.entries(lockfile.packages ?? {})) {
     if (packageName === "" || !packageMetadata.engines?.node) {
       continue;
     }
     const engine = packageMetadata.engines.node;
-    dependencyRanges.push({ packageName, engine, floor: minimumVersionInMajor(engine, 24) });
+    const floor = minimumVersionInMajor(engine, 24);
+    const entry = { packageName, engine, floor };
+    dependencyRanges.push(entry);
+    if (floor) {
+      node24DependencyRanges.push(entry);
+    }
   }
-  if (dependencyRanges.length === 0) {
+  if (node24DependencyRanges.length === 0) {
     throw new Error("could not find a Node 24 dependency engine range in frontend/package-lock.json");
   }
-  const dependencyFloor = dependencyRanges.reduce(
-    (highest, entry) => (entry.floor && compareVersions(entry.floor, highest) > 0 ? entry.floor : highest),
-    [0, 0, 0],
+  const dependencyFloor = node24DependencyRanges.reduce(
+    (highest, entry) => (!highest || compareVersions(entry.floor, highest) > 0 ? entry.floor : highest),
+    null,
   );
   if (compareVersions(packageFloor, dependencyFloor) !== 0) {
     throw new Error(
