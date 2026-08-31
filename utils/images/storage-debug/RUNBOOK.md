@@ -5,6 +5,12 @@ SPDX-License-Identifier: CC-BY-4.0
 
 # Storage-diagnostics runbook
 
+The digest-pinned Alpine base and tool versions are fixed inputs. Alpine
+security packages are additionally refreshed from the pinned v3.24 repositories
+at weekly rolling rebuild time, so this package layer is a documented
+time-of-build security refresh rather than a byte-for-byte lock. The exact
+built digest is scanned, signed, and attested before publication.
+
 ## Choose the least-powerful operation
 
 | Symptom | Start with | Escalate when |

@@ -19,7 +19,9 @@ env:
 jobs:
   validate-tag:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
+      actions: read
       checks: read
       contents: read
     outputs:
@@ -42,17 +44,15 @@ jobs:
       - name: Verify CI passed for commit
         env:
           GH_TOKEN: ${{ github.token }}
-        run: hack/verify-commit-check-runs.sh
+          IGNORE_RELEASE_WORKFLOW_RUNS: "true"
+        run: REQUIRED_CHECKS_JSON="$(hack/utility-release-contract.sh required-checks)" hack/verify-commit-check-runs.sh
 
       - name: Require version tag ref
         id: classify
         run: |
-          if [[ "${GITHUB_REF}" =~ ^refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Release ref is ${GITHUB_REF}"
-          else
-            echo "::error::Release workflow must run from a semver tag like v1.2.3 or v1.2.3-rc.1. Build metadata tags are not supported because Docker image tags cannot contain '+'. Got ${GITHUB_REF}"
-            exit 1
-          fi
+          validated="$(hack/utility-release-contract.sh tag push "${GITHUB_REF_NAME}")"
+          test "${GITHUB_REF}" = "refs/tags/${validated}"
+          echo "Release ref is ${GITHUB_REF}"
           if [[ "${GITHUB_REF_NAME}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo "stable=true" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
