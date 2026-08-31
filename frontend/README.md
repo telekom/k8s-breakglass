@@ -6,13 +6,13 @@ state management.
 
 ## Prerequisites
 
-- **Node.js** 24.15.0 or newer
+- **Node.js** 24.15.0 or newer within the Node 24 release line, or 26.0.0 or newer
 - **npm** ≥ 9
 
-Node.js 24.15.0 is the supported project baseline for the current frontend
-toolchain and CI. Some transitive packages advertise lower engine ranges, but
-the dependency lockfile requires Node.js 24.15.0 or newer for its supported
-Node 24 release line.
+Node.js `^24.15.0 || >=26.0.0` is the supported range for the current
+frontend toolchain and CI. Node 25 is intentionally not included. The existing
+dependency lockfile requires Node.js 24.15.0 for its supported Node 24 release
+line, while its dependency engine ranges also support Node 26 and newer.
 
 ## IDE Setup
 
@@ -117,7 +117,7 @@ Edit `frontend/mock-api/data.mjs` if you want to pin additional permutations. Th
 Express server automatically after each save.
 
 > **Node version**: The built-in `node --watch` flag only requires Node.js **18.11.0 or newer**, but this project requires
-> Node.js **24.15.0 or newer**. Use the project baseline when running `npm run mock-api` or `npm run dev:mock`.
+> Node.js **24.15.0 through Node 24**, or **26.0.0 or newer**. Use the project baseline when running `npm run mock-api` or `npm run dev:mock`.
 
 ### Type-Check, Compile and Minify for Production
 

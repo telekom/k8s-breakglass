@@ -45,9 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Frontend Node.js engine baseline**: Raised the frontend package, lockfile,
   documentation, and all `setup-node` CI pins to Node.js 24.15.0, the minimum
-  Node 24 release line accepted by the updated transitive `abbrev` and `nopt`
-  dependencies. Added a contract test to keep dependency engines and CI pins
-  aligned.
+  Node 24 release line required by the existing dependency graph (including
+  the `abbrev` and `nopt` versions brought in by Dependabot #1288). The
+  supported engine range is `^24.15.0 || >=26.0.0`, and a contract test keeps
+  dependency engines and CI pins aligned without admitting Node 25.
 
 ### Fixed
 

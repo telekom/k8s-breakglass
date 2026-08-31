@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: CC0-1.0
 
 /**
- * Keep the frontend Node.js baseline at or above the Node 24 engine floor
+ * Keep the frontend Node.js baseline aligned with the Node.js engine ranges
  * declared by the dependency lockfile, and keep every setup-node workflow pin
- * at that same baseline.
+ * at that baseline.
  */
 
 import fs from "node:fs";
@@ -21,11 +21,25 @@ function readJson(filePath) {
 }
 
 function parseVersion(value, label) {
-  const match = String(value).match(/^(\d+)\.(\d+)\.(\d+)$/);
+  const match = String(value).match(/^v?(\d+)\.(\d+)\.(\d+)$/);
   if (!match) {
     throw new Error(`${label} must be an exact major.minor.patch version, got ${value}`);
   }
   return match.slice(1).map(Number);
+}
+
+function parseRangeVersion(value, label) {
+  const match = String(value).match(/^v?(\d+)(?:\.(\d+|x|X|\*))?(?:\.(\d+|x|X|\*))?$/);
+  if (!match) {
+    throw new Error(`${label} is not a supported semver version, got ${value}`);
+  }
+  const parts = match.slice(1);
+  const precision = parts[1] === undefined ? 1 : parts[2] === undefined ? 2 : 3;
+  return {
+    version: parts.map((part) => (part === undefined || /^[xX*]$/.test(part) ? 0 : Number(part))),
+    precision,
+    wildcard: parts.slice(1).some((part) => part !== undefined && /^[xX*]$/.test(part)),
+  };
 }
 
 function compareVersions(left, right) {
@@ -41,16 +55,129 @@ function versionText(version) {
   return version.join(".");
 }
 
-function assertAtLeast(version, minimum, label) {
-  if (compareVersions(version, minimum) < 0) {
-    throw new Error(`${label} ${versionText(version)} is below ${versionText(minimum)}`);
+function incrementVersion(version, component) {
+  const next = [...version];
+  next[component] += 1;
+  for (let index = component + 1; index < next.length; index += 1) {
+    next[index] = 0;
   }
+  return next;
 }
 
-function node24Versions(engine) {
-  return [...String(engine).matchAll(/(?:^|[^\d])(?:\^|>=|>|~|=)?(24\.\d+\.\d+)/g)].map((match) =>
-    parseVersion(match[1], `dependency engine ${engine}`),
+function incrementPatch(version) {
+  return incrementVersion(version, 2);
+}
+
+function updateLower(current, version, inclusive) {
+  if (!current) {
+    return { version, inclusive };
+  }
+  const comparison = compareVersions(version, current.version);
+  return comparison > 0 || (comparison === 0 && !inclusive && current.inclusive)
+    ? { version, inclusive }
+    : current;
+}
+
+function updateUpper(current, version, inclusive) {
+  if (!current) {
+    return { version, inclusive };
+  }
+  const comparison = compareVersions(version, current.version);
+  return comparison < 0 || (comparison === 0 && !inclusive && current.inclusive)
+    ? { version, inclusive }
+    : current;
+}
+
+function parseRange(engine) {
+  const normalized = String(engine)
+    .replace(/([<>]=?|[~^=])\s+/g, "$1")
+    .trim();
+  if (!normalized) {
+    return [];
+  }
+
+  return normalized.split(/\s*\|\|\s*/).map((alternative) => {
+    const tokens = alternative.trim().split(/\s+/).filter(Boolean);
+    let lower;
+    let upper;
+    for (const token of tokens) {
+      const match = token.match(/^(\^|~|>=|<=|>|<|=)?(v?\d+(?:\.(?:\d+|x|X|\*))?(?:\.(?:\d+|x|X|\*))?)$/);
+      if (!match) {
+        throw new Error(`unsupported Node.js engine range token ${token} in ${engine}`);
+      }
+      const operator = match[1] ?? "";
+      const parsed = parseRangeVersion(match[2], `dependency engine ${engine}`);
+      const version = parsed.version;
+      if (operator === "^") {
+        lower = updateLower(lower, version, true);
+        const upperComponent = version[0] > 0 ? 0 : version[1] > 0 ? 1 : 2;
+        upper = updateUpper(upper, incrementVersion(version, upperComponent), false);
+      } else if (operator === "~") {
+        lower = updateLower(lower, version, true);
+        upper = updateUpper(upper, incrementVersion(version, parsed.precision === 1 ? 0 : 1), false);
+      } else if (operator === ">=") {
+        lower = updateLower(lower, version, true);
+      } else if (operator === ">") {
+        lower = updateLower(lower, version, false);
+      } else if (operator === "<=") {
+        upper = updateUpper(upper, version, true);
+      } else if (operator === "<") {
+        upper = updateUpper(upper, version, false);
+      } else if (operator === "=") {
+        lower = updateLower(lower, version, true);
+        upper = updateUpper(upper, version, true);
+      } else if (parsed.precision === 1 || parsed.wildcard) {
+        lower = updateLower(lower, version, true);
+        upper = updateUpper(upper, incrementVersion(version, parsed.precision === 1 ? 0 : 1), false);
+      } else {
+        lower = updateLower(lower, version, true);
+        upper = updateUpper(upper, version, true);
+      }
+    }
+    return { lower, upper };
+  });
+}
+
+function includesVersionFromBounds(version, { lower, upper }) {
+  const comparisonToLower = lower ? compareVersions(version, lower.version) : 1;
+  const comparisonToUpper = upper ? compareVersions(version, upper.version) : -1;
+  return (
+    (!lower || comparisonToLower > 0 || (comparisonToLower === 0 && lower.inclusive)) &&
+    (!upper || comparisonToUpper < 0 || (comparisonToUpper === 0 && upper.inclusive))
   );
+}
+
+function includesVersion(engine, version) {
+  return parseRange(engine).some((bounds) => includesVersionFromBounds(version, bounds));
+}
+
+function minimumVersionInMajor(engine, major) {
+  const candidateFloor = [major, 0, 0];
+  const candidates = [];
+  for (const bounds of parseRange(engine)) {
+    let candidate = candidateFloor;
+    if (bounds.lower) {
+      if (bounds.lower.version[0] > major) {
+        continue;
+      }
+      if (bounds.lower.version[0] === major) {
+        candidate = bounds.lower.inclusive ? bounds.lower.version : incrementPatch(bounds.lower.version);
+      }
+    }
+    if (candidate[0] === major && includesVersionFromBounds(candidate, bounds)) {
+      candidates.push(candidate);
+    }
+  }
+  return candidates.reduce(
+    (minimum, candidate) => (!minimum || compareVersions(candidate, minimum) < 0 ? candidate : minimum),
+    null,
+  );
+}
+
+function assert(condition, message) {
+  if (!condition) {
+    throw new Error(message);
+  }
 }
 
 function workflowFiles(directory) {
@@ -70,9 +197,11 @@ function main() {
   const lockfile = readJson(path.join(frontendDirectory, "package-lock.json"));
   const packageEngine = packageJson.engines?.node;
   const lockfileEngine = lockfile.packages?.[""]?.engines?.node;
-  const packageMatch = String(packageEngine ?? "").match(/^>=\s*(\d+\.\d+\.\d+)$/);
-  if (!packageMatch) {
-    throw new Error(`frontend/package.json must declare an exact >= engine floor, got ${packageEngine}`);
+  const packageFloor = minimumVersionInMajor(packageEngine ?? "", 24);
+  if (!packageFloor || !includesVersion(packageEngine, [26, 0, 0]) || includesVersion(packageEngine, [25, 0, 0])) {
+    throw new Error(
+      `frontend/package.json must support Node 24 from its dependency floor, exclude Node 25, and support Node 26+, got ${packageEngine}`,
+    );
   }
   if (lockfileEngine !== packageEngine) {
     throw new Error(
@@ -80,36 +209,45 @@ function main() {
     );
   }
 
-  const dependencyFloors = [];
+  const dependencyRanges = [];
   for (const [packageName, packageMetadata] of Object.entries(lockfile.packages ?? {})) {
-    if (packageName === "") {
+    if (packageName === "" || !packageMetadata.engines?.node) {
       continue;
     }
-    for (const version of node24Versions(packageMetadata.engines?.node ?? "")) {
-      dependencyFloors.push({ packageName, version });
-    }
+    const engine = packageMetadata.engines.node;
+    dependencyRanges.push({ packageName, engine, floor: minimumVersionInMajor(engine, 24) });
   }
-  if (dependencyFloors.length === 0) {
-    throw new Error("could not find a Node 24 dependency engine floor in frontend/package-lock.json");
+  if (dependencyRanges.length === 0) {
+    throw new Error("could not find a Node 24 dependency engine range in frontend/package-lock.json");
   }
-  const dependencyFloor = dependencyFloors.reduce(
-    (highest, entry) => (compareVersions(entry.version, highest) > 0 ? entry.version : highest),
+  const dependencyFloor = dependencyRanges.reduce(
+    (highest, entry) => (entry.floor && compareVersions(entry.floor, highest) > 0 ? entry.floor : highest),
     [0, 0, 0],
   );
-  const packageVersion = parseVersion(packageMatch[1], "frontend/package.json engine");
-  assertAtLeast(packageVersion, dependencyFloor, "frontend/package.json engine");
+  if (compareVersions(packageFloor, dependencyFloor) !== 0) {
+    throw new Error(
+      `frontend/package.json Node 24 floor ${versionText(packageFloor)} does not match dependency floor ${versionText(dependencyFloor)}`,
+    );
+  }
+  for (const { packageName, engine } of dependencyRanges) {
+    assert(
+      includesVersion(engine, packageFloor) && includesVersion(engine, [24, 99, 99]) && includesVersion(engine, [26, 0, 0]),
+      `${packageName} engine ${engine} does not support the project Node range ${packageEngine}`,
+    );
+  }
 
   const pins = [];
   for (const workflowPath of workflowFiles(path.join(repositoryRoot, ".github", "workflows"))) {
     const contents = fs.readFileSync(workflowPath, "utf8");
     for (const match of contents.matchAll(/^\s*node-version:\s*['"]?([^'"\s#]+)['"]?/gm)) {
       const version = parseVersion(match[1], `${path.relative(repositoryRoot, workflowPath)} node-version`);
-      assertAtLeast(version, dependencyFloor, `${path.relative(repositoryRoot, workflowPath)} node-version`);
-      if (compareVersions(version, packageVersion) !== 0) {
+      assert(
+        includesVersion(packageEngine, version),
+        `${path.relative(repositoryRoot, workflowPath)} node-version ${versionText(version)} is outside ${packageEngine}`,
+      );
+      if (compareVersions(version, packageFloor) !== 0) {
         throw new Error(
-          `${path.relative(repositoryRoot, workflowPath)} node-version ${versionText(
-            version,
-          )} does not match frontend/package.json baseline ${versionText(packageVersion)}`,
+          `${path.relative(repositoryRoot, workflowPath)} node-version ${versionText(version)} does not match Node 24 baseline ${versionText(packageFloor)}`,
         );
       }
       pins.push({ workflowPath, version });
@@ -120,15 +258,19 @@ function main() {
   }
 
   console.log(
-    `Node version contract OK: baseline ${versionText(packageVersion)}, dependency floor ${versionText(
+    `Node version contract OK: range ${packageEngine}, Node 24 floor ${versionText(packageFloor)}, dependency floor ${versionText(
       dependencyFloor,
-    )} (${dependencyFloors.length} lockfile engine declarations), ${pins.length} workflow pins checked`,
+    )} (${dependencyRanges.length} lockfile engine ranges), ${pins.length} workflow pins checked`,
   );
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(`Node version contract failed: ${error.message}`);
-  process.exitCode = 1;
+export { compareVersions, includesVersion, minimumVersionInMajor, parseRange, parseVersion };
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    console.error(`Node version contract failed: ${error.message}`);
+    process.exitCode = 1;
+  }
 }
