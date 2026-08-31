@@ -46,22 +46,28 @@ cleanup() {
         "$DOCKER_BIN" exec "${CLUSTER}-control-plane" sh -c \
             "rm -rf -- /var/local/${RUN_ID} /var/local/${RUN_ID}-attached" >/dev/null 2>&1 || status=1
         if [ -n "$ATTACHED_POD_UID" ]; then
-            kubernetes_delete_uid "$KUBECONFIG_FILE" \
-                "/api/v1/namespaces/$NAMESPACE/pods/$ATTACHED_POD_NAME" "$ATTACHED_POD_UID" >/dev/null 2>&1 || status=1
-			"$KUBECTL_BIN" --kubeconfig "$KUBECONFIG_FILE" wait --for=delete \
-				pod/"$ATTACHED_POD_NAME" --namespace "$NAMESPACE" --timeout=120s >/dev/null 2>&1 || status=1
-        fi
-        if [ -n "$ATTACHED_PVC_UID" ]; then
-            kubernetes_delete_uid "$KUBECONFIG_FILE" \
-                "/api/v1/namespaces/$NAMESPACE/persistentvolumeclaims/$ATTACHED_PVC_NAME" "$ATTACHED_PVC_UID" >/dev/null 2>&1 || status=1
-			"$KUBECTL_BIN" --kubeconfig "$KUBECONFIG_FILE" wait --for=delete \
-				pvc/"$ATTACHED_PVC_NAME" --namespace "$NAMESPACE" --timeout=120s >/dev/null 2>&1 || status=1
-        fi
-        if [ -n "$ATTACHED_PV_UID" ]; then
-            kubernetes_delete_uid "$KUBECONFIG_FILE" \
-                "/api/v1/persistentvolumes/$ATTACHED_PV_NAME" "$ATTACHED_PV_UID" >/dev/null 2>&1 || status=1
-			"$KUBECTL_BIN" --kubeconfig "$KUBECONFIG_FILE" wait --for=delete \
-				pv/"$ATTACHED_PV_NAME" --timeout=120s >/dev/null 2>&1 || status=1
+            if kubernetes_delete_uid "$KUBECONFIG_FILE" \
+                "/api/v1/namespaces/$NAMESPACE/pods/$ATTACHED_POD_NAME" "$ATTACHED_POD_UID" >/dev/null 2>&1 &&
+                "$KUBECTL_BIN" --kubeconfig "$KUBECONFIG_FILE" wait --for=delete \
+                    pod/"$ATTACHED_POD_NAME" --namespace "$NAMESPACE" --timeout=120s >/dev/null 2>&1; then
+                if [ -n "$ATTACHED_PVC_UID" ]; then
+                    if kubernetes_delete_uid "$KUBECONFIG_FILE" \
+                        "/api/v1/namespaces/$NAMESPACE/persistentvolumeclaims/$ATTACHED_PVC_NAME" "$ATTACHED_PVC_UID" >/dev/null 2>&1 &&
+                        "$KUBECTL_BIN" --kubeconfig "$KUBECONFIG_FILE" wait --for=delete \
+                            pvc/"$ATTACHED_PVC_NAME" --namespace "$NAMESPACE" --timeout=120s >/dev/null 2>&1; then
+                        if [ -n "$ATTACHED_PV_UID" ]; then
+                            kubernetes_delete_uid "$KUBECONFIG_FILE" \
+                                "/api/v1/persistentvolumes/$ATTACHED_PV_NAME" "$ATTACHED_PV_UID" >/dev/null 2>&1 || status=1
+                            "$KUBECTL_BIN" --kubeconfig "$KUBECONFIG_FILE" wait --for=delete \
+                                pv/"$ATTACHED_PV_NAME" --timeout=120s >/dev/null 2>&1 || status=1
+                        fi
+                    else
+                        status=1
+                    fi
+                fi
+            else
+                status=1
+            fi
         fi
         kind_cleanup_owned_cluster || status=1
     fi

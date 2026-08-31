@@ -2,8 +2,19 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 set -Eeuo pipefail
+start_time=$SECONDS
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"; helper="${root}/hack/utility-publication.sh"
-tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
+tmp="$(mktemp -d)"
+test_timeout_seconds=${UTILITY_PUBLICATION_TEST_TIMEOUT_SECONDS:-60}
+(
+  trap 'kill "$watchdog_sleep" 2>/dev/null || true; exit 0' TERM INT
+  sleep "$test_timeout_seconds" &
+  watchdog_sleep=$!
+  wait "$watchdog_sleep"
+  kill -TERM "$$" 2>/dev/null || true
+) 2>/dev/null &
+test_watchdog=$!
+trap 'kill "$test_watchdog" 2>/dev/null || true; wait "$test_watchdog" 2>/dev/null || true; rm -rf "${tmp}"' EXIT
 mkdir -p "${tmp}/bin"
 cat >"${tmp}/bin/docker" <<'EOF'
 #!/usr/bin/env bash
@@ -59,35 +70,6 @@ raw) printf '%s\n' '{"manifests":[{"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaa
 duplicate) printf '%s\n' '{"manifests":[{"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","platform":{"os":"linux","architecture":"amd64"}},{"digest":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","platform":{"os":"linux","architecture":"amd64"}}]}';;
 esac
 EOF
-cat >"${tmp}/bin/curl" <<'EOF'
-#!/usr/bin/env bash
-if [[ "$*" == *"ghcr.io/token"* ]]; then
-  printf '%s\n' '{"token":"fake-bearer"}'
-  exit 0
-fi
-if [[ "$*" == *"-X PUT"* ]]; then
-  [[ "${CONDITIONAL_TAG_FAILURE:-false}" != true ]] || { printf '%s\n' 'conditional request unsupported' >&2; exit 1; }
-  [[ "$*" == *"If-None-Match: *"* ]]
-  [[ -n "${TAG_CREATED_MARKER:-}" ]] && touch "${TAG_CREATED_MARKER}"
-  printf '%s\n' 'conditional tag create' >>"${DOCKER_CALL_LOG:?}"
-  printf '201'
-  exit 0
-fi
-if [[ "$*" == *"ghcr.io/v2/"* ]]; then
-  header_file= body_file=
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -D) header_file="$2"; shift 2 ;;
-      -o) body_file="$2"; shift 2 ;;
-      *) shift ;;
-    esac
-  done
-  printf 'Content-Type: application/vnd.oci.image.index.v1+json\n' >"${header_file:?}"
-  printf '%s\n' '{"schemaVersion":2,"manifests":[]}' >"${body_file:?}"
-  exit 0
-fi
-exit 1
-EOF
 cat >"${tmp}/bin/cosign" <<'EOF'
 #!/usr/bin/env bash
 [[ -z "${VERIFY_CALL_MARKER:-}" ]] || touch "${VERIFY_CALL_MARKER}"
@@ -109,7 +91,8 @@ EOF
 cat >"${tmp}/bin/timeout" <<'EOF'
 #!/bin/sh
 # Keep this fixture independent of platform-specific GNU timeout process
-# group behavior on macOS; every wrapped command is already deterministic.
+# group behavior on macOS. The complete behavioral harness has an overall
+# watchdog above, and every production command still carries its own timeout.
 case "${1:-}" in
   --foreground) shift ;;
 esac
@@ -118,7 +101,6 @@ exec "$@"
 EOF
 chmod +x "${tmp}/bin/docker"
 chmod +x "${tmp}/bin/cosign" "${tmp}/bin/gh"
-chmod +x "${tmp}/bin/curl"
 chmod +x "${tmp}/bin/timeout"
 export PATH="${tmp}/bin:${PATH}"
 expect_fail() { if "$@" >/dev/null 2>&1; then echo "unexpected success: $*" >&2; exit 1; fi; }
@@ -140,7 +122,7 @@ tag_helper="${root}/hack/publish-utility-tag.sh"
 tag_digest=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 docker_call_log="${tmp}/docker-calls"
 inspect_count_file="${tmp}/inspect-count"
-verify_env=(env DOCKER_MODE=exists GITHUB_REPOSITORY=o/r GITHUB_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee GITHUB_REF=refs/tags/v1.2.3 GITHUB_WORKFLOW_REF=o/r/.github/workflows/utility-release.yml@refs/tags/v1.2.3 GITHUB_ACTOR=github-actions INSPECT_COUNT_FILE="${inspect_count_file}" GH_TOKEN=fake-token)
+verify_env=(env DOCKER_MODE=exists UTILITY_TAG_VERIFY_ATTEMPTS=1 UTILITY_TAG_VERIFY_DELAY_SECONDS=0 GITHUB_REPOSITORY=o/r GITHUB_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee GITHUB_REF=refs/tags/v1.2.3 GITHUB_WORKFLOW_REF=o/r/.github/workflows/utility-release.yml@refs/tags/v1.2.3 GITHUB_ACTOR=github-actions INSPECT_COUNT_FILE="${inspect_count_file}" GH_TOKEN=fake-token)
 
 assert_no_tag_mutation() {
 	local failure="$1"
@@ -162,8 +144,9 @@ rm -f "${docker_call_log}" "${inspect_count_file}"
 "${verify_env[@]}" DOCKER_CALL_LOG="${docker_call_log}" "${tag_helper}" ghcr.io/telekom/k8s-breakglass/utils/test rolling "${tag_digest}"
 grep -F 'imagetools create --tag ghcr.io/telekom/k8s-breakglass/utils/test:rolling ghcr.io/telekom/k8s-breakglass/utils/test@sha256:eeeeeeee' "${docker_call_log}" >/dev/null
 
-# Stable tags must refuse an occupied tag without reaching the mutation, while
-# a proven-missing stable tag may be created and then must remain bound.
+# Stable version tags are deliberately unsupported because OCI/GHCR do not
+# provide an atomic create-only manifest PUT. The helper must reject one before
+# invoking verification or any registry mutation.
 rm -f "${docker_call_log}" "${inspect_count_file}"
 occupied_verify_marker="${tmp}/occupied-verify"
 rm -f "${occupied_verify_marker}"
@@ -171,21 +154,9 @@ expect_fail env VERIFY_CALL_MARKER="${occupied_verify_marker}" DOCKER_CALL_LOG="
 [[ ! -e "${docker_call_log}" ]]
 [[ ! -e "${occupied_verify_marker}" ]]
 
-stable_marker="${tmp}/stable-created"
-rm -f "${docker_call_log}" "${inspect_count_file}" "${stable_marker}"
-stable_env=(env DOCKER_MODE=missing TAG_CREATED_MARKER="${stable_marker}" GITHUB_REPOSITORY=o/r GITHUB_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee GITHUB_REF=refs/tags/v1.2.3 GITHUB_WORKFLOW_REF=o/r/.github/workflows/utility-release.yml@refs/tags/v1.2.3 GITHUB_ACTOR=github-actions GH_TOKEN=fake-token INSPECT_COUNT_FILE="${inspect_count_file}" DOCKER_CALL_LOG="${docker_call_log}")
-"${stable_env[@]}" "${tag_helper}" ghcr.io/telekom/k8s-breakglass/utils/test v1.2.3 "${tag_digest}"
-grep -F 'conditional tag create' "${docker_call_log}" >/dev/null
-[[ -e "${stable_marker}" ]]
-
-# A registry that rejects the conditional create must fail closed without
-# assigning the stable tag.
-rm -f "${docker_call_log}" "${inspect_count_file}" "${stable_marker}"
-if CONDITIONAL_TAG_FAILURE=true "${stable_env[@]}" "${tag_helper}" ghcr.io/telekom/k8s-breakglass/utils/test v1.2.3 "${tag_digest}"; then
-  echo 'stable publication unexpectedly accepted a non-conditional registry' >&2
-  exit 1
-fi
-[[ ! -e "${stable_marker}" && ! -e "${docker_call_log}" ]]
+dev_env=(env DOCKER_MODE=exists UTILITY_TAG_VERIFY_ATTEMPTS=1 UTILITY_TAG_VERIFY_DELAY_SECONDS=0 GITHUB_REPOSITORY=o/r GITHUB_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee GITHUB_REF=refs/tags/v1.2.3 GITHUB_WORKFLOW_REF=o/r/.github/workflows/utility-release.yml@refs/tags/v1.2.3 GITHUB_ACTOR=github-actions GH_TOKEN=fake-token INSPECT_COUNT_FILE="${inspect_count_file}" DOCKER_CALL_LOG="${docker_call_log}")
+"${dev_env[@]}" "${tag_helper}" ghcr.io/telekom/k8s-breakglass/utils/test dev-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-123-1 "${tag_digest}"
+grep -F 'imagetools create --tag ghcr.io/telekom/k8s-breakglass/utils/test:dev-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-123-1' "${docker_call_log}" >/dev/null
 
 # A partial matrix rerun may reuse a pre-existing version only after all exact
 # source, workflow, signature, SBOM, platform, and pull checks succeed.
@@ -247,4 +218,6 @@ expect_fail env CHECK_RUNS_JSON="[${release_run}]" "${gate[@]}" "${root}/hack/ve
 expect_fail env CHECK_RUNS_JSON="[${success_run/\"success\"/\"failure\"},${release_run}]" "${gate[@]}" "${root}/hack/verify-commit-check-runs.sh"
 expect_fail env CHECK_RUNS_JSON="[${success_run/\"completed\"/\"in_progress\"},${release_run}]" "${gate[@]}" "${root}/hack/verify-commit-check-runs.sh"
 expect_fail env CHECK_RUNS_JSON="${check_runs}" GITHUB_REPOSITORY=o/r GITHUB_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee REQUIRED_CHECKS_JSON='["Essential CI"]' IGNORE_RELEASE_WORKFLOW_RUNS=true CHECK_RUN_IGNORED_RUN_IDS_JSON='[]' "${root}/hack/verify-commit-check-runs.sh"
-echo 'utility publication behavioral tests passed'
+elapsed=$((SECONDS - start_time))
+[ "$elapsed" -le 60 ] || { echo "utility publication behavioral tests exceeded 60 seconds: ${elapsed}s" >&2; exit 1; }
+printf 'utility publication behavioral tests passed in %ss\n' "$elapsed"

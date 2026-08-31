@@ -84,25 +84,28 @@ library vulnerabilities (`ignore-unfixed=true`); it is intentionally separate
 from the controller-image scan in `security.yml` and is included in the release
 required-check inventory.
 
-On a controller release tag, every utility receives that exact same tag. The
-weekly scheduled rebuild publishes only the mutable `nightly` tag. Version tags
-are immutable, and their source must be on `main` with successful CI. The
+On a controller release tag, every utility is published under a unique
+`dev-<commit>-<run>-<attempt>` tag; the release version itself is deliberately
+not assigned as a mutable registry tag. The weekly scheduled rebuild publishes
+only the mutable `nightly` tag. Release artifacts are addressed by their
+immutable digest, and their source must be on `main` with successful CI. The
 workflow first publishes an untagged, digest-addressed staging image, resolves
 its exact two platform subjects, generates and validates complete SPDX SBOMs,
 publishes GitHub-native provenance, and signs/attests the index and platform
 digests. `hack/publish-utility-tag.sh` then performs the full signature, SBOM,
 provenance, platform, and reference-pull verification against those digests;
-only a successful verification can reach final tag assignment. The tag binding
-is checked again after the write. Consumers should pin both values,
+only a successful verification can reach the unique dev-tag assignment. The
+tag binding is checked again after the write. Consumers should pin the digest,
+and may retain the unique tag for discovery,
 for example:
 
 ```yaml
-image: ghcr.io/telekom/k8s-breakglass/utils/workload-debug:v1.2.3@sha256:<manifest-digest>
+image: ghcr.io/telekom/k8s-breakglass/utils/workload-debug:dev-<commit>-<run>-<attempt>@sha256:<manifest-digest>
 ```
 
-This tag-plus-digest form lets Renovate propose tag and digest updates while
-the digest remains the immutable pull reference. A partial matrix rerun accepts
-an existing version tag only when its index and platform signatures, SBOMs,
+This unique-tag-plus-digest form lets tooling discover the build while the
+digest remains the immutable pull reference. A partial matrix rerun accepts
+an existing unique tag only when its index and platform signatures, SBOMs,
 provenance, source SHA/ref, and reference pulls all verify against this exact
 workflow; a missing or competing claim fails closed rather than overwriting it.
 
@@ -115,22 +118,21 @@ deployment reference. A dispatch from another branch, or without the explicit
 input, is rejected. The weekly `nightly` channel has the same mutable-tag
 semantics.
 
-Stable tags use the GHCR registry API with `If-None-Match: *`, so assignment is
-create-only at the registry boundary. Any registry that does not honor that
-conditional request, returns an unsupported manifest media type, or cannot
-authenticate the request causes publication to fail before a stable tag is
-written. The helper never falls back to the overwrite-capable
-`imagetools create` path for stable tags. `nightly` and `rolling` are
-intentionally mutable and use the overwrite-capable path with post-write
-verification.
+The OCI Distribution API does not define an atomic create-only manifest PUT for
+tags, and GHCR does not provide one for this workflow. The release path
+therefore never assigns stable version tags: it uses a unique commit/run/attempt
+tag only as a discovery handle and consumes the attested digest. `nightly` and
+`rolling` remain intentionally mutable and use the overwrite-capable path with
+post-write verification.
 
 Release-matrix integration harnesses use the same ownership boundary. A Kind
 cluster is removable only through the exact Docker node IDs captured after a
 successful create; failed creates and same-name node replacement are leaked
 for inspection. Kubernetes Pod, PVC, PV, namespace, and fixture cleanup uses
 the API server's UID precondition on DELETE, so a replacement between
-observation and cleanup is preserved. Locally built image tags are removed
-only while they still resolve to the captured immutable image ID.
+observation and cleanup is preserved. Locally built images are intentionally
+left for the runner's managed cleanup; the harness does not race a mutable image
+tag during teardown.
 
 ## Release Checklist
 
