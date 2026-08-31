@@ -42,12 +42,12 @@ validate_rendered default "${rendered}"
 # fullnameOverride remains the explicit escape hatch for stable names.
 helm template release-a "${chart_dir}" --values "${chart_dir}/ci/test-values.yaml" >"${release_a_rendered}"
 helm template release-b "${chart_dir}" --values "${chart_dir}/ci/test-values.yaml" >"${release_b_rendered}"
-release_a_name=$(yq -r 'select(.kind == "DebugPodTemplate") | .metadata.name' "${release_a_rendered}" | head -n 1)
-release_b_name=$(yq -r 'select(.kind == "DebugPodTemplate") | .metadata.name' "${release_b_rendered}" | head -n 1)
+release_a_name=$(yq -r 'select(.kind == "DebugPodTemplate") | .metadata.name' "${release_a_rendered}" | sed -n '1p')
+release_b_name=$(yq -r 'select(.kind == "DebugPodTemplate") | .metadata.name' "${release_b_rendered}" | sed -n '1p')
 [[ -n "${release_a_name}" && "${release_a_name}" != "${release_b_name}" ]] || fail "distinct Helm releases collided on default template name"
 helm template release-override "${chart_dir}" --values "${chart_dir}/ci/test-values.yaml" \
   --set fullnameOverride=managed-catalogue >"${override_rendered}"
-override_name=$(yq -r 'select(.kind == "DebugPodTemplate") | .metadata.name' "${override_rendered}" | head -n 1)
+override_name=$(yq -r 'select(.kind == "DebugPodTemplate") | .metadata.name' "${override_rendered}" | sed -n '1p')
 [[ "${override_name}" == managed-catalogue-workload-diagnostics ]] || fail "fullnameOverride was not preserved"
 
 helm template debug-catalogue "${chart_dir}" \
