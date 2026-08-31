@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **DebugSession authoring guidance**: Added provider-neutral documentation for
+  digest-pinned utility templates, namespaced RBAC, isolation, lifecycle
+  cleanup, and downstream admission boundaries.
 - **Diagnostic artifact collector utility image**: Added the bounded,
   immutable `diagnostic-artifact-collector` image for reviewed system-summary
   and crashdump collection recipes, with private archive hand-off and a

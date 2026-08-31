@@ -27,6 +27,7 @@ Complete documentation for the breakglass privilege escalation system.
 - **[Rate Limiting](./rate-limiting.md)** - Multi-tier rate limiting architecture, tiers, and troubleshooting
 - **[Logging and Debugging](./logging-and-debugging.md)** - Frontend and backend logging infrastructure, debugging tips
 - **[Workload-debug runbook](./runbooks/workload-debug.md)** - Restricted workload diagnostics image and bounded helper usage
+- **[DebugSession authoring guide](./debug-session-authoring.md)** - Generic template, identity, isolation, lifecycle, and utility-mode guidance
 - **[CI Logs and Artifacts](./ci-logs.md)** - Retrieve CI logs and artifacts with gh CLI
 
 ## Identity & Authentication
@@ -49,8 +50,31 @@ Complete documentation for the breakglass privilege escalation system.
 
 ## Resources
 
-- **[Storage diagnostics image](../utils/images/storage-debug/README.md)** -
-  Bounded attached-volume and provider-dependent kubestr storage workflows
+### Debug utility images
+
+Every utility is published as an immutable,
+  reviewed image and has a generic in-image runbook. Choose the least
+  powerful intent that answers the incident question:
+  - **[Workload diagnostics](../utils/workload-debug/README.md)** - Bounded
+    DNS, TLS, HTTP(S), read-only Kubernetes API, and report helpers
+  - **[Network diagnostics](../utils/network-debug/README.md)** - Public
+    report/bounded-capture-only pod/network troubleshooting; this catalogue
+    profile does not authorize full host `pwru` tracing. Full host tracing is
+    an image capability that requires a separate custom template/profile with
+    independent privilege review and approval.
+  - **[Node maintenance](../utils/node-maintenance/README.md)** - Read-only
+    node recovery evidence and independently approved exact-entry repair
+  - **[Storage diagnostics](../utils/images/storage-debug/README.md)** -
+    Existing-PVC checks and controller-owned, provider-dependent storage
+    workflows
+  - **[Diagnostic artifact collection](../utils/images/diagnostic-artifact-collector/README.md)** -
+    Bounded system summaries and separately approved coredump collection
+
+### DebugSession and resource guides
+
+- **[DebugSession authoring guide](./debug-session-authoring.md)** - Publish
+  safe templates, ephemeral identity/RBAC, NetworkPolicy, lifecycle cleanup,
+  and downstream OCI runbook extensions
 - **[ClusterConfig](./cluster-config.md)** - Manage tenant cluster connections
 - **[BreakglassEscalation](./breakglass-escalation.md)** - Define privilege escalation policies
 - **[BreakglassSession](./breakglass-session.md)** - Active escalation sessions

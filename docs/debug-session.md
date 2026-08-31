@@ -129,11 +129,17 @@ spec:
     spec:
       containers:
         - name: debug
-          image: alpine:latest
-          command: ["sleep", "infinity"]
+          image: ghcr.io/telekom/k8s-breakglass/utils/workload-debug@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           securityContext:
             runAsNonRoot: true
-            runAsUser: 1000
+            runAsUser: 65532
+            runAsGroup: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
           resources:
             requests:
               cpu: 100m
@@ -141,8 +147,6 @@ spec:
             limits:
               cpu: 500m
               memory: 256Mi
-      tolerations:
-        - operator: Exists  # Run on any node
 ```
 
 **templateString (for dynamic configurations with session context):**
@@ -158,8 +162,7 @@ spec:
   templateString: |
     containers:
       - name: debug-{{ .session.name | trunc 15 }}
-        image: {{ .vars.image | default "alpine:latest" }}
-        command: ["sleep", "infinity"]
+        image: ghcr.io/telekom/k8s-breakglass/utils/workload-debug@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
         env:
           - name: SESSION_NAME
             value: {{ .session.name | quote }}
@@ -171,12 +174,16 @@ spec:
           limits:
             cpu: {{ .vars.cpuLimit | default "500m" }}
             memory: {{ .vars.memoryLimit | default "256Mi" }}
-    {{- if eq .vars.hostNetwork "true" }}
-    hostNetwork: true
-    {{- end }}
 ```
 
-The `templateString` supports all session context variables (`.session`, `.target`, `.vars`, etc.) using Sprig template functions. See [Template Context Variables](#template-context-variables) for the full list.
+The `templateString` supports session context variables (`.session`, `.target`,
+and `.vars` values) using Sprig template functions. Declared `.vars` values are
+validated against `extraDeployVariables`; additional request keys may also be
+carried into `.vars`, so templates must not use undeclared keys for sensitive
+interpolation.
+Keep security-sensitive values such as images, commands, mounts, capabilities,
+and host namespaces literal in the administrator-owned template. See [Template
+Context Variables](#template-context-variables) for the full list.
 
 > **Note:** `template` and `templateString` are mutually exclusive. The webhook will reject DebugPodTemplates with both fields set.
 
@@ -185,115 +192,25 @@ OCI image volume, see the [OCI runbook bundle contract](./runbook-bundle-contrac
 
 #### Multi-Document YAML in Pod Templates
 
-When using `templateString`, you can use multi-document YAML (documents separated by `---`) to define the PodSpec AND additional supporting Kubernetes resources that should be created alongside the debug pod.
+When using `templateString`, the first document is the PodSpec (the `spec`
+portion, not a full Pod object). Additional documents are complete Kubernetes
+resources separated by `---`.
 
 **Rules:**
 - The **first document** MUST be the PodSpec (just the `spec` portion, not a full Pod definition)
 - **Subsequent documents** must be complete Kubernetes resources with `apiVersion` and `kind`
 - Additional resources are created BEFORE the debug workload starts
-- Additional resources are automatically cleaned up when the session ends
+- Additional resources are tracked and cleaned up when the session reaches a
+  cleanup state; resources marked `deleteAfter: false` are retained
 - Empty documents (blank or whitespace-only) are silently skipped
 
-**Example: Debug Pod with PVC for Storage Testing**
-
-```yaml
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: DebugPodTemplate
-metadata:
-  name: storage-debug-pod
-spec:
-  displayName: "Storage Debug Pod"
-  description: "Debug pod with dynamically provisioned PVC for storage testing"
-  templateString: |
-    # First document: PodSpec
-    containers:
-      - name: fio
-        image: wallnerryan/fiotools:latest
-        command: ["sleep", "infinity"]
-        volumeMounts:
-          - name: test-volume
-            mountPath: /data
-    volumes:
-      - name: test-volume
-        persistentVolumeClaim:
-          claimName: pvc-{{ .session.name | trunc 20 }}
-    ---
-    # Second document: PVC (created before pod starts)
-    apiVersion: v1
-    kind: PersistentVolumeClaim
-    metadata:
-      name: pvc-{{ .session.name | trunc 20 }}
-    spec:
-      accessModes:
-        - ReadWriteOnce
-      storageClassName: {{ .vars.storageClass | default "standard" }}
-      resources:
-        requests:
-          storage: {{ .vars.pvcSize | default "10Gi" }}
-```
-
-**Example: Debug Pod with ConfigMap and Secret**
-
-```yaml
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: DebugPodTemplate
-metadata:
-  name: app-debug-pod
-spec:
-  displayName: "Application Debug Pod"
-  templateString: |
-    containers:
-      - name: debug
-        image: alpine:latest
-        command: ["sleep", "infinity"]
-        envFrom:
-          - configMapRef:
-              name: debug-config-{{ .session.name }}
-          - secretRef:
-              name: debug-creds-{{ .session.name }}
-    ---
-    apiVersion: v1
-    kind: ConfigMap
-    metadata:
-      name: debug-config-{{ .session.name }}
-    data:
-      CLUSTER: {{ .session.cluster }}
-      DEBUG_MODE: "true"
-    ---
-    apiVersion: v1
-    kind: Secret
-    metadata:
-      name: debug-creds-{{ .session.name }}
-    type: Opaque
-    stringData:
-      api-token: {{ .vars.apiToken | default "default-token" }}
-```
-
-**Conditional Additional Resources**
-
-Use Go template conditionals to optionally include resources:
-
-```yaml
-templateString: |
-  containers:
-    - name: debug
-      image: alpine:latest
-  {{- if eq .vars.createPVC "true" }}
-  ---
-  apiVersion: v1
-  kind: PersistentVolumeClaim
-  metadata:
-    name: optional-pvc-{{ .session.name }}
-  spec:
-    accessModes:
-      - ReadWriteOnce
-    resources:
-      requests:
-        storage: 10Gi
-  {{- end }}
-```
-
-> **Tip:** Multi-document pod templates are ideal for debug scenarios that need supporting resources (PVCs, ConfigMaps, Secrets) that are tightly coupled to the pod. For shared resources or complex resource graphs, consider using [Auxiliary Resources](#auxiliary-resources) instead.
+Use this feature only for provider-reviewed, session-scoped resources such as
+a PVC or NetworkPolicy. Do not interpolate an image, command, node name,
+mount, capability, Secret value, or RBAC rule from user input. For a complete
+authoring pattern, including per-session identity and isolation, see the
+[DebugSession authoring guide](./debug-session-authoring.md). For storage
+workflows use the [storage utility contract](../utils/images/storage-debug/README.md)
+instead of a free-form fio or kubestr pod.
 
 ### DebugSessionTemplate
 
@@ -356,18 +273,17 @@ spec:
   schedulingOptions:
     required: true
     options:
-      - name: sriov
-        displayName: "SRIOV Nodes"
-        description: "Deploy on nodes with SR-IOV network interfaces"
+      - name: network-capable
+        displayName: "Network-capable Nodes"
+        description: "Deploy on nodes selected by the downstream platform"
         schedulingConstraints:
           nodeSelector:
-            network.kubernetes.io/sriov: "true"
+            debug.network.example/approved: "true"
       - name: standard
         displayName: "Standard Nodes"
         default: true
         schedulingConstraints:
-          nodeSelector:
-            network.kubernetes.io/sriov: "false"
+          nodeSelector: {}
   
   # Optional: Terminal sharing
   terminalSharing:
@@ -400,7 +316,7 @@ spec:
   audit:
     logCommands: true
     sidecar:
-      image: audit-logger:v1
+      image: registry.example/audit-logger@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
   # Optional: Granular pod operation controls
   allowedPodOperations:
@@ -458,101 +374,22 @@ allowedPodOperations:
 
 #### 2. Core Dump Collection from Host
 
-For collecting crash dumps or memory analysis without interactive shell access:
-
-```yaml
-# Use case: Copy core dumps from debug pod with host filesystem access
-# Security: Exec allowed only for cp operations, no interactive shell
-# Note: kubectl cp requires exec (it runs tar inside the container)
-allowedPodOperations:
-  exec: true       # Required for kubectl cp to work
-  attach: false    # No interactive process attachment
-  logs: false      # Log access not needed
-  portForward: false
-```
-
-Combined with a debug pod template that mounts the host's core dump directory:
-
-```yaml
-kind: DebugPodTemplate
-metadata:
-  name: coredump-collector
-spec:
-  displayName: "Core Dump Collector"
-  description: "Read-only access to host core dumps for collection"
-  template:
-    spec:
-      containers:
-        - name: collector
-          image: busybox:1.36
-          command: ["sleep", "infinity"]
-          volumeMounts:
-            - name: host-coredumps
-              mountPath: /host/coredumps
-              readOnly: true
-      volumes:
-        - name: host-coredumps
-          hostPath:
-            path: /var/lib/systemd/coredump
-            type: Directory
-```
-
-**Usage:**
-```bash
-# Copy core dump from debug pod to local machine
-kubectl cp breakglass-debug/coredump-collector-xyz:/host/coredumps/core.1234 ./core.1234
-```
+Use the [diagnostic artifact collector](../utils/images/diagnostic-artifact-collector/README.md)
+for its reviewed `crashdump-collection.v1` recipe. It fixes the collector
+command, read-only host mount, node placement, output path, and upload
+boundary; it is not a general-purpose shell or `kubectl cp` recipe. Binary
+core files are sensitive and are not generically redacted.
 
 ---
 
 #### 3. Storage Write Benchmark / Functionality Test
 
-For running storage benchmarks without needing logs or network access:
-
-```yaml
-# Use case: Run fio benchmarks or dd write tests
-# Security: Exec only for running test commands
-allowedPodOperations:
-  exec: true       # Run benchmark commands
-  attach: false    # No process attachment needed
-  logs: false      # Test results retrieved via exec
-  portForward: false
-```
-
-Combined with a template that provides benchmark tools and storage access:
-
-```yaml
-kind: DebugPodTemplate
-metadata:
-  name: storage-tester
-spec:
-  displayName: "Storage Benchmark"
-  description: "Run storage performance tests with fio"
-  template:
-    spec:
-      containers:
-        - name: fio
-          image: nixery.dev/shell/fio/sysstat:latest
-          command: ["sleep", "infinity"]
-          volumeMounts:
-            - name: test-storage
-              mountPath: /mnt/test
-      volumes:
-        - name: test-storage
-          emptyDir:
-            sizeLimit: 10Gi
-```
-
-**Usage:**
-```bash
-# Run write benchmark
-kubectl exec debug-storage-xyz -- fio --name=write_test --rw=write \
-  --bs=4k --size=1G --directory=/mnt/test --output-format=json
-
-# Run read benchmark
-kubectl exec debug-storage-xyz -- fio --name=read_test --rw=read \
-  --bs=4k --size=1G --directory=/mnt/test --output-format=json
-```
+Use the [storage diagnostics image](../utils/images/storage-debug/README.md).
+Its standard `mounted-volume` mode targets an already attached PVC with
+bounded `fio`/`ioping`; its controller-owned advanced operations use a fixed
+kubestr contract and a dedicated ServiceAccount. Do not expose arbitrary fio
+files, commands, images, StorageClasses, or PVC sizes through a session
+request.
 
 ---
 
@@ -736,7 +573,6 @@ status:
   allowedPods:
     - namespace: breakglass-debug
       name: debug-session-abc123-ds-xyz
-      nodeName: node-1
       ready: true
   deployedResources:
     - apiVersion: apps/v1
@@ -822,12 +658,12 @@ schedulingOptions:
   required: true
   
   options:
-    - name: sriov
-      displayName: "SRIOV Nodes"
-      description: "Deploy on nodes with SR-IOV network interfaces"
+    - name: network-capable
+      displayName: "Network-capable Nodes"
+      description: "Deploy on nodes selected by the downstream platform"
       schedulingConstraints:
         nodeSelector:
-          network.kubernetes.io/sriov: "true"
+          debug.network.example/approved: "true"
       # Restrict this option to specific groups
       allowedGroups:
         - netops-admins
@@ -837,8 +673,7 @@ schedulingOptions:
       description: "Deploy on regular worker nodes"
       default: true  # Pre-selected in UI
       schedulingConstraints:
-        nodeSelector:
-          network.kubernetes.io/sriov: "false"
+        nodeSelector: {}
     
     - name: any
       displayName: "Any Worker Node"
@@ -1339,28 +1174,26 @@ kubectlDebug:
   ephemeralContainers:
     enabled: true
     allowedNamespaces:
-      - "app-*"
-      - "services-*"
+      patterns:
+        - "app-*"
+        - "services-*"
     deniedNamespaces:
-      - "kube-system"
-      - "breakglass"
+      patterns:
+        - "kube-system"
+        - "breakglass"
     allowedImages:
-      - "alpine:*"
-      - "busybox:*"
-      - "debug-tools:*"
-    requireImageDigest: false
-    maxCapabilities:
-      - NET_ADMIN
-      - SYS_PTRACE
+      - "ghcr.io/telekom/k8s-breakglass/utils/network-debug@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    requireImageDigest: true
+    maxCapabilities: []
     allowPrivileged: false
     requireNonRoot: true
 ```
 
-`allowedImages` entries are exact image references or explicit glob patterns. Use `*`
-where tag or repository wildcards are intended; exact entries such as
-`registry.example.com/debug:1.0.0` do not allow longer tags such as
-`registry.example.com/debug:1.0.0-extra`. When `allowPrivileged` is `false`,
-requests with `securityContext.privileged: true` are rejected.
+`allowedImages` entries are exact image references or explicit glob patterns.
+Prefer one reviewed digest per template and set `requireImageDigest: true`.
+When `allowPrivileged` is `false`, requests with
+`securityContext.privileged: true` are rejected. The template's allowlist is
+not a reason to expose image or command selection to an untrusted caller.
 
 #### Namespace Filtering with Labels
 
@@ -1404,8 +1237,7 @@ kubectlDebug:
   nodeDebug:
     enabled: true
     allowedImages:
-      - "alpine:*"
-      - "debug-tools:*"
+      - "ghcr.io/telekom/k8s-breakglass/utils/network-debug@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     hostNamespaces:
       hostNetwork: true
       hostPID: true
@@ -1493,7 +1325,7 @@ When enabled, participants can attach to shared terminals:
 **Tmux image for E2E:**
 - The repository provides a tmux-enabled image at [e2e/images/tmux-debug/Dockerfile](../e2e/images/tmux-debug/Dockerfile)
 - E2E setup scripts build it as `breakglass-tmux-debug:e2e` and load it into Kind before terminal-sharing tests run
-- Test pod templates set `imagePullPolicy: IfNotPresent`, and pod-copy E2E requests use the non-`latest` `breakglass-tmux-debug:e2e` image so Kubernetes uses a preloaded Kind image when it is already present instead of pulling from a registry
+- Test pod templates set `imagePullPolicy: IfNotPresent`, and pod-copy E2E requests use the fixed-tag `breakglass-tmux-debug:e2e` image so Kubernetes uses a preloaded Kind image when it is already present instead of pulling from a registry
 - Override the image name via `TMUX_DEBUG_IMAGE` if needed
 
 ## Approval Workflow
@@ -1588,7 +1420,7 @@ audit:
     - "history"
     - "clear"
   sidecar:
-    image: audit-logger:v1
+    image: registry.example/audit-logger@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     resources:
       requests:
         cpu: 50m
@@ -1656,7 +1488,7 @@ on the session. `viewer` participants can observe shared terminals but cannot
 inject ephemeral containers, create pod copies, or create node debug pods.
 
 Kubectl-debug operations merge their operation-specific status fields into the
-latest `DebugSession` status before returning. Concurrent renewals, participant
+current `DebugSession` status before returning. Concurrent renewals, participant
 changes, and lifecycle updates are preserved while the operation records copied
 pods, injected containers, allowed pods, or cleanup state.
 
@@ -1666,23 +1498,19 @@ pods, injected containers, allowed pods, or cleanup state.
 
 Inject a debug container into a running pod without restarting it.
 
-**Request Body:**
-```json
-{
-  "namespace": "default",
-  "podName": "my-app-pod-xyz",
-  "containerName": "debug",
-  "image": "busybox:latest",
-  "command": ["sh"]
-}
-```
+The wire request contains the target namespace/pod and container name plus the
+operation's image and command fields. The upstream API surface does not select
+safe values for a deployment. Generate those fields only from an
+administrator-owned, digest-pinned profile and enforce that profile with
+admission; this page intentionally provides no free-form request example.
 
 **Response:**
 ```json
 {
-  "success": true,
-  "message": "Ephemeral container 'debug' injected into pod 'my-app-pod-xyz'",
-  "containerName": "debug"
+  "message": "ephemeral container injected successfully",
+  "pod": "my-app-pod-xyz",
+  "namespace": "default",
+  "container": "debug"
 }
 ```
 
@@ -1692,20 +1520,19 @@ Inject a debug container into a running pod without restarting it.
 
 Create a copy of an existing pod for debugging without affecting the original.
 
-**Request Body:**
-```json
-{
-  "namespace": "default",
-  "podName": "my-app-pod-xyz",
-  "debugImage": "busybox:latest"  // optional - replaces container image
-}
-```
+The wire request identifies the source namespace/pod and may carry a debug
+image. The image, if used, must come from an administrator-owned,
+digest-pinned profile. Do not expose that field as caller-selected input; this
+page intentionally provides no free-form request example.
 
 **Response:**
 ```json
 {
+  "message": "pod copy created successfully",
   "copyName": "my-app-pod-xyz-debug-abc123",
-  "copyNamespace": "default"
+  "copyNamespace": "default",
+  "originalPod": "my-app-pod-xyz",
+  "originalNamespace": "default"
 }
 ```
 
@@ -1715,18 +1542,21 @@ Create a copy of an existing pod for debugging without affecting the original.
 
 Create a privileged debug pod on a specific node for node-level debugging.
 
-**Request Body:**
-```json
-{
-  "nodeName": "worker-node-1"
-}
-```
+The wire request carries a node name. Resolve it from a controller-owned,
+allowlisted scheduling policy and verify the target at admission; a requester
+must not be able to select an arbitrary node. This page intentionally provides
+no free-form request example. The current implementation creates a privileged
+pod with host namespaces and a read-write `/host` host-path; expose this
+endpoint only through a separately reviewed, short-lived node-maintenance
+profile and admission policy.
 
 **Response:**
 ```json
 {
+  "message": "node debug pod created successfully",
   "podName": "node-debug-worker-node-1-abc123",
-  "namespace": "breakglass-debug"
+  "namespace": "breakglass-debug",
+  "node": "worker-node-1"
 }
 ```
 
@@ -1747,8 +1577,7 @@ spec:
     spec:
       containers:
         - name: debug
-          image: busybox:latest
-          command: ["sleep", "infinity"]
+          image: ghcr.io/telekom/k8s-breakglass/utils/workload-debug@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ---
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugSessionTemplate
@@ -1772,60 +1601,14 @@ spec:
 
 ### Network Debug Template
 
-Privileged networking tools for SRE:
-
-```yaml
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: DebugPodTemplate
-metadata:
-  name: network-debug-pod
-spec:
-  displayName: "Network Debug Pod"
-  description: "Pod with network troubleshooting tools"
-  template:
-    spec:
-      hostNetwork: true
-      hostPID: true
-      containers:
-        - name: debug
-          image: nicolaka/netshoot:latest
-          command: ["sleep", "infinity"]
-          securityContext:
-            privileged: true
-      tolerations:
-        - operator: Exists
----
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: DebugSessionTemplate
-metadata:
-  name: network-debug
-spec:
-  displayName: "Network Debug"
-  description: "Privileged network debugging on all nodes"
-  mode: workload
-  podTemplateRef:
-    name: network-debug-pod
-  workloadType: DaemonSet
-  targetNamespace: breakglass-debug
-  allowed:
-    groups:
-      - network-sre
-    clusters:
-      - "*"
-  approvers:
-    groups:
-      - sre-leads
-  constraints:
-    maxDuration: "4h"
-    defaultDuration: "1h"
-    allowRenewal: true
-    maxRenewals: 2
-  terminalSharing:
-    enabled: true
-    method: tmux
-  audit:
-    logCommands: true
-```
+Use the [network-debug utility contract](../utils/network-debug/README.md)
+and the [DebugSession authoring guide](./debug-session-authoring.md). The
+public `network-diagnostics` catalogue profile is report/bounded-capture-only
+for ordinary pod-network diagnostics; it does not authorize full host `pwru`
+tracing. Full host-network/host-PID `pwru` tracing is an image capability only
+and requires a separate custom DebugSessionTemplate/profile with independent
+privilege review and approval plus a provider-enforced security context. Do
+not copy a privileged or all-node template into a general-purpose session.
 
 ### Ephemeral Container Debug Template
 
@@ -1844,15 +1627,15 @@ spec:
     ephemeralContainers:
       enabled: true
       allowedNamespaces:
-        - "app-*"
-        - "services-*"
+        patterns:
+          - "app-*"
+          - "services-*"
       deniedNamespaces:
-        - "kube-system"
-        - "breakglass"
+        patterns:
+          - "kube-system"
+          - "breakglass"
       allowedImages:
-        - "alpine:*"
-        - "busybox:*"
-        - "nicolaka/netshoot:*"
+        - "ghcr.io/telekom/k8s-breakglass/utils/network-debug@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
       requireNonRoot: true
       allowPrivileged: false
   allowed:
@@ -1879,8 +1662,7 @@ spec:
     spec:
       containers:
         - name: debug
-          image: debug-tools:v2
-          command: ["sleep", "infinity"]
+          image: ghcr.io/telekom/k8s-breakglass/utils/workload-debug@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ---
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugSessionTemplate
@@ -1898,9 +1680,11 @@ spec:
     ephemeralContainers:
       enabled: true
       allowedNamespaces:
-        - "*"
+        patterns:
+          - "app-*"
       deniedNamespaces:
-        - "kube-system"
+        patterns:
+          - "kube-system"
     nodeDebug:
       enabled: true
       hostNamespaces:
