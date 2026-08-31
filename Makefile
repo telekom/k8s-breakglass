@@ -103,6 +103,13 @@ E2E_EXCLUDE := grep -vE '/e2e($$|/)'
 vet: ## Run go vet against code.
 	go vet ./...
 
+.PHONY: cross-compile
+cross-compile: ## Compile artifact packages for every supported Unix target.
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go test -exec=true ./pkg/artifacts/... -run '^$$'
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -exec=true ./pkg/artifacts/... -run '^$$'
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go test -exec=true ./pkg/artifacts/... -run '^$$'
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go test -exec=true ./pkg/artifacts/... -run '^$$'
+
 .PHONY: prepare-test
 prepare-test: ## Regenerate code/manifests, format Go files, and run vet before testing.
 	$(MAKE) generate
