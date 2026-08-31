@@ -11,6 +11,13 @@ on:
       - "hack/utility-image-matrix.json"
       - "hack/utility-release-contract.sh"
       - "hack/test-utility-matrix-expansion.sh"
+      - "hack/docker-image-ownership.sh"
+      - "hack/docker-resource-ownership.sh"
+      - "hack/kind-ownership.sh"
+      - "hack/kubernetes-delete-uid.sh"
+      - "hack/kubernetes-storage-cleanup.sh"
+      - "hack/test-utility-workflow-paths.sh"
+      - "hack/test-utility-image-security-contract.sh"
       - "hack/release-required-checks.json"
       - ".github/workflows/utility-image-security.yml"
   push:
@@ -29,6 +36,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify utility workflow path and scan contracts
+        run: |
+          hack/test-utility-workflow-paths.sh
+          hack/test-utility-image-security-contract.sh
       - name: Export declared utility matrix
         id: matrix
         run: echo "matrix=$(hack/utility-release-contract.sh matrix | jq -c .)" >>"${GITHUB_OUTPUT}"
@@ -82,7 +93,7 @@ jobs:
       - name: Scan the exact built image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ${{ env.IMAGE_REF }}
+          image-ref: ${{ steps.build.outputs.image_id }}
           format: table
           vuln-type: os,library
           severity: CRITICAL,HIGH
