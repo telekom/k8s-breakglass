@@ -1347,8 +1347,11 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 	t.Run("pod copy disabled", func(t *testing.T) {
 		disabledSession := testSession.DeepCopy()
 		disabledSession.Status.ResolvedTemplate.KubectlDebug.PodCopy.Enabled = false
+		disabledHub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(disabledSession).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+		disabledHandler := NewKubectlDebugHandler(disabledHub, mockProvider)
 
-		_, err := handler.CreatePodCopy(
+		_, err := disabledHandler.CreatePodCopy(
 			context.Background(),
 			disabledSession,
 			"production",
@@ -1364,8 +1367,11 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 	t.Run("target namespace missing", func(t *testing.T) {
 		sessionWithMissingNs := testSession.DeepCopy()
 		sessionWithMissingNs.Status.ResolvedTemplate.KubectlDebug.PodCopy.TargetNamespace = "missing-namespace"
+		missingNsHub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(sessionWithMissingNs).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+		missingNsHandler := NewKubectlDebugHandler(missingNsHub, mockProvider)
 
-		_, err := handler.CreatePodCopy(
+		_, err := missingNsHandler.CreatePodCopy(
 			context.Background(),
 			sessionWithMissingNs,
 			"production",
@@ -1415,8 +1421,11 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 		sessionWithDenied.Status.ResolvedTemplate.KubectlDebug.PodCopy.DeniedNamespaces = &breakglassv1alpha1.NamespaceFilter{
 			Patterns: []string{"production", "kube-*"},
 		}
+		deniedHub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(sessionWithDenied).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+		deniedHandler := NewKubectlDebugHandler(deniedHub, mockProvider)
 
-		_, err := handler.CreatePodCopy(
+		_, err := deniedHandler.CreatePodCopy(
 			context.Background(),
 			sessionWithDenied,
 			"production",
@@ -1507,7 +1516,8 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 			WithScheme(scheme).
 			WithObjects(testPod, testNs, productionNs).
 			Build()
-		handler5 := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+		handler5 := NewKubectlDebugHandler(fake.NewClientBuilder().WithScheme(scheme).WithObjects(sessionWithSelector).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build(), &mockClientProvider{
 			clients: map[string]ctrlclient.Client{"test-cluster": targetClient5},
 		})
 
@@ -1795,7 +1805,11 @@ func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 			Build()
 		hubClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(testSession).
+			WithObjects(func() *breakglassv1alpha1.DebugSession {
+				hubSession := testSession.DeepCopy()
+				hubSession.Spec.TargetNamespace = "tenant-debug"
+				return hubSession
+			}()).
 			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
 		handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{
@@ -1822,8 +1836,11 @@ func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 	t.Run("node debug disabled", func(t *testing.T) {
 		disabledSession := testSession.DeepCopy()
 		disabledSession.Status.ResolvedTemplate.KubectlDebug.NodeDebug.Enabled = false
+		disabledHub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(disabledSession).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+		disabledHandler := NewKubectlDebugHandler(disabledHub, mockProvider)
 
-		_, err := handler.CreateNodeDebugPod(
+		_, err := disabledHandler.CreateNodeDebugPod(
 			context.Background(),
 			disabledSession,
 			"worker-1",
@@ -1839,8 +1856,11 @@ func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 		selectorSession.Status.ResolvedTemplate.KubectlDebug.NodeDebug.NodeSelector = map[string]string{
 			"special": "true",
 		}
+		selectorHub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(selectorSession).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+		selectorHandler := NewKubectlDebugHandler(selectorHub, mockProvider)
 
-		_, err := handler.CreateNodeDebugPod(
+		_, err := selectorHandler.CreateNodeDebugPod(
 			context.Background(),
 			selectorSession,
 			"worker-1",
