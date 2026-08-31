@@ -195,7 +195,6 @@ roleRef:
   kind: ClusterRole
   name: ${CLUSTER_ROLE}
 YAML
-ATTACHED_PV_UID=$(kubectl get pv "$ATTACHED_PV_NAME" -o jsonpath='{.metadata.uid}') || fail "attached PV UID was unavailable"
 
 runner_identity="system:serviceaccount:${NAMESPACE}:${RUNNER_SA}"
 kubectl auth can-i --as "$runner_identity" list nodes | grep -Fx yes >/dev/null || fail "runner cannot perform required node discovery"
@@ -282,6 +281,7 @@ spec:
         capabilities:
           drop: ["ALL"]
 YAML
+ATTACHED_PV_UID=$(kubectl get pv "$ATTACHED_PV_NAME" -o jsonpath='{.metadata.uid}') || fail "attached PV UID was unavailable"
 if ! kubectl wait --namespace "$NAMESPACE" --for=condition=Ready pod/session-sentinel --timeout=120s >/dev/null; then
     kubectl describe pod session-sentinel --namespace "$NAMESPACE" >&2 || true
     fail "session sentinel Pod did not become ready"

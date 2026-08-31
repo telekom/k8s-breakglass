@@ -28,16 +28,17 @@ pwru_wait_for_event() {
 
 pwru_stop_gracefully() {
 	local container=$1 timeout_seconds=$2
-	local state exit_code iterations settle_seconds settle_iterations
+	local state exit_code iterations settle_seconds settle_iterations ref
+	ref=${PWRU_CONTAINER_ID:-$container}
 	case "$timeout_seconds" in
 		''|*[!0-9]*) return 1 ;;
 	esac
 	iterations=$((10#$timeout_seconds * 2))
 	[ "$iterations" -gt 0 ] || return 1
-	state=$(pwru_docker inspect --format '{{.State.Status}}' "$container") || return 1
+	state=$(pwru_docker inspect --format '{{.State.Status}}' "$ref") || return 1
 	[ "$state" = running ] || return 2
 	pwru_validate_owner "$container" || return 1
-	pwru_docker kill --signal INT "$container" >/dev/null || return 1
+	pwru_docker kill --signal INT "$ref" >/dev/null || return 1
 
 	# Waiting on the daemon's lifecycle event avoids losing the race between
 	# the last inspect poll and a delayed BPF detach. GNU timeout keeps the
@@ -50,7 +51,7 @@ pwru_stop_gracefully() {
 		# Keep the helper usable in minimal test environments without silently
 		# turning this into an unbounded wait.
 		for _ in $(seq 1 "$iterations"); do
-			state=$(pwru_docker inspect --format '{{.State.Status}}' "$container") || return 1
+			state=$(pwru_docker inspect --format '{{.State.Status}}' "$ref") || return 1
 			[ "$state" = exited ] && break
 			sleep 0.5
 		done
@@ -69,12 +70,12 @@ pwru_stop_gracefully() {
 	settle_iterations=$((10#$settle_seconds * 10))
 	[ "$settle_iterations" -gt 0 ] || return 1
 	for _ in $(seq 1 "$settle_iterations"); do
-		state=$(pwru_docker inspect --format '{{.State.Status}}' "$container") || return 1
+		state=$(pwru_docker inspect --format '{{.State.Status}}' "$ref") || return 1
 		[ "$state" = exited ] && break
 		sleep 0.1
 	done
 	[ "$state" = exited ] || return 2
-	exit_code=$(pwru_docker inspect --format '{{.State.ExitCode}}' "$container") || return 1
+	exit_code=$(pwru_docker inspect --format '{{.State.ExitCode}}' "$ref") || return 1
 	case "$exit_code" in
 		0|130) return 0 ;;
 		*) return 3 ;;
@@ -84,7 +85,8 @@ pwru_stop_gracefully() {
 pwru_force_remove() {
 	local container=$1
 	local timeout_seconds=${2:-15}
-	local iterations state
+	local iterations state ref
+	ref=${PWRU_CONTAINER_ID:-$container}
 	# Absence is only a proof when the daemon was reachable for the inspect.
 	case "$timeout_seconds" in
 		''|*[!0-9]*) return 1 ;;
@@ -98,11 +100,13 @@ pwru_force_remove() {
 	# every attempt. A KILL is used only after a failed forced removal; this
 	# never broadens cleanup to containers from another invocation.
 	for _ in $(seq 1 "$iterations"); do
-		if ! pwru_docker inspect "$container" >/dev/null 2>&1; then
+		if ! pwru_docker inspect "$ref" >/dev/null 2>&1; then
 			# An inspect failure is only treated as absence after a bounded
 			# exact-name list query proves it is gone. If listed, ownership
 			# cannot be verified and cleanup fails closed.
-			if pwru_container_listed "$container"; then
+			if [ -n "${PWRU_CONTAINER_ID:-}" ]; then
+				state=1
+			elif pwru_container_listed "$container"; then
 				return 1
 			else
 				state=$?
@@ -111,18 +115,20 @@ pwru_force_remove() {
 			return 0
 		fi
 		pwru_validate_owner "$container" || return 1
-		if ! pwru_docker rm -f "$container" >/dev/null 2>&1; then
-			pwru_docker kill --signal KILL "$container" >/dev/null 2>&1 || true
-			pwru_docker rm -f "$container" >/dev/null 2>&1 || true
+		if ! pwru_docker rm -f "$ref" >/dev/null 2>&1; then
+			pwru_docker kill --signal KILL "$ref" >/dev/null 2>&1 || true
+			pwru_docker rm -f "$ref" >/dev/null 2>&1 || true
 		fi
-		if ! pwru_docker inspect "$container" >/dev/null 2>&1; then
+		if ! pwru_docker inspect "$ref" >/dev/null 2>&1; then
 			pwru_docker info >/dev/null 2>&1 || return 1
 			return 0
 		fi
 		sleep 0.5
 	done
-	if ! pwru_docker inspect "$container" >/dev/null 2>&1; then
-		if pwru_container_listed "$container"; then
+	if ! pwru_docker inspect "$ref" >/dev/null 2>&1; then
+		if [ -n "${PWRU_CONTAINER_ID:-}" ]; then
+			state=1
+		elif pwru_container_listed "$container"; then
 			return 1
 		else
 			state=$?
@@ -153,8 +159,9 @@ pwru_docker() {
 }
 
 pwru_validate_owner() {
-	local container=$1 owner
+	local container=$1 owner ref
+	ref=${PWRU_CONTAINER_ID:-$container}
 	[ -n "${PWRU_OWNER_LABEL:-}" ] || return 0
-	owner=$(pwru_docker inspect --format "{{index .Config.Labels \"${PWRU_OWNER_LABEL}\"}}" "$container") || return 1
+	owner=$(pwru_docker inspect --format "{{index .Config.Labels \"${PWRU_OWNER_LABEL}\"}}" "$ref") || return 1
 	[ "$owner" = "${PWRU_OWNER_VALUE:-}" ]
 }

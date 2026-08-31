@@ -90,6 +90,7 @@ exit 1
 EOF
 cat >"${tmp}/bin/cosign" <<'EOF'
 #!/usr/bin/env bash
+[[ -z "${VERIFY_CALL_MARKER:-}" ]] || touch "${VERIFY_CALL_MARKER}"
 [[ "$*" == *"--certificate-identity=https://github.com/o/r/.github/workflows/utility-release.yml@refs/tags/v1.2.3"* ]]
 [[ "$*" != *"certificate-identity-regexp"* ]]
 if [[ "${1:-}" == verify && "${VERIFY_FAILURE:-}" == signature ]]; then exit 1; fi
@@ -105,9 +106,20 @@ cat >"${tmp}/bin/gh" <<'EOF'
 [[ "$*" == *"--source-digest eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"* ]]
 [[ "$*" == *"--source-ref refs/tags/v1.2.3"* ]]
 EOF
+cat >"${tmp}/bin/timeout" <<'EOF'
+#!/bin/sh
+# Keep this fixture independent of platform-specific GNU timeout process
+# group behavior on macOS; every wrapped command is already deterministic.
+case "${1:-}" in
+  --foreground) shift ;;
+esac
+shift
+exec "$@"
+EOF
 chmod +x "${tmp}/bin/docker"
 chmod +x "${tmp}/bin/cosign" "${tmp}/bin/gh"
 chmod +x "${tmp}/bin/curl"
+chmod +x "${tmp}/bin/timeout"
 export PATH="${tmp}/bin:${PATH}"
 expect_fail() { if "$@" >/dev/null 2>&1; then echo "unexpected success: $*" >&2; exit 1; fi; }
 [[ "$(DOCKER_MODE=missing "${helper}" tag-state ghcr.io/telekom/k8s-breakglass/utils/test v1.2.3)" == missing ]]
@@ -153,8 +165,11 @@ grep -F 'imagetools create --tag ghcr.io/telekom/k8s-breakglass/utils/test:rolli
 # Stable tags must refuse an occupied tag without reaching the mutation, while
 # a proven-missing stable tag may be created and then must remain bound.
 rm -f "${docker_call_log}" "${inspect_count_file}"
-expect_fail env DOCKER_CALL_LOG="${docker_call_log}" "${verify_env[@]}" "${tag_helper}" ghcr.io/telekom/k8s-breakglass/utils/test v1.2.3 "${tag_digest}"
+occupied_verify_marker="${tmp}/occupied-verify"
+rm -f "${occupied_verify_marker}"
+expect_fail env VERIFY_CALL_MARKER="${occupied_verify_marker}" DOCKER_CALL_LOG="${docker_call_log}" "${verify_env[@]}" "${tag_helper}" ghcr.io/telekom/k8s-breakglass/utils/test v1.2.3 "${tag_digest}"
 [[ ! -e "${docker_call_log}" ]]
+[[ ! -e "${occupied_verify_marker}" ]]
 
 stable_marker="${tmp}/stable-created"
 rm -f "${docker_call_log}" "${inspect_count_file}" "${stable_marker}"
