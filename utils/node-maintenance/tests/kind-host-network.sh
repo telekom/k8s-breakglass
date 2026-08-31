@@ -21,18 +21,6 @@ cluster_create_attempted=false
 cluster_owned=false
 
 fail() { printf 'node-maintenance host-network proof: %s\n' "$*" >&2; exit 1; }
-partial_cluster_is_owned() {
-	[[ "${cluster_create_attempted}" == true ]] || return 1
-	[[ -s "${kubeconfig}" ]] || return 1
-	if ! awk -v expected="kind-${cluster}" '
-		($1 == "name:" && $2 == expected) || ($1 == "-" && $2 == "name:" && $3 == expected) { found_name = 1 }
-		$1 == "current-context:" && $2 == expected { found_context = 1 }
-		END { exit !(found_name && found_context) }
-	' "${kubeconfig}"; then
-		return 1
-	fi
-	kubectl --kubeconfig "${kubeconfig}" get --raw=/version >/dev/null 2>&1
-}
 cleanup() {
 	rc=$?
 	set +e
@@ -43,7 +31,10 @@ cleanup() {
 			KUBECONFIG="${kubeconfig}" kubectl describe pods -n "${namespace}" 2>&1 || true
 			KUBECONFIG="${kubeconfig}" kubectl get events -A --sort-by=.lastTimestamp 2>&1 || true
 		fi
-		if [[ "${cluster_owned}" == true ]] || partial_cluster_is_owned; then
+		# A failed create does not prove ownership: a same-name foreign cluster may
+		# have won the discovery/create race. Leak an unproven partial cluster rather
+		# than deleting foreign state.
+		if [[ "${cluster_owned}" == true ]]; then
 			KUBECONFIG="${kubeconfig}" kind delete cluster --name "${cluster}" >/dev/null 2>&1 || rc=1
 			if clusters="$(kind get clusters 2>/dev/null)"; then
 				if grep -Fx -- "${cluster}" <<<"${clusters}" >/dev/null; then rc=1; fi

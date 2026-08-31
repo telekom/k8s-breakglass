@@ -13,22 +13,12 @@ pod=diagnostic-artifact-collector
 KIND_NODE_IMAGE=${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}
 KUBECONFIG="$(mktemp "${TMPDIR:-/tmp}/diagnostic-artifact-collector-kubeconfig.XXXXXX")"
 cluster_owned=false
-cluster_create_attempted=false
 image_owned=false
-partial_cluster_is_owned() {
-	[ "${cluster_create_attempted}" = true ] || return 1
-	[ -s "${KUBECONFIG}" ] || return 1
-	if ! awk -v expected="kind-${cluster}" '
-		($1 == "name:" && $2 == expected) || ($1 == "-" && $2 == "name:" && $3 == expected) { found_name = 1 }
-		$1 == "current-context:" && $2 == expected { found_context = 1 }
-		END { exit !(found_name && found_context) }
-	' "${KUBECONFIG}"; then
-		return 1
-	fi
-	kubectl --kubeconfig "${KUBECONFIG}" get --raw=/version >/dev/null 2>&1
-}
 cleanup() {
-	if [ "$cluster_owned" = true ] || partial_cluster_is_owned; then
+	# A failed create does not prove ownership: a same-name foreign cluster may
+	# have won the discovery/create race. Leak an unproven partial cluster rather
+	# than deleting foreign state.
+	if [ "$cluster_owned" = true ]; then
 		kind delete cluster --name "$cluster" --kubeconfig "$KUBECONFIG" >/dev/null 2>&1 || true
 	fi
 	if [ "$image_owned" = true ]; then
@@ -71,7 +61,6 @@ while IFS= read -r existing_cluster; do
 done <<EOF
 $existing_clusters
 EOF
-cluster_create_attempted=true
 if kind create cluster --name "$cluster" --image "$KIND_NODE_IMAGE" --kubeconfig "$KUBECONFIG" --wait 90s; then
 	cluster_owned=true
 else

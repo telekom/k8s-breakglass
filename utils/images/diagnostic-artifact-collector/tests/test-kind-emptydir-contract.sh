@@ -36,7 +36,7 @@ case "${1:-}" in
         fi
         shift
       done
-    elif [[ "${KIND_PARTIAL_KUBECONFIG:-}" == 1 ]]; then
+    elif [[ "${KIND_SAME_NAME_TAKEOVER:-}" == 1 ]]; then
       while [[ $# -gt 0 ]]; do
         if [[ "${1:-}" == --kubeconfig ]]; then
           printf 'clusters:\n- name: kind-diagnostic-artifact-collector\ncurrent-context: kind-diagnostic-artifact-collector\n' >"${2:?}"
@@ -86,15 +86,15 @@ fi
 
 rm -f "${create_marker}" "${delete_marker}"
 if PATH="${tmp}/bin:${PATH}" KIND_CREATE_MARKER="${create_marker}" KIND_DELETE_MARKER="${delete_marker}" \
-  KIND_PARTIAL_KUBECONFIG=1 \
+  KIND_SAME_NAME_TAKEOVER=1 \
   KIND_EXISTING_CLUSTERS='' \
   KIND_IMAGE_NAME=diagnostic-artifact-collector:test \
   "${root}/tests/kind-emptydir.sh" >/dev/null 2>&1; then
-  echo 'verified partial Kind create unexpectedly succeeded' >&2
+  echo 'same-name takeover Kind create unexpectedly succeeded' >&2
   exit 1
 fi
-[[ -e "${create_marker}" && -e "${delete_marker}" ]] || {
-  echo 'verified partial Kind create did not clean its owned cluster' >&2
+[[ -e "${create_marker}" && ! -e "${delete_marker}" ]] || {
+  echo 'same-name takeover authorized deletion of an unproven cluster' >&2
   exit 1
 }
 

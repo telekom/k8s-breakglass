@@ -27,11 +27,12 @@ assert_contains "containerd_image=\"docker.io/library/\${image}\""
 assert_contains 'cluster_create_attempted=true'
 assert_contains "if [[ \"\${cluster_create_attempted}\" == true ]]"
 assert_contains 'cluster_owned=false'
-assert_contains "if [[ \"\${cluster_owned}\" == true ]] || partial_cluster_is_owned"
-assert_contains 'found_context = 1'
-assert_contains 'if ! awk -v expected='
 assert_contains 'cluster_owned=true'
-assert_contains "kubectl --kubeconfig \"\${kubeconfig}\" get --raw=/version"
+if grep -F 'partial_cluster_is_owned' "${script}" >/dev/null; then
+	printf '%s\n' 'node-maintenance proof trusts unproven partial cluster ownership' >&2
+	exit 1
+fi
+assert_contains "if [[ \"\${cluster_owned}\" == true ]]; then"
 create_line=$(rg -n '^if kind create cluster ' "${script}" | cut -d: -f1)
 owner_line=$(rg -n '^\s*cluster_owned=true$' "${script}" | cut -d: -f1)
 if [[ -z "${create_line}" || -z "${owner_line}" || "${owner_line}" -le "${create_line}" ]]; then
@@ -58,10 +59,9 @@ if grep -F 'kind load docker-image' "${script}" >/dev/null; then
 	exit 1
 fi
 
-# Exercise both ownership dimensions with a failed Kind create. The fake
+# Exercise failed Kind creation, including a same-name takeover. The fake
 # kubectl deliberately succeeds even for a foreign kubeconfig; cleanup must
-# still refuse deletion when either the cluster name or current context does
-# not match the newly requested cluster.
+# refuse deletion whenever create did not return success.
 fixture="$(mktemp -d)"
 trap 'rm -rf "${fixture}"' EXIT HUP INT TERM
 mkdir -p "${fixture}/bin"
@@ -93,6 +93,7 @@ case "${1:-}" in
     case "${KIND_KUBECONFIG_MODE:?}" in
       wrong-name) name=kind-foreign-cluster; context=kind-foreign-cluster ;;
       wrong-context) name="kind-${cluster_name}"; context=kind-foreign-cluster ;;
+      same-name-takeover) name="kind-${cluster_name}"; context="kind-${cluster_name}" ;;
       *) exit 2 ;;
     esac
     printf 'clusters:\n- name: %s\ncurrent-context: %s\n' "${name}" "${context}" >"${kubeconfig}"
@@ -117,7 +118,7 @@ printf '%s\n' Linux
 EOF
 chmod +x "${fixture}/bin/docker" "${fixture}/bin/kind" "${fixture}/bin/kubectl" "${fixture}/bin/jq" "${fixture}/bin/uname"
 
-for mode in wrong-name wrong-context; do
+for mode in wrong-name wrong-context same-name-takeover; do
 	delete_marker="${fixture}/${mode}.deleted"
 	if PATH="${fixture}/bin:${PATH}" \
 		NODE_MAINTENANCE_TEST_IMAGE=node-maintenance:test \

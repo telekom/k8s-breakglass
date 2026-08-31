@@ -14,22 +14,12 @@ KIND_BIN=${KIND_BIN:-kind}
 KUBECTL_BIN=${KUBECTL_BIN:-kubectl}
 sentinel_kubeconfig=$(mktemp "${TMPDIR:-/tmp}/diagnostic-artifact-collector-collision-kubeconfig.XXXXXX")
 cluster_owned=false
-cluster_create_attempted=false
 image_owned=false
-partial_cluster_is_owned() {
-	[ "$cluster_create_attempted" = true ] || return 1
-	[ -s "$sentinel_kubeconfig" ] || return 1
-	if ! awk -v expected="kind-${cluster}" '
-		($1 == "name:" && $2 == expected) || ($1 == "-" && $2 == "name:" && $3 == expected) { found_name = 1 }
-		$1 == "current-context:" && $2 == expected { found_context = 1 }
-		END { exit !(found_name && found_context) }
-	' "$sentinel_kubeconfig"; then
-		return 1
-	fi
-	"$KUBECTL_BIN" --kubeconfig "$sentinel_kubeconfig" get --raw=/version >/dev/null 2>&1
-}
 cleanup() {
-	if [ "$cluster_owned" = true ] || partial_cluster_is_owned; then
+	# A failed create does not prove ownership: a same-name foreign cluster may
+	# have won the discovery/create race. Leak an unproven partial cluster rather
+	# than deleting foreign state.
+	if [ "$cluster_owned" = true ]; then
 		"$KIND_BIN" delete cluster --name "$cluster" --kubeconfig "$sentinel_kubeconfig" >/dev/null 2>&1 || true
 	fi
 	if [ "$image_owned" = true ]; then
@@ -58,7 +48,6 @@ fi
 if printf '%s\n' "$existing_clusters" | grep -Fx "$cluster" >/dev/null 2>&1; then
 	:
 else
-	cluster_create_attempted=true
 	if "$KIND_BIN" create cluster --name "$cluster" --image "$KIND_NODE_IMAGE" --kubeconfig "$sentinel_kubeconfig" --wait 90s >/dev/null; then
 		cluster_owned=true
 	else
