@@ -129,6 +129,30 @@ func TestApplyDebugSessionStatusRejectsMissingExpiryResurrection(t *testing.T) {
 	assert.Contains(t, err.Error(), "must become terminal")
 }
 
+func TestApplyDebugSessionStatusRejectsJoinLeaveAfterExpiry(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	expired := metav1.NewTime(time.Now().Add(-time.Minute))
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "expired-join-leave", Namespace: "default"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &expired,
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	desired := session.DeepCopy()
+	desired.Status.Message = "participant left"
+	err := ApplyDebugSessionStatus(context.Background(), fakeClient, desired)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expired active session")
+
+	terminal := session.DeepCopy()
+	terminal.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+	require.NoError(t, ApplyDebugSessionStatus(context.Background(), fakeClient, terminal))
+}
+
 func TestApplyDebugSessionStatusRejectsStaleFullSnapshot(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))

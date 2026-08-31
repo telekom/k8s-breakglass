@@ -17,6 +17,9 @@ import (
 //
 // CopiedPodRef tracks a debug copy of a pod.
 type CopiedPodRefApplyConfiguration struct {
+	// uid is the immutable UID of the copied pod observed after creation.
+	// Cleanup must match this UID before deleting a name-reused replacement.
+	UID *string `json:"uid,omitempty"`
 	// originalPod is the name of the original pod.
 	OriginalPod *string `json:"originalPod,omitempty"`
 	// originalNamespace is the original pod's namespace.
@@ -35,6 +38,14 @@ type CopiedPodRefApplyConfiguration struct {
 // apply.
 func CopiedPodRef() *CopiedPodRefApplyConfiguration {
 	return &CopiedPodRefApplyConfiguration{}
+}
+
+// WithUID sets the UID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UID field is set to the value of the last call.
+func (b *CopiedPodRefApplyConfiguration) WithUID(value string) *CopiedPodRefApplyConfiguration {
+	b.UID = &value
+	return b
 }
 
 // WithOriginalPod sets the OriginalPod field in the declarative configuration to the given value

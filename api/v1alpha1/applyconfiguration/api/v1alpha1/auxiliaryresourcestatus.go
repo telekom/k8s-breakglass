@@ -13,6 +13,9 @@ package v1alpha1
 //
 // AuxiliaryResourceStatus tracks the state of a deployed auxiliary resource.
 type AuxiliaryResourceStatusApplyConfiguration struct {
+	// uid is the immutable Kubernetes UID observed when the resource was created.
+	// Cleanup must match this UID before deleting a name-reused replacement.
+	UID *string `json:"uid,omitempty"`
 	// name is the auxiliary resource name (from template).
 	Name *string `json:"name,omitempty"`
 	// category is the resource category.
@@ -51,6 +54,14 @@ type AuxiliaryResourceStatusApplyConfiguration struct {
 // apply.
 func AuxiliaryResourceStatus() *AuxiliaryResourceStatusApplyConfiguration {
 	return &AuxiliaryResourceStatusApplyConfiguration{}
+}
+
+// WithUID sets the UID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UID field is set to the value of the last call.
+func (b *AuxiliaryResourceStatusApplyConfiguration) WithUID(value string) *AuxiliaryResourceStatusApplyConfiguration {
+	b.UID = &value
+	return b
 }
 
 // WithName sets the Name field in the declarative configuration to the given value

@@ -269,6 +269,11 @@ type DebugSessionStatus struct {
 
 // PodTemplateResourceStatus tracks the state of resources deployed from multi-doc pod templates.
 type PodTemplateResourceStatus struct {
+	// uid is the immutable Kubernetes UID observed when the resource was created.
+	// Cleanup must match this UID before deleting a name-reused replacement.
+	// +optional
+	UID string `json:"uid,omitempty"`
+
 	// kind is the Kubernetes kind of the resource.
 	// +optional
 	Kind string `json:"kind,omitempty"`
@@ -521,6 +526,11 @@ type EphemeralContainerRef struct {
 
 // CopiedPodRef tracks a debug copy of a pod.
 type CopiedPodRef struct {
+	// uid is the immutable UID of the copied pod observed after creation.
+	// Cleanup must match this UID before deleting a name-reused replacement.
+	// +optional
+	UID string `json:"uid,omitempty"`
+
 	// originalPod is the name of the original pod.
 	// +required
 	OriginalPod string `json:"originalPod"`

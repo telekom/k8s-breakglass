@@ -131,6 +131,11 @@ func validateDebugSessionStatusMutation(oldStatus, newStatus breakglassv1alpha1.
 	if newStatus.State == breakglassv1alpha1.DebugSessionStateActive && newExpiryMissing {
 		return fmt.Errorf("active session must have an expiry")
 	}
+	if oldStatus.State == breakglassv1alpha1.DebugSessionStateActive &&
+		!oldExpiryMissing && !now.Before(oldStatus.ExpiresAt.Time) &&
+		newStatus.State == breakglassv1alpha1.DebugSessionStateActive {
+		return fmt.Errorf("expired active session cannot receive a non-terminal status update")
+	}
 	if oldStatus.ExpiresAt != nil && !oldStatus.ExpiresAt.IsZero() &&
 		(newStatus.ExpiresAt == nil || newStatus.ExpiresAt.IsZero()) && newStatus.State == breakglassv1alpha1.DebugSessionStateActive {
 		return fmt.Errorf("active session expiry cannot be cleared")
