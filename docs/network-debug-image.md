@@ -35,14 +35,6 @@ tracefs, and securityfs mounts, and a kernel with BTF. Follow the target
 cluster's Pod Security policy. Never copy a
 capture to a public tracker without redaction.
 
-`kubestr` talks to the Kubernetes API and may create short-lived diagnostic
-resources for its selected command. Use a read-only service account unless a
-specific kubestr check documents a narrower write permission. The image itself
-does not contain `kubectl`, credentials, or a kubeconfig. Keep
-`automountServiceAccountToken: false` for ordinary network diagnostics; mount
-an explicitly approved, read-only service account only for the kubestr command
-that needs API access.
-
 The image runs as UID 0 to support packet capture and eBPF tools. A workload
 or DebugSession using it must isolate the network namespace and grant only the
 capabilities required for the selected operation (`NET_RAW`/`NET_ADMIN`, and
@@ -73,10 +65,11 @@ tool lock record, license notices, and BuildKit SBOM/provenance commands.
 The image has a fail-closed integration harness at
 [`utils/network-debug/tests/integration.sh`](../utils/network-debug/tests/integration.sh).
 It generates disposable HTTP traffic, verifies the shipped connectivity, DNS,
-TLS, socket, and routing helpers, reads a real tcpdump pcap, observes generated
-packets with `pwru`, and runs `kubestr fio` with a pinned disposable fio
-fixture against a kind cluster and its default `standard` StorageClass. Missing BTF/BPF/PERFMON,
-Docker capabilities, kind, or storage support emits an actionable
-`REQUIREMENT:` message and fails the dedicated compatible-runner job rather
-than reporting a partial pass. The operation and prerequisite contract is
-tracked in [`tool-contract.yaml`](../utils/network-debug/tests/tool-contract.yaml).
+TLS, socket, and routing helpers, reads a real tcpdump pcap, and observes
+generated packets with `pwru`. The network image deliberately does not contain
+storage provisioning or `kubestr`; those workflows belong to the separate
+`storage-debug` image. Missing BTF/BPF/PERFMON, Docker capabilities, or kind
+support emits an actionable `REQUIREMENT:` message and fails the dedicated
+compatible-runner job rather than reporting a partial pass. The operation and
+prerequisite contract is tracked in
+[`tool-contract.yaml`](../utils/network-debug/tests/tool-contract.yaml).

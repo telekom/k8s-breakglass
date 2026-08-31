@@ -3,7 +3,7 @@
 
 profiles:
   - name: elevated-check
-    intent: node-recovery
+    intent: network-diagnostics
     displayName: Elevated check
     description: Explicitly opted-in elevation validation profile.
     enabled: true

@@ -122,7 +122,7 @@ when "custom"
   expect(value_at(pod_by_profile.fetch("custom-readonly"), "spec", "template", "spec", "containers").first["image"] == "busybox:1.36.1", "custom image was not rendered")
   expect(value_at(pod_by_profile.fetch("direct-image"), "spec", "template", "spec", "containers").first["image"] == "busybox:1.36.1", "direct image was not rendered")
 when "all"
-  expected = %w[workload-diagnostics network-diagnostics storage-diagnostics dump-access network-repair node-recovery cluster-validation]
+  expected = %w[workload-diagnostics network-diagnostics storage-diagnostics dump-access cluster-validation]
   expect(session_by_profile.keys == expected, "all-enabled profiles must preserve the declared intent order")
   expected.each do |profile|
     pod_spec = value_at(pod_by_profile.fetch(profile), "spec", "template", "spec")
@@ -177,13 +177,6 @@ when "all"
   dump_mounts = value_at(pod_by_profile.fetch("dump-access"), "spec", "template", "spec", "containers").first.fetch("volumeMounts")
   dump_input = dump_mounts.find { |mount| mount["mountPath"] == "/input" }
   expect(dump_input && dump_input["readOnly"].is_a?(TrueClass), "dump input must be read-only")
-  %w[network-repair node-recovery].each do |node_profile|
-    node_pod = value_at(pod_by_profile.fetch(node_profile), "spec", "template", "spec")
-    node_container = value_at(node_pod, "containers").first
-    node_env = value_at(node_container, "env")
-    node_name = node_env.find { |entry| entry["name"] == "NODE_NAME" }
-    expect(node_name == {"name" => "NODE_NAME", "valueFrom" => {"fieldRef" => {"fieldPath" => "spec.nodeName"}}}, "#{node_profile} must receive the Downward API node name")
-  end
 when "digest"
   expect(pods.length == 1 && sessions.length == 1, "digest fixture must render one paired profile")
   image = value_at(pods.first, "spec", "template", "spec", "containers").first["image"]

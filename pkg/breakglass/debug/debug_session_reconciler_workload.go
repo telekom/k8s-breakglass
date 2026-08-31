@@ -884,6 +884,9 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 			spec.NodeSelector = make(map[string]string)
 		}
 		for k, v := range ds.Spec.NodeSelector {
+			if existing, ok := spec.NodeSelector[k]; ok && existing != v {
+				return nil, fmt.Errorf("session nodeSelector %q=%q conflicts with the template selector value %q", k, v, existing)
+			}
 			spec.NodeSelector[k] = v
 		}
 	}

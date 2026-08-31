@@ -33,6 +33,28 @@ validate_rendered() {
   ruby "${chart_dir}/ci/validate-rendered.rb" "$1" "$2"
 }
 
+# Checked-in defaults must remain canonical, digest-shaped, and deliberately
+# non-runnable. Release packaging replaces the zero digests with verified refs.
+if rg -n 'ghcr\.io/telekom/k8s-breakglass/(workload-debug|network-debug|storage-debug|dump-reader|node-maintenance|cluster-validator):' "${chart_dir}/values.yaml"; then
+  fail "catalogue defaults contain a legacy mutable image path"
+fi
+if rg -n '^  [A-Za-z]+: \{repository: ghcr\.io/telekom/k8s-breakglass/utils/[^,]+, tag:' "${chart_dir}/values.yaml"; then
+  fail "catalogue defaults contain a mutable image tag"
+fi
+ruby -ryaml -e '
+  values = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+  images = values.fetch("images")
+  canonical = "ghcr.io/telekom/k8s-breakglass/utils/"
+  public = images.values.map { |image| image.fetch("repository") if image.fetch("repository").start_with?(canonical) }.compact
+  expected = %w[diagnostic-artifact-collector network-debug node-maintenance storage-debug workload-debug].map { |name| "#{canonical}#{name}" }.sort
+  abort("catalogue public image set mismatch: #{public.uniq.sort.inspect}") unless public.uniq.sort == expected
+  zero = "sha256:" + "0" * 64
+  %w[dumpAccess clusterValidation].each do |key|
+    image = images.fetch(key)
+    abort("#{key} must remain a non-public placeholder") if image.fetch("repository").start_with?(canonical) || image.fetch("digest") != zero
+  end
+' "${chart_dir}/values.yaml"
+
 helm lint "${chart_dir}" --strict --values "${chart_dir}/ci/test-values.yaml"
 helm template debug-catalogue "${chart_dir}" \
   --values "${chart_dir}/ci/test-values.yaml" >"${rendered}"
@@ -72,7 +94,7 @@ expect_rejected "hostNetwork on an unrelated intent" helm template debug-catalog
   --set-json 'profiles=[{"name":"unsafe-network","intent":"dump-access","displayName":"Unsafe network","description":"Wrong intent","enabled":true,"elevated":true,"hostNetwork":true,"preset":"elevated-node","imageKey":"dumpAccess","command":["sh"],"args":[]}]'
 
 expect_rejected "hostPID without hostNetwork" helm template debug-catalogue "${chart_dir}" \
-  --set-json 'profiles=[{"name":"unsafe-pid","intent":"node-recovery","displayName":"Unsafe PID","description":"Missing host network","enabled":true,"elevated":true,"hostPID":true,"preset":"elevated-node","imageKey":"nodeRecovery","command":["sh"],"args":[]}]'
+  --set-json 'profiles=[{"name":"unsafe-pid","intent":"network-diagnostics","displayName":"Unsafe PID","description":"Missing host network","enabled":true,"elevated":true,"hostPID":true,"preset":"elevated-node","imageKey":"network","command":["sh"],"args":[]}]'
 
 helm template debug-catalogue "${chart_dir}" \
   --set-json 'profiles=[{"name":"digest-image","intent":"workload-diagnostics","displayName":"Digest image","description":"Digest precedence test","enabled":true,"elevated":false,"command":["sh"],"args":[],"image":{"repository":"example.invalid/workload-debug","tag":"ignored","digest":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}]' >"${digest_rendered}"
@@ -106,7 +128,7 @@ expect_rejected "dump source without an explicit path" helm template debug-catal
   --set-json 'profiles=[{"name":"dump-access","intent":"dump-access","displayName":"Dump access","description":"Read approved dump","enabled":true,"elevated":false,"imageKey":"dumpAccess","command":["/usr/local/bin/dump-reader"],"args":["copy","/input/fixture.dump"],"allowExec":false,"pod":{"volumeMounts":[{"name":"input","mountPath":"/input","readOnly":true},{"name":"output","mountPath":"/output"}],"volumes":[{"name":"input","hostPath":{"path":"/var/lib/catalogue-fixtures/dumps","type":"Directory"}},{"name":"output","emptyDir":{"sizeLimit":"1Gi"}}]}}]'
 
 helm template debug-catalogue "${chart_dir}" \
-  --set-json 'profiles=[{"name":"elevated-host","intent":"node-recovery","displayName":"Elevated host","description":"Explicit elevation test","enabled":true,"elevated":true,"hostNetwork":true,"preset":"elevated-node","imageKey":"nodeRecovery","command":["/usr/local/bin/node-maintenance"],"args":["node-recovery"],"pod":{"volumes":[{"name":"host","hostPath":{"path":"/var/lib/example","type":"Directory"}}]}}]' >"${elevated_rendered}"
+  --set-json 'profiles=[{"name":"elevated-host","intent":"network-diagnostics","displayName":"Elevated host","description":"Explicit elevation test","enabled":true,"elevated":true,"hostNetwork":true,"preset":"elevated-node","imageKey":"network","command":["/usr/local/bin/net-debug"],"args":["report"],"pod":{"volumes":[{"name":"host","hostPath":{"path":"/var/lib/example","type":"Directory"}}]}}]' >"${elevated_rendered}"
 validate_rendered elevated "${elevated_rendered}"
 
 expect_rejected "cluster-validation service account without token opt-in" helm template debug-catalogue "${chart_dir}" \

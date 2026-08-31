@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Network debug image**: Rebased the runtime on the immutable netshoot v0.16
   multi-architecture manifest. The inherited netshoot toolset now supplies all
   overlapping network commands; the image retains only its bounded helpers,
-  pinned `kubestr`/`pwru` additions, and signed SBOM/provenance workflow. Tool
+  pinned `pwru` addition, and signed SBOM/provenance workflow. Tool
   inventory normalizes upstream version-banner formats while the integration
   proof executes the real storage operation.
 - The standalone debug-session catalogue now uses an ordered, extensible
@@ -57,6 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Storage diagnostics utility image**: Added the bounded `storage-debug`
   image with mounted-volume fio/ioping checks and controller-owned kubestr
   storage workflows.
+- **Standalone debug-session catalogue**: Added the OCI-ready
+  `debug-session-catalogue` Helm chart with neutral workload, network,
+  storage, packet-capture, network-repair, node-recovery, and cluster-validation
+  profiles. Requesters, approvers, targets, images, and the target namespace are
+  configurable; elevated profiles are disabled and require explicit opt-in.
 - **Node-maintenance utility image**: Added the generic, digest-pinnable
   `node-maintenance` intent image with read-only node recovery evidence, exact
   controller-approved link, auto-negotiation, neighbor, and bridge-FDB repair,
@@ -99,14 +104,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now accepts both explicit and implicit `:latest` containerd references and
   deduplicates by manifest digest before creating the immutable local image
   reference.
-- **Standalone debug-session catalogue**: Added the OCI-ready
-  `debug-session-catalogue` Helm chart with neutral workload, network,
-  storage, packet-capture, network-repair, node-recovery, and cluster-validation
-  profiles. Requesters, approvers, targets, images, and the target namespace are
-  configurable; elevated profiles are disabled and require explicit opt-in.
-
-### Fixed
-
 - Debug-session workload rendering now applies selector ownership labels to
   DaemonSet pod templates, matching Deployment and Job behavior and preserving
   Kubernetes selector validity.

@@ -72,6 +72,16 @@ fail_archive("archive is missing linux/amd64 or linux/arm64 image manifests") un
 image_digests = images.map { |descriptor| descriptor_digest(descriptor, "image manifest") }
 image_attestations = {}
 images.each do |descriptor|
+  fail_archive("image manifest descriptor has unexpected media type") unless descriptor["mediaType"] == "application/vnd.oci.image.manifest.v1+json"
+  manifest = JSON.parse(read_blob(archive, descriptor, "image manifest"))
+  fail_archive("image manifest has an invalid schema version") unless manifest["schemaVersion"] == 2
+  fail_archive("image manifest has an unexpected media type") unless manifest["mediaType"] == "application/vnd.oci.image.manifest.v1+json"
+  config = manifest["config"]
+  fail_archive("image manifest has no valid config descriptor") unless config.is_a?(Hash) && config["mediaType"] == "application/vnd.oci.image.config.v1+json"
+  descriptor_digest(config, "image config")
+  layers = manifest["layers"]
+  fail_archive("image manifest has no valid layers list") unless layers.is_a?(Array)
+  layers.each { |layer| descriptor_digest(layer, "image layer") }
   digest = descriptor_digest(descriptor, "image manifest")
   image_attestations[digest] = { "platform" => "#{descriptor.dig('platform', 'os')}/#{descriptor.dig('platform', 'architecture')}", "sbom" => false, "provenance" => false }
 end
