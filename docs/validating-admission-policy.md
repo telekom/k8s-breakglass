@@ -40,24 +40,24 @@ Requests are **never blocked** by VAP in Phase 1 — the existing webhook remain
 
 | Validation | CEL Expression |
 |------------|---------------|
-| `spec.cluster` required | `object.spec.cluster.size() > 0` |
-| `spec.user` required | `object.spec.user.size() > 0` |
-| `spec.grantedGroup` required | `object.spec.grantedGroup.size() > 0` |
-| `spec.reason` ≥ 10 chars | `object.spec.reason.size() >= 10` |
-| Spec immutability on update | `object.spec == oldSelf.spec` |
+| `spec.cluster` required on create | `oldObject != null || (has(object.spec.cluster) && object.spec.cluster.size() > 0)` |
+| `spec.user` required on create | `oldObject != null || (has(object.spec.user) && object.spec.user.size() > 0)` |
+| `spec.grantedGroup` required on create | `oldObject != null || (has(object.spec.grantedGroup) && object.spec.grantedGroup.size() > 0)` |
+| Spec immutability on update | `oldObject == null || object.spec == oldObject.spec` |
 | Valid state transitions | Enumerated allowed transitions |
 
 #### BreakglassEscalation
 
 | Validation | CEL Expression |
 |------------|---------------|
-| Approvers non-empty | At least one group or user |
-| `escalatedGroup` identifier format | Regex `^[a-zA-Z0-9._:-]+$` |
+| Approvers non-empty | `has(object.spec.approvers) && ((has(object.spec.approvers.groups) && object.spec.approvers.groups.size() > 0) || (has(object.spec.approvers.users) && object.spec.approvers.users.size() > 0))` |
+| `escalatedGroup` identifier format | `has(object.spec.escalatedGroup) && object.spec.escalatedGroup.size() > 0 && object.spec.escalatedGroup.matches('^[a-zA-Z0-9._:-]+$')` |
 | No empty `allowed.groups` entries | `all(g, g.size() > 0)` |
 | No empty `allowed.clusters` entries | `all(c, c.size() > 0)` |
-| No duplicate `allowed.groups` | Size matches `toSet()` size |
-| No duplicate `allowed.clusters` | Size matches `toSet()` size |
-| IDP field mutual exclusivity | `allowedIdentityProviders` vs `forRequests`/`forApprovers` |
+| No duplicate `allowed.groups` | `!has(object.spec.allowed) || !has(object.spec.allowed.groups) || object.spec.allowed.groups.all(g, object.spec.allowed.groups.exists_one(x, x == g))` |
+| No duplicate `allowed.clusters` | `!has(object.spec.allowed) || !has(object.spec.allowed.clusters) || object.spec.allowed.clusters.all(c, object.spec.allowed.clusters.exists_one(x, x == c))` |
+| IDP legacy mutual exclusion | `!has(object.spec.allowedIdentityProviders) || object.spec.allowedIdentityProviders.size() == 0 || ((!has(object.spec.allowedIdentityProvidersForRequests) || object.spec.allowedIdentityProvidersForRequests.size() == 0) && (!has(object.spec.allowedIdentityProvidersForApprovers) || object.spec.allowedIdentityProvidersForApprovers.size() == 0))` |
+| IDP split-field symmetry | `(!has(object.spec.allowedIdentityProvidersForRequests) || object.spec.allowedIdentityProvidersForRequests.size() == 0) == (!has(object.spec.allowedIdentityProvidersForApprovers) || object.spec.allowedIdentityProvidersForApprovers.size() == 0)` |
 
 #### ClusterConfig
 
@@ -65,7 +65,7 @@ Requests are **never blocked** by VAP in Phase 1 — the existing webhook remain
 |------------|---------------|
 | Auth config mutual exclusivity | Exactly one of `kubeconfigSecretRef` or `oidcAuth` |
 | `kubeconfigSecretRef.name` required | Non-empty when set |
-| No duplicate `identityProviderRefs` | Size matches `toSet()` size |
+| No duplicate `identityProviderRefs` | `all(... exists_one(...))` uniqueness check |
 
 #### IdentityProvider
 
@@ -89,6 +89,7 @@ These validations **cannot** be expressed in CEL without cross-resource lookups:
 - **`validateIdentityProviderRefs`** — Requires looking up referenced IdentityProviders
 - **`validateMailProviderReference`** — Requires looking up referenced MailProviders
 - **`validateSessionIdentityProviderAuthorization`** — Requires cross-referencing escalations and IDPs
+- **BreakglassSession request reason policy** — Depends on the matched escalation's stored reason policy
 - **Go template syntax validation** — Cannot validate Go templates via CEL
 - **Template dry-run rendering** — Requires full Go runtime
 
@@ -115,6 +116,17 @@ Build and apply:
 kustomize build config/test-overlays/vap/ | kubectl apply -f -
 ```
 
+### Helm deployments
+
+The `escalation-config` chart can also render these VAP objects through
+`validatingAdmissionPolicy.enabled=true`. The policy and binding names are
+static cluster-scoped names. Enable them from only one release per cluster.
+
+If a cluster already installed the VAP objects through this kustomize component,
+leave the chart value disabled. To move ownership to Helm, first remove or adopt
+the existing `ValidatingAdmissionPolicy` and `ValidatingAdmissionPolicyBinding`
+objects so Helm does not collide with unmanaged cluster-scoped resources.
+
 ### Verify
 
 Check policies are deployed:
@@ -128,9 +140,9 @@ Expected output:
 ```
 NAME                                       VALIDATIONS   PARAMKIND   MATCHCONDITIONS
 breakglass-clusterconfig-validation        3             <unset>     0
-breakglass-escalation-validation           7             <unset>     0
+breakglass-escalation-validation           8             <unset>     0
 breakglass-identityprovider-validation     8             <unset>     0
-breakglass-session-validation              6             <unset>     0
+breakglass-session-validation              5             <unset>     0
 ```
 
 Check bindings:

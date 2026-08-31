@@ -303,6 +303,7 @@ non-buggy case:
 
 ### Added
 
+- **Helm ValidatingAdmissionPolicy opt-in**: The `escalation-config` chart can optionally render phase-1 ValidatingAdmissionPolicy and binding resources with Kubernetes 1.30+ server-side validation coverage.
 - **`--disable-session-rate-limit` flag**: New CLI flag (`BREAKGLASS_DISABLE_SESSION_RATE_LIMIT` env var) replaces the strict session-creation rate limiter with a permissive one (1000 req/s, burst 10000). Intended for E2E testing and development environments only. Do not use in production.
 
 ### Fixed
