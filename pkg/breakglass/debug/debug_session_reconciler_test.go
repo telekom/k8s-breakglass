@@ -5272,6 +5272,12 @@ func TestDebugSessionController_CleanupPodTemplateResourcesPreservesFailures(t *
 				Name:      "debug-script",
 				UID:       "fixture-debug-script",
 				Namespace: "default",
+				Labels: map[string]string{
+					"breakglass.t-caas.telekom.com/session": session.Name,
+				},
+				Annotations: map[string]string{
+					"breakglass.t-caas.telekom.com/source-session": session.Namespace + "/" + session.Name,
+				},
 			},
 		}).
 		WithInterceptorFuncs(interceptor.Funcs{

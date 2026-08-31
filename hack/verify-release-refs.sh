@@ -13,6 +13,14 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 test_dir="$(mktemp -d)"
 trap 'rm -rf "${test_dir}"' EXIT
 mkdir -p "${test_dir}/bin" "${test_dir}/refs"
+ruby -ryaml -e '
+  values = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+  %w[workload network storage networkRepair diagnosticArtifactCollector].each do |key|
+    values.fetch("images").fetch(key).delete("digest")
+    values.fetch("images").fetch(key)["tag"] = "0.1.0"
+  end
+  File.write(ARGV.fetch(1), values.to_yaml)
+' "${script_dir}/../charts/debug-session-catalogue/values.yaml" "${test_dir}/values.yaml"
 
 cat >"${test_dir}/bin/cosign" <<'EOF'
 #!/usr/bin/env bash
@@ -32,24 +40,11 @@ printf 'Name: %s\nDigest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 EOF
 chmod 700 "${test_dir}/bin/docker"
 
-ruby -ryaml -e '
-  values = YAML.load_file(ARGV.fetch(0))
-  %w[workload network storage networkRepair diagnosticArtifactCollector].each do |key|
-    values.fetch("images").fetch(key).delete("digest")
-    values.fetch("images").fetch(key)["tag"] = "ci"
-  end
-  File.write(ARGV.fetch(1), values.to_yaml)
-' "${script_dir}/../charts/debug-session-catalogue/values.yaml" "${test_dir}/values.yaml"
-
 PATH="${test_dir}/bin:${PATH}" "${script_dir}/resolve-release-refs.sh" \
   "${test_dir}/values.yaml" "${test_dir}/refs"
 [ "$(find "${test_dir}/refs" -name '*.ref' | wc -l | tr -d ' ')" -eq 5 ]
 while IFS= read -r ref; do
-  IFS='|' read -r name repository digest sbom provenance signature <"${ref}"
-  [[ "${name}" =~ ^[a-z-]+$ ]]
-  [[ "${repository}" =~ ^ghcr\.io/telekom/k8s-breakglass/[^|]+$ ]]
-  [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]]
-  [[ "${sbom}" == verified && "${provenance}" == verified && "${signature}" == verified ]]
+  [[ "$(cat "${ref}")" =~ ^[a-z][a-z-]*\|ghcr\.io/telekom/k8s-breakglass/utils/(workload-debug|network-debug|storage-debug|node-maintenance|diagnostic-artifact-collector)\|sha256:[a-f0-9]{64}$ ]]
 done < <(find "${test_dir}/refs" -name '*.ref' -print | sort)
 
 cat >"${test_dir}/bin/docker" <<'EOF'
@@ -61,6 +56,14 @@ chmod 700 "${test_dir}/bin/docker"
 if PATH="${test_dir}/bin:${PATH}" "${script_dir}/resolve-release-refs.sh" \
   "${test_dir}/values.yaml" "${test_dir}/refs"; then
   echo "malformed registry digest was accepted" >&2
+  exit 1
+fi
+
+cp "${test_dir}/values.yaml" "${test_dir}/wrong-path-values.yaml"
+sed -i '' 's#ghcr.io/telekom/k8s-breakglass/utils/workload-debug#ghcr.io/telekom/k8s-breakglass/workload-debug#' "${test_dir}/wrong-path-values.yaml"
+if PATH="${test_dir}/bin:${PATH}" "${script_dir}/resolve-release-refs.sh" \
+  "${test_dir}/wrong-path-values.yaml" "${test_dir}/refs" >/dev/null 2>&1; then
+  echo "legacy sibling utility repository was accepted" >&2
   exit 1
 fi
 

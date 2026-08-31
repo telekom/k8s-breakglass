@@ -107,11 +107,16 @@ securityContext:
 {{- $elevatedNode := and (default false $profile.elevated) (eq (default "restricted" $profile.preset) "elevated-node") -}}
 {{- $dumpAccess := eq (default "" $profile.intent) "dump-access" -}}
 {{- $dumpInputReadOnly := false -}}
+{{- $dumpInputMounts := 0 -}}
 {{- $dumpInputSource := false -}}
 {{- $dumpOutputBounded := false -}}
 {{- with $profile.pod }}
 {{- range $mount := (default (list) .volumeMounts) }}
-{{- if and $dumpAccess (eq $mount.name "input") (eq $mount.mountPath "/input") (default false $mount.readOnly) }}{{ $dumpInputReadOnly = true }}{{ end }}
+{{- if and $dumpAccess (eq $mount.name "input") }}
+{{- $dumpInputMounts = add $dumpInputMounts 1 -}}
+{{- if or (ne (default "" $mount.mountPath) "/input") (not (default false $mount.readOnly)) }}{{ fail (printf "profiles[%s] dump-access input volume mounts must have exactly one read-only mount at /input" $profile.name) }}{{ end }}
+{{- $dumpInputReadOnly = true }}
+{{- end }}
 {{- end }}
 {{- range $volume := (default (list) .volumes) }}
 {{- if and $dumpAccess (eq $volume.name "input") (or (hasKey $volume "hostPath") (hasKey $volume "persistentVolumeClaim") (hasKey $volume "configMap")) }}{{ $dumpInputSource = true }}{{ end }}
@@ -130,6 +135,7 @@ securityContext:
 {{- if and $serviceAccountToken (not $elevatedNode) }}{{ fail (printf "profiles[%s] projected serviceAccountToken volume overrides require explicit elevated: true and preset elevated-node" $profile.name) }}{{ end }}
 {{- end }}
 {{- if and $profile.enabled $dumpAccess (not (regexMatch "^/input/[A-Za-z0-9][A-Za-z0-9._-]{0,254}$" (default "" $profile.sourcePath))) }}{{ fail (printf "profiles[%s].sourcePath must be a path to one input file" $profile.name) }}{{ end }}
+{{- if and $profile.enabled $dumpAccess (ne $dumpInputMounts 1) }}{{ fail (printf "profiles[%s] enabled dump-access requires exactly one read-only input volume mount at /input" $profile.name) }}{{ end }}
 {{- if and $profile.enabled $dumpAccess (not $dumpInputSource) }}{{ fail (printf "profiles[%s] enabled dump-access requires an explicit input source volume" $profile.name) }}{{ end }}
 {{- if and $profile.enabled $dumpAccess (not $dumpOutputBounded) }}{{ fail (printf "profiles[%s] enabled dump-access requires a size-limited output emptyDir" $profile.name) }}{{ end }}
 {{- end }}
