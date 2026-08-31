@@ -86,12 +86,12 @@ func TestDeployDebugResourcesRejectsSessionInvalidationBeforeEachWrite(t *testin
 		configure func(*breakglassv1alpha1.DebugSessionTemplate)
 	}{
 		{name: "resource quota", configure: func(t *breakglassv1alpha1.DebugSessionTemplate) {
-			max := int32(1)
-			t.Spec.ResourceQuota = &breakglassv1alpha1.DebugResourceQuotaConfig{MaxPods: &max}
+			maxAvailable := int32(1)
+			t.Spec.ResourceQuota = &breakglassv1alpha1.DebugResourceQuotaConfig{MaxPods: &maxAvailable}
 		}},
 		{name: "pod disruption budget", configure: func(t *breakglassv1alpha1.DebugSessionTemplate) {
-			min := int32(1)
-			t.Spec.PodDisruptionBudget = &breakglassv1alpha1.DebugPDBConfig{Enabled: true, MinAvailable: &min}
+			minAvailable := int32(1)
+			t.Spec.PodDisruptionBudget = &breakglassv1alpha1.DebugPDBConfig{Enabled: true, MinAvailable: &minAvailable}
 		}},
 		{name: "workload", configure: func(*breakglassv1alpha1.DebugSessionTemplate) {}},
 	} {
