@@ -5,6 +5,10 @@
 set -Eeuo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+script="${root}/tests/kind-emptydir.sh"
+grep -F 'KIND_CLUSTER_OWNER_IDS=' "${script}" >/dev/null
+grep -F 'kind_create_owned_cluster' "${script}" >/dev/null
+grep -F 'kind_cleanup_owned_cluster' "${script}" >/dev/null
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 mkdir -p "${tmp}/bin"

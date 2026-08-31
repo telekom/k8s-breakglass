@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
@@ -13,15 +13,15 @@ DOCKER_BIN=${DOCKER_BIN:-docker}
 KIND_BIN=${KIND_BIN:-kind}
 KUBECTL_BIN=${KUBECTL_BIN:-kubectl}
 sentinel_kubeconfig=$(mktemp "${TMPDIR:-/tmp}/diagnostic-artifact-collector-collision-kubeconfig.XXXXXX")
-cluster_owned=false
+export KIND_CLUSTER_NAME="$cluster" KUBECONFIG_FILE="$sentinel_kubeconfig" KIND_CLUSTER_CREATED=false KIND_CLUSTER_OWNER_IDS=''
+# shellcheck source=../../../../hack/kind-ownership.sh
+# shellcheck disable=SC1091
+script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
+# shellcheck disable=SC1091
+. "${script_dir}/../../../../hack/kind-ownership.sh"
 image_owned=false
 cleanup() {
-	# A failed create does not prove ownership: a same-name foreign cluster may
-	# have won the discovery/create race. Leak an unproven partial cluster rather
-	# than deleting foreign state.
-	if [ "$cluster_owned" = true ]; then
-		"$KIND_BIN" delete cluster --name "$cluster" --kubeconfig "$sentinel_kubeconfig" >/dev/null 2>&1 || true
-	fi
+	kind_cleanup_owned_cluster >/dev/null 2>&1 || true
 	if [ "$image_owned" = true ]; then
 		"$DOCKER_BIN" image rm "$sentinel_image" >/dev/null 2>&1 || true
 	fi
@@ -48,9 +48,7 @@ fi
 if printf '%s\n' "$existing_clusters" | grep -Fx "$cluster" >/dev/null 2>&1; then
 	:
 else
-	if "$KIND_BIN" create cluster --name "$cluster" --image "$KIND_NODE_IMAGE" --kubeconfig "$sentinel_kubeconfig" --wait 90s >/dev/null; then
-		cluster_owned=true
-	else
+	if ! kind_create_owned_cluster >/dev/null; then
 		echo 'could not create collision sentinel Kind cluster' >&2
 		exit 1
 	fi

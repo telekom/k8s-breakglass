@@ -41,6 +41,8 @@ WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/network-debug-proof.XXXXXX")
 KUBECONFIG_FILE=${WORK_DIR}/kubeconfig
 KIND_CLUSTER_CREATED=false
 NETWORK_NAMESPACE_CREATED=false
+NETWORK_NAMESPACE_UID=
+NETWORK_HOST_POD_UID=
 NETWORK_CREATED=false
 CONTAINER_CREATED=false
 PWRU_CONTAINER_CREATED=false
@@ -82,10 +84,11 @@ cleanup() {
 	cleanup_failed=false
 	if [ "$KIND_CLUSTER_CREATED" = true ]; then
 		if [ "$NETWORK_NAMESPACE_CREATED" = true ] && command -v kubectl >/dev/null 2>&1; then
-			if ! kubectl --kubeconfig "$KUBECONFIG_FILE" delete namespace "$NETWORK_NAMESPACE" --ignore-not-found --wait=true --timeout=60s >/dev/null 2>&1; then
-				cleanup_failed=true
-			fi
-			if kubectl --kubeconfig "$KUBECONFIG_FILE" get namespace "$NETWORK_NAMESPACE" >/dev/null 2>&1; then
+			current_namespace_uid=$(kubectl --kubeconfig "$KUBECONFIG_FILE" get namespace "$NETWORK_NAMESPACE" -o jsonpath='{.metadata.uid}' 2>/dev/null) || current_namespace_uid=
+			if [ -n "$NETWORK_NAMESPACE_UID" ] && [ "$current_namespace_uid" = "$NETWORK_NAMESPACE_UID" ]; then
+				kubectl --kubeconfig "$KUBECONFIG_FILE" delete namespace "$NETWORK_NAMESPACE" --ignore-not-found --wait=true --timeout=60s >/dev/null 2>&1 || cleanup_failed=true
+				if kubectl --kubeconfig "$KUBECONFIG_FILE" get namespace "$NETWORK_NAMESPACE" >/dev/null 2>&1; then cleanup_failed=true; fi
+			elif [ -n "$current_namespace_uid" ]; then
 				cleanup_failed=true
 			fi
 		fi
@@ -226,6 +229,8 @@ kubectl wait --for=condition=Ready nodes --all --timeout=180s >/dev/null || requ
 # the catalogue deploys, rather than a Docker analogue of a pod namespace.
 kubectl create namespace "$NETWORK_NAMESPACE" >/dev/null || requirement "could not create disposable network diagnostics namespace"
 NETWORK_NAMESPACE_CREATED=true
+NETWORK_NAMESPACE_UID=$(kubectl get namespace "$NETWORK_NAMESPACE" -o jsonpath='{.metadata.uid}') || requirement "could not capture disposable namespace UID"
+[ -n "$NETWORK_NAMESPACE_UID" ] || requirement "disposable namespace UID was empty"
 
 # Refuse collisions before claiming ownership. A daemon-reachable absent
 # result is the only safe state in which to proceed. Status 3 means a resource
@@ -407,6 +412,8 @@ fi
 host_network=$(kubectl get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" \
 	-o jsonpath='{.spec.hostNetwork}')
 [ "$host_network" = true ] || requirement "host-network capture pod was not assigned the host network"
+NETWORK_HOST_POD_UID=$(kubectl get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" -o jsonpath='{.metadata.uid}') || requirement "could not capture host-network Pod UID"
+[ -n "$NETWORK_HOST_POD_UID" ] || requirement "host-network Pod UID was empty"
 kubectl get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" -o json | jq -e '
 		.spec.automountServiceAccountToken == false and
 		(.spec.containers | length == 1) and
@@ -486,6 +493,9 @@ capture_pod_traffic() {
 
 capture_pod_traffic "$NETWORK_HOST_POD_NAME" host-network "$WORK_DIR/host-network-tcpdump.log"
 
+current_host_pod_uid=$(kubectl get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" -o jsonpath='{.metadata.uid}') || \
+	requirement "network diagnostics Pod disappeared before UID-fenced cleanup"
+[ "$current_host_pod_uid" = "$NETWORK_HOST_POD_UID" ] || requirement "network diagnostics Pod was replaced before cleanup"
 kubectl delete pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" --wait=true --timeout=60s >/dev/null || \
 	requirement "network diagnostics pod cleanup failed"
 if kubectl get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" >/dev/null 2>&1; then

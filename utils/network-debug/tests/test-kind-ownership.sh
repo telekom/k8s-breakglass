@@ -79,7 +79,8 @@ run_case() {
 		KIND_CLUSTER_CREATED=false \
 		bash -c '
 			set -eu
-			. "$1/kind-ownership.sh"
+			helper="$(cd -- "$1/../../../hack" && pwd)/kind-ownership.sh"
+			. "$helper"
 			if kind_create_owned_cluster; then
 				status=0
 			else
@@ -109,6 +110,8 @@ delete"
 elif [ "$expected_delete" = true ] && [ -f "$state" ]; then
 	printf '%s\n' "ownership case $mode left a cluster" >&2
 	exit 1
+else
+	:
 fi
 }
 
@@ -134,7 +137,8 @@ KIND_FAKE_MODE=success KIND_CLUSTER_NAME=ownership-success KIND_NODE_IMAGE=fixtu
 KUBECONFIG_FILE="$fixture/kubeconfig" KIND_CLUSTER_CREATED=false \
 	KIND_CLUSTER_OWNER_IDS='' bash -c '
 	set -eu
-	. "$1/kind-ownership.sh"
+	helper="$(cd -- "$1/../../../hack" && pwd)/kind-ownership.sh"
+	. "$helper"
 	kind_create_owned_cluster
 	test "$KIND_CLUSTER_CREATED" = true
 	cleanup_status=0
@@ -152,9 +156,10 @@ log="$fixture/replacement.log"
 KIND_BIN="$fixture/kind" DOCKER_BIN="$fixture/docker" KIND_FAKE_STATE="$state" KIND_FAKE_LOG="$log" \
 KIND_FAKE_MODE=success KIND_CLUSTER_NAME=ownership-replacement KIND_NODE_IMAGE=fixture \
 KUBECONFIG_FILE="$fixture/kubeconfig" KIND_CLUSTER_CREATED=false \
-KIND_CLUSTER_OWNER_IDS='' bash -c '
+	KIND_CLUSTER_OWNER_IDS='' bash -c '
 	set -eu
-	. "$1/kind-ownership.sh"
+	helper="$(cd -- "$1/../../../hack" && pwd)/kind-ownership.sh"
+	. "$helper"
 	kind_create_owned_cluster
 	printf "%s\n" foreign >"$KIND_FAKE_STATE"
 	cleanup_status=0
