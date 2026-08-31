@@ -182,6 +182,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Debug-session pod-template cleanup now preserves live unmarked resources
+  whose names were reused, requiring exact UID ownership markers or both
+  valid legacy session markers before deletion.
+
 - Preserve independently managed escalation validation and group-sync status fields during concurrent updates.
 
 - Keep debug session CRUD fixtures in the hub namespace while using the default

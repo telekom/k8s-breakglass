@@ -745,7 +745,7 @@ func resourceMayBeDeletedByDebugSession(obj *unstructured.Unstructured, ds *brea
 	case hasDebugSessionLegacyMarker(obj):
 		return resourceOwnedByLegacyDebugSession(obj, ds)
 	default:
-		return true
+		return false
 	}
 }
 
