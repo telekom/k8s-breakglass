@@ -59,6 +59,72 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 > release builds to ensure clean, reproducible images without layer reuse from prior
 > development iterations.
 
+## Utility image releases
+
+Standalone utility images are built by the separate `Utility image release`
+workflow. Its explicit `hack/utility-image-matrix.json` inventory selects
+publishable images, so nested test fixtures are excluded and images may use
+either colocated or shared Makefiles. Add each new utility's name, context, and
+Dockerfile to that inventory. The workflow builds each image independently for
+`linux/amd64` and `linux/arm64`, and publishes it at
+`ghcr.io/telekom/k8s-breakglass/utils/<intent>`.
+
+Every declared image and platform is built on pull requests and `main`, then
+run with its inventory-declared reference smoke command. The release gate also
+requires the explicit core checks in `hack/release-required-checks.json` and
+each image's uniquely named dedicated behavior checks. A new network, collector,
+or other utility becomes publishable only after its inventory entry, smoke
+contract, and dedicated checks have reached `main` successfully.
+Its dedicated workflow must retain an unfiltered `push` trigger for `main` so
+that the exact release commit always has those required check results.
+The separate `Utility image security` workflow rebuilds every declared image
+for both supported platforms and scans the exact local image produced by that
+build with Trivy. It fails on fixed or actionable `HIGH` and `CRITICAL` OS or
+library vulnerabilities (`ignore-unfixed=true`); it is intentionally separate
+from the controller-image scan in `security.yml` and is included in the release
+required-check inventory.
+
+On a controller release tag, every utility receives that exact same tag. The
+weekly scheduled rebuild publishes only the mutable `nightly` tag. Version tags
+are immutable, and their source must be on `main` with successful CI. The
+workflow first publishes an untagged, digest-addressed staging image, resolves
+its exact two platform subjects, generates and validates complete SPDX SBOMs,
+publishes GitHub-native provenance, and signs/attests the index and platform
+digests. `hack/publish-utility-tag.sh` then performs the full signature, SBOM,
+provenance, platform, and reference-pull verification against those digests;
+only a successful verification can reach final tag assignment. The tag binding
+is checked again after the write. Consumers should pin both values,
+for example:
+
+```yaml
+image: ghcr.io/telekom/k8s-breakglass/utils/workload-debug:v1.2.3@sha256:<manifest-digest>
+```
+
+This tag-plus-digest form lets Renovate propose tag and digest updates while
+the digest remains the immutable pull reference. A partial matrix rerun accepts
+an existing version tag only when its index and platform signatures, SBOMs,
+provenance, source SHA/ref, and reference pulls all verify against this exact
+workflow; a missing or competing claim fails closed rather than overwriting it.
+
+Before a release is approved, maintainers may manually dispatch the workflow
+from the `main` branch with `publish_rolling=true`. This publishes every
+declared utility to the mutable `rolling` tag for integration testing. The
+rolling channel is intentionally overwriteable and is never a release input;
+consumers must use a signed digest and must not treat `rolling` as an immutable
+deployment reference. A dispatch from another branch, or without the explicit
+input, is rejected. The weekly `nightly` channel has the same mutable-tag
+semantics.
+
+GHCR does not provide a compare-and-swap tag operation. Repository policy
+therefore makes this workflow the only writer for utility version tags, and its
+concurrency group serializes the same release tag. It checks again immediately
+before final assignment and verifies the tag-to-digest binding afterwards, but
+does not claim atomic protection from an out-of-band registry writer. Stable
+release tags are never intentionally overwritten; a competing writer remains a
+residual registry-level race that must be handled by repository permissions and
+the failed post-write verification. `nightly` and `rolling` are intentionally
+mutable and follow the same post-write verification.
+
 ## Release Checklist
 
 - Verify CI success on the release commit.

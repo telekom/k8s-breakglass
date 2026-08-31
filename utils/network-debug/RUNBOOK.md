@@ -11,6 +11,11 @@ this image adds only the bounded `net-debug`/`net-report` contract, approved
 ephemeral pod capture, pinned `pwru`, and the documentation mounted under
 `/usr/share/breakglass/runbooks/upstream/network-debug`.
 
+The inherited Alpine package set is refreshed from the pinned v3.24
+repositories during the weekly rolling rebuild. The digest-pinned base and
+tool source are reproducible inputs, but this package layer is intentionally a
+time-of-build security refresh; scan the exact digest before publication.
+
 Use `net-report` for a deterministic overview, then invoke only the helper
 needed for the incident. `net-debug --help` and `net-debug tools` list the
 supported commands; `curl`, `nc`, `dig`, `ip`, `ss`, `tcpdump`, `mtr`, and the

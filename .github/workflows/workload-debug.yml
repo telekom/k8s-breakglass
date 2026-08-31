@@ -13,17 +13,13 @@ on:
       - ".github/workflows/workload-debug.yml"
   push:
     branches: [main]
-    paths:
-      - "utils/workload-debug/**"
-      - "docs/runbooks/workload-debug.md"
-      - ".github/workflows/workload-debug.yml"
 
 permissions:
   contents: read
 
 jobs:
   static:
-    name: Static image checks
+    name: Workload debug static checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -38,7 +34,7 @@ jobs:
           dockerfile: utils/workload-debug/Dockerfile
 
   behavior:
-    name: Real image behavior
+    name: Workload debug real behavior
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:

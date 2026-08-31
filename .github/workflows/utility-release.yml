@@ -1,0 +1,334 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+name: Utility image release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_rolling:
+        description: Publish the current main commit to the mutable rolling channel
+        required: true
+        default: false
+        type: boolean
+  pull_request:
+    paths:
+      - "utils/**"
+      - "hack/utility-release-contract.sh"
+      - "hack/utility-image-matrix.json"
+      - "hack/release-required-checks.json"
+      - "hack/test-utility-release-contract.sh"
+      - "hack/test-utility-matrix-expansion.sh"
+      - "hack/utility-publication.sh"
+      - "hack/publish-utility-tag.sh"
+      - "hack/verify-utility-publication.sh"
+      - "hack/verify-commit-check-runs.sh"
+      - "hack/test-utility-publication.sh"
+      - ".github/workflows/utility-release.yml"
+      - ".github/workflows/utility-image-security.yml"
+      - ".github/workflows/workload-debug.yml"
+      - ".github/workflows/storage-image-behavior.yml"
+      - ".github/workflows/node-maintenance.yml"
+      - ".github/workflows/network-debug-pod-capture-integration.yml"
+      - ".github/workflows/diagnostic-artifact-collector-image.yml"
+  push:
+    branches:
+      - main
+    tags:
+      - "v*.*.*"
+  schedule:
+    # Rebuild all utilities once per week; the contract maps this event only
+    # to the mutable nightly channel.
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: utility-release-${{ github.event_name }}-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_PREFIX: ghcr.io/telekom/k8s-breakglass/utils
+
+jobs:
+  contract:
+    name: Utility release contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Exercise matrix, tag, and digest subject contracts
+        run: |
+          hack/test-utility-release-contract.sh
+          hack/test-utility-matrix-expansion.sh
+          hack/test-utility-publication.sh
+      - name: Set up Go for workflow schema validation
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Validate GitHub Actions workflow schemas
+        # The repository's workflow shell blocks have a separate ShellCheck
+        # policy; keep actionlint focused on workflow/schema/expression errors.
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -ignore 'SC[0-9]+'
+      - name: Export declared image matrix
+        id: matrix
+        run: echo "matrix=$(hack/utility-release-contract.sh matrix | jq -c '[.[] as $image | ["linux/amd64", "linux/arm64"][] as $platform | $image + {platform:$platform}]')" >>"${GITHUB_OUTPUT}"
+
+  compatibility:
+    name: Compatibility ${{ matrix.name }} (${{ matrix.platform }})
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.contract.outputs.matrix) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Build declared platform and exercise reference smoke contract
+        env:
+          ENTRY: ${{ toJSON(matrix) }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -Eeuo pipefail
+          name="$(jq -r .name <<<"${ENTRY}")"
+          tag="utility-contract-${name}:${PLATFORM##*/}"
+          timeout 45m docker buildx build --platform "${PLATFORM}" --load \
+            --file "$(jq -r .file <<<"${ENTRY}")" --tag "${tag}" \
+            "$(jq -r .context <<<"${ENTRY}")"
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${tag}")" = "${PLATFORM}"
+          smoke_command=()
+          while IFS= read -r -d '' argument; do smoke_command+=("${argument}"); done < <(jq -j '.smokeCommand[] + "\u0000"' <<<"${ENTRY}")
+          timeout 2m docker run --rm --platform "${PLATFORM}" "${tag}" "${smoke_command[@]}" >smoke.log 2>&1
+          grep -F -- "$(jq -r .smokeOutput <<<"${ENTRY}")" smoke.log >/dev/null
+
+  compatibility-result:
+    name: Utility Publication Compatibility
+    if: always() && (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    needs: compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Require every declared platform smoke contract
+        env:
+          RESULT: ${{ needs.compatibility.result }}
+        run: test "${RESULT}" = success
+
+  discover:
+    name: Discover utility images
+    if: github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_rolling == true)
+    needs: contract
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Resolve release channel
+        id: tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          PUBLISH_ROLLING: ${{ inputs.publish_rolling || false }}
+        run: echo "tag=$(hack/utility-release-contract.sh tag "${EVENT_NAME}" "${REF_NAME}" "${PUBLISH_ROLLING}")" >>"${GITHUB_OUTPUT}"
+      - name: Require main ancestry and successful checks for exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IGNORE_RELEASE_WORKFLOW_RUNS: "true"
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "${GITHUB_SHA}" origin/main
+          REQUIRED_CHECKS_JSON="$(hack/utility-release-contract.sh required-checks)" hack/verify-commit-check-runs.sh
+      - name: Resolve image matrix
+        id: matrix
+        env:
+          UTILITY_IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
+        run: echo "matrix=$(hack/utility-release-contract.sh matrix | jq -c .)" >>"${GITHUB_OUTPUT}"
+
+  build:
+    name: Build and attest ${{ matrix.name }}
+    if: github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_rolling == true)
+    needs: discover
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Verify exact source checkout
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Resume verified image or build immutable digest first
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ matrix.image }}
+          TAG: ${{ needs.discover.outputs.tag }}
+          CONTEXT: ${{ matrix.context }}
+          DOCKERFILE: ${{ matrix.file }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          state="$(timeout 1m hack/utility-publication.sh tag-state "${IMAGE}" "${TAG}")"
+          if [[ "${state}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            timeout 30m hack/verify-utility-publication.sh "${IMAGE}" "${state}"
+            digest="${state}"
+            reuse=true
+          else
+            [[ "${state}" == missing || "${state}" == mutable ]] || { echo "unexpected tag state: ${state}" >&2; exit 1; }
+            reuse=false
+            build_date="$(git show -s --format=%cI "${SOURCE_SHA}")"
+            timeout 60m docker buildx build \
+              --platform linux/amd64,linux/arm64 \
+              --file "${DOCKERFILE}" \
+              --provenance=mode=max --sbom=true \
+              --output "type=image,name=${IMAGE},push-by-digest=true,name-canonical=true,push=true" \
+              --metadata-file build-metadata.json \
+              --build-arg VERSION="${TAG}" \
+              --build-arg VCS_REF="${SOURCE_SHA}" \
+              --build-arg GIT_COMMIT="${SOURCE_SHA}" \
+              --build-arg BUILD_DATE="${build_date}" \
+              "${CONTEXT}"
+            digest="$(jq -r '."containerimage.digest" // empty' build-metadata.json)"
+            [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'invalid build digest' >&2; exit 1; }
+          fi
+          subject="$(hack/utility-release-contract.sh subject "${IMAGE}" "${digest}")"
+          printf 'reuse=%s\ndigest=%s\nsubject=%s\n' "${reuse}" "${digest}" "${subject}" >>"${GITHUB_OUTPUT}"
+          for attempt in $(seq 1 30); do
+            if subjects="$(timeout 1m hack/utility-publication.sh platform-subjects "${IMAGE}" "${digest}" 2>/dev/null)"; then
+              printf '%s\n' "${subjects}" >>"${GITHUB_OUTPUT}"
+              exit 0
+            fi
+            echo "Platform manifest resolution attempt ${attempt}/30"
+            sleep 2
+          done
+          echo 'unable to resolve the exact two-platform digest' >&2
+          exit 1
+      - name: Generate complete linux/amd64 SPDX SBOM
+        if: steps.resolve.outputs.reuse != 'true'
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ steps.resolve.outputs.amd64_subject }}
+          format: spdx-json
+          output-file: ${{ matrix.name }}-linux-amd64.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Generate complete linux/arm64 SPDX SBOM
+        if: steps.resolve.outputs.reuse != 'true'
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ steps.resolve.outputs.arm64_subject }}
+          format: spdx-json
+          output-file: ${{ matrix.name }}-linux-arm64.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Validate complete platform SBOM documents
+        if: steps.resolve.outputs.reuse != 'true'
+        env:
+          IMAGE_NAME: ${{ matrix.name }}
+        run: |
+          set -Eeuo pipefail
+          for arch in amd64 arm64; do
+            jq -e '.spdxVersion | startswith("SPDX-")' "${IMAGE_NAME}-linux-${arch}.spdx.json" >/dev/null
+            jq -e '.packages | type == "array" and length > 0' "${IMAGE_NAME}-linux-${arch}.spdx.json" >/dev/null
+          done
+      - name: Publish GitHub-native provenance for exact digest
+        if: steps.resolve.outputs.reuse != 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ matrix.image }}
+          subject-digest: ${{ steps.resolve.outputs.digest }}
+          push-to-registry: true
+      - name: Publish GitHub-native provenance for linux/amd64
+        if: steps.resolve.outputs.reuse != 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ matrix.image }}
+          subject-digest: ${{ steps.resolve.outputs.amd64_digest }}
+          push-to-registry: true
+      - name: Publish GitHub-native provenance for linux/arm64
+        if: steps.resolve.outputs.reuse != 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ matrix.image }}
+          subject-digest: ${{ steps.resolve.outputs.arm64_digest }}
+          push-to-registry: true
+      - name: Sign and attest exact digest
+        if: steps.resolve.outputs.reuse != 'true'
+        env:
+          SUBJECT: ${{ steps.resolve.outputs.subject }}
+          AMD64_SUBJECT: ${{ steps.resolve.outputs.amd64_subject }}
+          ARM64_SUBJECT: ${{ steps.resolve.outputs.arm64_subject }}
+          IMAGE_NAME: ${{ matrix.name }}
+        run: |
+          set -Eeuo pipefail
+          timeout 5m cosign sign --yes "${SUBJECT}"
+          timeout 5m cosign sign --yes "${AMD64_SUBJECT}"
+          timeout 5m cosign sign --yes "${ARM64_SUBJECT}"
+          timeout 5m cosign attest --yes --type spdxjson --predicate "${IMAGE_NAME}-linux-amd64.spdx.json" "${AMD64_SUBJECT}"
+          timeout 5m cosign attest --yes --type spdxjson --predicate "${IMAGE_NAME}-linux-arm64.spdx.json" "${ARM64_SUBJECT}"
+      - name: Verify staged digest before assigning final tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ matrix.image }}
+          TAG: ${{ needs.discover.outputs.tag }}
+          DIGEST: ${{ steps.resolve.outputs.digest }}
+          ENTRY: ${{ toJSON(matrix) }}
+        run: |
+          set -Eeuo pipefail
+          # Exercise the exact, immutable platform subjects before the helper
+          # mutates the release tag. Keep the complete matrix entry in the
+          # environment and decode it with jq: shell interpolation would break
+          # smoke contracts containing apostrophes or embedded newlines.
+          smoke_command="$(jq -c .smokeCommand <<<"${ENTRY}")"
+          smoke_output="$(jq -r .smokeOutput <<<"${ENTRY}")"
+          timeout 70m hack/verify-utility-publication.sh "${IMAGE}" "${DIGEST}" \
+            "${smoke_command}" "${smoke_output}"
+          timeout 70m hack/publish-utility-tag.sh "${IMAGE}" "${TAG}" "${DIGEST}"
+      - name: Verify exact-source publication and reference use
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ matrix.image }}
+          TAG: ${{ needs.discover.outputs.tag }}
+          DIGEST: ${{ steps.resolve.outputs.digest }}
+        run: |
+          set -Eeuo pipefail
+          timeout 1m hack/utility-publication.sh require-tag "${IMAGE}" "${TAG}" "${DIGEST}"
+          timeout 30m hack/verify-utility-publication.sh "${IMAGE}" "${DIGEST}"

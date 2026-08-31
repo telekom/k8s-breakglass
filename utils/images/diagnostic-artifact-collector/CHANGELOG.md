@@ -10,6 +10,8 @@ All notable changes to this image are documented here.
 ### Added
 
 - Added immutable crashdump-collection.v1 and system-summary.v1 recipes.
+- Added a collision-preservation Kind proof: the integration harness now uses
+  unique owned cluster/image names and never removes pre-existing resources.
 - Added bounded archive, manifest, private output, and uploader hand-off
   contract with behavioral rejection of injected commands and unsafe source
   filesystem entries.
@@ -32,6 +34,8 @@ All notable changes to this image are documented here.
   ceiling.
 - Enforced controller-provided archive caps and bounded upload timeouts in both
   collection and upload paths.
+- Release metadata now maps each utility image to its dedicated behavioral
+  workflow; release compatibility remains gated by those real behavior jobs.
 - Enforced recipe-specific archive ceilings (16 MiB for summaries and 512 MiB
   for crashdumps), fail-closed pipeline execution, exact ready-marker content,
   URL ForceQuery rejection, and bounded crashdump candidate/path traversal.

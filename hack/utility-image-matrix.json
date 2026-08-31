@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "images": [
+    {
+      "name": "node-maintenance",
+      "context": "utils/node-maintenance",
+      "file": "utils/node-maintenance/Dockerfile",
+      "smokeCommand": ["--help"],
+      "smokeOutput": "Usage: node-maintenance",
+      "requiredChecks": ["Node maintenance static checks", "Node maintenance real behavior"],
+      "behaviorWorkflows": [".github/workflows/node-maintenance.yml"]
+    },
+    {
+      "name": "storage-debug",
+      "context": "utils/images/storage-debug",
+      "file": "utils/images/storage-debug/Dockerfile",
+      "smokeCommand": ["help"],
+      "smokeOutput": "storage-diagnostics: bounded storage-diagnostics intent dispatcher",
+      "requiredChecks": ["Storage diagnostics real behavior"],
+      "behaviorWorkflows": [".github/workflows/storage-image-behavior.yml"]
+    },
+    {
+      "name": "workload-debug",
+      "context": "utils/workload-debug",
+      "file": "utils/workload-debug/Dockerfile",
+      "smokeCommand": ["/bin/sh", "-c", "printf 'workload-debug-reference-ok\\n'"],
+      "smokeOutput": "workload-debug-reference-ok",
+      "requiredChecks": ["Workload debug static checks", "Workload debug real behavior"],
+      "behaviorWorkflows": [".github/workflows/workload-debug.yml"]
+    },
+    {
+      "name": "network-debug",
+      "context": "utils/network-debug",
+      "file": "utils/network-debug/Dockerfile",
+      "smokeCommand": ["--help"],
+      "smokeOutput": "network-debug - a portable network troubleshooting toolbox",
+      "requiredChecks": [
+        "Network-debug static behavior",
+        "Network-debug host capture and trace behavior",
+        "Network-debug selected-pod capture behavior"
+      ],
+      "behaviorWorkflows": [".github/workflows/network-debug-pod-capture-integration.yml"]
+    },
+    {
+      "name": "diagnostic-artifact-collector",
+      "context": "utils/images/diagnostic-artifact-collector",
+      "file": "utils/images/diagnostic-artifact-collector/Dockerfile",
+      "smokeCommand": ["--help"],
+      "smokeOutput": "diagnostic-artifact-collector: bounded, immutable diagnostic recipes",
+      "requiredChecks": ["Utility image checks (diagnostic-artifact-collection)"],
+      "behaviorWorkflows": [".github/workflows/diagnostic-artifact-collector-image.yml"]
+    }
+  ]
+}

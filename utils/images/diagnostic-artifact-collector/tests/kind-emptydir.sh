@@ -6,12 +6,33 @@ set -eu
 
 root=$(cd -- "$(dirname -- "$0")/.." && pwd)
 image=diagnostic-artifact-collector:kind-test
-cluster=diagnostic-artifact-collector
+requested_image=${KIND_IMAGE_NAME:-$image}
+requested_cluster=${KIND_CLUSTER_NAME:-diagnostic-artifact-collector}
+cluster=$requested_cluster
 pod=diagnostic-artifact-collector
 KIND_NODE_IMAGE=${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}
+KUBECONFIG="$(mktemp "${TMPDIR:-/tmp}/diagnostic-artifact-collector-kubeconfig.XXXXXX")"
+cluster_owned=false
+cluster_create_attempted=false
+image_owned=false
+partial_cluster_is_owned() {
+	[ "${cluster_create_attempted}" = true ] || return 1
+	[ -s "${KUBECONFIG}" ] || return 1
+	awk -v expected="kind-${cluster}" '
+		($1 == "name:" && $2 == expected) || ($1 == "-" && $2 == "name:" && $3 == expected) { found_name = 1 }
+		$1 == "current-context:" && $2 == expected { found_context = 1 }
+		END { exit !(found_name && found_context) }
+	' "${KUBECONFIG}"
+	kubectl --kubeconfig "${KUBECONFIG}" get --raw=/version >/dev/null 2>&1
+}
 cleanup() {
-	kind delete cluster --name "$cluster" >/dev/null 2>&1 || true
-	docker image rm "$image" >/dev/null 2>&1 || true
+	if [ "$cluster_owned" = true ] || partial_cluster_is_owned; then
+		kind delete cluster --name "$cluster" --kubeconfig "$KUBECONFIG" >/dev/null 2>&1 || true
+	fi
+	if [ "$image_owned" = true ]; then
+		docker image rm "$image" >/dev/null 2>&1 || true
+	fi
+	rm -f "$KUBECONFIG"
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -19,8 +40,43 @@ command -v docker >/dev/null 2>&1 || { echo 'Docker is required for Kind fsGroup
 command -v kind >/dev/null 2>&1 || { echo 'Kind is required for fsGroup proof' >&2; exit 1; }
 command -v kubectl >/dev/null 2>&1 || { echo 'kubectl is required for fsGroup proof' >&2; exit 1; }
 
+case "$requested_image" in
+	*@sha256:*)
+		echo 'KIND_IMAGE_NAME must be a local tag, not a digest reference' >&2
+		exit 1
+		;;
+esac
+
+if docker image inspect "$requested_image" >/dev/null 2>&1; then
+	# Do not parse arbitrary Docker references here: digest references and
+	# registries with ports make tag suffix manipulation ambiguous. Use a
+	# validated local repository for the owned build instead.
+	image="diagnostic-artifact-collector:kind-owned-$$-$(date +%s)"
+else
+	image=$requested_image
+fi
 docker build --tag "$image" "$root"
-kind create cluster --name "$cluster" --image "$KIND_NODE_IMAGE" --wait 90s
+image_owned=true
+if ! existing_clusters=$(kind get clusters 2>/dev/null); then
+	echo 'could not list Kind clusters before creating the disposable cluster' >&2
+	exit 1
+fi
+while IFS= read -r existing_cluster; do
+	if [ "$existing_cluster" = "$requested_cluster" ]; then
+		cluster="${requested_cluster}-$$-$(date +%s)"
+		break
+	fi
+done <<EOF
+$existing_clusters
+EOF
+cluster_create_attempted=true
+if kind create cluster --name "$cluster" --image "$KIND_NODE_IMAGE" --kubeconfig "$KUBECONFIG" --wait 90s; then
+	cluster_owned=true
+else
+	echo 'could not create disposable Kind cluster' >&2
+	exit 1
+fi
+export KUBECONFIG
 kind load docker-image "$image" --name "$cluster"
 # shellcheck disable=SC2154
 kubectl apply -f - <<EOF

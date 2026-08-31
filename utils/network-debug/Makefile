@@ -7,7 +7,7 @@ VCS_REF ?= $(shell git rev-parse --short HEAD 2>/dev/null || printf 'unknown')
 BUILD_DATE ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 PLATFORMS ?= linux/amd64,linux/arm64
 
-.PHONY: help build build-multiarch test integration pod-capture-integration sbom sign
+.PHONY: help build build-multiarch test fetch-test integration pod-capture-integration sbom sign
 
 OCI_ARCHIVE ?= network-debug.oci.tar
 
@@ -35,10 +35,14 @@ sign: ## Sign an immutable image digest with keyless cosign.
 	cosign sign --yes "$(IMAGE)@$(DIGEST)"
 
 test: ## Run hermetic image behavior checks.
+	$(MAKE) fetch-test
 	./tests/test.sh
 	./tests/test-docker-preflight.sh
 	./tests/test-kind-ownership.sh
 	./tests/test-pwru-lifecycle.sh
+
+fetch-test: ## Test the immutable build-input downloader.
+	go test ./tools
 
 integration: ## Run real tool proofs in disposable Docker and kind resources.
 	./tests/integration.sh
