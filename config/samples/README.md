@@ -153,8 +153,10 @@ The comprehensive sample files cover these use-cases:
 - **Developer access**: Basic and network debugging with auto-approval for dev clusters
 - **SRE/Operations**: Standard and production access with approval workflows
 - **Network troubleshooting**: Historical host-network and packet-capture
-  examples are deprecated. Use the disabled `network-diagnostics` or
-  `dump-access` catalogue profile with explicit elevation and approved images.
+  examples are deprecated. Use the disabled `network-diagnostics` catalogue
+  profile with explicit elevation and an approved image. For existing dump
+  files, use the separate restricted `dump-access` profile; it does not
+  provide network troubleshooting or packet capture.
 - **Kubectl-debug mode**: Basic, advanced, and node debugging via ephemeral containers
 - **Hybrid mode**: Combined workload + kubectl-debug capabilities
 - **Emergency access**: Privileged node access for incident response

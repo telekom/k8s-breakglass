@@ -32,7 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   overlapping network commands; the image retains only its bounded helpers,
   pinned `pwru` addition, and signed SBOM/provenance workflow. Tool
   inventory normalizes upstream version-banner formats while the integration
-  proof executes the real storage operation.
+  proof exercises the network image's connectivity, packet-capture, and
+  kernel-tracing operations.
 - The standalone debug-session catalogue now uses an ordered, extensible
   profile list with DNS-safe names and stable generic intent names. Existing
   map-shaped profile values must be converted before upgrading; the chart
@@ -59,7 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   storage workflows.
 - **Standalone debug-session catalogue**: Added the OCI-ready
   `debug-session-catalogue` Helm chart with neutral workload, network,
-  storage, packet-capture, network-repair, node-recovery, and cluster-validation
+  storage, dump-access, network-repair, node-recovery, and cluster-validation
   profiles. Requesters, approvers, targets, images, and the target namespace are
   configurable; elevated profiles are disabled and require explicit opt-in.
 - **Node-maintenance utility image**: Added the generic, digest-pinnable

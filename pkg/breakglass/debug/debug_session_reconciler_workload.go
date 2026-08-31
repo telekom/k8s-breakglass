@@ -866,6 +866,18 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 		if overrides.HostIPC != nil {
 			spec.HostIPC = *overrides.HostIPC
 		}
+		// Static pod overrides have the same precedence as the templated
+		// override form.  In particular, retain nodeSelector: otherwise the
+		// field is accepted by the API but silently disappears before the
+		// workload is created.
+		if len(overrides.NodeSelector) > 0 {
+			if spec.NodeSelector == nil {
+				spec.NodeSelector = make(map[string]string, len(overrides.NodeSelector))
+			}
+			for key, value := range overrides.NodeSelector {
+				spec.NodeSelector[key] = value
+			}
+		}
 	}
 
 	// Apply affinity overrides
