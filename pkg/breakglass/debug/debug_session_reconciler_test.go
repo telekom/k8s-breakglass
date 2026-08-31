@@ -5261,6 +5261,12 @@ func TestDebugSessionController_CleanupPodTemplateResourcesPreservesFailures(t *
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "debug-script",
 				Namespace: "default",
+				Labels: map[string]string{
+					"breakglass.t-caas.telekom.com/session": session.Name,
+				},
+				Annotations: map[string]string{
+					"breakglass.t-caas.telekom.com/source-session": session.Namespace + "/" + session.Name,
+				},
 			},
 		}).
 		WithInterceptorFuncs(interceptor.Funcs{

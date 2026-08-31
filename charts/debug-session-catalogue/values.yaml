@@ -22,15 +22,13 @@ maxDuration: 1h
 maxConcurrentSessions: 1
 imagePullPolicy: IfNotPresent
 
-# Image defaults are deliberately non-runnable placeholders. Replace every
-# image with an independently verified release digest before enabling access;
-# release packaging injects these immutable values from release-refs/*.ref.
+# Image defaults are deliberately non-runnable placeholders. Public image
+# references use the canonical utility paths; internal hooks remain non-public
+# until separately approved. Release packaging injects verified refs.
 images:
   workload: {repository: ghcr.io/telekom/k8s-breakglass/utils/workload-debug, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
   network: {repository: ghcr.io/telekom/k8s-breakglass/utils/network-debug, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
   storage: {repository: ghcr.io/telekom/k8s-breakglass/utils/storage-debug, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
-  # dump-access requires a separately approved reader integration; no public
-  # dump-reader image is implied by this chart.
   dumpAccess: {repository: example.invalid/breakglass/dump-reader-not-published, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
   networkRepair: {repository: ghcr.io/telekom/k8s-breakglass/utils/node-maintenance, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
   nodeRecovery: {repository: ghcr.io/telekom/k8s-breakglass/utils/node-maintenance, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}

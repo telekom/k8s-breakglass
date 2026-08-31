@@ -17,26 +17,28 @@ refs=("${refs_dir}"/*.ref)
 
 tmp_file="$(mktemp)"
 trap 'rm -f "${tmp_file}"' EXIT
-printf 'images:\n' >"${tmp_file}"
-# These profiles are deliberately not public utility declarations. Preserve
-# explicit non-runnable placeholders until an administrator supplies an
-# independently approved image through an overlay.
-printf '  dumpAccess:\n    repository: "example.invalid/breakglass/dump-reader-not-published"\n    digest: "sha256:%064d"\n' 0 >>"${tmp_file}"
-printf '  clusterValidation:\n    repository: "example.invalid/breakglass/cluster-validator-internal"\n    digest: "sha256:%064d"\n' 0 >>"${tmp_file}"
+printf '%s\n' \
+  'images:' \
+  '  dumpAccess:' \
+  '    repository: "example.invalid/breakglass/dump-reader-not-published"' \
+  '    digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"' \
+  '  clusterValidation:' \
+  '    repository: "example.invalid/breakglass/cluster-validator-internal"' \
+  '    digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"' >"${tmp_file}"
 seen_names=""
 for ref in "${refs[@]}"; do
   IFS='|' read -r name repository digest signature sbom provenance remainder <"${ref}"
   [ -z "${remainder:-}" ] || { echo "Malformed utility release reference: ${ref}" >&2; exit 1; }
   [ -n "${name}" ] || { echo "Utility release reference has no name: ${ref}" >&2; exit 1; }
-  [[ "${name}" =~ ^[a-z-]+$ ]] || { echo "Invalid utility release name: ${name}" >&2; exit 1; }
+  [[ "${name}" =~ ^[a-z][a-z-]*$ ]] || { echo "Invalid utility release name: ${name}" >&2; exit 1; }
   case "|${seen_names}|" in
     *"|${name}|"*) echo "Duplicate utility release reference: ${name}" >&2; exit 1 ;;
   esac
   seen_names="${seen_names}|${name}"
-  [[ "${repository}" == ghcr.io/telekom/k8s-breakglass/* ]] || {
-    echo "Unexpected utility repository: ${repository}" >&2
-    exit 1
-  }
+  case "${name}|${repository}" in
+    workload\|ghcr.io/telekom/k8s-breakglass/utils/workload-debug|network\|ghcr.io/telekom/k8s-breakglass/utils/network-debug|storage\|ghcr.io/telekom/k8s-breakglass/utils/storage-debug|node\|ghcr.io/telekom/k8s-breakglass/utils/node-maintenance|diagnostic-artifact-collector\|ghcr.io/telekom/k8s-breakglass/utils/diagnostic-artifact-collector) ;;
+    *) echo "Unexpected utility repository mapping: ${name} -> ${repository}" >&2; exit 1 ;;
+  esac
   [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
     echo "Invalid utility digest for ${name}: ${digest}" >&2
     exit 1
@@ -59,7 +61,7 @@ done
 
 ruby -ryaml -e '
   values = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
-  expected = %w[workload network storage networkRepair nodeRecovery diagnosticArtifactCollector dumpAccess clusterValidation].sort
+  expected = %w[clusterValidation diagnosticArtifactCollector dumpAccess network networkRepair nodeRecovery storage workload].sort
   actual = values.fetch("images").keys.sort
   abort("release image set mismatch: #{actual.inspect}") unless actual == expected
 ' "${tmp_file}"

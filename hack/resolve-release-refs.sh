@@ -26,17 +26,24 @@ while IFS= read -r record; do
 done < <(ruby -ryaml -e '
   values = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false) || {}
   images = values.fetch("images")
-  %w[workload network storage networkRepair diagnosticArtifactCollector].each do |key|
+  expected = {
+    "workload" => "ghcr.io/telekom/k8s-breakglass/utils/workload-debug",
+    "network" => "ghcr.io/telekom/k8s-breakglass/utils/network-debug",
+    "storage" => "ghcr.io/telekom/k8s-breakglass/utils/storage-debug",
+    "networkRepair" => "ghcr.io/telekom/k8s-breakglass/utils/node-maintenance",
+    "diagnosticArtifactCollector" => "ghcr.io/telekom/k8s-breakglass/utils/diagnostic-artifact-collector"
+  }
+  expected.each do |key, expected_repository|
     image = images.fetch(key)
     repository = image.fetch("repository").to_s
     tag = image.fetch("tag", "").to_s
     digest = image.fetch("digest", "").to_s
-    abort("#{key} repository must use the canonical GHCR path") unless repository.start_with?("ghcr.io/telekom/k8s-breakglass/") && repository !~ /[[:space:]@]/
+    abort("#{key} repository must be exactly #{expected_repository}") unless repository == expected_repository
     abort("#{key} must specify either a tag or digest") if tag.empty? && digest.empty?
     abort("#{key} cannot specify both tag and digest") unless tag.empty? || digest.empty?
     abort("#{key} digest is not immutable") unless digest.empty? || digest.match?(/\Asha256:[0-9a-f]{64}\z/)
     abort("#{key} tag contains unsafe characters") unless tag.empty? || tag.match?(/\A[0-9A-Za-z._-]+\z/)
-    name = {"networkRepair" => "node", "diagnosticArtifactCollector" => "diagnostic-artifact-collector"}.fetch(key, key)
+    name = key == "networkRepair" ? "node" : key == "diagnosticArtifactCollector" ? "diagnostic-artifact-collector" : key
     puts [name, repository, tag, digest].join("|")
   end
 ' "${values_file}")

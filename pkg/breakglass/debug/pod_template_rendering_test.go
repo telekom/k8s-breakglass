@@ -2393,6 +2393,14 @@ func TestValidateRestrictedCataloguePodSpec_DumpInputRequiresReadOnlyMount(t *te
 	notReadOnlyPod := base(false)
 	require.NoError(t, validateRestrictedCataloguePodSpec(&readOnlyPod, "dump-access"))
 	require.ErrorContains(t, validateRestrictedCataloguePodSpec(&notReadOnlyPod, "dump-access"), "disallowed source")
+	duplicateMountPod := base(true)
+	duplicateMountPod.Containers[0].VolumeMounts = append(duplicateMountPod.Containers[0].VolumeMounts,
+		corev1.VolumeMount{Name: "input", MountPath: "/alternate-input", ReadOnly: true})
+	require.ErrorContains(t, validateRestrictedCataloguePodSpec(&duplicateMountPod, "dump-access"), "exactly one")
+	writableAlternatePod := base(true)
+	writableAlternatePod.Containers[0].VolumeMounts = append(writableAlternatePod.Containers[0].VolumeMounts,
+		corev1.VolumeMount{Name: "input", MountPath: "/alternate-input"})
+	require.ErrorContains(t, validateRestrictedCataloguePodSpec(&writableAlternatePod, "dump-access"), "exactly one")
 	require.ErrorContains(t, validateRestrictedCataloguePodSpec(&readOnlyPod, "workload-diagnostics"), "disallowed source")
 }
 

@@ -1041,14 +1041,23 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 		return fmt.Errorf("restricted catalogue profiles cannot receive a Kubernetes service account identity")
 	}
 	dumpInputReadOnly := false
+	dumpInputMounts := 0
 	if intent == "dump-access" {
 		containers := append(append([]corev1.Container{}, spec.InitContainers...), spec.Containers...)
 		for _, container := range containers {
 			for _, mount := range container.VolumeMounts {
-				if mount.Name == "input" && mount.MountPath == "/input" && mount.ReadOnly {
-					dumpInputReadOnly = true
+				if mount.Name != "input" {
+					continue
 				}
+				dumpInputMounts++
+				if mount.MountPath != "/input" || !mount.ReadOnly {
+					return fmt.Errorf("dump-access input volume mounts must have exactly one read-only mount at /input")
+				}
+				dumpInputReadOnly = true
 			}
+		}
+		if dumpInputMounts != 1 {
+			return fmt.Errorf("dump-access requires exactly one read-only input volume mount at /input")
 		}
 	}
 	for _, volume := range spec.Volumes {
