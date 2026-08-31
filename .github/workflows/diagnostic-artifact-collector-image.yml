@@ -8,6 +8,9 @@ on:
   pull_request:
     paths:
       - "utils/images/diagnostic-artifact-collector/**"
+      - "hack/docker-image-ownership.sh"
+      - "hack/docker-resource-ownership.sh"
+      - "hack/kind-ownership.sh"
       - ".github/workflows/diagnostic-artifact-collector-image.yml"
   push:
     # Run on every main commit so release tags always have an exact, fresh
