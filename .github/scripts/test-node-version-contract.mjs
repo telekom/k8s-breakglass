@@ -105,6 +105,13 @@ function main() {
     for (const match of contents.matchAll(/^\s*node-version:\s*['"]?([^'"\s#]+)['"]?/gm)) {
       const version = parseVersion(match[1], `${path.relative(repositoryRoot, workflowPath)} node-version`);
       assertAtLeast(version, dependencyFloor, `${path.relative(repositoryRoot, workflowPath)} node-version`);
+      if (compareVersions(version, packageVersion) !== 0) {
+        throw new Error(
+          `${path.relative(repositoryRoot, workflowPath)} node-version ${versionText(
+            version,
+          )} does not match frontend/package.json baseline ${versionText(packageVersion)}`,
+        );
+      }
       pins.push({ workflowPath, version });
     }
   }
