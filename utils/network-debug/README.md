@@ -107,11 +107,11 @@ Kubernetes distributions and admission policies.
 
 The netshoot runtime and Go build image are pinned by immutable OCI manifest
 digests. The netshoot v0.16 release is the source of the inherited runtime
-packages; `pwru` is rebuilt for each architecture from its immutable upstream
-source tag and verified commit. The build stage uses only the digest-pinned Go
-builder, updates the Go networking modules before compiling, and copies only
-the resulting binary into the runtime image. Optional inherited binaries that
-are outside this image's supported intent contract are removed so stale
+packages; `pwru` is selected per architecture from its GitHub release asset
+and verified by the pinned SHA256 before extraction. The build stage compiles
+the repository's standard-library-only verified downloader and copies only the
+verified static binary into the runtime image. Optional inherited binaries
+that are outside this image's supported intent contract are removed so stale
 upstream builds cannot be shipped or scanned as part of the utility.
 `versions.env` is the
 human-readable lock record and the image carries OCI version, revision,

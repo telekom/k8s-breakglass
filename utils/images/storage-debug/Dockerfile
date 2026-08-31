@@ -42,17 +42,12 @@ LABEL org.opencontainers.image.title="Storage diagnostics utilities" \
       io.telekom.breakglass.intent="storage-diagnostics" \
       io.telekom.breakglass.image.role="debug-storage"
 
-# fio and ioping are installed at the declared minimum versions, then the
-# weekly rolling build refreshes the complete Alpine package set for security.
-# The exact resulting versions are therefore recorded by the image SBOM, not
-# promised by these minimum-version arguments. Alpine's busybox provides the
-# small POSIX utilities used by the scripts.
+# Install only the exact fio and ioping versions required by the utility
+# contract. Do not upgrade the inherited package set: the base digest and
+# exact package selections must remain reproducible as one Alpine release.
 RUN apk add --no-cache \
       "fio=${FIO_VERSION}" \
       "ioping=${IOPING_VERSION}" \
-    && apk upgrade --no-cache \
-	--repository https://dl-cdn.alpinelinux.org/alpine/v3.24/main \
-	--repository https://dl-cdn.alpinelinux.org/alpine/v3.24/community \
     && addgroup -S -g 65532 debug \
     && adduser -S -D -H -u 65532 -G debug debug \
     && install -d -o debug -g debug /scratch /reports /usr/share/storage-debug \

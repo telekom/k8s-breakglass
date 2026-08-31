@@ -72,7 +72,7 @@ jobs:
       - name: Validate GitHub Actions workflow schemas
         # The repository's workflow shell blocks have a separate ShellCheck
         # policy; keep actionlint focused on workflow/schema/expression errors.
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -ignore 'SC[0-9]+'
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@03d0035246f3e81f36aed592ffb4bebf33a03106 -ignore 'SC[0-9]+'
       - name: Export declared image matrix
         id: matrix
         run: echo "matrix=$(hack/utility-release-contract.sh matrix | jq -c '[.[] as $image | ["linux/amd64", "linux/arm64"][] as $platform | $image + {platform:$platform}]')" >>"${GITHUB_OUTPUT}"

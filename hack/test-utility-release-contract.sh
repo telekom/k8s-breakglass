@@ -3,12 +3,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Behavioral tests for the utility publication contract. These execute the
-# matrix, tag, and digest-subject calculations and exercise rejection paths;
-# they do not inspect workflow source for selected strings.
+# matrix, tag, and digest-subject calculations and exercise rejection paths.
 set -Eeuo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 contract="${root}/hack/utility-release-contract.sh"
+utility_workflow="${root}/.github/workflows/utility-release.yml"
 
 [[ -f "${root}/utils/node-maintenance/IMAGE-METADATA.yaml" ]] || {
 	printf '%s\n' 'node-maintenance image metadata must use IMAGE-METADATA.yaml' >&2
@@ -21,6 +21,16 @@ expect_fail() {
 		exit 1
 	fi
 }
+
+actionlint_commit=03d0035246f3e81f36aed592ffb4bebf33a03106
+grep -F "github.com/rhysd/actionlint/cmd/actionlint@${actionlint_commit} -ignore" "${utility_workflow}" >/dev/null || {
+	printf '%s\n' 'utility workflow must pin actionlint to its verified v1.7.7 commit' >&2
+	exit 1
+}
+if grep -E 'github.com/rhysd/actionlint/cmd/actionlint@v?1\.7\.7([[:space:]]|$)' "${utility_workflow}" >/dev/null; then
+	printf '%s\n' 'utility workflow uses a mutable actionlint version reference' >&2
+	exit 1
+fi
 
 matrix="$(UTILITY_IMAGE_PREFIX=ghcr.io/telekom/k8s-breakglass/utils "${contract}" matrix "${root}")"
 jq -e '

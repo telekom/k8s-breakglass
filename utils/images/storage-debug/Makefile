@@ -6,10 +6,14 @@ SHELL := /bin/sh
 IMAGE ?= ghcr.io/telekom/k8s-breakglass/utils/storage-debug:dev
 PLATFORM ?= linux/amd64
 
-.PHONY: test build integration shellcheck
+.PHONY: test package-contract-test build integration shellcheck
 
 test:
+	./tests/test-package-contract.sh
 	./tests/test.sh
+
+package-contract-test:
+	./tests/test-package-contract.sh
 
 build:
 	docker build --pull=false --platform "$(PLATFORM)" --tag "$(IMAGE)" .
