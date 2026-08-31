@@ -33,6 +33,8 @@ jobs:
     name: OpenSSF Scorecard
     runs-on: ubuntu-24.04
     permissions:
+      # Needed by actions/checkout to read repository contents
+      contents: read
       # Needed for Code scanning upload
       security-events: write
       # Needed for GitHub OIDC token if publish_results is true
