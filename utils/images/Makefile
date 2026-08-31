@@ -3,7 +3,7 @@
 
 .PHONY: test storage-test dump-test oci-attestation-test shellcheck integration multiarch
 
-test: storage-test dump-test
+test: storage-test dump-test oci-attestation-test
 
 storage-test:
 	./storage-debug/tests/test.sh
@@ -16,7 +16,8 @@ oci-attestation-test:
 
 shellcheck:
 	shellcheck storage-debug/bin/storage-report storage-debug/tests/test.sh \
-		dump-reader/bin/dump-reader dump-reader/tests/test.sh tests/integration.sh
+		dump-reader/bin/dump-reader dump-reader/tests/test.sh tests/integration.sh \
+		tests/verify-oci-attestations-test.sh
 
 integration:
 	./tests/integration.sh

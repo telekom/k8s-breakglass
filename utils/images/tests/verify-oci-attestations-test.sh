@@ -35,9 +35,9 @@ end
 
   %w[sbom provenance].each do |kind|
     statement = if kind == "sbom"
-                  { "_type" => "https://in-toto.io/Statement/v1", "predicateType" => "https://spdx.dev/Document", "predicate" => { "spdxVersion" => "SPDX-2.3" } }
+                  { "_type" => "https://in-toto.io/Statement/v1", "subject" => [{ "name" => "ghcr.io/example/utility", "digest" => { "sha256" => image_digest } }], "predicateType" => "https://spdx.dev/Document", "predicate" => { "spdxVersion" => "SPDX-2.3", "packages" => [{ "name" => "example" }] } }
                 else
-                  { "_type" => "https://in-toto.io/Statement/v1", "predicateType" => "https://slsa.dev/provenance/v1", "predicate" => {} }
+                  { "_type" => "https://in-toto.io/Statement/v1", "subject" => [{ "name" => "ghcr.io/example/utility", "digest" => { "sha256" => image_digest } }], "predicateType" => "https://slsa.dev/provenance/v1", "predicate" => { "buildDefinition" => { "buildType" => "https://example.invalid/build" }, "runDetails" => { "builder" => { "id" => "https://example.invalid/builder" } } } }
                 end
     layer = write_blob.call(JSON.generate(statement), "application/vnd.in-toto+json")
     attestation = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.manifest.v1+json", "layers" => [layer], "subject" => { "digest" => "sha256:#{image_digest}" } }
@@ -59,14 +59,28 @@ write_index = lambda do |filename, selected_descriptors|
   File.write(File.join(root, filename), JSON.generate(root_index))
 end
 
+# Add a content-addressed attestation whose in-toto predicate is an empty
+# placeholder. The verifier must reject it even though all OCI digests bind.
+provenance_descriptor = attestation_descriptors.fetch(["amd64", "provenance"])
+provenance_manifest = JSON.parse(File.read(File.join(blob_dir, provenance_descriptor["digest"].delete_prefix("sha256:"))))
+empty_statement = { "_type" => "https://in-toto.io/Statement/v1", "subject" => [{ "digest" => { "sha256" => descriptors.first["digest"].delete_prefix("sha256:") } }], "predicateType" => "https://slsa.dev/provenance/v1", "predicate" => {} }
+empty_layer = write_blob.call(JSON.generate(empty_statement), "application/vnd.in-toto+json")
+provenance_manifest["layers"] = [empty_layer]
+empty_manifest_payload = JSON.generate(provenance_manifest)
+empty_manifest_digest = Digest::SHA256.hexdigest(empty_manifest_payload)
+File.write(File.join(blob_dir, empty_manifest_digest), empty_manifest_payload)
+empty_descriptor = provenance_descriptor.merge("digest" => "sha256:#{empty_manifest_digest}")
+empty_descriptors = descriptors.map { |descriptor| descriptor["digest"] == provenance_descriptor["digest"] ? empty_descriptor : descriptor }
+
 write_index.call("index.json", descriptors)
 write_index.call("bad-index.json", descriptors.reject { |descriptor| descriptor.dig("annotations", "vnd.docker.reference.type") == "attestation-manifest" })
 write_index.call("missing-sbom-index.json", descriptors.reject { |descriptor| descriptor["digest"] == attestation_descriptors.fetch(["amd64", "sbom"])["digest"] })
 write_index.call("missing-provenance-index.json", descriptors.reject { |descriptor| descriptor["digest"] == attestation_descriptors.fetch(["arm64", "provenance"])["digest"] })
+write_index.call("empty-provenance-index.json", empty_descriptors)
 RUBY
 
 (cd "$test_root" && tar -cf "$test_root/good.tar" index.json blobs)
-for variant in bad missing-sbom missing-provenance; do
+for variant in bad missing-sbom missing-provenance empty-provenance; do
     mkdir "$test_root/$variant"
     cp "$test_root/$variant-index.json" "$test_root/$variant/index.json"
     cp -R "$test_root/blobs" "$test_root/$variant/"
@@ -74,7 +88,7 @@ for variant in bad missing-sbom missing-provenance; do
 done
 
 ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/good.tar" >/dev/null
-for variant in bad missing-sbom missing-provenance; do
+for variant in bad missing-sbom missing-provenance empty-provenance; do
     if ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/$variant.tar" >/dev/null 2>&1; then
         echo "invalid $variant archive was accepted" >&2
         exit 1
