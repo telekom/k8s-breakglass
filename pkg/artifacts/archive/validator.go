@@ -131,12 +131,12 @@ func validateStream(ctx context.Context, staged io.Reader, compressedSize int64,
 	var embeddedManifest []byte
 	var decompressedBytes, members, payloadFiles, payloadBytes int64
 	var foundManifest, foundStdout, foundStderr bool
+	header := make([]byte, tarBlockSize)
 
 	for {
 		if err := contextError(ctx); err != nil {
 			return result, err
 		}
-		header := make([]byte, tarBlockSize)
 		if err := readFullContext(ctx, reader, header); err != nil {
 			return result, errors.New("artifact tar stream is truncated")
 		}
