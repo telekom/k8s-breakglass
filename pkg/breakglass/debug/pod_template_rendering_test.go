@@ -2389,9 +2389,11 @@ func TestValidateRestrictedCataloguePodSpec_DumpInputRequiresReadOnlyMount(t *te
 		}
 	}
 
-	require.NoError(t, validateRestrictedCataloguePodSpec(base(true), "dump-access"))
-	require.ErrorContains(t, validateRestrictedCataloguePodSpec(base(false), "dump-access"), "disallowed source")
-	require.ErrorContains(t, validateRestrictedCataloguePodSpec(base(true), "workload-diagnostics"), "disallowed source")
+	readOnlyPod := base(true)
+	notReadOnlyPod := base(false)
+	require.NoError(t, validateRestrictedCataloguePodSpec(&readOnlyPod, "dump-access"))
+	require.ErrorContains(t, validateRestrictedCataloguePodSpec(&notReadOnlyPod, "dump-access"), "disallowed source")
+	require.ErrorContains(t, validateRestrictedCataloguePodSpec(&readOnlyPod, "workload-diagnostics"), "disallowed source")
 }
 
 func TestBuildPodSpec_RestrictedCatalogueRejectsArbitraryAdditionalResources(t *testing.T) {
