@@ -112,20 +112,6 @@ including a kind service account/token, under the same non-root,
 read-only/no-capabilities policy used in deployment. The test is intentionally
 not skippable when Docker, kind, or kubectl is unavailable.
 
-The checked-in `tool-contract.json` records the stable `workload-diagnostics`
-intent and each helper's allowed operation. `debug-report --json` emits a
-deterministic JSON summary with `status: ready|not-ready`, containing only
-check identities and success statuses for one-time or post-upgrade readiness.
-Use `debug-tls --ca FILE` when the endpoint must be verified against
-a supplied local CA, and `debug-dns --server HOST#PORT` for a non-default
-resolver port.
-
-Run the upstream proof with `make -C utils/workload-debug integration-test`.
-It builds the image and exercises all helpers in a disposable fixture setup,
-including a kind service account/token, under the same non-root,
-read-only/no-capabilities policy used in deployment. The test is intentionally
-not skippable when Docker, kind, or kubectl is unavailable.
-
 ## Incident checklist
 
 1. Confirm the image digest and signature before starting the session.

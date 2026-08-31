@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 {{- define "debug-session-catalogue.fullname" -}}
-{{- if .Values.fullnameOverride -}}{{ .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}{{- else -}}{{ include "debug-session-catalogue.name" . }}{{- end -}}
+{{- if .Values.fullnameOverride -}}{{ .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}{{- else -}}{{ printf "%s-%s" .Release.Name (include "debug-session-catalogue.name" .) | trunc 63 | trimSuffix "-" -}}{{- end -}}
 {{- end -}}
 {{- define "debug-session-catalogue.labels" -}}
 app.kubernetes.io/name: {{ include "debug-session-catalogue.name" . }}

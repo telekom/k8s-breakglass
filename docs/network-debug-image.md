@@ -18,10 +18,11 @@ permissions or authorize network mutation.
 1. Run `net-report` and save the output to a protected incident location.
 2. Check DNS with `dig +short`, route selection with `ip route get ADDRESS`,
    and transport reachability with `nc -vz HOST PORT` or `curl -v`.
-3. Capture only the required interface and filter:
-   `tcpdump -ni eth0 -s 128 -w /work/capture.pcap 'host ADDRESS and port PORT'`.
-4. If the packet is not visible at the expected kernel hook, check the host
-   kernel requirements with `pwru --help` and run a narrowly scoped filter.
+3. Capture only the required interface and filter through the bounded wrapper:
+   `net-debug capture --interface eth0 --filter 'host ADDRESS and port PORT'`.
+4. If the packet is not visible at the expected kernel hook, inspect the host
+   requirements with `net-debug trace --help` and run a narrowly scoped,
+   bounded trace through that wrapper.
 5. Remove captures after the incident retention period; packet data can contain
    credentials and personal data.
 

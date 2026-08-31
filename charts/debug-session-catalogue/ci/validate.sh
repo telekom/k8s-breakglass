@@ -10,8 +10,11 @@ all_rendered="$(mktemp)"
 failure_output="$(mktemp)"
 digest_rendered="$(mktemp)"
 elevated_rendered="$(mktemp)"
+release_a_rendered="$(mktemp)"
+release_b_rendered="$(mktemp)"
+override_rendered="$(mktemp)"
 duration_rendered=
-trap 'rm -f "${rendered}" "${custom_rendered}" "${all_rendered}" "${failure_output}" "${digest_rendered}" "${elevated_rendered}" "${duration_rendered}"' EXIT
+trap 'rm -f "${rendered}" "${custom_rendered}" "${all_rendered}" "${failure_output}" "${digest_rendered}" "${elevated_rendered}" "${release_a_rendered}" "${release_b_rendered}" "${override_rendered}" "${duration_rendered}"' EXIT
 
 fail() {
   echo "::error::debug-session-catalogue validation failed: $*" >&2
@@ -34,6 +37,18 @@ helm lint "${chart_dir}" --strict --values "${chart_dir}/ci/test-values.yaml"
 helm template debug-catalogue "${chart_dir}" \
   --values "${chart_dir}/ci/test-values.yaml" >"${rendered}"
 validate_rendered default "${rendered}"
+
+# Distinct Helm releases must not collide on default template names;
+# fullnameOverride remains the explicit escape hatch for stable names.
+helm template release-a "${chart_dir}" --values "${chart_dir}/ci/test-values.yaml" >"${release_a_rendered}"
+helm template release-b "${chart_dir}" --values "${chart_dir}/ci/test-values.yaml" >"${release_b_rendered}"
+release_a_name=$(yq -r 'select(.kind == "DebugPodTemplate") | .metadata.name' "${release_a_rendered}" | head -n 1)
+release_b_name=$(yq -r 'select(.kind == "DebugPodTemplate") | .metadata.name' "${release_b_rendered}" | head -n 1)
+[[ -n "${release_a_name}" && "${release_a_name}" != "${release_b_name}" ]] || fail "distinct Helm releases collided on default template name"
+helm template release-override "${chart_dir}" --values "${chart_dir}/ci/test-values.yaml" \
+  --set fullnameOverride=managed-catalogue >"${override_rendered}"
+override_name=$(yq -r 'select(.kind == "DebugPodTemplate") | .metadata.name' "${override_rendered}" | head -n 1)
+[[ "${override_name}" == managed-catalogue-workload-diagnostics ]] || fail "fullnameOverride was not preserved"
 
 helm template debug-catalogue "${chart_dir}" \
   --values "${chart_dir}/ci/custom-profile-values.yaml" >"${custom_rendered}"
