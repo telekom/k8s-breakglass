@@ -10,6 +10,7 @@ TEST_DIR="$(mktemp -d)"
 trap 'rm -rf "${TEST_DIR}"' EXIT
 
 mkdir -p "${TEST_DIR}/bin"
+export TEST_DIR
 printf '%s\n' \
   'ghcr.io/example/utility@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
   '# comments and blank lines are ignored' \
@@ -23,21 +24,35 @@ JSON
 EOF
 cat >"${TEST_DIR}/bin/cosign" <<'EOF'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >> "${TEST_DIR}/cosign-args"
 exit 0
 EOF
 chmod +x "${TEST_DIR}/bin/docker" "${TEST_DIR}/bin/cosign"
 
-PATH="${TEST_DIR}/bin:${PATH}" "${SCRIPT_DIR}/verify-catalogue-supply-chain.sh" \
+SUPPLY_CHAIN_RELEASE_TAG=v1.2.3 PATH="${TEST_DIR}/bin:${PATH}" "${SCRIPT_DIR}/verify-catalogue-supply-chain.sh" \
   --images-file "${TEST_DIR}/images" \
   --chart 'ghcr.io/example/catalogue@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
   >/dev/null
+grep -F -- '--certificate-identity https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v1.2.3' "${TEST_DIR}/cosign-args" >/dev/null
+if grep -F -- '--certificate-identity-regexp' "${TEST_DIR}/cosign-args" >/dev/null; then
+  echo "catalogue verification used a broad identity regexp" >&2
+  exit 1
+fi
 
 printf '%s\n' 'ghcr.io/example/utility:mutable' >"${TEST_DIR}/invalid-images"
-if PATH="${TEST_DIR}/bin:${PATH}" "${SCRIPT_DIR}/verify-catalogue-supply-chain.sh" \
+if SUPPLY_CHAIN_RELEASE_TAG=v1.2.3 PATH="${TEST_DIR}/bin:${PATH}" "${SCRIPT_DIR}/verify-catalogue-supply-chain.sh" \
   --images-file "${TEST_DIR}/invalid-images" \
   --chart 'ghcr.io/example/catalogue@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
   >/dev/null 2>&1; then
   echo "mutable utility image reference was accepted" >&2
+  exit 1
+fi
+
+if SUPPLY_CHAIN_RELEASE_TAG=v1.2 PATH="${TEST_DIR}/bin:${PATH}" "${SCRIPT_DIR}/verify-catalogue-supply-chain.sh" \
+  --images-file "${TEST_DIR}/images" \
+  --chart 'ghcr.io/example/catalogue@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
+  >/dev/null 2>&1; then
+  echo "non-semver release tag was accepted for exact identity binding" >&2
   exit 1
 fi
 

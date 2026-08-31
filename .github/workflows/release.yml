@@ -683,9 +683,14 @@ jobs:
       - name: Sign and verify immutable chart contracts
         env:
           CHART_REPO: oci://ghcr.io/${{ github.repository }}/charts
-          SUPPLY_CHAIN_IDENTITY_REGEXP: https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*
+          SUPPLY_CHAIN_RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          [[ "${SUPPLY_CHAIN_RELEASE_TAG}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]] || {
+            echo "release tag is not a validated semver tag: ${SUPPLY_CHAIN_RELEASE_TAG}" >&2
+            exit 1
+          }
+          identity_args=(--certificate-identity "https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/${SUPPLY_CHAIN_RELEASE_TAG}")
           shopt -s nullglob
           chart_packages=(chart-dist/*.tgz)
           [ "${#chart_packages[@]}" -gt 0 ] || { echo "No chart packages found" >&2; exit 1; }
@@ -711,13 +716,13 @@ jobs:
               --output chart-provenance.json
             cosign attest --yes --type slsaprovenance1 --predicate chart-provenance.json "${subject}"
             cosign verify "${subject}" \
-              --certificate-identity-regexp="${SUPPLY_CHAIN_IDENTITY_REGEXP}" \
+              "${identity_args[@]}" \
               --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
             cosign verify-attestation "${subject}" --type spdxjson \
-              --certificate-identity-regexp="${SUPPLY_CHAIN_IDENTITY_REGEXP}" \
+              "${identity_args[@]}" \
               --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
             cosign verify-attestation "${subject}" --type slsaprovenance1 \
-              --certificate-identity-regexp="${SUPPLY_CHAIN_IDENTITY_REGEXP}" \
+              "${identity_args[@]}" \
               --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
             if [ "${chart_name}" = "debug-session-catalogue" ]; then
               catalogue_chart_ref="${subject}"

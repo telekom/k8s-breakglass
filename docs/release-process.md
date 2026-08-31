@@ -77,7 +77,11 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 - Verify both chart publications in GHCR (`.../charts/escalation-config` and `.../charts/debug-session-catalogue`).
 - For a catalogue release, verify every rendered utility image is a
   linux/amd64 + linux/arm64 digest reference and run
-  `hack/verify-catalogue-supply-chain.sh` against the published chart digest.
+  `SUPPLY_CHAIN_RELEASE_TAG=vX.Y.Z hack/verify-catalogue-supply-chain.sh
+  --images-file <image-refs> --chart <chart-digest>` against the published
+  chart digest. The tag is required so the default Cosign identity is bound to
+  this exact release; an explicit exact `SUPPLY_CHAIN_IDENTITY` override is
+  reserved for controlled alternate workflows.
 - Publish checksums and update release notes.
 - Verify provenance attestation was pushed to the registry.
 - Verify SBOM is attached to the GitHub Release.
@@ -91,7 +95,7 @@ Consumers should be able to:
 - Confirm checksums match the downloaded artifacts.
 - Verify provenance attestation via `gh attestation verify` or the GitHub attestation API.
 - Verify SBOM contents match the release image.
-- Verify Cosign signature: `cosign verify ghcr.io/telekom/k8s-breakglass@<digest> --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/' --certificate-oidc-issuer='https://token.actions.githubusercontent.com'`
+- Verify Cosign signature: `cosign verify ghcr.io/telekom/k8s-breakglass@<digest> --certificate-identity="https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/<release-tag>" --certificate-oidc-issuer='https://token.actions.githubusercontent.com'`
 - Verify Helm chart availability:
    ```bash
    helm show chart oci://ghcr.io/telekom/k8s-breakglass/charts/debug-session-catalogue \
@@ -102,7 +106,7 @@ Consumers should be able to:
   ```bash
   cosign verify-attestation ghcr.io/telekom/k8s-breakglass@<digest> \
     --type spdxjson \
-    --certificate-identity-regexp='https://github.com/telekom/k8s-breakglass/' \
+    --certificate-identity="https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/<release-tag>" \
     --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
     | jq -r '.payload' | base64 -d | jq
   ```

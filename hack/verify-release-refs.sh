@@ -71,4 +71,10 @@ if PATH="${test_dir}/bin:${PATH}" "${script_dir}/resolve-release-refs.sh" \
   exit 1
 fi
 
+if PATH="${test_dir}/bin:${PATH}" "${script_dir}/resolve-release-refs.sh" \
+  "${test_dir}/values.yaml" "${test_dir}/refs" v0.1 >/dev/null 2>&1; then
+  echo "non-semver release tag was accepted for exact identity binding" >&2
+  exit 1
+fi
+
 echo "Release reference production behavior passed"
