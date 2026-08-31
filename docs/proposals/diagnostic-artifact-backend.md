@@ -153,16 +153,16 @@ an enabled environment consumes it.
 
 Acceptance requires all of the following:
 
-1. design/API/controller shape is reviewed and generated API files and
-   manifests are produced by repository targets;
-2. S3 and local implementations pass the common contract and race tests;
-3. quotas, authorization, expiry, revocation, restart recovery, and cleanup
+1. design/API/controller shape is reviewed;
+2. generated API files and manifests are produced by repository targets;
+3. S3 and local implementations pass the common contract and race tests;
+4. quotas, authorization, expiry, revocation, restart recovery, and cleanup
    pass the fault matrix with no secret leakage;
-4. exact-head CI is green, including lint, unit, API/controller, and the
+5. exact-head CI is green, including lint, unit, API/controller, and the
    permitted integration environment;
-5. documentation, changelog, RBAC, metrics, and rollback runbook match the
+6. documentation, changelog, RBAC, metrics, and rollback runbook match the
    shipped behavior; and
-6. a review records the immutable artifact/image digests and confirms that no
+7. a review records the immutable artifact/image digests and confirms that no
    production rollout or publication occurred during this plan phase.
 
 Rollback disables new artifact requests, drains or quarantines pending
