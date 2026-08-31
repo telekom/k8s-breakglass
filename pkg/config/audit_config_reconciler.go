@@ -56,7 +56,7 @@ type AuditConfigReconciler struct {
 
 	// onReloadMultiple is called when AuditConfig changes are detected
 	// It receives all valid AuditConfigs to aggregate their sinks
-	onReloadMultiple func(ctx context.Context, configs []*breakglassv1alpha1.AuditConfig) error
+	onReloadMultiple func(ctx context.Context, configs []*breakglassv1alpha1.AuditConfig, configuredUnavailable bool) error
 	// onError is called when reload fails (optional, for metrics/logging)
 	onError func(ctx context.Context, err error)
 	// getSinkHealth returns the current health status of all sinks (optional)
@@ -67,9 +67,20 @@ type AuditConfigReconciler struct {
 	resyncPeriod time.Duration
 
 	// Cache for all active AuditConfigs
-	configMutex   sync.RWMutex
-	activeConfigs []*breakglassv1alpha1.AuditConfig
+	configMutex        sync.RWMutex
+	activeConfigs      []*breakglassv1alpha1.AuditConfig
+	configurationState AuditConfigurationState
 }
+
+// AuditConfigurationState distinguishes intentional disablement from an
+// enabled configuration that cannot currently be loaded.
+type AuditConfigurationState string
+
+const (
+	AuditConfigurationDisabled    AuditConfigurationState = "disabled"
+	AuditConfigurationReady       AuditConfigurationState = "ready"
+	AuditConfigurationUnavailable AuditConfigurationState = "unavailable"
+)
 
 // SinkHealthInfo contains health information for a sink.
 type SinkHealthInfo struct {
@@ -91,7 +102,7 @@ func NewAuditConfigReconciler(
 	c client.Client,
 	logger *zap.SugaredLogger,
 	recorder events.EventRecorder,
-	onReloadMultiple func(ctx context.Context, configs []*breakglassv1alpha1.AuditConfig) error,
+	onReloadMultiple func(ctx context.Context, configs []*breakglassv1alpha1.AuditConfig, configuredUnavailable bool) error,
 	onError func(ctx context.Context, err error),
 	resyncPeriod time.Duration,
 ) *AuditConfigReconciler {
@@ -99,12 +110,13 @@ func NewAuditConfigReconciler(
 		resyncPeriod = 10 * time.Minute
 	}
 	return &AuditConfigReconciler{
-		client:           c,
-		logger:           logger,
-		recorder:         recorder,
-		onReloadMultiple: onReloadMultiple,
-		onError:          onError,
-		resyncPeriod:     resyncPeriod,
+		client:             c,
+		logger:             logger,
+		recorder:           recorder,
+		onReloadMultiple:   onReloadMultiple,
+		onError:            onError,
+		resyncPeriod:       resyncPeriod,
+		configurationState: AuditConfigurationUnavailable,
 	}
 }
 
@@ -135,18 +147,28 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 	// List ALL AuditConfigs
 	allConfigs := &breakglassv1alpha1.AuditConfigList{}
 	if err := r.client.List(ctx, allConfigs); err != nil {
+		r.setConfigurationState(nil, AuditConfigurationUnavailable)
+		if r.onReloadMultiple != nil {
+			if reloadErr := r.onReloadMultiple(ctx, nil, true); reloadErr != nil && r.onError != nil {
+				r.onError(ctx, reloadErr)
+			}
+		}
 		r.logger.Errorw("Failed to list AuditConfigs", "error", err)
 		return reconcile.Result{}, err
 	}
 
 	// Process each config: validate and update status
 	var validConfigs []*breakglassv1alpha1.AuditConfig
+	configuredUnavailable := false
 	for i := range allConfigs.Items {
 		config := &allConfigs.Items[i]
 
 		// Perform structural validation
 		validationResult := breakglassv1alpha1.ValidateAuditConfig(config)
 		if !validationResult.IsValid() {
+			if config.Spec.Enabled {
+				configuredUnavailable = true
+			}
 			r.logger.Warnw("AuditConfig failed structural validation",
 				"name", config.Name,
 				"errors", validationResult.ErrorMessage())
@@ -179,12 +201,18 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 		// Update status based on validation
 		if err := r.updateStatus(ctx, config, validationErrors); err != nil {
 			r.logger.Errorw("Failed to update AuditConfig status", "name", config.Name, "error", err)
+			if config.Spec.Enabled {
+				configuredUnavailable = true
+			}
 			// Continue processing other configs
 			continue
 		}
 
 		// If validation failed, skip this config but continue with others
 		if len(validationErrors) > 0 {
+			if config.Spec.Enabled {
+				configuredUnavailable = true
+			}
 			r.logger.Warnw("AuditConfig validation failed, skipping",
 				"name", config.Name,
 				"errors", validationErrors)
@@ -207,15 +235,11 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 		}
 	}
 
-	// Cache the active configs
-	r.configMutex.Lock()
-	r.activeConfigs = validConfigs
-	r.configMutex.Unlock()
-
 	// Call reload callback with ALL valid configs. audit.Service.ReloadMultiple
 	// records successful reload metrics; the reconciler records callback failures.
 	if r.onReloadMultiple != nil {
-		if err := r.onReloadMultiple(ctx, validConfigs); err != nil {
+		if err := r.onReloadMultiple(ctx, validConfigs, configuredUnavailable); err != nil {
+			r.setConfigurationState(nil, AuditConfigurationUnavailable)
 			r.logger.Errorw("Failed to reload audit configuration with aggregated configs",
 				"configCount", len(validConfigs),
 				"error", err)
@@ -237,6 +261,18 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 		}
 	}
 
+	state := AuditConfigurationDisabled
+	if configuredUnavailable {
+		state = AuditConfigurationUnavailable
+	} else if len(validConfigs) > 0 {
+		state = AuditConfigurationReady
+	}
+	if state == AuditConfigurationUnavailable {
+		r.setConfigurationState(nil, state)
+	} else {
+		r.setConfigurationState(validConfigs, state)
+	}
+
 	// Log summary
 	var configNames []string
 	totalSinks := 0
@@ -251,6 +287,20 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 		"totalSinks", totalSinks)
 
 	return reconcile.Result{RequeueAfter: r.resyncPeriod}, nil
+}
+
+func (r *AuditConfigReconciler) setConfigurationState(configs []*breakglassv1alpha1.AuditConfig, state AuditConfigurationState) {
+	r.configMutex.Lock()
+	defer r.configMutex.Unlock()
+	r.activeConfigs = configs
+	r.configurationState = state
+}
+
+// GetAuditConfigurationState returns the last reconciled aggregate state.
+func (r *AuditConfigReconciler) GetAuditConfigurationState() AuditConfigurationState {
+	r.configMutex.RLock()
+	defer r.configMutex.RUnlock()
+	return r.configurationState
 }
 
 // isConfigInList checks if a config name is in the valid configs list
@@ -350,7 +400,15 @@ func (r *AuditConfigReconciler) updateStatus(ctx context.Context, config *breakg
 	// Build conditions based on validation
 	var conditions []metav1.Condition
 
-	if len(validationErrors) == 0 {
+	if !config.Spec.Enabled {
+		conditions = append(conditions, metav1.Condition{
+			Type:               "Ready",
+			Status:             metav1.ConditionFalse,
+			Reason:             "AuditingDisabled",
+			Message:            "AuditConfig is intentionally disabled",
+			LastTransitionTime: metav1.Now(),
+		})
+	} else if len(validationErrors) == 0 {
 		conditions = append(conditions, metav1.Condition{
 			Type:               "Ready",
 			Status:             metav1.ConditionTrue,
@@ -375,8 +433,10 @@ func (r *AuditConfigReconciler) updateStatus(ctx context.Context, config *breakg
 
 	// Build list of active sink names
 	var activeSinkNames []string
-	for _, sink := range config.Spec.Sinks {
-		activeSinkNames = append(activeSinkNames, sink.Name)
+	if config.Spec.Enabled && len(validationErrors) == 0 {
+		for _, sink := range config.Spec.Sinks {
+			activeSinkNames = append(activeSinkNames, sink.Name)
+		}
 	}
 	config.Status.ActiveSinks = activeSinkNames
 

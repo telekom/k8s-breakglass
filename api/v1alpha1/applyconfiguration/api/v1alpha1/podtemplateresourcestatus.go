@@ -13,6 +13,9 @@ package v1alpha1
 //
 // PodTemplateResourceStatus tracks the state of resources deployed from multi-doc pod templates.
 type PodTemplateResourceStatusApplyConfiguration struct {
+	// uid is the immutable Kubernetes UID observed when the resource was created.
+	// Cleanup must match this UID before deleting a name-reused replacement.
+	UID *string `json:"uid,omitempty"`
 	// kind is the Kubernetes kind of the resource.
 	Kind *string `json:"kind,omitempty"`
 	// apiVersion is the API version of the resource.
@@ -46,6 +49,14 @@ type PodTemplateResourceStatusApplyConfiguration struct {
 // apply.
 func PodTemplateResourceStatus() *PodTemplateResourceStatusApplyConfiguration {
 	return &PodTemplateResourceStatusApplyConfiguration{}
+}
+
+// WithUID sets the UID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UID field is set to the value of the last call.
+func (b *PodTemplateResourceStatusApplyConfiguration) WithUID(value string) *PodTemplateResourceStatusApplyConfiguration {
+	b.UID = &value
+	return b
 }
 
 // WithKind sets the Kind field in the declarative configuration to the given value

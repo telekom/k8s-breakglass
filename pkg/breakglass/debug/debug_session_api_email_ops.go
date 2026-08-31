@@ -445,7 +445,11 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	}
 
 	// Create kubectl debug handler
-	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+	provider := c.clusterClients
+	if provider == nil {
+		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
+	}
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider)
 
 	// Validate the request
 	capabilities := extractCapabilities(req.SecurityContext)
@@ -549,7 +553,11 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	}
 
 	// Create kubectl debug handler
-	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+	provider := c.clusterClients
+	if provider == nil {
+		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
+	}
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider)
 
 	// Create the pod copy
 	pod, err := handler.CreatePodCopy(apiCtx, session, req.Namespace, req.PodName, req.DebugImage, username)
@@ -642,7 +650,11 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	}
 
 	// Create kubectl debug handler
-	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+	provider := c.clusterClients
+	if provider == nil {
+		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
+	}
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider)
 
 	// Create the node debug pod
 	pod, err := handler.CreateNodeDebugPod(apiCtx, session, req.NodeName, username)
@@ -714,6 +726,44 @@ func (a *clusterClientAdapter) GetClient(ctx context.Context, clusterName string
 		return nil, err
 	}
 	return ctrlclient.New(restCfg, ctrlclient.Options{})
+}
+
+func (a *clusterClientAdapter) GetClientForPrivilegedOperation(ctx context.Context, clusterName string) (ctrlclient.Client, *breakglassv1alpha1.ClusterConfig, error) {
+	if a.ccProvider == nil {
+		return nil, nil, fmt.Errorf("cluster client provider is not configured")
+	}
+	restCfg, configured, err := a.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, clusterName)
+	if err != nil {
+		return nil, nil, err
+	}
+	targetClient, err := ctrlclient.New(restCfg, ctrlclient.Options{})
+	if err != nil {
+		// GetRESTConfigForPrivilegedOperation registers the exact input snapshot
+		// before returning.  Client construction is part of the same operation;
+		// release that snapshot on this failure path so a failed request cannot
+		// retain an entry in privilegedInputVersions indefinitely.
+		a.ccProvider.ReleasePrivilegedOperationClusterConfig(configured)
+		return nil, nil, fmt.Errorf("create target cluster client: %w", err)
+	}
+	return targetClient, configured, nil
+}
+
+// ReleasePrivilegedOperationClusterConfig forwards operation cleanup to the
+// underlying provider.  Keeping this adapter method explicit ensures callers
+// using the debug ClientProviderInterface can release snapshots through the
+// optional lifecycle interface as well.
+func (a *clusterClientAdapter) ReleasePrivilegedOperationClusterConfig(configured *breakglassv1alpha1.ClusterConfig) {
+	if a == nil || a.ccProvider == nil {
+		return
+	}
+	a.ccProvider.ReleasePrivilegedOperationClusterConfig(configured)
+}
+
+func (a *clusterClientAdapter) ValidatePrivilegedOperationClusterConfig(ctx context.Context, configured *breakglassv1alpha1.ClusterConfig) error {
+	if a.ccProvider == nil {
+		return fmt.Errorf("cluster client provider is not configured")
+	}
+	return a.ccProvider.ValidatePrivilegedOperationClusterConfig(ctx, configured)
 }
 
 // isUserParticipant checks if the user is a participant of the session

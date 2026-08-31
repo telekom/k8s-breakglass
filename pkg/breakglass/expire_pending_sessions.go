@@ -6,6 +6,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -16,6 +17,7 @@ func (wc *BreakglassSessionController) ExpirePendingSessions(ctxs ...context.Con
 		wc.log.Infow("skipping pending session expiry because context is cancelled", "error", err)
 		return
 	}
+	wc.drainExpiryNotifications(ctx, breakglassv1alpha1.SessionStateTimeout)
 	// Use indexed query to fetch only pending sessions (matching ExpireApprovedSessions pattern)
 	sessions, err := wc.sessionManager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStatePending)
 	if err != nil {
@@ -36,6 +38,8 @@ func (wc *BreakglassSessionController) ExpirePendingSessions(ctxs ...context.Con
 				breakglassv1alpha1.SessionStatePending,
 				IsSessionApprovalTimedOut,
 				func(current *breakglassv1alpha1.BreakglassSession) {
+					transitionTime := metav1.NewTime(now.UTC())
+					current.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(current.Status.ExpiresAt, now)
 					current.Status.State = breakglassv1alpha1.SessionStateTimeout
 					retainFor := ParseRetainFor(current.Spec, wc.log)
 					current.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
@@ -43,10 +47,11 @@ func (wc *BreakglassSessionController) ExpirePendingSessions(ctxs ...context.Con
 					current.SetCondition(metav1.Condition{
 						Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
 						Status:             metav1.ConditionTrue,
-						LastTransitionTime: metav1.Now(),
+						LastTransitionTime: transitionTime,
 						Reason:             "ApprovalTimeout",
 						Message:            "Session approval timed out.",
 					})
+					wc.setExpiryNotificationIntent(current, transitionTime)
 				},
 			)
 			if err != nil {
@@ -63,14 +68,10 @@ func (wc *BreakglassSessionController) ExpirePendingSessions(ctxs ...context.Con
 
 			metrics.SessionExpired.WithLabelValues(updated.Spec.Cluster).Inc()
 			wc.emitSessionExpiredAuditEvent(ctx, &updated, "approvalTimeout")
-			if err := ctx.Err(); err != nil {
-				wc.log.Infow("skipping pending session expiry email because context is cancelled",
-					"session", updated.Name,
-					"namespace", updated.Namespace,
-					"error", err)
-				return
+			if err := wc.enqueueExpiryNotification(ctx, updated); err != nil {
+				wc.log.Errorw("failed to enqueue approval timeout notification",
+					"session", updated.Name, "namespace", updated.Namespace, "error", err)
 			}
-			wc.sendSessionExpiredEmail(updated, "approvalTimeout")
 		}
 	}
 }

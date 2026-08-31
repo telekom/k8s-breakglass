@@ -24,6 +24,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -201,11 +202,13 @@ func (wc *BreakglassSessionController) prepareIdleExpiredSession(
 		return breakglassv1alpha1.BreakglassSession{}, 0, false, nil
 	}
 
+	now := time.Now().UTC()
+	refreshed.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(refreshed.Status.ExpiresAt, now)
 	refreshed.Status.State = breakglassv1alpha1.SessionStateIdleExpired
 	refreshed.SetCondition(newIdleCondition(refreshedIdle, refreshed.Spec.IdleTimeout))
 	refreshed.Status.ReasonEnded = "idleTimeout"
 	retainFor := ParseRetainFor(refreshed.Spec, wc.log)
-	refreshed.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
+	refreshed.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
 	return refreshed, refreshedIdle, true, nil
 }
 

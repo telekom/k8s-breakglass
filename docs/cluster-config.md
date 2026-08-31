@@ -932,17 +932,26 @@ spec:
 
 ## Webhook Integration
 
-For clusters using the breakglass authorization webhook, configure the API server with:
+For clusters using the breakglass authorization webhook, configure the API
+server with the Kubernetes 1.34+ structured configuration below. Positive
+authorization caching must be disabled so expiry is enforced exactly:
 
 ```yaml
 # authorization-config.yaml
-apiVersion: apiserver.config.k8s.io/v1beta1
+apiVersion: apiserver.config.k8s.io/v1
 kind: AuthorizationConfiguration
 authorizers:
   - type: Webhook
     name: breakglass
     webhook:
       timeout: 3s
+      authorizedTTL: 5m
+      cacheAuthorizedRequests: false
+      cacheUnauthorizedRequests: false
+      unauthorizedTTL: 30s
+      subjectAccessReviewVersion: v1
+      matchConditionSubjectAccessReviewVersion: v1
+      failurePolicy: Deny
       connectionInfo:
         type: KubeConfigFile
         kubeConfigFile: /etc/kubernetes/breakglass-webhook-kubeconfig.yaml
@@ -950,6 +959,11 @@ authorizers:
         - expression: "'system:authenticated' in request.groups"
         - expression: "!request.user.startsWith('system:')"
 ```
+
+For older Kubernetes versions, use legacy webhook mode with the webhook
+kubeconfig and set `--authorization-webhook-cache-authorized-ttl=0s` and
+`--authorization-webhook-cache-unauthorized-ttl=0s` instead of the structured
+cache field.
 
 The webhook kubeconfig should point to the breakglass service:
 
@@ -1148,6 +1162,12 @@ authorizers:
     name: breakglass
     webhook:
       timeout: 3s
+      authorizedTTL: 5m
+      cacheAuthorizedRequests: false
+      cacheUnauthorizedRequests: false
+      unauthorizedTTL: 30s
+      subjectAccessReviewVersion: v1
+      matchConditionSubjectAccessReviewVersion: v1
       failurePolicy: NoOpinion
       connectionInfo:
         type: KubeConfigFile

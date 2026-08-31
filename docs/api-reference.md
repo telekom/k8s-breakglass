@@ -87,13 +87,13 @@ spec:
 
 ## Session State and Validation
 
-The breakglass API implements a **state-first validation architecture**:
+The breakglass API implements a **state-and-lease validation architecture**:
 
-### State Priority Rules
+### State and Lease Priority Rules
 
-1. **State is ultimate authority** - A session's `state` field determines validity, not timestamps
-2. **Terminal states override timestamps** - Sessions in Rejected, Withdrawn, Expired, IdleExpired, or ApprovalTimeout states can NEVER be valid, regardless of timestamp values
-3. **Timestamp preservation** - Timestamps are never cleared, only added/updated, creating a complete audit history
+1. **Terminal state takes precedence** - Sessions in Rejected, Withdrawn, Expired, IdleExpired, or ApprovalTimeout states can NEVER be valid, regardless of timestamp values
+2. **Approved requires a live lease** - An `Approved` session is valid only when `expiresAt` is present and strictly later than the authorization decision time; a missing, zero, or equal/past expiry fails closed
+3. **Timestamp preservation** - Timestamps are never cleared, and regular sessions have no renewal operation; terminal cleanup may shorten a still-live lease but never move an elapsed expiry forward
 
 ### Session Validity Rules
 
@@ -102,7 +102,7 @@ A session is considered valid for access ONLY if:
 1. **State is Approved** - Session must be in `Approved` state
 2. **Not in terminal state** - Must not be in Rejected, Withdrawn, Expired, IdleExpired, or ApprovalTimeout
 3. **Not scheduled for future** - If `scheduledStartTime` is in the future, session is not yet valid
-4. **Not expired** - `expiresAt` timestamp must be in the future
+4. **Not expired** - `expiresAt` must be present and in the future; a missing or zero expiry fails closed
 
 **Pseudocode:**
 
@@ -120,7 +120,7 @@ isSessionValid(session) {
             return false
         }
         // Check expiration only for Approved
-        if (session.status.expiresAt <= now) {
+        if (session.status.expiresAt is missing || session.status.expiresAt <= now) {
             return false
         }
         return true
@@ -1008,6 +1008,11 @@ POST /api/debugSessions
 
 JSON bodies for debug-session create requests must contain only known field names and exactly one JSON object. Unknown fields, malformed JSON, and trailing JSON values are rejected with `400 Bad Request`.
 
+`DebugSessionTemplate.spec.expirationBehavior: notify-only` is deprecated. It
+now requests the configured expiry notification and still performs mandatory
+hard expiry, access revocation, and cleanup. Use `expirationBehavior: terminate`
+with `notification.notifyOnExpiry` for new templates.
+
 ClusterConfig readiness, missing-cluster, and tenant-alias errors are returned only after the request is authorized by the selected template or binding.
 
 The same strict JSON parsing applies to DebugSession renew, approve, reject, and kubectl-debug operation bodies. Bodyless actions such as join, leave, and terminate reject any non-empty body before JSON parsing.
@@ -1401,7 +1406,19 @@ These endpoints provide kubectl-debug style operations for sessions in `kubectl-
 POST /api/debugSessions/:name/injectEphemeralContainer
 ```
 
-Injects an ephemeral container into a running pod for live debugging without restarting the pod.
+Injects an ephemeral container into a running pod for live debugging without
+restarting the pod. This is the only Breakglass-mediated ephemeral-container
+path: the manager validates the authenticated session and policy and fences the
+live session and target Pod UID immediately before the target update. PR
+[#1277](https://github.com/telekom/k8s-breakglass/pull/1277) records ephemeral
+operation evidence after that effect. It has no durable pre-effect record, so
+an interrupted status write can leave the effect without matching evidence.
+PR [#1278](https://github.com/telekom/k8s-breakglass/pull/1278) adds the durable
+pre-effect operation outbox.
+Direct writes to
+`pods/ephemeralcontainers` through
+the target cluster API are governed by target-cluster RBAC and are outside
+Breakglass.
 
 **Request Body:**
 

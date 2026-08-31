@@ -64,8 +64,10 @@ webhooks:
     operations:
     - CREATE
     - UPDATE
+    - DELETE
     resources:
     - breakglasssessions
+    - breakglasssessions/status
   sideEffects: None
 - admissionReviewVersions:
   - v1
@@ -129,6 +131,7 @@ webhooks:
     - UPDATE
     resources:
     - debugsessions
+    - debugsessions/status
   sideEffects: None
 - admissionReviewVersions:
   - v1

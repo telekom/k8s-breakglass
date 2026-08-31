@@ -92,6 +92,11 @@ type AuxiliaryResource struct {
 
 // AuxiliaryResourceStatus tracks the state of a deployed auxiliary resource.
 type AuxiliaryResourceStatus struct {
+	// uid is the immutable Kubernetes UID observed when the resource was created.
+	// Cleanup must match this UID before deleting a name-reused replacement.
+	// +optional
+	UID string `json:"uid,omitempty"`
+
 	// name is the auxiliary resource name (from template).
 	Name string `json:"name"`
 
@@ -144,6 +149,11 @@ type AuxiliaryResourceStatus struct {
 // AdditionalResourceRef tracks a resource created from a multi-document YAML template.
 // This is used when an auxiliary resource templateString produces multiple K8s resources.
 type AdditionalResourceRef struct {
+	// uid is the immutable Kubernetes UID observed when the resource was created.
+	// Cleanup must match this UID before deleting a name-reused replacement.
+	// +optional
+	UID string `json:"uid,omitempty"`
+
 	// kind is the Kubernetes resource kind.
 	Kind string `json:"kind"`
 

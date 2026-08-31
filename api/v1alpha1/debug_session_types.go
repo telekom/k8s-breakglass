@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"context"
 	"reflect"
+	"time"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -268,6 +269,11 @@ type DebugSessionStatus struct {
 
 // PodTemplateResourceStatus tracks the state of resources deployed from multi-doc pod templates.
 type PodTemplateResourceStatus struct {
+	// uid is the immutable Kubernetes UID observed when the resource was created.
+	// Cleanup must match this UID before deleting a name-reused replacement.
+	// +optional
+	UID string `json:"uid,omitempty"`
+
 	// kind is the Kubernetes kind of the resource.
 	// +optional
 	Kind string `json:"kind,omitempty"`
@@ -520,6 +526,11 @@ type EphemeralContainerRef struct {
 
 // CopiedPodRef tracks a debug copy of a pod.
 type CopiedPodRef struct {
+	// uid is the immutable UID of the copied pod observed after creation.
+	// Cleanup must match this UID before deleting a name-reused replacement.
+	// +optional
+	UID string `json:"uid,omitempty"`
+
 	// originalPod is the name of the original pod.
 	// +required
 	OriginalPod string `json:"originalPod"`
@@ -571,7 +582,7 @@ type DebugSession struct {
 	Status DebugSessionStatus `json:"status,omitempty"`
 }
 
-//+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-debugsession,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=debugsessions,verbs=create;update,versions=v1alpha1,name=debugsession.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
+//+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-debugsession,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=debugsessions;debugsessions/status,verbs=create;update,versions=v1alpha1,name=debugsession.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
 
 // SetCondition updates or adds a condition in the DebugSession status
 func (ds *DebugSession) SetCondition(condition metav1.Condition) {
@@ -587,6 +598,10 @@ func (ds *DebugSession) GetCondition(condType string) *metav1.Condition {
 func (ds *DebugSession) ValidateCreate(ctx context.Context, obj *DebugSession) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
 	result := ValidateDebugSession(obj)
+	if obj.Status.State == DebugSessionStateActive && (obj.Status.ExpiresAt == nil || obj.Status.ExpiresAt.IsZero()) {
+		result.Errors = append(result.Errors, field.Required(field.NewPath("status").Child("expiresAt"),
+			"an active debug session must have an expiry"))
+	}
 	if result.IsValid() {
 		return nil, nil
 	}
@@ -609,7 +624,42 @@ func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) fie
 	}
 
 	checkTime(oldObj.Status.StartsAt, newObj.Status.StartsAt, statusPath.Child("startsAt"))
-	checkTime(oldObj.Status.ExpiresAt, newObj.Status.ExpiresAt, statusPath.Child("expiresAt"))
+
+	oldExpiry := oldObj.Status.ExpiresAt
+	newExpiry := newObj.Status.ExpiresAt
+	if oldObj.Status.State == DebugSessionStateActive && (oldExpiry == nil || oldExpiry.IsZero()) {
+		if !isTerminalDebugSessionState(newObj.Status.State) {
+			errs = append(errs, field.Invalid(statusPath.Child("state"), newObj.Status.State,
+				"an active debug session with a missing expiry must become terminal"))
+		}
+		if newExpiry != nil && !newExpiry.IsZero() {
+			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), newExpiry.Time,
+				"a missing active expiry cannot be added later"))
+		}
+	}
+	if oldExpiry != nil && !oldExpiry.IsZero() {
+		if newExpiry == nil || newExpiry.IsZero() {
+			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), nil, "timestamp must not be cleared once set"))
+		} else if newExpiry.Time.Before(oldExpiry.Time) {
+			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), newExpiry.Time, "timestamp must not move backwards"))
+		} else if newExpiry.Time.After(oldExpiry.Time) &&
+			(oldObj.Status.State != DebugSessionStateActive || newObj.Status.State != DebugSessionStateActive ||
+				!time.Now().Before(oldExpiry.Time) || newObj.Status.RenewalCount != oldObj.Status.RenewalCount+1) {
+			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), newExpiry.Time,
+				"an expiry may only be extended by one renewal while the session is active and unexpired"))
+		}
+	}
+	if newObj.Status.RenewalCount < oldObj.Status.RenewalCount {
+		errs = append(errs, field.Invalid(statusPath.Child("renewalCount"), newObj.Status.RenewalCount,
+			"renewalCount must not decrease"))
+	}
+	if isTerminalDebugSessionState(oldObj.Status.State) && newObj.Status.State != oldObj.Status.State {
+		errs = append(errs, field.Invalid(statusPath.Child("state"), newObj.Status.State,
+			"a terminal debug session state cannot change"))
+	}
+	if newObj.Status.State == DebugSessionStateActive && (newExpiry == nil || newExpiry.IsZero()) {
+		errs = append(errs, field.Required(statusPath.Child("expiresAt"), "an active debug session must have an expiry"))
+	}
 
 	if oldObj.Status.Approval != nil {
 		if newObj.Status.Approval == nil {
@@ -624,6 +674,10 @@ func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) fie
 	}
 
 	return errs
+}
+
+func isTerminalDebugSessionState(state DebugSessionState) bool {
+	return state == DebugSessionStateExpired || state == DebugSessionStateTerminated || state == DebugSessionStateFailed
 }
 
 func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *DebugSession) (admission.Warnings, error) {

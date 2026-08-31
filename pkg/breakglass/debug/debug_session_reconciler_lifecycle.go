@@ -552,7 +552,7 @@ func (c *DebugSessionController) cleanupDeployedResources(
 			continue
 		}
 
-		if err := targetClient.Delete(ctx, obj); err != nil {
+		if err := deleteOwnedResource(ctx, targetClient, obj, ref.UID, ds); err != nil {
 			if apierrors.IsNotFound(err) {
 				log.Debugw("Debug resource already deleted", "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace)
 				continue
@@ -568,6 +568,45 @@ func (c *DebugSessionController) cleanupDeployedResources(
 	ds.Status.DeployedResources = remainingDeployedResources
 	ds.Status.AllowedPods = allowedPodsForRemainingDeployedPods(ds.Status.AllowedPods, remainingDeployedResources)
 	return errors.Join(cleanupErrors...)
+}
+
+const sourceSessionUIDAnnotation = "breakglass.t-caas.telekom.com/source-session-uid"
+
+const createOperationIDAnnotation = "breakglass.t-caas.telekom.com/create-operation-id"
+
+// deleteOwnedResource resolves the target object immediately before deletion and
+// verifies immutable ownership. A name is reusable after deletion, so deleting
+// a name-only placeholder can destroy a replacement belonging to another
+// session. Records written before UID tracking was introduced are only
+// deletable when the immutable session UID annotation is present and matches.
+func deleteOwnedResource(ctx context.Context, targetClient ctrlclient.Client, obj ctrlclient.Object, expectedUID string, session *breakglassv1alpha1.DebugSession) error {
+	live := obj.DeepCopyObject().(ctrlclient.Object)
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(obj), live); err != nil {
+		return err
+	}
+	if live.GetUID() == "" {
+		return fmt.Errorf("refusing to delete %s %s/%s: live UID is unavailable", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetNamespace(), obj.GetName())
+	}
+	if expectedUID != "" {
+		if string(live.GetUID()) != expectedUID {
+			return fmt.Errorf("refusing to delete %s %s/%s: UID changed from %s to %s", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetNamespace(), obj.GetName(), expectedUID, live.GetUID())
+		}
+	} else if session == nil || session.UID == "" || live.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
+		return fmt.Errorf("refusing to delete %s %s/%s: ownership identity is unavailable or changed", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetNamespace(), obj.GetName())
+	}
+	if live.GetUID() != "" {
+		uid := live.GetUID()
+		return targetClient.Delete(ctx, live, ctrlclient.Preconditions{UID: &uid})
+	}
+	return targetClient.Delete(ctx, live)
+}
+
+func captureResourceUID(ctx context.Context, targetClient ctrlclient.Client, obj ctrlclient.Object) (string, error) {
+	live := obj.DeepCopyObject().(ctrlclient.Object)
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(obj), live); err != nil {
+		return "", err
+	}
+	return string(live.GetUID()), nil
 }
 
 func allowedPodsForRemainingDeployedPods(
@@ -639,7 +678,7 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 		obj.SetName(status.ResourceName)
 		obj.SetNamespace(status.Namespace)
 
-		if err := targetClient.Delete(ctx, obj); err != nil {
+		if err := deleteOwnedResource(ctx, targetClient, obj, status.UID, ds); err != nil {
 			if apierrors.IsNotFound(err) {
 				log.Debugw("Pod template resource already deleted",
 					"kind", status.Kind,

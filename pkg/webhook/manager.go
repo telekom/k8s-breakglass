@@ -1,8 +1,6 @@
 package webhook
 
 import (
-	"net/http"
-
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -10,7 +8,6 @@ import (
 	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
 	"github.com/telekom/k8s-breakglass/pkg/cert"
 	"github.com/telekom/k8s-breakglass/pkg/cli"
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
@@ -24,7 +21,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	webhookserver "sigs.k8s.io/controller-runtime/pkg/webhook"
-	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // Setup starts the webhook server with TLS configuration and optional separate metrics server.
@@ -145,29 +141,6 @@ func Setup(
 		if err := registerWebhook(&breakglassv1alpha1.DebugSessionClusterBinding{}, "DebugSessionClusterBinding", mgr, log); err != nil {
 			return err
 		}
-
-		// Register ephemeral container webhook
-		log.Infof("Registering ephemeral container webhook at /validate-ephemeral-containers")
-		admissionHandler := &webhookserver.Admission{
-			Handler: &EphemeralContainerWebhook{
-				Client:       mgr.GetClient(),
-				Log:          log,
-				Decoder:      admission.NewDecoder(mgr.GetScheme()),
-				DebugHandler: debug.NewKubectlDebugHandler(mgr.GetClient(), nil),
-			},
-		}
-
-		mgr.GetWebhookServer().Register("/validate-ephemeral-containers", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			cluster := r.URL.Query().Get("cluster")
-			if cluster == "" {
-				cluster = strings.TrimPrefix(r.URL.Path, "/validate-ephemeral-containers/")
-				if cluster == "/validate-ephemeral-containers" {
-					cluster = ""
-				}
-			}
-			ctx := context.WithValue(r.Context(), clusterContextKey, cluster)
-			admissionHandler.ServeHTTP(w, r.WithContext(ctx))
-		}))
 	} else {
 		log.Infow("Validating webhooks disabled via --enable-validating-webhooks=false")
 	}

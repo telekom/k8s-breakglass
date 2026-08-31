@@ -661,6 +661,73 @@ func TestDebugSessionReconciler_ExpirationHandling(t *testing.T) {
 	})
 }
 
+func TestDebugSessionReconciler_ExpiryNotificationAndHardExpiry(t *testing.T) {
+	tests := []struct {
+		name               string
+		expirationBehavior string
+		notification       *breakglassv1alpha1.DebugSessionNotificationConfig
+		wantMessages       int
+	}{
+		{
+			name:               "terminate sends the requested expiry email",
+			expirationBehavior: "terminate",
+			notification: &breakglassv1alpha1.DebugSessionNotificationConfig{
+				Enabled:        true,
+				NotifyOnExpiry: true,
+			},
+			wantMessages: 1,
+		},
+		{
+			name:               "terminate respects a disabled expiry email",
+			expirationBehavior: "terminate",
+			notification: &breakglassv1alpha1.DebugSessionNotificationConfig{
+				Enabled:        true,
+				NotifyOnExpiry: false,
+			},
+		},
+		{
+			name:               "deprecated notify-only still emails and expires",
+			expirationBehavior: "notify-only",
+			wantMessages:       1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pastTime := metav1.NewTime(time.Now().UTC().Add(-time.Minute))
+			session := newTestDebugSession("expired-session", "test-template", "test-cluster", "user@example.com")
+			session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+			session.Status.ExpiresAt = &pastTime
+			session.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{
+				ExpirationBehavior: tt.expirationBehavior,
+				Notification:       tt.notification,
+			}
+			fakeClient := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).
+				WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+			mailService := NewMockMailEnqueuer(true)
+			controller := &DebugSessionController{
+				log:          zap.NewNop().Sugar(),
+				client:       fakeClient,
+				mailService:  mailService,
+				brandingName: "Breakglass",
+			}
+
+			result, err := controller.handleActive(context.Background(), session.DeepCopy())
+			require.NoError(t, err)
+			assert.Equal(t, ExpiredSessionRequeue, result.RequeueAfter)
+
+			var stored breakglassv1alpha1.DebugSession
+			require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+			assert.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, stored.Status.State)
+			assert.Equal(t, "Session expired", stored.Status.Message)
+			require.Len(t, mailService.GetMessages(), tt.wantMessages)
+			if tt.wantMessages == 1 {
+				assert.Contains(t, mailService.GetMessages()[0].Subject, "Debug Session Expired")
+			}
+		})
+	}
+}
+
 func TestDebugSessionReconciler_DeployedResourcesTracking(t *testing.T) {
 	scheme := testScheme()
 
@@ -1055,6 +1122,39 @@ func TestDebugSessionReconciler_HandleActiveDoesNotExpireRenewedStaleSnapshot(t 
 	assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, updated.Status.State)
 	assert.Equal(t, int32(1), updated.Status.RenewalCount)
 	assert.Empty(t, updated.Status.Message)
+}
+
+func TestDebugSessionReconcilerFailsActiveSessionWithoutExpiry(t *testing.T) {
+	scheme := testScheme()
+	session := newTestDebugSession("missing-expiry", "test-template", "test-cluster", "user@example.com")
+	session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+		Status:     breakglassv1alpha1.DebugSessionTemplateStatus{ActiveSessionCount: 1},
+	}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session, template).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).
+		Build()
+	controller := &DebugSessionController{log: zap.NewNop().Sugar(), client: fakeClient}
+	metrics.DebugSessionsActive.WithLabelValues(session.Spec.Cluster, session.Spec.TemplateRef).Set(1)
+	t.Cleanup(func() {
+		metrics.DebugSessionsActive.DeleteLabelValues(session.Spec.Cluster, session.Spec.TemplateRef)
+	})
+
+	result, err := controller.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{
+		Name: session.Name, Namespace: session.Namespace,
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, ExpiredSessionRequeue, result.RequeueAfter)
+
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, stored.Status.State)
+	assert.Contains(t, stored.Status.Message, "has no expiry")
+	assert.Nil(t, stored.Status.ExpiresAt)
+	assert.Equal(t, float64(0), testutil.ToFloat64(metrics.DebugSessionsActive.WithLabelValues(session.Spec.Cluster, session.Spec.TemplateRef)))
 }
 
 func TestDebugSessionReconciler_HandleActiveDoesNotMarkRenewedSessionExpiringSoonFromStaleSnapshot(t *testing.T) {

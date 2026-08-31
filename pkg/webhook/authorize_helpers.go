@@ -15,8 +15,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	authorizationv1 "k8s.io/api/authorization/v1"
+	"k8s.io/client-go/rest"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/impersonation"
@@ -77,12 +79,33 @@ type authorizeState struct {
 	impersonationWarnedLegacy bool
 
 	// Decision state (filled progressively)
-	allowed           bool
-	allowSource       string // "rbac" | "session" | "debug-session"
-	allowDetail       string
-	reason            string
-	escals            []breakglassv1alpha1.BreakglassEscalation
-	sessionSARSkipErr error
+	allowed               bool
+	allowSource           string // "rbac" | "session" | "debug-session"
+	allowDetail           string
+	debugSessionNamespace string
+	debugSessionName      string
+	debugSessionUID       string
+	allowedSession        *sessionAuthorizationCandidate
+	allowedSessions       []sessionAuthorizationCandidate
+	sessionDerivedRBAC    bool
+	auditTarget           audit.Target
+	// sessionActivity fields are populated during authorization but recorded only
+	// after the final live authorization fence has passed.
+	sessionActivityName  string
+	sessionActivityGroup string
+	reason               string
+	escals               []breakglassv1alpha1.BreakglassEscalation
+	sessionSARSkipErr    error
+}
+
+type sessionAuthorizationCandidate struct {
+	namespace            string
+	name                 string
+	uid                  string
+	user                 string
+	cluster              string
+	grantedGroup         string
+	identityProviderName string
 }
 
 // countRequest increments the SAR request counter, at most once per request.
@@ -299,24 +322,19 @@ func (wc *WebhookController) checkEarlyDebugSession(c *gin.Context, s *authorize
 	if s.sar.Spec.ResourceAttributes != nil {
 		ra := s.sar.Spec.ResourceAttributes
 		if ra.Resource == "pods" && isDebugSessionSubresource(ra.Subresource) && ra.Name != "" {
-			if debugAllowed, debugSession, debugReason := wc.checkDebugSessionAccess(
-				s.ctx, s.sar.Spec.User, s.clusterName, ra, s.reqLog); debugAllowed {
-				s.phases.EndPhase(PhaseDebugSession) // End debug_session phase
-				s.phases.LogSummary()                // Log timing summary
-				s.reqLog.Infow("Debug session authorizing pod operation (bypassing deny policies)",
-					"session", debugSession, "pod", ra.Name,
+			if debugSession, debugReason := wc.findDebugSessionAccess(
+				s.ctx, s.sar.Spec.User, s.clusterName, ra, s.reqLog); debugSession != nil {
+				s.allowed = true
+				s.allowSource = "debug-session"
+				s.allowDetail = fmt.Sprintf("session=%s", debugSession.Name)
+				s.reason = debugReason
+				s.debugSessionNamespace = debugSession.Namespace
+				s.debugSessionName = debugSession.Name
+				s.debugSessionUID = string(debugSession.UID)
+				s.phases.EndPhase(PhaseDebugSession)
+				s.reqLog.Infow("Debug session authorization candidate found (bypassing deny policies)",
+					"session", debugSession.Name, "pod", ra.Name,
 					"namespace", ra.Namespace, "operation", ra.Subresource)
-				metrics.WebhookSARAllowed.WithLabelValues(s.clusterLabel).Inc()
-				metrics.WebhookSARDecisions.WithLabelValues(
-					s.clusterLabel, "allowed", "debug-session").Inc()
-				metrics.WebhookSARDuration.WithLabelValues(s.clusterLabel, "allowed").
-					Observe(time.Since(s.startTime).Seconds())
-				reason := wc.finalizeReason(debugReason, true, s.clusterName)
-				c.JSON(http.StatusOK, &SubjectAccessReviewResponse{
-					ApiVersion: s.sar.APIVersion,
-					Kind:       s.sar.Kind,
-					Status:     SubjectAccessReviewResponseStatus{Allowed: true, Reason: reason},
-				})
 				return true
 			}
 		}
@@ -553,6 +571,7 @@ func (wc *WebhookController) performRBACCheck(c *gin.Context, s *authorizeState)
 	s.phases.StartPhase() // Start rbac_check phase
 	var can bool
 	var rbacErr error
+	var rbacConfig *rest.Config
 	// Log input to RBAC check for easier debugging
 	s.reqLog.Debugw("Invoking RBAC canDoFn",
 		"groupCount", len(s.groups), "resourceAttributes", s.sar.Spec.ResourceAttributes,
@@ -560,6 +579,7 @@ func (wc *WebhookController) performRBACCheck(c *gin.Context, s *authorizeState)
 
 	if wc.ccProvider != nil {
 		if rc, rerr := wc.ccProvider.GetRESTConfig(s.ctx, s.clusterName); rerr == nil {
+			rbacConfig = rc
 			can, rbacErr = wc.canDoFn(s.ctx, rc, s.groups, s.sar, s.clusterName)
 		} else {
 			// downgrade to info; this will commonly happen if RBAC does not yet allow clusterconfig get
@@ -600,15 +620,41 @@ func (wc *WebhookController) performRBACCheck(c *gin.Context, s *authorizeState)
 	s.reqLog.Debugw("RBAC check result", "allowed", can, "groupCount", len(s.groups))
 
 	if can {
+		// The synthetic probe receives only active-session granted groups. A
+		// positive result with such groups is therefore session-derived and must
+		// pass the final live fence. Ordinary user/OIDC RBAC is evaluated by the
+		// apiserver before this webhook and does not enter this path.
+		s.sessionDerivedRBAC = len(s.sessions) > 0
+		if s.sessionDerivedRBAC {
+			// The aggregate probe may combine groups from several sessions. Attribute
+			// the positive result to a session before the final fence so an unrelated
+			// expired session does not revoke a still-valid grant. If no individual
+			// session group reproduces the result (for example, a role requires a
+			// combination of groups), leave the candidate unset and conservatively
+			// require every contributing session to remain live.
+			for i := range s.sessions {
+				session := &s.sessions[i]
+				if session.Spec.GrantedGroup == "" {
+					continue
+				}
+				individual, individualErr := wc.canDoFn(s.ctx, rbacConfig, []string{session.Spec.GrantedGroup}, s.sar, s.clusterName)
+				if individualErr == nil && individual {
+					candidate := sessionAuthorizationCandidate{
+						namespace: session.Namespace, name: session.Name, uid: string(session.UID),
+						user: session.Spec.User, cluster: session.Spec.Cluster, grantedGroup: session.Spec.GrantedGroup,
+						identityProviderName: session.Spec.IdentityProviderName,
+					}
+					s.allowedSessions = append(s.allowedSessions, candidate)
+				}
+			}
+			if len(s.allowedSessions) > 0 {
+				s.allowedSession = &s.allowedSessions[0]
+			}
+		}
 		s.reqLog.Info("User authorized through regular RBAC permissions")
 		s.allowed = true
 		s.allowSource = "rbac"
 		s.allowDetail = fmt.Sprintf("groupCount=%d", len(s.groups))
-		// Emit allowed decision metric for action
-		if s.sar.Spec.ResourceAttributes != nil {
-			metrics.WebhookSARDecisions.WithLabelValues(
-				s.clusterLabel, "allowed", "rbac").Inc()
-		}
 	}
 	return true
 }
@@ -628,20 +674,27 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 				"Unable to load target cluster rest.Config for SAR; skipping session SAR checks")
 			// mark that we skipped session SAR checks for diagnostics
 			s.sessionSARSkipErr = err
-		} else if allowedSession, grp, sesName, impersonated := wc.authorizeViaSessions(
+		} else if allowedSession, grp, sesName, impersonated, candidates := wc.authorizeViaSessionsWithCandidates(
 			s.ctx, rc, s.sessions, s.sar, s.clusterName, s.reqLog); allowedSession {
 			s.reqLog.With("sessionGroup", system.RedactGroupName(grp), "session", sesName, "impersonationGroup", system.RedactGroupName(impersonated)).
 				Debug("Authorized via breakglass session group on target cluster")
 			s.allowed = true
 			s.allowSource = "session"
+			s.allowedSessions = candidates
+			if len(s.allowedSessions) > 0 {
+				s.allowedSession = &s.allowedSessions[0]
+			}
 			s.allowDetail = fmt.Sprintf("session=%s sessionGroup=%s impersonationGroup=%s", sesName, system.RedactGroupName(grp), system.RedactGroupName(impersonated))
 			// Emit a single correlated info log showing the final accepted impersonated group for observability
 			s.reqLog.Infow("Final accepted impersonated group",
 				"username", username, "cluster", s.clusterName,
 				"sessionGroup", system.RedactGroupName(grp), "session", sesName, "impersonationGroup", system.RedactGroupName(impersonated))
 
-			// Record session activity for idle timeout detection and usage analytics (#314)
-			wc.recordSessionActivity(s.sessions, sesName, s.clusterName, grp)
+			// Defer session activity until sendAuthorizationResponse has passed the
+			// final live expiry/revocation fence. A request that crosses the expiry
+			// boundary must not create an allow-side effect.
+			s.sessionActivityName = sesName
+			s.sessionActivityGroup = grp
 		}
 	}
 	s.phases.EndPhase(PhaseSessionSARs) // End session_sars phase
@@ -649,15 +702,15 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 	// Debug session pod exec check: allow exec into debug pods if user is a session participant
 	if !s.allowed && s.sar.Spec.ResourceAttributes != nil {
 		ra := s.sar.Spec.ResourceAttributes
-		if debugAllowed, debugSession, debugReason := wc.checkDebugSessionAccess(
-			s.ctx, username, s.clusterName, ra, s.reqLog); debugAllowed {
+		if debugSession, debugReason := wc.findDebugSessionAccess(
+			s.ctx, username, s.clusterName, ra, s.reqLog); debugSession != nil {
 			s.allowed = true
 			s.allowSource = "debug-session"
-			s.allowDetail = fmt.Sprintf("session=%s", debugSession)
+			s.allowDetail = fmt.Sprintf("session=%s", debugSession.Name)
 			s.reason = debugReason
-			// Emit metric for debug session authorization
-			metrics.WebhookSARDecisions.WithLabelValues(
-				s.clusterLabel, "allowed", "debug-session").Inc()
+			s.debugSessionNamespace = debugSession.Namespace
+			s.debugSessionName = debugSession.Name
+			s.debugSessionUID = string(debugSession.UID)
 		}
 	}
 
@@ -849,19 +902,44 @@ func (wc *WebhookController) buildFinalReason(s *authorizeState) {
 func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *authorizeState) {
 	username := s.sar.Spec.User
 
-	if s.allowed {
-		metrics.WebhookSARAllowed.WithLabelValues(s.clusterLabel).Inc()
-		// Increment action-based decision metric only for session-authorized decisions.
-		// RBAC and debug-session paths are already recorded at decision time to avoid duplicate/misleading labels.
-		if s.sar.Spec.ResourceAttributes != nil && s.allowSource == "session" {
-			metrics.WebhookSARDecisions.WithLabelValues(
-				s.clusterLabel, "allowed", "session").Inc()
-		}
-	} else {
-		metrics.WebhookSARDenied.WithLabelValues(s.clusterLabel).Inc()
+	// Namespace-label enrichment may call the spoke API and block. Complete it
+	// before the last live authorization fence so time spent enriching the audit
+	// event can never consume the remaining lease after the allow decision.
+	if wc.auditService != nil && wc.auditService.IsEnabled() {
+		s.auditTarget, _, _, _ = wc.auditTargetFromSAR(s.ctx, s.clusterName, &s.sar)
+	}
+
+	sessionDerivedAllow := s.allowSource == "session" || (s.allowSource == "rbac" && s.sessionDerivedRBAC)
+	if s.allowed && wc.ccProvider != nil && s.clusterCfg != nil && !wc.isClusterConfigStillActive(s.ctx, s.clusterCfg) {
+		s.allowed = false
+		s.allowSource = ""
+		s.reason = wc.finalizeReason("Breakglass cluster configuration was removed or replaced before authorization completed", false, s.clusterName)
+	}
+
+	if s.allowed && s.allowSource == "debug-session" {
+		var ra *authorizationv1.ResourceAttributes
 		if s.sar.Spec.ResourceAttributes != nil {
-			metrics.WebhookSARDecisions.WithLabelValues(
-				s.clusterLabel, "denied", "final").Inc()
+			ra = s.sar.Spec.ResourceAttributes
+		}
+		if ok, reason := wc.liveDebugSessionAccess(s.ctx, username, s.clusterName, ra,
+			s.debugSessionNamespace, s.debugSessionName, s.debugSessionUID); !ok {
+			s.allowed = false
+			s.allowSource = ""
+			s.reason = wc.finalizeReason("Debug session expired, was revoked, or no longer authorizes this pod operation", false, s.clusterName)
+		} else {
+			s.reason = wc.finalizeReason(reason, true, s.clusterName)
+		}
+	}
+
+	if s.allowed && sessionDerivedAllow {
+		liveCandidates := wc.liveSessionAuthorizationCandidates(s.ctx, s.sessions, s.allowedSessions)
+		if len(liveCandidates) == 0 {
+			s.allowed = false
+			s.allowSource = ""
+			s.reason = wc.finalizeReason("Breakglass session expired or was revoked before authorization completed", false, s.clusterName)
+		} else {
+			s.allowedSessions = liveCandidates
+			s.allowedSession = &s.allowedSessions[0]
 		}
 	}
 
@@ -873,6 +951,58 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 			Reason:  s.reason,
 		},
 	}
+	// There must be no blocking work between the last live fence and writing the
+	// response. Audit delivery and detailed logging happen after c.JSON has
+	// committed the decision to the caller.
+	if cidv, ok := c.Get("cid"); ok {
+		if cidstr, ok2 := cidv.(string); ok2 && cidstr != "" {
+			c.Writer.Header().Set("X-Request-ID", cidstr)
+		}
+	}
+	c.JSON(http.StatusOK, &response)
+
+	// All allow-side effects are deliberately after the final live fence and
+	// response. This includes audit/impersonation accounting and idle activity.
+	wc.noteImpersonationOutcome(s)
+	if s.allowed && s.allowSource == "session" && s.sessionActivityName != "" {
+		// If the first SAR winner expired during the request, attribute activity
+		// to the first candidate that survived the final live fence instead.
+		if len(s.allowedSessions) > 0 {
+			s.sessionActivityName = s.allowedSessions[0].name
+			s.sessionActivityGroup = s.allowedSessions[0].grantedGroup
+		}
+		wc.recordSessionActivity(s.sessions, s.sessionActivityName, s.clusterName, s.sessionActivityGroup)
+	}
+
+	if s.allowed {
+		if s.allowSource == "session" {
+			for _, candidate := range s.allowedSessions {
+				metrics.WebhookSessionSARsAllowed.WithLabelValues(s.clusterName).Inc()
+				if candidate.identityProviderName != "" {
+					metrics.EscalationIDPAuthorizationChecks.WithLabelValues(candidate.grantedGroup, candidate.identityProviderName, "allowed").Inc()
+				}
+			}
+		}
+		metrics.WebhookSARAllowed.WithLabelValues(s.clusterLabel).Inc()
+		// Emit action-based allow metrics only after the final live fence. This
+		// prevents a session-derived RBAC result revoked during the request from
+		// leaving a misleading positive metric.
+		if s.sar.Spec.ResourceAttributes != nil && (s.allowSource == "session" || s.allowSource == "rbac") {
+			metrics.WebhookSARDecisions.WithLabelValues(
+				s.clusterLabel, "allowed", s.allowSource).Inc()
+		}
+		if s.sar.Spec.ResourceAttributes != nil && s.allowSource == "debug-session" {
+			metrics.WebhookSARDecisions.WithLabelValues(
+				s.clusterLabel, "allowed", "debug-session").Inc()
+		}
+	} else {
+		metrics.WebhookSARDenied.WithLabelValues(s.clusterLabel).Inc()
+		if s.sar.Spec.ResourceAttributes != nil {
+			metrics.WebhookSARDecisions.WithLabelValues(
+				s.clusterLabel, "denied", "final").Inc()
+		}
+	}
+
 	s.reqLog.Debugw("Authorization decision",
 		"allowed", s.allowed, "reason", s.reason,
 		"sessionCount", len(s.sessions), "source", s.allowSource)
@@ -943,9 +1073,10 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 		"username", username, "cluster", s.clusterName,
 		"allowed", s.allowed, "reason", s.reason, "response", respLogForInfo)
 
-	// Emit audit event for authorization decisions
-	wc.emitAccessDecisionAudit(s.ctx, username, s.sar.Spec.Groups, s.clusterName,
-		&s.sar, s.allowed, s.allowSource, s.reason)
+	// Emit the already-enriched audit event without another spoke lookup after
+	// the final live fence.
+	wc.emitAccessDecisionAuditWithTarget(s.ctx, username, s.sar.Spec.Groups,
+		&s.sar, s.auditTarget, s.allowed, s.allowSource, s.reason)
 
 	// Record total SAR processing duration
 	decision := "allowed"
@@ -955,13 +1086,5 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 	metrics.WebhookSARDuration.WithLabelValues(s.clusterLabel, decision).
 		Observe(time.Since(s.startTime).Seconds())
 
-	// Ensure correlation ID header is present for apiserver correlation
-	if cidv, ok := c.Get("cid"); ok {
-		if cidstr, ok2 := cidv.(string); ok2 && cidstr != "" {
-			c.Writer.Header().Set("X-Request-ID", cidstr)
-		}
-	}
-
-	c.JSON(http.StatusOK, &response)
 	s.reqLog.Debug("Authorization handler completed successfully")
 }

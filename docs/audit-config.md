@@ -141,6 +141,10 @@ kept. `tls.caSecretRef` loads a `ca.crt` key into the webhook HTTP client's
 trust store, while `tls.insecureSkipVerify` disables certificate verification
 for private test endpoints and should not be used in production.
 
+Webhook delivery always uses `POST`, does not follow redirects, and succeeds
+only for a `2xx` response. Redirect and other response codes keep required
+audit delivery pending.
+
 ### Log Sink
 
 Write events to structured logs (always available, useful for debugging):
@@ -163,6 +167,7 @@ sinks:
   - name: k8s-events
     type: kubernetes
     eventTypes:
+      - session.termination_intent
       - session.requested
       - session.approved
       - session.revoked
@@ -179,6 +184,7 @@ The audit system captures 120+ event types organized by category:
 - `session.rejected` - Session auto-rejected by policy
 - `session.activated` - Session now active
 - `session.expired` - Session time expired
+- `session.termination_intent` - Duplicate-cleanup decision stored with the terminal state before delivery
 - `session.revoked` - Session manually revoked
 - `session.extended` - Session duration extended
 - `session.validated` / `session.invalidated` - Session validation
@@ -238,6 +244,19 @@ synchronous writes, and global user, namespace, resource, and event-type filters
 are applied at every sink. Sink-local `eventTypes` and `minSeverity` filters
 then further narrow each sink's output. Exclude filters take precedence over
 include filters.
+
+Required duplicate-cleanup delivery uses `session.termination_intent`. Every
+configured sink and global filter must accept that event; filtering it out keeps
+the terminal session's intent pending without restoring access. Cleanup stores
+the terminal state and intent in one status update, then delivers the event and
+records acknowledgement. At least one
+sink must return a durable receipt. Kafka can
+acknowledge required delivery only with
+`async: false` and nonzero `requiredAcks`. Kubernetes Events and controller logs
+remain useful operational outputs, but they do not provide a durable delivery
+receipt and cannot satisfy required delivery by themselves. If any configured
+sink cannot be constructed, required auditing remains unavailable and duplicate
+cleanup fails closed until configuration is repaired.
 
 ```yaml
 spec:

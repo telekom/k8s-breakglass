@@ -409,7 +409,10 @@ spec:
 
 ### Option 2: Using kubectl-debug Mode
 
-For ephemeral debugging directly into running pods without deploying new workloads:
+For ephemeral debugging directly into running pods without deploying new
+workloads, use the authenticated Breakglass API operation below. A direct
+`pods/ephemeralcontainers` request to the target API server is not intercepted
+by Breakglass and is governed by the target cluster's independent RBAC.
 
 ```yaml
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1

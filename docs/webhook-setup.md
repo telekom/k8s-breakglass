@@ -13,6 +13,18 @@ The breakglass authorization webhook integrates with the Kubernetes API server t
 - Enforce `DenyPolicy` restrictions
 - Provide real-time access control without modifying cluster RBAC
 
+The authorization webhook covers SubjectAccessReview requests for supported
+Breakglass operations. It does not intercept direct `pods/ephemeralcontainers`
+updates: no target-cluster validating webhook is deployed for that subresource,
+and such writes are governed solely by the target cluster's RBAC. Use the
+authenticated DebugSession API injection operation for Breakglass-mediated
+ephemeral-container debugging; it performs the session, policy, and target-Pod
+identity checks before updating the target Pod. PR
+[#1277](https://github.com/telekom/k8s-breakglass/pull/1277) records ephemeral
+operation evidence after the effect. Durable pre-effect intent and
+interrupted-write recovery depend on the operation outbox in PR
+[#1278](https://github.com/telekom/k8s-breakglass/pull/1278).
+
 ## Architecture
 
 ```text
@@ -35,11 +47,12 @@ The breakglass authorization webhook integrates with the Kubernetes API server t
 
 ### Authorization Configuration
 
-Configure the API server with webhook authorization:
+Configure the API server with webhook authorization. On Kubernetes 1.34 and
+later, use this structured configuration:
 
 ```yaml
 # /etc/kubernetes/authorization-config.yaml
-apiVersion: apiserver.config.k8s.io/v1beta1
+apiVersion: apiserver.config.k8s.io/v1
 kind: AuthorizationConfiguration
 authorizers:
   # Node authorizer for kubelet operations (first for performance)
@@ -58,7 +71,10 @@ authorizers:
       # Connection settings
       timeout: 3s
       unauthorizedTTL: 30s
-      authorizedTTL: 30s
+      # Required for exact BreakglassSession expiry; do not cache allows.
+      authorizedTTL: 5m
+      cacheAuthorizedRequests: false
+      cacheUnauthorizedRequests: false
       
       # Webhook endpoint configuration
       connectionInfo:
@@ -82,6 +98,25 @@ authorizers:
         # recursive webhook calls (see "Preventing Recursive Webhook Calls" below)
         - expression: "request.user != 'breakglass-group-sync@service.local'"
 ```
+
+Disabling positive authorization caching adds a webhook round trip to each
+authorization request, but it is required for exact session expiry. Keep the
+webhook path low-latency and size its capacity for that request rate; the
+ordinary in-flight native stream limitation is documented in the session
+lifecycle guide.
+
+On Kubernetes versions older than 1.34, use the legacy webhook mode and
+disable both decision caches:
+
+```text
+--authorization-mode=Node,RBAC,Webhook
+--authorization-webhook-config-file=/etc/kubernetes/breakglass-webhook-config.yaml
+--authorization-webhook-cache-authorized-ttl=0s
+--authorization-webhook-cache-unauthorized-ttl=0s
+```
+
+The structured `cacheAuthorizedRequests` field is not available there; never
+use a positive authorized cache TTL for session-derived access.
 
 > **Important:** The last matchCondition excludes the breakglass manager's OIDC identity from webhook processing. This is critical for multi-cluster setups using OIDC authentication. See [Preventing Recursive Webhook Calls](#preventing-recursive-webhook-calls) for details.
 

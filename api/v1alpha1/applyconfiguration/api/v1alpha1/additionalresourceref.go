@@ -14,6 +14,9 @@ package v1alpha1
 // AdditionalResourceRef tracks a resource created from a multi-document YAML template.
 // This is used when an auxiliary resource templateString produces multiple K8s resources.
 type AdditionalResourceRefApplyConfiguration struct {
+	// uid is the immutable Kubernetes UID observed when the resource was created.
+	// Cleanup must match this UID before deleting a name-reused replacement.
+	UID *string `json:"uid,omitempty"`
 	// kind is the Kubernetes resource kind.
 	Kind *string `json:"kind,omitempty"`
 	// apiVersion is the Kubernetes API version.
@@ -36,6 +39,14 @@ type AdditionalResourceRefApplyConfiguration struct {
 // apply.
 func AdditionalResourceRef() *AdditionalResourceRefApplyConfiguration {
 	return &AdditionalResourceRefApplyConfiguration{}
+}
+
+// WithUID sets the UID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UID field is set to the value of the last call.
+func (b *AdditionalResourceRefApplyConfiguration) WithUID(value string) *AdditionalResourceRefApplyConfiguration {
+	b.UID = &value
+	return b
 }
 
 // WithKind sets the Kind field in the declarative configuration to the given value

@@ -1142,6 +1142,11 @@ spec:
                             description: resourceName is the actual Kubernetes resource
                               name.
                             type: string
+                          uid:
+                            description: |-
+                              uid is the immutable Kubernetes UID observed when the resource was created.
+                              Cleanup must match this UID before deleting a name-reused replacement.
+                            type: string
                         required:
                         - apiVersion
                         - kind
@@ -1194,6 +1199,11 @@ spec:
                     resourceName:
                       description: resourceName is the actual Kubernetes resource
                         name (after template rendering).
+                      type: string
+                    uid:
+                      description: |-
+                        uid is the immutable Kubernetes UID observed when the resource was created.
+                        Cleanup must match this UID before deleting a name-reused replacement.
                       type: string
                   required:
                   - name
@@ -1327,6 +1337,11 @@ spec:
                           type: string
                         originalPod:
                           description: originalPod is the name of the original pod.
+                          type: string
+                        uid:
+                          description: |-
+                            uid is the immutable UID of the copied pod observed after creation.
+                            Cleanup must match this UID before deleting a name-reused replacement.
                           type: string
                       required:
                       - copyName
@@ -1475,6 +1490,11 @@ spec:
                       description: |-
                         source identifies where this resource came from.
                         Either "podTemplateString" or "debugPodTemplate:<name>".
+                      type: string
+                    uid:
+                      description: |-
+                        uid is the immutable Kubernetes UID observed when the resource was created.
+                        Cleanup must match this UID before deleting a name-reused replacement.
                       type: string
                   type: object
                 type: array
@@ -2822,7 +2842,8 @@ spec:
                     default: terminate
                     description: |-
                       expirationBehavior controls what happens when a session expires.
-                      Options: "terminate" (default) or "notify-only".
+                      "notify-only" is a deprecated alias that requests an expiry notification;
+                      it still expires the session, revokes access, and starts resource cleanup.
                     enum:
                     - terminate
                     - notify-only

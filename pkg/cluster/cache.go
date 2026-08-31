@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -56,9 +58,10 @@ func getEnvDuration(key string, defaultVal time.Duration) time.Duration {
 
 // cachedRESTConfig wraps a rest.Config with expiry time for TTL-based eviction.
 type cachedRESTConfig struct {
-	config    *rest.Config
-	expiresAt time.Time
-	authType  breakglassv1alpha1.ClusterAuthType
+	config        *rest.Config
+	expiresAt     time.Time
+	authType      breakglassv1alpha1.ClusterAuthType
+	clusterConfig *breakglassv1alpha1.ClusterConfig
 }
 
 // cachedClientset wraps a kubernetes.Clientset with expiry time for TTL-based eviction.
@@ -69,11 +72,12 @@ type cachedClientset struct {
 }
 
 type ClientProvider struct {
-	k8s  ctrlclient.Client
-	log  *zap.SugaredLogger
-	mu   sync.RWMutex
-	data map[string]*breakglassv1alpha1.ClusterConfig
-	rest map[string]*cachedRESTConfig
+	k8s        ctrlclient.Client
+	liveReader ctrlclient.Reader
+	log        *zap.SugaredLogger
+	mu         sync.RWMutex
+	data       map[string]*breakglassv1alpha1.ClusterConfig
+	rest       map[string]*cachedRESTConfig
 	// bareToCanonical maps bare-name cache keys to their canonical namespace/name keys.
 	// This allows evictClusterLocked to clean up bare-name aliases when the canonical entry is evicted.
 	bareToCanonical map[string]string
@@ -95,6 +99,19 @@ type ClientProvider struct {
 	// clientsets caches kubernetes.Clientset instances per cluster to avoid repeated
 	// creation during SubjectAccessReview, pod fetch, and namespace label lookups.
 	clientsets map[string]*cachedClientset
+	// privilegedInputVersions records the resource versions of every hub-side
+	// object used to build a privileged target client. The target mutation fence
+	// compares these inputs as well as the ClusterConfig itself.
+	privilegedInputVersions map[*breakglassv1alpha1.ClusterConfig]map[string]string
+}
+
+// WithLiveReader configures an uncached reader for final authorization fences.
+// The normal client remains cache-backed for hot-path lookups.
+func (p *ClientProvider) WithLiveReader(reader ctrlclient.Reader) *ClientProvider {
+	if reader != nil {
+		p.liveReader = reader
+	}
+	return p
 }
 
 func NewClientProvider(c ctrlclient.Client, log *zap.SugaredLogger) *ClientProvider {
@@ -104,18 +121,19 @@ func NewClientProvider(c ctrlclient.Client, log *zap.SugaredLogger) *ClientProvi
 // NewClientProviderWithCircuitBreaker creates a ClientProvider with explicit circuit breaker configuration.
 func NewClientProviderWithCircuitBreaker(c ctrlclient.Client, log *zap.SugaredLogger, cbCfg ClusterCircuitBreakerConfig) *ClientProvider {
 	return &ClientProvider{
-		k8s:                  c,
-		log:                  log,
-		data:                 map[string]*breakglassv1alpha1.ClusterConfig{},
-		rest:                 map[string]*cachedRESTConfig{},
-		bareToCanonical:      map[string]string{},
-		clusterToSecret:      map[string]string{},
-		secretToClusters:     map[string]map[string]struct{}{},
-		clusterToOIDCSecrets: map[string]map[string]struct{}{},
-		oidcSecretToClusters: map[string]map[string]struct{}{},
-		oidcProvider:         NewOIDCTokenProvider(c, log),
-		circuitBreakers:      NewCircuitBreakerRegistry(cbCfg, log),
-		clientsets:           map[string]*cachedClientset{},
+		k8s:                     c,
+		log:                     log,
+		data:                    map[string]*breakglassv1alpha1.ClusterConfig{},
+		rest:                    map[string]*cachedRESTConfig{},
+		bareToCanonical:         map[string]string{},
+		clusterToSecret:         map[string]string{},
+		secretToClusters:        map[string]map[string]struct{}{},
+		clusterToOIDCSecrets:    map[string]map[string]struct{}{},
+		oidcSecretToClusters:    map[string]map[string]struct{}{},
+		oidcProvider:            NewOIDCTokenProvider(c, log),
+		circuitBreakers:         NewCircuitBreakerRegistry(cbCfg, log),
+		clientsets:              map[string]*cachedClientset{},
+		privilegedInputVersions: map[*breakglassv1alpha1.ClusterConfig]map[string]string{},
 	}
 }
 
@@ -207,6 +225,162 @@ func (p *ClientProvider) GetAcrossAllNamespaces(ctx context.Context, name string
 		return found, nil
 	}
 	return nil, fmt.Errorf("%w: %s", ErrClusterConfigNotFound, name)
+}
+
+// GetInNamespaceLive reads ClusterConfig directly from the backing client,
+// bypassing the provider cache. Authorization callers use this as a final
+// fence so a deleted or replaced ClusterConfig cannot leave a cached spoke
+// configuration authorizing a session.
+func (p *ClientProvider) GetInNamespaceLive(ctx context.Context, namespace, name string) (*breakglassv1alpha1.ClusterConfig, error) {
+	if p == nil || (p.k8s == nil && p.liveReader == nil) {
+		return nil, fmt.Errorf("cluster config live reader is not configured")
+	}
+	reader := p.liveReader
+	if reader == nil {
+		reader = p.k8s
+	}
+	var found breakglassv1alpha1.ClusterConfig
+	if err := reader.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &found); err != nil {
+		return nil, fmt.Errorf("get live clusterconfig %s/%s: %w", namespace, name, err)
+	}
+	if !found.DeletionTimestamp.IsZero() {
+		return nil, fmt.Errorf("ClusterConfig %s/%s is being deleted", namespace, name)
+	}
+	return &found, nil
+}
+
+// livePrivilegedOperationClusterConfig re-reads a ClusterConfig through the
+// uncached reader and verifies the exact object used to create a target client.
+// It returns the live object so client resolution can retain the exact UID and
+// spec that were current after the client-producing configuration was checked.
+func (p *ClientProvider) livePrivilegedOperationClusterConfig(ctx context.Context, configured *breakglassv1alpha1.ClusterConfig) (*breakglassv1alpha1.ClusterConfig, error) {
+	if configured == nil || configured.Namespace == "" || configured.Name == "" || configured.UID == "" {
+		return nil, fmt.Errorf("privileged operation cluster config identity is incomplete")
+	}
+	live, err := p.GetInNamespaceLive(ctx, configured.Namespace, configured.Name)
+	if err != nil {
+		return nil, err
+	}
+	if live.UID != configured.UID {
+		return nil, fmt.Errorf("ClusterConfig %s/%s was replaced", configured.Namespace, configured.Name)
+	}
+	if !apiequality.Semantic.DeepEqual(live.Spec, configured.Spec) {
+		return nil, fmt.Errorf("ClusterConfig %s/%s spec changed", configured.Namespace, configured.Name)
+	}
+	return live.DeepCopy(), nil
+}
+
+// ValidatePrivilegedOperationClusterConfig checks that the captured live
+// ClusterConfig still has the same UID and spec at a target write boundary.
+func (p *ClientProvider) ValidatePrivilegedOperationClusterConfig(ctx context.Context, configured *breakglassv1alpha1.ClusterConfig) error {
+	live, err := p.livePrivilegedOperationClusterConfig(ctx, configured)
+	if err != nil {
+		return err
+	}
+	if configured.ResourceVersion != "" && live.ResourceVersion != configured.ResourceVersion {
+		return fmt.Errorf("ClusterConfig %s/%s resource version changed", configured.Namespace, configured.Name)
+	}
+	p.mu.RLock()
+	expected := p.privilegedInputVersions[configured]
+	p.mu.RUnlock()
+	if err := p.validatePrivilegedInputVersions(ctx, configured, expected); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ReleasePrivilegedOperationClusterConfig releases the immutable input
+// snapshot after the caller has completed all writes for one operation.
+func (p *ClientProvider) ReleasePrivilegedOperationClusterConfig(configured *breakglassv1alpha1.ClusterConfig) {
+	if p == nil || configured == nil {
+		return
+	}
+	p.mu.Lock()
+	delete(p.privilegedInputVersions, configured)
+	p.mu.Unlock()
+}
+
+// capturePrivilegedInputVersions snapshots the hub resources which contribute
+// credentials or trust material to a privileged client. ResourceVersion is
+// deliberately used rather than object equality so Secret data and inherited
+// IdentityProvider changes cannot be hidden by an unchanged ClusterConfig.
+func (p *ClientProvider) capturePrivilegedInputVersions(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig) (map[string]string, error) {
+	return p.capturePrivilegedInputVersionsWithReader(ctx, cc, p.liveReaderOrClient())
+}
+
+func (p *ClientProvider) capturePrivilegedInputVersionsWithReader(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig, reader ctrlclient.Reader) (map[string]string, error) {
+	refs := make(map[string]ctrlclient.ObjectKey)
+	addSecret := func(ref *breakglassv1alpha1.SecretKeyReference) {
+		if ref != nil && ref.Name != "" {
+			refs["secret/"+cacheKey(ref.Namespace, ref.Name)] = ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}
+		}
+	}
+	if cc.Spec.KubeconfigSecretRef != nil {
+		addSecret(cc.Spec.KubeconfigSecretRef)
+	}
+	if oidc := cc.Spec.OIDCAuth; oidc != nil {
+		addSecret(oidc.ClientSecretRef)
+		addSecret(oidc.RefreshTokenSecretRef)
+		addSecret(oidc.CASecretRef)
+		if oidc.TokenExchange != nil {
+			addSecret(oidc.TokenExchange.SubjectTokenSecretRef)
+			addSecret(oidc.TokenExchange.ActorTokenSecretRef)
+		}
+	}
+	if ref := cc.Spec.OIDCFromIdentityProvider; ref != nil {
+		idp := &breakglassv1alpha1.IdentityProvider{}
+		if err := reader.Get(ctx, ctrlclient.ObjectKey{Name: ref.Name}, idp); err != nil {
+			return nil, fmt.Errorf("get referenced IdentityProvider %s: %w", ref.Name, err)
+		}
+		refs["identityprovider/"+ref.Name] = ctrlclient.ObjectKey{Name: ref.Name}
+		addSecret(ref.ClientSecretRef)
+		addSecret(ref.RefreshTokenSecretRef)
+		addSecret(ref.CASecretRef)
+		if ref.TokenExchange != nil {
+			addSecret(ref.TokenExchange.SubjectTokenSecretRef)
+			addSecret(ref.TokenExchange.ActorTokenSecretRef)
+		}
+		if idp.Spec.Keycloak != nil {
+			addSecret(&idp.Spec.Keycloak.ClientSecretRef)
+		}
+	}
+	versions := make(map[string]string, len(refs))
+	for identity, key := range refs {
+		var object ctrlclient.Object
+		if strings.HasPrefix(identity, "secret/") {
+			object = &corev1.Secret{}
+		} else {
+			object = &breakglassv1alpha1.IdentityProvider{}
+		}
+		if err := reader.Get(ctx, key, object); err != nil {
+			return nil, fmt.Errorf("read privileged input %s: %w", identity, err)
+		}
+		versions[identity] = object.GetResourceVersion()
+	}
+	return versions, nil
+}
+
+func (p *ClientProvider) liveReaderOrClient() ctrlclient.Reader {
+	if p.liveReader != nil {
+		return p.liveReader
+	}
+	return p.k8s
+}
+
+func (p *ClientProvider) validatePrivilegedInputVersions(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig, expected map[string]string) error {
+	if len(expected) == 0 {
+		return nil
+	}
+	actual, err := p.capturePrivilegedInputVersions(ctx, cc)
+	if err != nil {
+		return err
+	}
+	for identity, version := range expected {
+		if actual[identity] != version {
+			return fmt.Errorf("privileged input %s changed", identity)
+		}
+	}
+	return nil
 }
 
 // GetInNamespace fetches a ClusterConfig by metadata.name within the provided namespace.
@@ -326,6 +500,79 @@ func (p *ClientProvider) getInNamespaceLocked(ctx context.Context, namespace, na
 // majority of callers are read-only. The three call sites that do mutate all
 // copy explicitly.
 func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.Config, error) {
+	cfg, _, err := p.getRESTConfig(ctx, name)
+	return cfg, err
+}
+
+// GetRESTConfigForPrivilegedOperation returns a target REST config together
+// with the exact live ClusterConfig that produced it. It rejects a stale cached
+// config before the caller can use the target client.
+func (p *ClientProvider) GetRESTConfigForPrivilegedOperation(ctx context.Context, name string) (*rest.Config, *breakglassv1alpha1.ClusterConfig, error) {
+	// Privileged callers must never receive a cached client built from an older
+	// credential or trust input. Evict the candidate before resolving it.
+	if namespace, cluster, ok := splitNamespacedName(name); ok {
+		p.Invalidate(namespace, cluster)
+	} else {
+		p.mu.Lock()
+		for key, cfg := range p.data {
+			if cfg != nil && cfg.Name == name {
+				p.evictClusterLocked(key)
+			}
+		}
+		p.mu.Unlock()
+	}
+	// Resolve once to identify the exact ClusterConfig, then invalidate and
+	// rebuild after taking a live input snapshot. The second build is the one
+	// returned to the caller; the snapshot therefore brackets construction and
+	// catches rotations that happen while the cached REST config is rebuilt.
+	_, configured, err := p.getRESTConfig(ctx, name)
+	if err != nil {
+		return nil, nil, err
+	}
+	live, err := p.livePrivilegedOperationClusterConfig(ctx, configured)
+	if err != nil {
+		return nil, nil, fmt.Errorf("validate privileged operation cluster config: %w", err)
+	}
+	if configured.ResourceVersion != "" && live.ResourceVersion != configured.ResourceVersion {
+		return nil, nil, fmt.Errorf("cached ClusterConfig %s/%s is stale", configured.Namespace, configured.Name)
+	}
+	cachedInputs, err := p.capturePrivilegedInputVersionsWithReader(ctx, live, p.k8s)
+	if err != nil {
+		return nil, nil, fmt.Errorf("capture cached privileged client inputs: %w", err)
+	}
+	before, err := p.capturePrivilegedInputVersions(ctx, live)
+	if err != nil {
+		return nil, nil, fmt.Errorf("capture privileged client inputs: %w", err)
+	}
+	if !reflect.DeepEqual(cachedInputs, before) {
+		return nil, nil, fmt.Errorf("cached privileged client inputs are stale")
+	}
+	// Force the returned config to be constructed after the first live snapshot
+	// rather than returning the resolving call's possibly cached value.
+	p.Invalidate(live.Namespace, live.Name)
+	cfg, rebuilt, err := p.getRESTConfig(ctx, name)
+	if err != nil {
+		return nil, nil, err
+	}
+	liveAfter, err := p.livePrivilegedOperationClusterConfig(ctx, rebuilt)
+	if err != nil {
+		return nil, nil, fmt.Errorf("validate rebuilt privileged operation cluster config: %w", err)
+	}
+	after, err := p.capturePrivilegedInputVersions(ctx, liveAfter)
+	if err != nil {
+		return nil, nil, fmt.Errorf("capture rebuilt privileged client inputs: %w", err)
+	}
+	if liveAfter.UID != live.UID || liveAfter.ResourceVersion != live.ResourceVersion || !reflect.DeepEqual(before, after) {
+		return nil, nil, fmt.Errorf("privileged client inputs changed while building target config")
+	}
+	live = liveAfter
+	p.mu.Lock()
+	p.privilegedInputVersions[live] = after
+	p.mu.Unlock()
+	return cfg, live, nil
+}
+
+func (p *ClientProvider) getRESTConfig(ctx context.Context, name string) (*rest.Config, *breakglassv1alpha1.ClusterConfig, error) {
 	now := time.Now()
 
 	// If caller provided namespace/name, use it for exact cache lookup.
@@ -355,7 +602,7 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 		if cb.IsDefinitelyOpen() {
 			cb.totalRejections.Add(1)
 			metrics.ClusterCircuitBreakerRejections.WithLabelValues(cb.name).Inc()
-			return nil, fmt.Errorf("%w: cluster %s temporarily unavailable", ErrCircuitOpen, cacheLookupKey)
+			return nil, nil, fmt.Errorf("%w: cluster %s temporarily unavailable", ErrCircuitOpen, cacheLookupKey)
 		}
 		cbChecked = true
 	}
@@ -377,12 +624,12 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 			if cb.IsDefinitelyOpen() {
 				cb.totalRejections.Add(1)
 				metrics.ClusterCircuitBreakerRejections.WithLabelValues(cb.name).Inc()
-				return nil, fmt.Errorf("%w: cluster %s temporarily unavailable", ErrCircuitOpen, canonicalKey)
+				return nil, nil, fmt.Errorf("%w: cluster %s temporarily unavailable", ErrCircuitOpen, canonicalKey)
 			}
 		}
 
 		metrics.ClusterCacheHits.WithLabelValues(name).Inc()
-		return cached.config, nil
+		return cached.config, cached.clusterConfig.DeepCopy(), nil
 	}
 	p.mu.RUnlock()
 
@@ -406,7 +653,7 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	// No metric increment here - we already counted this as a miss above.
 	cached, ok = p.rest[cacheLookupKey]
 	if cacheLookupKey != "" && ok && now.Before(cached.expiresAt) {
-		return cached.config, nil
+		return cached.config, cached.clusterConfig.DeepCopy(), nil
 	}
 
 	// Log expiry if we had a stale entry
@@ -425,7 +672,7 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	}
 	if err != nil {
 		metrics.ClusterRESTConfigErrors.WithLabelValues(name, "clusterconfig_not_found").Inc()
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Deferred circuit breaker check for bare-name callers — now that we have
@@ -437,7 +684,7 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 		if cb.IsDefinitelyOpen() {
 			cb.totalRejections.Add(1)
 			metrics.ClusterCircuitBreakerRejections.WithLabelValues(cb.name).Inc()
-			return nil, fmt.Errorf("%w: cluster %s temporarily unavailable", ErrCircuitOpen, finalCacheKey)
+			return nil, nil, fmt.Errorf("%w: cluster %s temporarily unavailable", ErrCircuitOpen, finalCacheKey)
 		}
 	}
 
@@ -450,7 +697,7 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 		} else if cc.Spec.KubeconfigSecretRef != nil {
 			authType = breakglassv1alpha1.ClusterAuthTypeKubeconfig
 		} else {
-			return nil, fmt.Errorf("no authentication method configured for cluster %s", name)
+			return nil, nil, fmt.Errorf("no authentication method configured for cluster %s", name)
 		}
 	}
 
@@ -466,11 +713,11 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 		cfg, err = p.getRESTConfigFromKubeconfig(ctx, cc)
 		ttl = KubeconfigCacheTTL
 	default:
-		return nil, fmt.Errorf("unsupported auth type: %s", authType)
+		return nil, nil, fmt.Errorf("unsupported auth type: %s", authType)
 	}
 
 	if err != nil && !errors.Is(err, ErrDegradedAuth) {
-		return nil, err
+		return nil, nil, err
 	}
 	// ErrDegradedAuth means fallback auth succeeded — the config is valid.
 	// Log the degraded state but don't propagate the error to callers, as
@@ -485,9 +732,10 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	// Note: We already hold the write lock from above
 	// finalCacheKey was computed above for the deferred CB check
 	entry := &cachedRESTConfig{
-		config:    cfg,
-		expiresAt: now.Add(ttl),
-		authType:  authType,
+		config:        cfg,
+		expiresAt:     now.Add(ttl),
+		authType:      authType,
+		clusterConfig: cc.DeepCopy(),
 	}
 	p.rest[finalCacheKey] = entry
 	// When the caller used a bare name (no namespace), also store under
@@ -518,7 +766,7 @@ func (p *ClientProvider) GetRESTConfig(ctx context.Context, name string) (*rest.
 	}
 
 	p.log.Debugw("Cached REST config", "cluster", finalCacheKey, "authType", authType, "ttl", ttl)
-	return cfg, nil
+	return cfg, cc.DeepCopy(), nil
 }
 
 // GetClientset returns a cached kubernetes.Clientset for the named cluster.
