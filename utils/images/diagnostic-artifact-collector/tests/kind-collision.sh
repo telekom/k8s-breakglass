@@ -19,11 +19,13 @@ image_owned=false
 partial_cluster_is_owned() {
 	[ "$cluster_create_attempted" = true ] || return 1
 	[ -s "$sentinel_kubeconfig" ] || return 1
-	awk -v expected="kind-${cluster}" '
+	if ! awk -v expected="kind-${cluster}" '
 		($1 == "name:" && $2 == expected) || ($1 == "-" && $2 == "name:" && $3 == expected) { found_name = 1 }
 		$1 == "current-context:" && $2 == expected { found_context = 1 }
 		END { exit !(found_name && found_context) }
-	' "$sentinel_kubeconfig"
+	' "$sentinel_kubeconfig"; then
+		return 1
+	fi
 	"$KUBECTL_BIN" --kubeconfig "$sentinel_kubeconfig" get --raw=/version >/dev/null 2>&1
 }
 cleanup() {
