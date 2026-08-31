@@ -472,7 +472,10 @@ func (store *Store) DeleteVersion(ctx context.Context, object artifactstorage.Ob
 	if err := store.ready(object); err != nil {
 		return err
 	}
-	if ctx == nil || version.DeleteMarker {
+	if err := contextError(ctx); err != nil {
+		return err
+	}
+	if version.DeleteMarker {
 		return artifactstorage.ErrConflict
 	}
 	store.mutationMu.Lock()

@@ -126,6 +126,15 @@ func TestLocalStoreCreateReadInventoryDelete(t *testing.T) {
 	}
 }
 
+func TestLocalStoreDeleteVersionRequiresContext(t *testing.T) {
+	store, _ := openLocalTestStore(t)
+	defer store.Close()
+	object := testObject([]byte("delete-context"))
+	if err := store.DeleteVersion(nil, object, artifactstorage.Version{}); err == nil || err.Error() != "local artifact context is required" {
+		t.Fatalf("DeleteVersion(nil) error = %v, want context-required error", err)
+	}
+}
+
 func TestLocalStoreRejectsWrongBytesBoundsAndCancelledStreams(t *testing.T) {
 	store, _ := openLocalTestStore(t)
 	defer store.Close()
