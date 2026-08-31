@@ -2444,6 +2444,77 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: podCopy
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.PodCopyConfig
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugEphemeralContainerIntent
+  map:
+    fields:
+    - name: command
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: containerDigest
+      type:
+        scalar: string
+    - name: image
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: securityContextDigest
+      type:
+        scalar: string
+    - name: stdin
+      type:
+        scalar: boolean
+    - name: tty
+      type:
+        scalar: boolean
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugOperation
+  map:
+    fields:
+    - name: completedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: ephemeralContainer
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugEphemeralContainerIntent
+    - name: id
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: message
+      type:
+        scalar: string
+    - name: preparedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: requestedBy
+      type:
+        scalar: string
+    - name: state
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugOperationState
+    - name: targetPod
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugOperationTargetPod
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugOperationState
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugOperationTargetPod
+  map:
+    fields:
+    - name: name
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+    - name: uid
+      type:
+        namedType: io.k8s.apimachinery.pkg.types.UID
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugStatus
   map:
     fields:
@@ -2458,6 +2529,12 @@ var schemaYAML = typed.YAMLObject(`types:
         list:
           elementType:
             namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.EphemeralContainerRef
+          elementRelationship: atomic
+    - name: operations
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugOperation
           elementRelationship: atomic
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubernetesSinkSpec
   map:

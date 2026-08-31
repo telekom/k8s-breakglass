@@ -18,6 +18,9 @@ package debug
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -32,6 +35,7 @@ import (
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -109,6 +113,8 @@ func podName(pod *corev1.Pod) string {
 // orphanCleanupTimeout bounds the compensating delete for a pod that could not be
 // recorded in the session status.
 const orphanCleanupTimeout = 30 * time.Second
+
+const kubectlDebugOperationKindEphemeralContainer = "ephemeral-container"
 
 // ClientProviderInterface abstracts the cluster.ClientProvider for testing
 type ClientProviderInterface interface {
@@ -221,6 +227,316 @@ func ensureKubectlDebugStatus(status *breakglassv1alpha1.DebugSessionStatus) *br
 	return status.KubectlDebugStatus
 }
 
+func findKubectlDebugOperation(status *breakglassv1alpha1.DebugSessionStatus, id string) *breakglassv1alpha1.KubectlDebugOperation {
+	if status == nil || status.KubectlDebugStatus == nil {
+		return nil
+	}
+	for index := range status.KubectlDebugStatus.Operations {
+		operation := &status.KubectlDebugStatus.Operations[index]
+		if operation.ID == id {
+			return operation
+		}
+	}
+	return nil
+}
+
+func findMatchingEphemeralOperation(
+	status *breakglassv1alpha1.DebugSessionStatus,
+	targetNamespace, targetPodName string,
+	targetPodUID types.UID,
+	containerName, image string,
+	command []string,
+	securityContext *corev1.SecurityContext,
+) *breakglassv1alpha1.KubectlDebugOperation {
+	if status == nil || status.KubectlDebugStatus == nil {
+		return nil
+	}
+	request := desiredEphemeralContainerForIntent(containerName, image, command, securityContext)
+	requestDigest := ephemeralContainerDigest(&request)
+	for index := range status.KubectlDebugStatus.Operations {
+		operation := &status.KubectlDebugStatus.Operations[index]
+		if operation.Kind != kubectlDebugOperationKindEphemeralContainer ||
+			(operation.State != breakglassv1alpha1.KubectlDebugOperationPrepared && operation.State != breakglassv1alpha1.KubectlDebugOperationCompleted) ||
+			operation.TargetPod.Namespace != targetNamespace || operation.TargetPod.Name != targetPodName || operation.TargetPod.UID != targetPodUID ||
+			!ephemeralContainerIntentEqual(&operation.EphemeralContainer, containerName, image, command, true, true, securityContext, requestDigest) {
+			continue
+		}
+		return operation
+	}
+	return nil
+}
+
+func securityContextDigest(securityContext *corev1.SecurityContext) string {
+	encoded, err := json.Marshal(securityContext)
+	if err != nil {
+		return ""
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
+}
+
+func ephemeralContainerDigest(ephemeralContainer *corev1.EphemeralContainer) string {
+	if ephemeralContainer == nil {
+		return ""
+	}
+	// Hash only fields controlled by the Breakglass request. The API server may
+	// default termination-message fields, env-related fields, and other
+	// EphemeralContainerCommon fields on read-back; those defaults must not turn
+	// an already-applied operation into Unknown.
+	canonical := struct {
+		Name            string            `json:"name"`
+		Image           string            `json:"image"`
+		Command         []string          `json:"command,omitempty"`
+		ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy"`
+		TTY             bool              `json:"tty"`
+		Stdin           bool              `json:"stdin"`
+		SecurityContext string            `json:"securityContextDigest"`
+	}{
+		Name:            ephemeralContainer.Name,
+		Image:           ephemeralContainer.Image,
+		Command:         ephemeralContainer.Command,
+		ImagePullPolicy: ephemeralContainer.ImagePullPolicy,
+		TTY:             ephemeralContainer.TTY,
+		Stdin:           ephemeralContainer.Stdin,
+		SecurityContext: securityContextDigest(ephemeralContainer.SecurityContext),
+	}
+	encoded, err := json.Marshal(canonical)
+	if err != nil {
+		return ""
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
+}
+
+func desiredEphemeralContainerForIntent(name, image string, command []string, securityContext *corev1.SecurityContext) corev1.EphemeralContainer {
+	return corev1.EphemeralContainer{
+		EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+			Name:            name,
+			Image:           image,
+			Command:         command,
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			TTY:             true,
+			Stdin:           true,
+			SecurityContext: securityContext,
+		},
+	}
+}
+
+func ephemeralContainerIntentEqual(
+	intent *breakglassv1alpha1.KubectlDebugEphemeralContainerIntent,
+	name, image string,
+	command []string,
+	tty bool,
+	stdin bool,
+	securityContext *corev1.SecurityContext,
+	containerDigest string,
+) bool {
+	if intent == nil {
+		return false
+	}
+	if intent.ContainerDigest != "" {
+		return intent.ContainerDigest == containerDigest
+	}
+	return intent.Name == name && intent.Image == image &&
+		apiequality.Semantic.DeepEqual(intent.Command, command) &&
+		intent.TTY == tty && intent.Stdin == stdin &&
+		intent.SecurityContextDigest == securityContextDigest(securityContext)
+}
+
+func newEphemeralContainerOperation(
+	pod *corev1.Pod,
+	ephemeralContainer corev1.EphemeralContainer,
+	user string,
+) breakglassv1alpha1.KubectlDebugOperation {
+	return breakglassv1alpha1.KubectlDebugOperation{
+		ID:    uuid.New().String(),
+		Kind:  kubectlDebugOperationKindEphemeralContainer,
+		State: breakglassv1alpha1.KubectlDebugOperationPrepared,
+		TargetPod: breakglassv1alpha1.KubectlDebugOperationTargetPod{
+			Namespace: pod.Namespace,
+			Name:      pod.Name,
+			UID:       pod.UID,
+		},
+		EphemeralContainer: breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{
+			Name:                  ephemeralContainer.Name,
+			Image:                 ephemeralContainer.Image,
+			Command:               ephemeralContainer.Command,
+			ContainerDigest:       ephemeralContainerDigest(&ephemeralContainer),
+			SecurityContextDigest: securityContextDigest(ephemeralContainer.SecurityContext),
+			TTY:                   ephemeralContainer.TTY,
+			Stdin:                 ephemeralContainer.Stdin,
+		},
+		RequestedBy: user,
+		PreparedAt:  metav1.Now(),
+	}
+}
+
+func addEphemeralContainerRefIfMissing(status *breakglassv1alpha1.DebugSessionStatus, ref breakglassv1alpha1.EphemeralContainerRef) {
+	kubectlStatus := ensureKubectlDebugStatus(status)
+	for _, existing := range kubectlStatus.EphemeralContainersInjected {
+		if existing.Namespace == ref.Namespace && existing.PodName == ref.PodName && existing.ContainerName == ref.ContainerName {
+			return
+		}
+	}
+	kubectlStatus.EphemeralContainersInjected = append(kubectlStatus.EphemeralContainersInjected, ref)
+}
+
+// prepareEphemeralContainerOperation durably records target identity and the
+// exact requested container before any target-cluster mutation occurs.
+func (h *KubectlDebugHandler) prepareEphemeralContainerOperation(
+	ctx context.Context,
+	ds *breakglassv1alpha1.DebugSession,
+	operation breakglassv1alpha1.KubectlDebugOperation,
+) error {
+	return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		kubectlStatus := ensureKubectlDebugStatus(status)
+		for _, existing := range kubectlStatus.Operations {
+			if existing.ID == operation.ID {
+				return
+			}
+		}
+		kubectlStatus.Operations = append(kubectlStatus.Operations, operation)
+	})
+}
+
+func (h *KubectlDebugHandler) completeEphemeralContainerOperation(
+	ctx context.Context,
+	ds *breakglassv1alpha1.DebugSession,
+	operationID string,
+	state breakglassv1alpha1.KubectlDebugOperationState,
+	message string,
+	ref *breakglassv1alpha1.EphemeralContainerRef,
+) error {
+	if findKubectlDebugOperation(&ds.Status, operationID) == nil {
+		return kubectlDebugInternalErrorf("durable ephemeral-container operation %s is missing", operationID)
+	}
+	return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		kubectlStatus := ensureKubectlDebugStatus(status)
+		for index := range kubectlStatus.Operations {
+			operation := &kubectlStatus.Operations[index]
+			if operation.ID != operationID {
+				continue
+			}
+			if operation.State != breakglassv1alpha1.KubectlDebugOperationPrepared {
+				if operation.State == breakglassv1alpha1.KubectlDebugOperationCompleted && state == breakglassv1alpha1.KubectlDebugOperationCompleted {
+					if ref != nil {
+						addEphemeralContainerRefIfMissing(status, *ref)
+						addAllowedPodIfMissing(status, breakglassv1alpha1.AllowedPodRef{Namespace: ref.Namespace, Name: ref.PodName, Ready: true})
+					}
+				}
+				return
+			}
+			operation.State = state
+			operation.Message = message
+			if state != breakglassv1alpha1.KubectlDebugOperationPrepared {
+				completedAt := metav1.Now()
+				operation.CompletedAt = &completedAt
+			}
+			if ref != nil && state == breakglassv1alpha1.KubectlDebugOperationCompleted {
+				addEphemeralContainerRefIfMissing(status, *ref)
+				addAllowedPodIfMissing(status, breakglassv1alpha1.AllowedPodRef{Namespace: ref.Namespace, Name: ref.PodName, Ready: true})
+			}
+			return
+		}
+	})
+}
+
+// RecoverPendingKubectlDebugOperations resolves prepared operations after a
+// controller restart or an ambiguous target API response. It only records
+// evidence; it never performs a compensating target mutation. A same-named
+// replacement Pod or container with a different identity is marked Unknown.
+func (h *KubectlDebugHandler) RecoverPendingKubectlDebugOperations(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	if ds == nil || ds.Status.KubectlDebugStatus == nil {
+		return nil
+	}
+	pending := make([]breakglassv1alpha1.KubectlDebugOperation, 0)
+	for _, operation := range ds.Status.KubectlDebugStatus.Operations {
+		if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared && operation.Kind == kubectlDebugOperationKindEphemeralContainer {
+			pending = append(pending, operation)
+		}
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	if h.ccProvider == nil {
+		return kubectlDebugInternalErrorf("target cluster client provider is not configured")
+	}
+	targetClient, err := h.ccProvider.GetClient(ctx, ds.Spec.Cluster)
+	if err != nil {
+		return fmt.Errorf("failed to get client for cluster %s while recovering debug operation: %w", ds.Spec.Cluster, err)
+	}
+	if targetClient == nil {
+		return kubectlDebugInternalErrorf("target client for cluster %s is not configured", ds.Spec.Cluster)
+	}
+
+	for _, operation := range pending {
+		pod := &corev1.Pod{}
+		err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: operation.TargetPod.Namespace, Name: operation.TargetPod.Name}, pod)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				if outcomeErr := h.completeEphemeralContainerOperation(ctx, ds, operation.ID, breakglassv1alpha1.KubectlDebugOperationUnknown, "target Pod disappeared before the prepared operation outcome could be confirmed", nil); outcomeErr != nil {
+					return outcomeErr
+				}
+				continue
+			}
+			return fmt.Errorf("read target Pod %s/%s while recovering debug operation %s: %w", operation.TargetPod.Namespace, operation.TargetPod.Name, operation.ID, err)
+		}
+
+		if pod.UID != operation.TargetPod.UID {
+			if outcomeErr := h.completeEphemeralContainerOperation(ctx, ds, operation.ID, breakglassv1alpha1.KubectlDebugOperationUnknown, "target Pod UID changed before the prepared operation outcome could be confirmed", nil); outcomeErr != nil {
+				return outcomeErr
+			}
+			continue
+		}
+
+		found := false
+		matches := false
+		for index := range pod.Spec.EphemeralContainers {
+			container := &pod.Spec.EphemeralContainers[index]
+			if container.Name != operation.EphemeralContainer.Name {
+				continue
+			}
+			found = true
+			matches = ephemeralContainerIntentEqual(
+				&operation.EphemeralContainer,
+				container.Name,
+				container.Image,
+				container.Command,
+				container.TTY,
+				container.Stdin,
+				container.SecurityContext,
+				ephemeralContainerDigest(container),
+			)
+			break
+		}
+		if !found {
+			if outcomeErr := h.completeEphemeralContainerOperation(ctx, ds, operation.ID, breakglassv1alpha1.KubectlDebugOperationFailed, "target Pod does not contain the prepared ephemeral container", nil); outcomeErr != nil {
+				return outcomeErr
+			}
+			continue
+		}
+		if !matches {
+			if outcomeErr := h.completeEphemeralContainerOperation(ctx, ds, operation.ID, breakglassv1alpha1.KubectlDebugOperationUnknown, "target Pod contains a different ephemeral container with the prepared name", nil); outcomeErr != nil {
+				return outcomeErr
+			}
+			continue
+		}
+
+		ref := &breakglassv1alpha1.EphemeralContainerRef{
+			PodName:       operation.TargetPod.Name,
+			Namespace:     operation.TargetPod.Namespace,
+			ContainerName: operation.EphemeralContainer.Name,
+			Image:         operation.EphemeralContainer.Image,
+			InjectedAt:    operation.PreparedAt,
+			InjectedBy:    operation.RequestedBy,
+		}
+		if outcomeErr := h.completeEphemeralContainerOperation(ctx, ds, operation.ID, breakglassv1alpha1.KubectlDebugOperationCompleted, "", ref); outcomeErr != nil {
+			return outcomeErr
+		}
+	}
+	return nil
+}
+
 func addAllowedPodIfMissing(status *breakglassv1alpha1.DebugSessionStatus, ref breakglassv1alpha1.AllowedPodRef) {
 	for _, existing := range status.AllowedPods {
 		if existing.Namespace == ref.Namespace && existing.Name == ref.Name {
@@ -240,6 +556,34 @@ func addDeployedResourceIfMissing(status *breakglassv1alpha1.DebugSessionStatus,
 		}
 	}
 	status.DeployedResources = append(status.DeployedResources, ref)
+}
+
+func terminalKubectlDebugOperations(operations []breakglassv1alpha1.KubectlDebugOperation) []breakglassv1alpha1.KubectlDebugOperation {
+	terminal := make([]breakglassv1alpha1.KubectlDebugOperation, 0, len(operations))
+	for _, operation := range operations {
+		if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared {
+			continue
+		}
+		terminal = append(terminal, operation)
+	}
+	return terminal
+}
+
+func cleanupRetainedKubectlDebugStatus(kubectlStatus *breakglassv1alpha1.KubectlDebugStatus) *breakglassv1alpha1.KubectlDebugStatus {
+	if kubectlStatus == nil {
+		return nil
+	}
+	operations := terminalKubectlDebugOperations(kubectlStatus.Operations)
+	if len(operations) == 0 && len(kubectlStatus.EphemeralContainersInjected) == 0 {
+		return nil
+	}
+	retained := &breakglassv1alpha1.KubectlDebugStatus{
+		Operations: operations,
+	}
+	if len(kubectlStatus.EphemeralContainersInjected) > 0 {
+		retained.EphemeralContainersInjected = append([]breakglassv1alpha1.EphemeralContainerRef(nil), kubectlStatus.EphemeralContainersInjected...)
+	}
+	return retained
 }
 
 // liveSessionForMutation re-reads the session through the uncached API reader
@@ -412,12 +756,20 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	ds = live
 
 	// Resolve the target client together with the exact live ClusterConfig that
-	// produced it. The same object is checked again at the final write boundary.
+	// produced it. The same snapshot is checked again at the final write boundary.
 	targetClient, configuredCluster, err := h.privilegedOperationClient(ctx, ds.Spec.Cluster)
 	if err != nil {
 		return err
 	}
 	defer releasePrivilegedOperationSnapshot(h.ccProvider, configuredCluster)
+
+	// A previous request may have successfully changed the target Pod but lost
+	// the follow-up status write. Resolve that durable intent before accepting a
+	// new mutation request, so retries are idempotent and never duplicate a
+	// completed ephemeral container.
+	if err := h.RecoverPendingKubectlDebugOperations(ctx, ds); err != nil {
+		return err
+	}
 
 	// Get the target pod
 	pod := &corev1.Pod{}
@@ -427,14 +779,6 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	if pod.UID == "" {
 		return kubectlDebugPolicyErrorf("target pod %s/%s has no UID", namespace, podName)
 	}
-
-	// Check if container name already exists
-	for _, ec := range pod.Spec.EphemeralContainers {
-		if ec.Name == containerName {
-			return fmt.Errorf("ephemeral container %s already exists in pod", containerName)
-		}
-	}
-
 	// Re-read the target Pod and complete its identity checks before the final
 	// authorization fence. No target read may occur after the live session check.
 	freshPod := &corev1.Pod{}
@@ -447,13 +791,7 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	if pod.ResourceVersion != "" && freshPod.ResourceVersion != "" && freshPod.ResourceVersion != pod.ResourceVersion {
 		return kubectlDebugPolicyErrorf("target pod %s/%s changed during injection authorization", namespace, podName)
 	}
-	for _, ec := range freshPod.Spec.EphemeralContainers {
-		if ec.Name == containerName {
-			return fmt.Errorf("ephemeral container %s already exists in pod", containerName)
-		}
-	}
-	// Namespace labels and policy may change while the target Pod is read. Repeat
-	// the policy check immediately before the final session fence and mutation.
+	// Namespace labels and policy may change while the target Pod is read.
 	template := ds.Status.ResolvedTemplate
 	if template == nil || template.KubectlDebug == nil || template.KubectlDebug.EphemeralContainers == nil {
 		return kubectlDebugPolicyErrorf("ephemeral container policy is no longer available")
@@ -466,44 +804,63 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	if !namespaceAllowed {
 		return kubectlDebugPolicyErrorf("namespace %s is no longer allowed for ephemeral container injection", namespace)
 	}
-
 	// Create ephemeral container spec
-	ephemeralContainer := corev1.EphemeralContainer{
-		EphemeralContainerCommon: corev1.EphemeralContainerCommon{
-			Name:            containerName,
-			Image:           image,
-			Command:         command,
-			ImagePullPolicy: corev1.PullIfNotPresent,
-			TTY:             true,
-			Stdin:           true,
-		},
+	ephemeralContainer := desiredEphemeralContainerForIntent(containerName, image, command, securityContext)
+	if recovered := findMatchingEphemeralOperation(
+		&ds.Status,
+		namespace,
+		podName,
+		pod.UID,
+		containerName,
+		image,
+		command,
+		ephemeralContainer.SecurityContext,
+	); recovered != nil && recovered.State == breakglassv1alpha1.KubectlDebugOperationCompleted {
+		return nil
 	}
-
-	if securityContext != nil {
-		ephemeralContainer.SecurityContext = securityContext
+	for _, ec := range freshPod.Spec.EphemeralContainers {
+		if ec.Name == containerName {
+			return fmt.Errorf("ephemeral container %s already exists in pod", containerName)
+		}
 	}
-
-	// Add the ephemeral container
+	// Add the ephemeral container to the request object. The target API has not
+	// been mutated yet; the durable operation intent below is persisted first.
 	freshPod.Spec.EphemeralContainers = append(freshPod.Spec.EphemeralContainers, ephemeralContainer)
 
-	// Validate all target configuration and policy inputs first. The uncached
-	// session fence below is then the last slow operation before the mutation.
-	if err := h.fencePrivilegedOperationClusterConfig(ctx, configuredCluster); err != nil {
-		return err
-	}
+	// This must be the last slow operation before the target mutation. Any
+	// expiry, revocation, participant removal, or approved-plan change observed
+	// here prevents the update; native Kubernetes requests already admitted by
+	// the target API remain outside this boundary. The operation intent is
+	// written immediately after this fence and before the target API call.
 	live, err = h.liveSessionForMutation(ctx, ds, user)
 	if err != nil {
 		return err
 	}
 	ds = live
+	operation := newEphemeralContainerOperation(freshPod, ephemeralContainer, user)
+	if err := h.prepareEphemeralContainerOperation(ctx, ds, operation); err != nil {
+		// No target mutation has happened if durable intent cannot be written.
+		return fmt.Errorf("failed to persist ephemeral-container operation intent: %w", err)
+	}
+
+	// Persisting intent is itself a potentially slow API operation. Re-fence
+	// after it succeeds so an operation that crossed expiry is never admitted;
+	// the prepared intent remains for the controller to mark failed.
+	live, err = h.liveSessionForMutation(ctx, ds, user)
+	if err != nil {
+		return err
+	}
+	ds = live
+	if err := h.fencePrivilegedOperationClusterConfig(ctx, configuredCluster); err != nil {
+		return err
+	}
 
 	// Update the pod using SubResource for ephemeral containers
 	if err := targetClient.SubResource("ephemeralcontainers").Update(ctx, freshPod); err != nil {
 		return fmt.Errorf("failed to inject ephemeral container: %w", err)
 	}
 
-	// Record post-effect evidence in session status. PR #1278 adds the durable
-	// pre-effect operation outbox needed to recover an interrupted status write.
+	// Track the injected container in session status
 	now := metav1.Now()
 	injectedContainer := breakglassv1alpha1.EphemeralContainerRef{
 		PodName:       podName,
@@ -513,29 +870,13 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 		InjectedAt:    now,
 		InjectedBy:    user,
 	}
-	allowedPod := breakglassv1alpha1.AllowedPodRef{
-		Namespace: namespace,
-		Name:      podName,
-		Ready:     true,
+	if err := h.completeEphemeralContainerOperation(ctx, ds, operation.ID, breakglassv1alpha1.KubectlDebugOperationCompleted, "", &injectedContainer); err != nil {
+		// The target update has already happened. The prepared operation remains
+		// durable in status and will be resolved by the next reconciliation or
+		// retry, so this path never leaves an untracked mutation.
+		return fmt.Errorf("failed to persist ephemeral-container operation outcome: %w", err)
 	}
-
-	return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
-		kubectlStatus := ensureKubectlDebugStatus(status)
-		alreadyTracked := false
-		for _, existing := range kubectlStatus.EphemeralContainersInjected {
-			if existing.Namespace == injectedContainer.Namespace &&
-				existing.PodName == injectedContainer.PodName &&
-				existing.ContainerName == injectedContainer.ContainerName {
-				alreadyTracked = true
-				break
-			}
-		}
-		if !alreadyTracked {
-			kubectlStatus.EphemeralContainersInjected = append(kubectlStatus.EphemeralContainersInjected, injectedContainer)
-		}
-
-		addAllowedPodIfMissing(status, allowedPod)
-	})
+	return nil
 }
 
 // CreatePodCopy creates a debug copy of a pod
@@ -1037,12 +1378,15 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 	if ds.Status.KubectlDebugStatus == nil {
 		return nil
 	}
+	if err := h.RecoverPendingKubectlDebugOperations(ctx, ds); err != nil {
+		return fmt.Errorf("recover pending kubectl-debug operations before cleanup: %w", err)
+	}
 
 	if len(ds.Status.KubectlDebugStatus.CopiedPods) == 0 {
 		// Ephemeral containers cannot be removed; without copied pods there is
 		// no spoke-cluster cleanup to perform.
 		return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
-			status.KubectlDebugStatus = nil
+			status.KubectlDebugStatus = cleanupRetainedKubectlDebugStatus(status.KubectlDebugStatus)
 		})
 	}
 
@@ -1083,7 +1427,7 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 	}
 
 	return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
-		status.KubectlDebugStatus = nil
+		status.KubectlDebugStatus = cleanupRetainedKubectlDebugStatus(status.KubectlDebugStatus)
 	})
 }
 

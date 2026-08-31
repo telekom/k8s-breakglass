@@ -26,6 +26,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -495,6 +496,131 @@ type KubectlDebugStatus struct {
 	// copiedPods lists debug copies of pods.
 	// +optional
 	CopiedPods []CopiedPodRef `json:"copiedPods,omitempty"`
+
+	// operations is the durable operation outbox for target-cluster mutations.
+	// An operation is persisted in Prepared state before the target API is
+	// changed and is reconciled to a terminal outcome after a restart or an
+	// ambiguous response. Completed operations are idempotent evidence and are
+	// not re-applied.
+	// +optional
+	Operations []KubectlDebugOperation `json:"operations,omitempty"`
+}
+
+// KubectlDebugOperationState describes the state of a target-cluster debug
+// operation recorded in the session status outbox.
+// +kubebuilder:validation:Enum=Prepared;Completed;Failed;Unknown
+type KubectlDebugOperationState string
+
+const (
+	// KubectlDebugOperationPrepared means intent was durably recorded before a
+	// target-cluster mutation was attempted.
+	KubectlDebugOperationPrepared KubectlDebugOperationState = "Prepared"
+	// KubectlDebugOperationCompleted means the target mutation and its outcome
+	// are durably recorded.
+	KubectlDebugOperationCompleted KubectlDebugOperationState = "Completed"
+	// KubectlDebugOperationFailed means the target mutation was confirmed not
+	// to have been applied.
+	KubectlDebugOperationFailed KubectlDebugOperationState = "Failed"
+	// KubectlDebugOperationUnknown means the target outcome cannot be resolved
+	// safely and requires operator investigation; no compensating mutation is
+	// attempted.
+	KubectlDebugOperationUnknown KubectlDebugOperationState = "Unknown"
+)
+
+// KubectlDebugOperation is durable intent and outcome evidence for a
+// target-cluster kubectl-debug operation. The target Pod UID and complete
+// ephemeral-container request are part of the identity used during recovery;
+// a same-named but different Pod/container is never treated as a match.
+type KubectlDebugOperation struct {
+	// id is a unique operation identifier.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	ID string `json:"id"`
+
+	// kind identifies the operation implementation.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	Kind string `json:"kind"`
+
+	// state is the durable outbox state.
+	// +required
+	State KubectlDebugOperationState `json:"state"`
+
+	// targetPod identifies the target Pod and immutable UID.
+	// +required
+	TargetPod KubectlDebugOperationTargetPod `json:"targetPod"`
+
+	// ephemeralContainer contains the exact request fields used to identify
+	// the target mutation.
+	// +required
+	EphemeralContainer KubectlDebugEphemeralContainerIntent `json:"ephemeralContainer"`
+
+	// requestedBy identifies the authenticated operation actor.
+	// +required
+	RequestedBy string `json:"requestedBy"`
+
+	// preparedAt records when intent was persisted.
+	// +required
+	PreparedAt metav1.Time `json:"preparedAt"`
+
+	// completedAt records when the target outcome was persisted.
+	// +optional
+	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
+
+	// message describes a failed or unknown outcome.
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
+// KubectlDebugEphemeralContainerIntent is the compact, stable representation
+// of an ephemeral-container request kept in the operation outbox. The security
+// context is represented by a canonical digest to avoid embedding the complete
+// Kubernetes API type in the CRD schema while still requiring an exact match
+// during recovery.
+type KubectlDebugEphemeralContainerIntent struct {
+	// name is the ephemeral container name.
+	// +required
+	Name string `json:"name"`
+
+	// image is the requested image.
+	// +required
+	Image string `json:"image"`
+
+	// command is the requested command.
+	// +optional
+	Command []string `json:"command,omitempty"`
+
+	// containerDigest identifies the exact canonical ephemeral-container request.
+	// +required
+	ContainerDigest string `json:"containerDigest"`
+
+	// securityContextDigest identifies the complete requested security context.
+	// +required
+	SecurityContextDigest string `json:"securityContextDigest"`
+
+	// tty and stdin are the manager-owned terminal settings.
+	// +required
+	TTY bool `json:"tty"`
+
+	// stdin is the manager-owned standard-input setting.
+	// +required
+	Stdin bool `json:"stdin"`
+}
+
+// KubectlDebugOperationTargetPod identifies a target Pod for durable
+// operation recovery.
+type KubectlDebugOperationTargetPod struct {
+	// namespace is the Pod namespace.
+	// +required
+	Namespace string `json:"namespace"`
+
+	// name is the Pod name.
+	// +required
+	Name string `json:"name"`
+
+	// uid is the immutable Pod UID observed before the mutation.
+	// +required
+	UID types.UID `json:"uid"`
 }
 
 // EphemeralContainerRef tracks an injected ephemeral container.

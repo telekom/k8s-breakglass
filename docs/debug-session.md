@@ -4,13 +4,15 @@ Debug Sessions provide temporary, controlled access to debug pods deployed on ta
 
 Ephemeral-container injection is available only through the authenticated
 DebugSession API operation. The manager validates the approved image and
-security policy and rechecks the live session lease and target Pod UID before
-the target update. PR
-[#1277](https://github.com/telekom/k8s-breakglass/pull/1277) records ephemeral
-operation evidence after that effect. It cannot guarantee durable pre-effect
-evidence or recover the outcome if the status write is interrupted. Those
-guarantees depend on the durable operation outbox in PR
-[#1278](https://github.com/telekom/k8s-breakglass/pull/1278). Independent writes to
+security policy, rechecks the live session lease and target Pod UID, and
+persists a `Prepared` operation containing the exact target Pod UID plus a
+canonical digest of the full submitted container request before changing the
+target. It records a terminal
+`Completed`, `Failed`, or `Unknown` outcome idempotently. A controller restart
+recovers prepared operations by comparing the exact Pod UID and container
+request; identity mismatches are never guessed or mutated. Session cleanup
+removes copied Pods while retaining terminal kubectl-debug operation evidence
+for operator handling. Independent writes to
 `pods/ephemeralcontainers` through a target cluster API server are governed by
 that cluster's RBAC and are outside Breakglass. Kubernetes cannot remove an
 ephemeral container from a live Pod, so retained containers remain only as
@@ -123,10 +125,6 @@ Debug sessions follow a strict state machine:
 | `Expired` | Session duration exceeded | ❌ |
 | `Terminated` | Manually ended by owner or admin | ❌ |
 | `Failed` | Setup failed or rejected | ❌ |
-
-A non-zero `metadata.deletionTimestamp` revokes an otherwise active
-DebugSession immediately. Live authorization and privileged operation fences do
-not wait for finalizer completion.
 
 ## Resource Definitions
 
@@ -399,7 +397,7 @@ spec:
     notifyOnApproval: true
     notifyOnExpiry: true
     notifyOnTermination: true
-  expirationBehavior: terminate   # notify-only is deprecated
+  expirationBehavior: terminate   # or notify-only
   gracePeriodBeforeExpiry: 15m
 
   # Optional: Resource controls
@@ -428,15 +426,6 @@ spec:
     logs: true        # kubectl logs
     portForward: true # kubectl port-forward
 ```
-
-`expirationBehavior: notify-only` is deprecated. For compatibility, it requests
-the configured expiry notification and then performs the same hard expiry as
-`terminate`. Expiry always changes the session to `Expired`, revokes new access,
-and starts resource cleanup. Use `notification.notifyOnExpiry` with `terminate`
-for new templates. Notification settings never disable hard expiry.
-An `Active` DebugSession must have a non-zero `status.expiresAt`. Admission and
-internal status writers reject adding a lease later to a malformed active
-session, and reconciliation changes that session to terminal `Failed` state.
 
 The controller updates `DebugSessionTemplate.status` with readiness conditions,
 the observed generation, pod-template reference resolution, active session
@@ -986,7 +975,7 @@ When a user creates a debug session:
    - `createIfNotExists: false`: Session fails or uses fail-open mode
 
 The web UI validates Kubernetes namespace syntax and glob-style allowed/denied patterns before submitting a debug session request. The API and controller remain the authoritative enforcement points for namespace constraints and cluster state.
-Kubectl-debug namespace selectors for ephemeral-container injection and pod-copy creation are evaluated against live namespace labels from the target cluster; selector-based policies fail closed if those labels cannot be read. The namespace policy is evaluated again at the final privileged mutation boundary, after target Pod identity checks, so a concurrent label change cannot authorize a stale mutation.
+Kubectl-debug namespace selectors for ephemeral-container injection and pod-copy creation are evaluated against live namespace labels from the target cluster; selector-based policies fail closed if those labels cannot be read.
 
 ### Example: Team-Isolated Debug Namespaces
 
@@ -1494,10 +1483,6 @@ session; `viewer` entries and participants with `leftAt` set cannot renew.
 The active-session expiry, approval-timeout, expiring-soon message, cleanup
 timeout, and cleanup expiry writers use optimistic locking, so stale reconciler
 or cleanup passes cannot overwrite a newer renewal or participant update.
-Terminal DebugSession states cannot transition again on the status mutation
-path or status admission path. Renewal performs its final uncached state and
-strict `now < expiresAt` check immediately before the optimistic status patch,
-so a request that reaches the boundary cannot extend or resurrect the lease.
 
 ## Terminal Sharing
 
@@ -1691,11 +1676,6 @@ Kubectl-debug operations merge their operation-specific status fields into the
 latest `DebugSession` status before returning. Concurrent renewals, participant
 changes, and lifecycle updates are preserved while the operation records copied
 pods, injected containers, allowed pods, or cleanup state.
-
-Immediately before creating pod copies or privileged node-debug Pods, the
-controller re-reads the destination Namespace and requires the same non-empty
-UID. Node-debug creation also re-evaluates namespace label policy, so Namespace
-deletion/recreation or relabeling fails closed before Pod creation.
 
 #### Inject Ephemeral Container
 
