@@ -48,17 +48,24 @@ publish_stable_tag_create_only() {
 	[[ "${status}" == 201 ]] || die "registry did not accept create-only stable tag publication (HTTP ${status})"
 }
 
+# Check a stable tag before the potentially long verification stage. This
+# makes an occupied release tag fail fast on macOS and CI while retaining the
+# same create-only check immediately before the mutation below.
+stable_tag=false
+if [[ "${tag}" != nightly && "${tag}" != rolling ]]; then
+	stable_tag=true
+	state="$(timeout 1m "${root}/hack/utility-publication.sh" tag-state "${image}" "${tag}")"
+	[[ "${state}" == missing ]] || die "refusing to overwrite existing utility tag ${image}:${tag} (state: ${state})"
+fi
+
 # The digest-only publication is the staging area. Full signature, SBOM,
 # provenance, platform, and pull verification must succeed before a release-
 # matched tag is ever created.
 timeout 60m "${verify_script}" "${image}" "${digest}"
 
-# Keep the stable-tag collision check immediately adjacent to the mutation.
-# Mutable channels intentionally skip this check, but still pass the same
-# pre-tag verification above and the post-write binding check below.
-if [[ "${tag}" != nightly && "${tag}" != rolling ]]; then
-	state="$(timeout 1m "${root}/hack/utility-publication.sh" tag-state "${image}" "${tag}")"
-	[[ "${state}" == missing ]] || die "refusing to overwrite existing utility tag ${image}:${tag} (state: ${state})"
+# Mutable channels intentionally skip the collision check, but still pass the
+# same pre-tag verification above and the post-write binding check below.
+if [[ "${stable_tag}" == true ]]; then
 	publish_stable_tag_create_only
 else
 	subject="${image}@${digest}"
