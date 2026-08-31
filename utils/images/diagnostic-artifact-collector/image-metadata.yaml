@@ -15,8 +15,8 @@ build:
   digest: sha256:c5b07c17f54c5f22230c4b4da6e90249165cf55368e01a52808cb92064e18836
   purpose: static-stdlib-uploader-and-pinned-ca-bundle
 runtime:
-  user: "65532:65532 by default; 0:65532 only for host-mounted crashdump collector"
   # The image default and all uploader/summary containers are unprivileged.
+  user: "65532:65532"
   # The controller may run only the host-mounted crashdump collector init
   # container as root because coredump files are commonly root-readable only.
   users:
@@ -62,8 +62,17 @@ runtime:
   # Collection is offline; only the uploader needs egress to the exact
   # controller-issued upload endpoint. The controller, not this image, talks
   # to S3-compatible storage.
-  network_required: true
+  network_required: operation-dependent
   network_consumer: uploader-only
+dependencies:
+  - name: busybox
+    version: 1.37
+    digest: sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
+    license: GPL-2.0-only
+  - name: golang
+    version: 1.27
+    digest: sha256:c5b07c17f54c5f22230c4b4da6e90249165cf55368e01a52808cb92064e18836
+    purpose: static uploader and safe-copy build toolchain
 contract:
   schema_version: diagnostic-artifact/v1
   executable: /usr/local/bin/diagnostic-artifact-collector
