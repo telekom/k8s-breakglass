@@ -137,6 +137,7 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       tag: ${{ steps.tag.outputs.tag }}
+      publication_tag: ${{ steps.publication_tag.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -148,6 +149,17 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           PUBLISH_ROLLING: ${{ inputs.publish_rolling || false }}
         run: echo "tag=$(hack/utility-release-contract.sh tag "${EVENT_NAME}" "${REF_NAME}" "${PUBLISH_ROLLING}")" >>"${GITHUB_OUTPUT}"
+      - name: Resolve unique publication tag
+        id: publication_tag
+        run: |
+          set -Eeuo pipefail
+          release_tag="$(hack/utility-release-contract.sh tag "${{ github.event_name }}" "${{ github.ref_name }}" "${{ inputs.publish_rolling || false }}")"
+          if [[ "${release_tag}" == nightly || "${release_tag}" == rolling ]]; then
+            publication_tag="${release_tag}"
+          else
+            publication_tag="dev-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          fi
+          printf 'tag=%s\n' "${publication_tag}" >>"${GITHUB_OUTPUT}"
       - name: Require main ancestry and successful checks for exact commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -201,12 +213,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           IMAGE: ${{ matrix.image }}
           TAG: ${{ needs.discover.outputs.tag }}
+          PUBLICATION_TAG: ${{ needs.discover.outputs.publication_tag }}
           CONTEXT: ${{ matrix.context }}
           DOCKERFILE: ${{ matrix.file }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
           set -Eeuo pipefail
-          state="$(timeout 1m hack/utility-publication.sh tag-state "${IMAGE}" "${TAG}")"
+          state="$(timeout 1m hack/utility-publication.sh tag-state "${IMAGE}" "${PUBLICATION_TAG}")"
           if [[ "${state}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             timeout 30m hack/verify-utility-publication.sh "${IMAGE}" "${state}"
             digest="${state}"
@@ -309,26 +322,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           IMAGE: ${{ matrix.image }}
           TAG: ${{ needs.discover.outputs.tag }}
+          PUBLICATION_TAG: ${{ needs.discover.outputs.publication_tag }}
           DIGEST: ${{ steps.resolve.outputs.digest }}
           ENTRY: ${{ toJSON(matrix) }}
         run: |
           set -Eeuo pipefail
           # Exercise the exact, immutable platform subjects before the helper
-          # mutates the release tag. Keep the complete matrix entry in the
+          # mutates the unique publication tag. Keep the complete matrix entry in the
           # environment and decode it with jq: shell interpolation would break
           # smoke contracts containing apostrophes or embedded newlines.
           smoke_command="$(jq -c .smokeCommand <<<"${ENTRY}")"
           smoke_output="$(jq -r .smokeOutput <<<"${ENTRY}")"
           timeout 70m hack/verify-utility-publication.sh "${IMAGE}" "${DIGEST}" \
             "${smoke_command}" "${smoke_output}"
-          timeout 70m hack/publish-utility-tag.sh "${IMAGE}" "${TAG}" "${DIGEST}"
+          timeout 70m hack/publish-utility-tag.sh "${IMAGE}" "${PUBLICATION_TAG}" "${DIGEST}"
       - name: Verify exact-source publication and reference use
         env:
           GH_TOKEN: ${{ github.token }}
           IMAGE: ${{ matrix.image }}
           TAG: ${{ needs.discover.outputs.tag }}
+          PUBLICATION_TAG: ${{ needs.discover.outputs.publication_tag }}
           DIGEST: ${{ steps.resolve.outputs.digest }}
         run: |
           set -Eeuo pipefail
-          timeout 1m hack/utility-publication.sh require-tag "${IMAGE}" "${TAG}" "${DIGEST}"
+          timeout 1m hack/utility-publication.sh require-tag "${IMAGE}" "${PUBLICATION_TAG}" "${DIGEST}"
           timeout 30m hack/verify-utility-publication.sh "${IMAGE}" "${DIGEST}"

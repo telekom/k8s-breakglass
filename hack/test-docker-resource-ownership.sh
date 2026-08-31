@@ -17,8 +17,10 @@ case "${1:-} ${2:-}" in
 "network inspect") printf '%s\n' "${NETWORK_ID:?}" ;;
 "rm -f") touch "${CONTAINER_REMOVED:?}" ;;
 "network rm") touch "${NETWORK_REMOVED:?}" ;;
-"volume inspect") printf '%s\n' "${VOLUME_OWNER:-foreign}" ;;
-"volume rm") touch "${VOLUME_REMOVED:?}" ;;
+"rm -fv")
+  [ "${3:-}" = owner-original ] || exit 1
+  touch "${OWNER_REMOVED:?}"
+  ;;
 *) exit 2 ;;
 esac
 EOF
@@ -30,10 +32,6 @@ CONTAINER_ID=container-original CONTAINER_REMOVED="$fixture/container" \
 NETWORK_ID=network-original NETWORK_REMOVED="$fixture/network" \
   docker_remove_resource_id "$fixture/docker" network network-original
 [ -e "$fixture/network" ]
-if VOLUME_OWNER=replacement VOLUME_REMOVED="$fixture/volume" \
-  docker_remove_volume_if_owned "$fixture/docker" proof-volume owner run-original; then
-  echo 'replacement volume passed ownership check' >&2
-  exit 1
-fi
-[ ! -e "$fixture/volume" ]
+OWNER_REMOVED="$fixture/owner" docker_remove_resource_with_volumes "$fixture/docker" container owner-original
+[ -e "$fixture/owner" ]
 echo 'Docker immutable resource ownership behavior passed'

@@ -4,7 +4,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Integration proof for the node-maintenance image. Every container uses a
-# disposable Docker network namespace (--network none) and named volume. The
+# disposable Docker network namespace (--network none) and an anonymous volume
+# owned by a dedicated container. The
 # runner's network namespaces are never joined or changed.
 set -eu
 
@@ -21,6 +22,8 @@ image_owned=0
 image_owned_id=
 container_name=
 volume_name=
+volume_owner_name=
+volume_owner_id=
 holder_name=
 container_id=
 holder_id=
@@ -51,8 +54,8 @@ cleanup() {
 			cleanup_failed=1
 		fi
 	fi
-	if [ -n "${volume_name:-}" ]; then
-		docker_remove_volume_if_owned "$docker_bin" "$volume_name" com.telekom.node-maintenance.test "$prefix" >/dev/null 2>&1 || true
+	if [ -n "${volume_owner_id:-}" ]; then
+		docker_remove_resource_with_volumes "$docker_bin" container "$volume_owner_id" >/dev/null 2>&1 || true
 		if "$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1; then
 			printf 'FAIL: disposable volume %s survived cleanup\n' "$volume_name" >&2
 			cleanup_failed=1
@@ -187,11 +190,19 @@ new_fixture() {
 	label=$1
 	container_name="${prefix}-${label}"
 	volume_name="${prefix}-volume-${label}"
+	volume_owner_name="${prefix}-volume-owner-${label}"
 	container_id=
 	holder_id=
+	volume_owner_id=
 	fixture_dir="$tmp_dir/$label"
 	mkdir -p "$fixture_dir"
-	"$docker_bin" volume create --label "com.telekom.node-maintenance.test=$prefix" "$volume_name" >/dev/null || fail "could not create disposable volume '$volume_name'"
+	"$docker_bin" run -d --name "$volume_owner_name" --user 0 --network none --read-only --cap-drop ALL \
+		--security-opt no-new-privileges --security-opt seccomp=builtin \
+		--mount type=volume,destination=/evidence --entrypoint /bin/sh "$image" \
+		-c 'while :; do sleep 60; done' >/dev/null || fail "could not create disposable volume owner '$volume_owner_name'"
+	volume_owner_id=$(docker_capture_resource_id "$docker_bin" container "$volume_owner_name") || fail "could not capture volume owner ID for '$volume_owner_name'"
+	volume_name=$("$docker_bin" inspect --format '{{range .Mounts}}{{if eq .Destination "/evidence"}}{{.Name}}{{end}}{{end}}' "$volume_owner_id") || fail "could not resolve anonymous volume for '$volume_owner_name'"
+	[ -n "$volume_name" ] || fail "volume owner '$volume_owner_name' did not expose an anonymous volume"
 	case "$label" in
 		stale-temporary-recovery)
 			# A constrained production container has no CHOWN capability. Seed the
@@ -227,11 +238,13 @@ destroy_fixture() {
 	if [ -n "${container_id:-}" ] && "$docker_bin" inspect "$container_id" >/dev/null 2>&1; then
 		fail "disposable container '$container_name' survived cleanup"
 	fi
-	docker_remove_volume_if_owned "$docker_bin" "$volume_name" com.telekom.node-maintenance.test "$prefix" >/dev/null || fail "cleanup failed for volume '$volume_name'"
+	docker_remove_resource_with_volumes "$docker_bin" container "$volume_owner_id" >/dev/null || fail "cleanup failed for volume '$volume_name'"
 	"$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1 && fail "disposable volume '$volume_name' survived cleanup"
 	container_name=
 	container_id=
 	volume_name=
+	volume_owner_name=
+	volume_owner_id=
 	holder_name=
 	holder_id=
 }
@@ -1236,7 +1249,8 @@ set -e
 grep -q 'another node-maintenance operation is active' "$fixture_dir/output" \
 	|| fail 'aged active holder produced no concurrency denial'
 assert_container_security "$container_name" none
-docker_remove_resource_id "$docker_bin" container "$container_id" >/dev/null || fail 'could not remove denied lock competitor'
+	docker_remove_resource_id "$docker_bin" container "$container_id" >/dev/null || fail 'could not remove denied lock competitor'
+	container_id=
 	"$docker_bin" kill --signal KILL "$holder_id" >/dev/null || fail 'could not SIGKILL flock holder'
 	"$docker_bin" wait "$holder_id" >/dev/null 2>&1 || true
 	docker_remove_resource_id "$docker_bin" container "$holder_id" >/dev/null || fail 'could not remove killed flock holder'

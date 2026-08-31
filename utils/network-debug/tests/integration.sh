@@ -676,7 +676,7 @@ if [ "$PWRU_READY" = true ]; then
 	fi
 	pwru_force_remove "$PWRU_CONTAINER" 15 || requirement "public trace container cleanup failed"
 	PWRU_CONTAINER_CREATED=false
-	if docker_resource_present container "$PWRU_CONTAINER"; then
+	if docker_resource_id_exists "$DOCKER_BIN" container "$PWRU_CONTAINER_ID"; then
 		requirement "public trace container survived cleanup"
 	else
 		resource_status=$?

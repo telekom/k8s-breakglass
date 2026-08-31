@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Docker containers and networks have immutable IDs and can be removed by
-# those IDs. Volumes have no removable ID, so their name and ownership label
-# are revalidated immediately before the name-based remove; any inspection
-# uncertainty fails closed and leaves the volume behind.
+# those IDs. Docker volumes have no removable ID, so test harnesses create
+# anonymous volumes through an owner container and remove them with that
+# container's immutable ID and Docker's -v operation.
 
 docker_resource_call() {
 	docker_bin=$1
@@ -42,6 +42,16 @@ docker_remove_resource_id() {
 	esac
 }
 
+docker_remove_resource_with_volumes() {
+	[ "$#" -eq 3 ] || return 2
+	docker_bin=$1
+	kind=$2
+	id=$3
+	[ "$kind" = container ] || return 2
+	[ -n "$id" ] || return 2
+	docker_resource_call "$docker_bin" rm -fv "$id"
+}
+
 docker_resource_id_exists() {
 	[ "$#" -eq 3 ] || return 2
 	docker_bin=$1
@@ -52,15 +62,4 @@ docker_resource_id_exists() {
 	network) docker_resource_call "$docker_bin" network inspect "$id" >/dev/null 2>&1 ;;
 	*) return 2 ;;
 	esac
-}
-
-docker_remove_volume_if_owned() {
-	[ "$#" -eq 4 ] || return 2
-	docker_bin=$1
-	name=$2
-	label=$3
-	expected=$4
-	actual=$(docker_resource_call "$docker_bin" volume inspect --format "{{index .Labels \"$label\"}}" "$name") || return 1
-	[ "$actual" = "$expected" ] || return 3
-	docker_resource_call "$docker_bin" volume rm "$name"
 }
