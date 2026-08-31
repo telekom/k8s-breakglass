@@ -26,10 +26,13 @@
 
 ## Standalone cluster-validator image
 
-This repository also publishes a provider-neutral, read-only
-`cluster-validator` image for one-time and post-upgrade Kubernetes readiness
-reports. It uses only public Kubernetes APIs, has no T-CaaS-specific checks or
-assumptions, and supports `linux/amd64` and `linux/arm64`. See the
+This repository also contains a provider-neutral, read-only
+`cluster-validator` image definition for one-time and post-upgrade Kubernetes
+readiness reports. It uses only public Kubernetes APIs, has no T-CaaS-specific
+checks or assumptions, and supports `linux/amd64` and `linux/arm64`. This tree
+builds the image and local OCI archive but does not publish a release image;
+follow the deployment pipeline's signing and registry instructions before use.
+See the
 [cluster-validator contract and image guide](./docs/cluster-validator.md) and
 the [post-upgrade runbook](./docs/runbooks/cluster-validator.md). The image's
 in-container operator bundle is in

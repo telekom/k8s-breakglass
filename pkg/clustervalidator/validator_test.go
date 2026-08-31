@@ -291,6 +291,27 @@ func TestInvalidCustomStatusIsReportError(t *testing.T) {
 	require.Equal(t, StatusError, report.Checks[0].Status)
 }
 
+func TestValidateAggregatesStatusErrorAfterNotReady(t *testing.T) {
+	client, discoveryClient := readyClient()
+	for name, checks := range map[string][]Check{
+		"not-ready sorts before error": {
+			resultCheck{name: "a-not-ready", status: StatusNotReady, message: "waiting"},
+			resultCheck{name: "z-error", status: StatusError, message: "failed"},
+		},
+		"error sorts before not-ready": {
+			resultCheck{name: "a-error", status: StatusError, message: "failed"},
+			resultCheck{name: "z-not-ready", status: StatusNotReady, message: "waiting"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			report := NewValidator(checks...).ValidateWithPodIdentity(
+				context.Background(), client, discoveryClient, ModeOneTime, false, PodIdentity{},
+			)
+			require.Equal(t, StatusError, report.Status)
+		})
+	}
+}
+
 type customCheck struct{}
 
 func (customCheck) Name() string { return "custom" }
@@ -303,6 +324,17 @@ type invalidCheck struct{}
 func (invalidCheck) Name() string { return "invalid" }
 func (invalidCheck) Run(context.Context, ReadOnlyClient, ReadOnlyDiscovery) CheckResult {
 	return CheckResult{Name: "ignored", Status: "unknown"}
+}
+
+type resultCheck struct {
+	name    string
+	status  string
+	message string
+}
+
+func (c resultCheck) Name() string { return c.name }
+func (c resultCheck) Run(context.Context, ReadOnlyClient, ReadOnlyDiscovery) CheckResult {
+	return CheckResult{Status: c.status, Message: c.message}
 }
 
 func checkNames(results []CheckResult) []string {

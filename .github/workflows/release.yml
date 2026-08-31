@@ -721,18 +721,7 @@ jobs:
             if [ "${chart_name}" = "debug-session-catalogue" ]; then
               catalogue_chart_ref="${subject}"
               helm show values "${chart_package}" > catalogue-values.yaml
-              ruby -ryaml -e '
-                values = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false) || {}
-                images = values.fetch("images", {})
-                refs = values.fetch("profiles", []).map do |profile|
-                  image = profile["image"] || images.fetch(profile.fetch("imageKey"))
-                  repository = image.fetch("repository")
-                  digest = image["digest"].to_s
-                  tag = image["tag"].to_s
-                  digest.empty? ? "#{repository}:#{tag}" : "#{repository}@#{digest}"
-                end
-                puts refs.uniq.sort
-              ' catalogue-values.yaml | awk '/@sha256:[0-9a-f]{64}$/' > catalogue-image-refs.txt
+              hack/extract-catalogue-image-refs.sh catalogue-values.yaml catalogue-image-refs.txt
             fi
           done
           if [ -n "${catalogue_chart_ref}" ]; then
