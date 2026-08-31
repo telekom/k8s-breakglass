@@ -17,12 +17,15 @@ limitations under the License.
 package debug
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"text/template"
 	"time"
 
+	"github.com/Masterminds/sprig/v3"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
@@ -31,7 +34,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
@@ -153,7 +155,7 @@ func (m *AuxiliaryResourceManager) deployAuxiliaryResources(
 				return statuses, err
 			}
 		}
-		status, err := m.deployResource(ctx, targetClient, targetNamespace, auxRes, renderCtx, session)
+		status, err := m.deployResourceWithFence(ctx, targetClient, targetNamespace, auxRes, renderCtx, session, fence)
 		statuses = append(statuses, status)
 
 		if err != nil {
@@ -236,7 +238,6 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 				APIVersion:   addlRes.APIVersion,
 				ResourceName: addlRes.ResourceName,
 				Namespace:    addlRes.Namespace,
-				UID:          addlRes.UID,
 			}
 
 			err := m.deleteResource(ctx, targetClient, addlStatus, session)
@@ -284,6 +285,12 @@ func (m *AuxiliaryResourceManager) filterEnabledResources(
 ) []breakglassv1alpha1.AuxiliaryResource {
 	if template == nil {
 		return nil
+	}
+
+	// Build maps for efficient lookup
+	defaultEnabled := make(map[string]bool)
+	for name, enabled := range template.AuxiliaryResourceDefaults {
+		defaultEnabled[name] = enabled
 	}
 
 	// Categories that are always required
@@ -340,7 +347,7 @@ func (m *AuxiliaryResourceManager) filterEnabledResources(
 		}
 
 		// Check default
-		if template.AuxiliaryResourceDefaults[res.Category] {
+		if defaultEnabled[res.Name] {
 			enabled = append(enabled, res)
 		}
 	}
@@ -472,7 +479,15 @@ func (m *AuxiliaryResourceManager) buildVarsFromSession(
 		vars[name] = extractJSONValue(jsonVal.Raw)
 	}
 
-	// Preserve input; the renderer requires serialization at output.
+	// Escape at the boundary: these values are end-user controlled and are
+	// substituted into YAML documents, so they must not be able to inject
+	// sibling keys. See template_vars_sanitize.go.
+	vars, changed := sanitizeTemplateVarsReportingChanges(vars)
+	if len(changed) > 0 {
+		m.log.Warnw("Sanitized YAML-unsafe characters in extraDeployValues before auxiliary template rendering",
+			"session", session.Name, "variables", changed)
+	}
+
 	return vars
 }
 
@@ -525,6 +540,18 @@ func (m *AuxiliaryResourceManager) deployResource(
 	auxRes breakglassv1alpha1.AuxiliaryResource,
 	renderCtx breakglassv1alpha1.AuxiliaryResourceContext,
 	session *breakglassv1alpha1.DebugSession,
+) (breakglassv1alpha1.AuxiliaryResourceStatus, error) {
+	return m.deployResourceWithFence(ctx, targetClient, targetNamespace, auxRes, renderCtx, session, nil)
+}
+
+func (m *AuxiliaryResourceManager) deployResourceWithFence(
+	ctx context.Context,
+	targetClient client.Client,
+	targetNamespace string,
+	auxRes breakglassv1alpha1.AuxiliaryResource,
+	renderCtx breakglassv1alpha1.AuxiliaryResourceContext,
+	session *breakglassv1alpha1.DebugSession,
+	fence func() error,
 ) (breakglassv1alpha1.AuxiliaryResourceStatus, error) {
 	status := breakglassv1alpha1.AuxiliaryResourceStatus{
 		Name:     auxRes.Name,
@@ -619,13 +646,19 @@ func (m *AuxiliaryResourceManager) deployResource(
 			annotations[k] = v
 		}
 		annotations["breakglass.t-caas.telekom.com/source-session"] = fmt.Sprintf("%s/%s", session.Namespace, session.Name)
+		annotations[sourceSessionUIDAnnotation] = string(session.UID)
 		obj.SetAnnotations(annotations)
 
 		// Deploy the resource using Server-Side Apply (SSA) for idempotency.
 		// SSA will create or update the resource, handling existing resources automatically.
 		// Note: We use our own field owner and force ownership to take over any existing resources.
 		obj.SetManagedFields(nil)
-		if err := applyTrackedResource(ctx, targetClient, obj); err != nil {
+		if fence != nil {
+			if err := fence(); err != nil {
+				return status, err
+			}
+		}
+		if err := utils.ApplyUnstructured(ctx, targetClient, obj); err != nil {
 			status.Error = fmt.Sprintf("SSA apply failed for %s/%s: %v", obj.GetKind(), obj.GetName(), err)
 			return status, fmt.Errorf("failed to apply resource %s/%s: %w", obj.GetKind(), obj.GetName(), err)
 		}
@@ -657,8 +690,17 @@ func (m *AuxiliaryResourceManager) deployResource(
 			status.APIVersion = obj.GetAPIVersion()
 			status.ResourceName = obj.GetName()
 			status.Namespace = obj.GetNamespace()
-			status.UID = string(obj.GetUID())
 			status.Created = true
+			status.UID = string(obj.GetUID())
+			if status.UID == "" {
+				live := &unstructured.Unstructured{}
+				live.SetAPIVersion(obj.GetAPIVersion())
+				live.SetKind(obj.GetKind())
+				if err := targetClient.Get(ctx, client.ObjectKeyFromObject(obj), live); err != nil {
+					return status, fmt.Errorf("failed to read created auxiliary resource %s/%s: %w", obj.GetKind(), obj.GetName(), err)
+				}
+				status.UID = string(live.GetUID())
+			}
 			now := time.Now().UTC().Format(time.RFC3339)
 			status.CreatedAt = &now
 		} else {
@@ -670,6 +712,15 @@ func (m *AuxiliaryResourceManager) deployResource(
 				Namespace:    obj.GetNamespace(),
 				UID:          string(obj.GetUID()),
 			})
+			if status.AdditionalResources[len(status.AdditionalResources)-1].UID == "" {
+				live := &unstructured.Unstructured{}
+				live.SetAPIVersion(obj.GetAPIVersion())
+				live.SetKind(obj.GetKind())
+				if err := targetClient.Get(ctx, client.ObjectKeyFromObject(obj), live); err != nil {
+					return status, fmt.Errorf("failed to read created auxiliary resource %s/%s: %w", obj.GetKind(), obj.GetName(), err)
+				}
+				status.AdditionalResources[len(status.AdditionalResources)-1].UID = string(live.GetUID())
+			}
 		}
 	}
 
@@ -684,10 +735,25 @@ func (m *AuxiliaryResourceManager) deployResource(
 
 // renderTemplate renders a Go template with the given context.
 func (m *AuxiliaryResourceManager) renderTemplate(templateBytes []byte, ctx breakglassv1alpha1.AuxiliaryResourceContext) ([]byte, error) {
-	if len(templateBytes) == 0 {
-		return templateBytes, nil
+	// Convert context to map for template
+	ctxMap, err := toMap(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert context: %w", err)
 	}
-	return NewTemplateRenderer().RenderTemplateString(string(templateBytes), ctx)
+
+	// Parse template with sprig functions
+	tmpl, err := template.New("auxiliary").Funcs(sprig.FuncMap()).Parse(string(templateBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse template: %w", err)
+	}
+
+	// Execute template
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, ctxMap); err != nil {
+		return nil, fmt.Errorf("failed to execute template: %w", err)
+	}
+
+	return buf.Bytes(), nil
 }
 
 // toMap converts a struct to a map using JSON marshaling.
@@ -716,11 +782,37 @@ func (m *AuxiliaryResourceManager) deleteResource(
 	obj.SetKind(status.Kind)
 	obj.SetName(status.ResourceName)
 	obj.SetNamespace(status.Namespace)
-	uid := types.UID(status.UID)
-	obj.SetUID(uid)
 
-	// Delete the resource
-	if err := deleteTrackedResource(ctx, targetClient, session, obj); err != nil {
+	// Resolve and verify the live object immediately before deletion. Names are
+	// reusable; a replacement must never be removed for an old session.
+	live := &unstructured.Unstructured{}
+	live.SetAPIVersion(status.APIVersion)
+	live.SetKind(status.Kind)
+	if err := targetClient.Get(ctx, client.ObjectKeyFromObject(obj), live); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get %s/%s before deletion: %w", status.Kind, status.ResourceName, err)
+	}
+	if live.GetUID() == "" {
+		return fmt.Errorf("refusing to delete %s/%s: live UID is unavailable", status.Kind, status.ResourceName)
+	}
+	if status.UID != "" {
+		if string(live.GetUID()) != status.UID {
+			return fmt.Errorf("refusing to delete %s/%s: UID changed from %s to %s", status.Kind, status.ResourceName, status.UID, live.GetUID())
+		}
+	} else if session == nil || session.UID == "" || live.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
+		return fmt.Errorf("refusing to delete %s/%s: ownership identity is unavailable or changed", status.Kind, status.ResourceName)
+	}
+
+	var deleteErr error
+	if live.GetUID() != "" {
+		uid := live.GetUID()
+		deleteErr = targetClient.Delete(ctx, live, client.Preconditions{UID: &uid})
+	} else {
+		deleteErr = targetClient.Delete(ctx, live)
+	}
+	if err := deleteErr; err != nil {
 		if apierrors.IsNotFound(err) {
 			// Already deleted, that's fine
 			m.log.Debugw("Auxiliary resource already deleted",
@@ -925,7 +1017,7 @@ func (m *AuxiliaryResourceManager) CheckAuxiliaryResourcesReadiness(
 
 		// Check primary resource readiness
 		if !status.Ready {
-			primaryReady := m.checkSingleResourceReadiness(ctx, log, targetClient, status.APIVersion, status.Kind, status.ResourceName, status.Namespace, status.UID)
+			primaryReady := m.checkSingleResourceReadiness(ctx, log, targetClient, status.APIVersion, status.Kind, status.ResourceName, status.Namespace)
 			status.ReadinessStatus = primaryReady.readinessStatus
 			if primaryReady.ready {
 				status.Ready = true
@@ -961,7 +1053,7 @@ func (m *AuxiliaryResourceManager) CheckAuxiliaryResourcesReadiness(
 				continue
 			}
 
-			addlReady := m.checkSingleResourceReadiness(ctx, log, targetClient, addlRes.APIVersion, addlRes.Kind, addlRes.ResourceName, addlRes.Namespace, addlRes.UID)
+			addlReady := m.checkSingleResourceReadiness(ctx, log, targetClient, addlRes.APIVersion, addlRes.Kind, addlRes.ResourceName, addlRes.Namespace)
 			addlRes.ReadinessStatus = addlReady.readinessStatus
 
 			if addlReady.ready {
@@ -1005,7 +1097,7 @@ func (m *AuxiliaryResourceManager) checkSingleResourceReadiness(
 	ctx context.Context,
 	log *zap.SugaredLogger,
 	targetClient client.Client,
-	apiVersion, kind, name, namespace, expectedUID string,
+	apiVersion, kind, name, namespace string,
 ) readinessResult {
 	gvk, err := parseGVK(apiVersion, kind)
 	if err != nil {
@@ -1016,21 +1108,7 @@ func (m *AuxiliaryResourceManager) checkSingleResourceReadiness(
 		return readinessResult{failed: true, message: fmt.Sprintf("invalid GVK: %v", err)}
 	}
 
-	if expectedUID == "" {
-		return readinessResult{failed: true, message: "resource identity is not recorded; terminate this legacy debug session and request a new session"}
-	}
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(gvk)
-	if err := targetClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, obj); err != nil {
-		if apierrors.IsNotFound(err) {
-			return readinessResult{readinessStatus: "NotFound", message: "resource not found"}
-		}
-		return readinessResult{readinessStatus: "Unknown", message: fmt.Sprintf("resource lookup failed: %v", err)}
-	}
-	if string(obj.GetUID()) != expectedUID {
-		return readinessResult{failed: true, message: "resource was replaced"}
-	}
-	readiness := m.readinessChecker.CheckReadiness(obj)
+	readiness := m.readinessChecker.CheckResourceReadiness(ctx, targetClient, gvk, name, namespace)
 
 	return readinessResult{
 		ready:           readiness.IsReady(),

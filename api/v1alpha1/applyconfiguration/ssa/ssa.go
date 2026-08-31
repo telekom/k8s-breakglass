@@ -635,6 +635,9 @@ func AuxiliaryResourceStatusFrom(s *breakglassv1alpha1.AuxiliaryResourceStatus) 
 		WithCreated(s.Created).
 		WithReady(s.Ready).
 		WithDeleted(s.Deleted)
+	if s.UID != "" {
+		result.WithUID(s.UID)
+	}
 
 	if s.Category != "" {
 		result.WithCategory(s.Category)
@@ -685,6 +688,9 @@ func AdditionalResourceRefFrom(r *breakglassv1alpha1.AdditionalResourceRef) *ac.
 		WithResourceName(r.ResourceName).
 		WithReady(r.Ready).
 		WithDeleted(r.Deleted)
+	if r.UID != "" {
+		result.WithUID(r.UID)
+	}
 
 	if r.Namespace != "" {
 		result.WithNamespace(r.Namespace)
@@ -708,6 +714,9 @@ func PodTemplateResourceStatusFrom(s *breakglassv1alpha1.PodTemplateResourceStat
 		WithCreated(s.Created).
 		WithReady(s.Ready).
 		WithDeleted(s.Deleted)
+	if s.UID != "" {
+		result.WithUID(s.UID)
+	}
 	if s.Kind != "" {
 		result.WithKind(s.Kind)
 	}
@@ -811,6 +820,9 @@ func CopiedPodRefFrom(c *breakglassv1alpha1.CopiedPodRef) *ac.CopiedPodRefApplyC
 		WithCopyNamespace(c.CopyNamespace).
 		WithCopyUID(c.CopyUID).
 		WithCreatedAt(c.CreatedAt)
+	if c.UID != "" {
+		result.WithUID(c.UID)
+	}
 
 	if c.ExpiresAt != nil {
 		result.WithExpiresAt(*c.ExpiresAt)

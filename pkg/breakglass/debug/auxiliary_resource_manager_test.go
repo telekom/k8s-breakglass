@@ -29,6 +29,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -1161,6 +1162,11 @@ func TestCleanupAuxiliaryResources_WithAdditionalResources(t *testing.T) {
 			Name:      "config-1",
 			UID:       "fixture-config-1",
 			Namespace: "debug-ns",
+			UID:       types.UID("config-1-uid"),
+			Annotations: map[string]string{
+				"breakglass.t-caas.telekom.com/source-session":     "breakglass-system/test-session",
+				"breakglass.t-caas.telekom.com/source-session-uid": "session-uid",
+			},
 		},
 	}
 	cm2 := &corev1.ConfigMap{
@@ -1168,6 +1174,11 @@ func TestCleanupAuxiliaryResources_WithAdditionalResources(t *testing.T) {
 			Name:      "config-2",
 			UID:       "fixture-config-2",
 			Namespace: "debug-ns",
+			UID:       types.UID("config-2-uid"),
+			Annotations: map[string]string{
+				"breakglass.t-caas.telekom.com/source-session":     "breakglass-system/test-session",
+				"breakglass.t-caas.telekom.com/source-session-uid": "session-uid",
+			},
 		},
 	}
 
@@ -1184,6 +1195,7 @@ func TestCleanupAuxiliaryResources_WithAdditionalResources(t *testing.T) {
 			Name:      "test-session",
 			UID:       "fixture-test-session",
 			Namespace: "breakglass-system",
+			UID:       types.UID("session-uid"),
 		},
 		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "prod",
@@ -2485,6 +2497,11 @@ func TestCleanupAuxiliaryResources_PartialFailure(t *testing.T) {
 			Name:      "config-1",
 			UID:       "fixture-config-1",
 			Namespace: "debug-ns",
+			UID:       types.UID("config-1-uid"),
+			Annotations: map[string]string{
+				"breakglass.t-caas.telekom.com/source-session":     "breakglass-system/test-session",
+				"breakglass.t-caas.telekom.com/source-session-uid": "session-uid",
+			},
 		},
 	}
 
@@ -2501,6 +2518,7 @@ func TestCleanupAuxiliaryResources_PartialFailure(t *testing.T) {
 			Name:      "test-session",
 			UID:       "fixture-test-session",
 			Namespace: "breakglass-system",
+			UID:       types.UID("session-uid"),
 		},
 		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "prod",

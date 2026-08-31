@@ -20,6 +20,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -63,7 +65,24 @@ func (h *KubectlDebugHandler) deleteOrphanedPod(ctx context.Context, targetClien
 	deleteCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), orphanCleanupTimeout)
 	defer cancel()
 
-	if err := targetClient.Delete(deleteCtx, pod); err != nil && !apierrors.IsNotFound(err) {
+	if pod == nil || pod.UID == "" || pod.Annotations[sourceSessionUIDAnnotation] == "" {
+		log.Errorw("Refusing to delete orphaned debug pod without immutable identity",
+			"pod", podName(pod), "statusError", cause)
+		return
+	}
+	live := &corev1.Pod{}
+	if err := targetClient.Get(deleteCtx, ctrlclient.ObjectKeyFromObject(pod), live); err != nil {
+		if !apierrors.IsNotFound(err) {
+			log.Errorw("Failed to read orphaned debug pod before deletion", "pod", pod.Name, "podNamespace", pod.Namespace, "statusError", cause, "getError", err)
+		}
+		return
+	}
+	if live.UID != pod.UID || live.Annotations[sourceSessionUIDAnnotation] != pod.Annotations[sourceSessionUIDAnnotation] {
+		log.Warnw("Preserved orphaned debug pod because its immutable identity changed", "pod", pod.Name, "podNamespace", pod.Namespace, "statusError", cause)
+		return
+	}
+	uidPrecondition := metav1.NewUIDPreconditions(string(pod.UID))
+	if err := targetClient.Delete(deleteCtx, live, ctrlclient.Preconditions(*uidPrecondition)); err != nil && !apierrors.IsNotFound(err) {
 		log.Errorw("Failed to delete orphaned debug pod after status update failure; "+
 			"the pod is not tracked in the session status and will not be cleaned up automatically",
 			"pod", pod.Name,
@@ -77,6 +96,13 @@ func (h *KubectlDebugHandler) deleteOrphanedPod(ctx context.Context, targetClien
 		"pod", pod.Name,
 		"podNamespace", pod.Namespace,
 		"statusError", cause)
+}
+
+func podName(pod *corev1.Pod) string {
+	if pod == nil {
+		return "<nil>"
+	}
+	return pod.Name
 }
 
 // orphanCleanupTimeout bounds the compensating delete for a pod that could not be
@@ -591,6 +617,9 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 				"breakglass.telekom.com/original":    originalPodName,
 				"breakglass.telekom.com/original-ns": originalNamespace,
 			},
+			Annotations: map[string]string{
+				sourceSessionUIDAnnotation: string(ds.UID),
+			},
 		},
 		Spec: *originalPod.Spec.DeepCopy(),
 	}
@@ -666,6 +695,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	// label change can still race this call; the target cluster's admission
 	// policy remains the final authority for that unavoidable API boundary.
 	if err := targetClient.Create(ctx, copyPod); err != nil {
+		h.recoverAmbiguousCreatedPod(ctx, targetClient, copyPod, err)
 		return nil, fmt.Errorf("failed to create pod copy: %w", err)
 	}
 
@@ -689,6 +719,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		CopyNamespace:     targetNs,
 		CreatedAt:         now,
 		ExpiresAt:         &expiresAt,
+		UID:               string(copyPod.UID),
 	}
 	allowedPod := breakglassv1alpha1.AllowedPodRef{
 		Namespace: targetNs,
@@ -817,6 +848,9 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 				"breakglass.telekom.com/target-node":  nodeName,
 				"breakglass.telekom.com/requested-by": sanitizeLabel(user),
 			},
+			Annotations: map[string]string{
+				sourceSessionUIDAnnotation: string(ds.UID),
+			},
 		},
 		Spec: corev1.PodSpec{
 			NodeName:      nodeName,
@@ -903,6 +937,7 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	// Create the pod using Create (not SSA). The explicit NodeName binds this
 	// mutation to the re-read node identity; target admission remains authoritative.
 	if err := targetClient.Create(ctx, debugPod); err != nil {
+		h.recoverAmbiguousCreatedPod(ctx, targetClient, debugPod, err)
 		return nil, fmt.Errorf("failed to create node debug pod: %w", err)
 	}
 
@@ -918,6 +953,7 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 		Kind:       "Pod",
 		Name:       podName,
 		Namespace:  namespace,
+		UID:        string(debugPod.UID),
 	}
 
 	if err := h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
@@ -932,6 +968,50 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	}
 
 	return debugPod, nil
+}
+
+// recoverAmbiguousCreatedPod handles a create response that may have been lost
+// after the API server persisted the pod. It intentionally skips AlreadyExists:
+// that error identifies a pre-existing object and must never trigger deletion.
+// For other errors, only a live object carrying this session's immutable marker
+// is eligible, and the observed UID is passed as an API delete precondition.
+func (h *KubectlDebugHandler) recoverAmbiguousCreatedPod(ctx context.Context, targetClient ctrlclient.Client, pod *corev1.Pod, createErr error) {
+	log := zap.S().Named("kubectl-debug")
+	if pod == nil || !isAmbiguousCreateError(createErr) || pod.Annotations[sourceSessionUIDAnnotation] == "" {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), orphanCleanupTimeout)
+	defer cancel()
+	live := &corev1.Pod{}
+	if err := targetClient.Get(cleanupCtx, ctrlclient.ObjectKeyFromObject(pod), live); err != nil {
+		if !apierrors.IsNotFound(err) {
+			log.Errorw("Failed to inspect pod after ambiguous create failure", "pod", pod.Name, "podNamespace", pod.Namespace, "createError", createErr, "getError", err)
+		}
+		return
+	}
+	if live.UID == "" || live.Annotations[sourceSessionUIDAnnotation] != pod.Annotations[sourceSessionUIDAnnotation] {
+		log.Warnw("Preserved pod after ambiguous create failure because ownership could not be verified", "pod", pod.Name, "podNamespace", pod.Namespace, "createError", createErr)
+		return
+	}
+	uidPrecondition := metav1.NewUIDPreconditions(string(live.UID))
+	if err := targetClient.Delete(cleanupCtx, live, ctrlclient.Preconditions(*uidPrecondition)); err != nil && !apierrors.IsNotFound(err) {
+		log.Errorw("Failed to remove pod after ambiguous create failure", "pod", pod.Name, "podNamespace", pod.Namespace, "createError", createErr, "deleteError", err)
+	}
+}
+
+func isAmbiguousCreateError(err error) bool {
+	if err == nil || apierrors.IsAlreadyExists(err) || apierrors.IsForbidden(err) || apierrors.IsInvalid(err) || apierrors.IsUnauthorized(err) || apierrors.IsNotFound(err) {
+		return false
+	}
+	if apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	var urlErr *url.Error
+	return errors.As(err, &urlErr)
 }
 
 func namespaceAllowedForDebugPod(namespace string, labels map[string]string, constraints *breakglassv1alpha1.NamespaceConstraints) bool {
@@ -979,7 +1059,7 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 				Namespace: cp.CopyNamespace,
 			},
 		}
-		if err := targetClient.Delete(ctx, pod); err != nil && !apierrors.IsNotFound(err) {
+		if err := deleteOwnedResource(ctx, targetClient, pod, cp.UID, ds); err != nil && !apierrors.IsNotFound(err) {
 			remainingCopiedPods = append(remainingCopiedPods, cp)
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("delete copied pod %s/%s: %w", cp.CopyNamespace, cp.CopyName, err))
 			continue

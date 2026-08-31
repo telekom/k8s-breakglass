@@ -71,6 +71,12 @@ type DebugSessionController struct {
 	brandingName string
 	baseURL      string
 	disableEmail bool
+	// targetClientFactory and beforeDebugTargetWrite are nil in production. They
+	// are narrow seams for deployment fence tests: the former keeps tests from
+	// needing a live spoke API, while the latter injects a hub-side change after
+	// preparation and before the next authorization fence.
+	targetClientFactory    func(*rest.Config) (ctrlclient.Client, error)
+	beforeDebugTargetWrite func(string)
 }
 
 // NewDebugSessionController creates a new DebugSessionController

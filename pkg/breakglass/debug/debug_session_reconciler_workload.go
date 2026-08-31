@@ -98,11 +98,20 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		return fmt.Errorf("failed to get REST config for cluster %s: %w", ds.Spec.Cluster, restErr)
 	}
 	defer c.ccProvider.ReleasePrivilegedOperationClusterConfig(configuredCluster)
-	baseClient, baseErr := ctrlclient.New(baseRestCfg, ctrlclient.Options{})
+	var baseClient ctrlclient.Client
+	var baseErr error
+	if c.targetClientFactory != nil {
+		baseClient, baseErr = c.targetClientFactory(baseRestCfg)
+	} else {
+		baseClient, baseErr = ctrlclient.New(baseRestCfg, ctrlclient.Options{})
+	}
 	if baseErr != nil {
 		return fmt.Errorf("failed to create base client for cluster %s: %w", ds.Spec.Cluster, baseErr)
 	}
 	fence := func() error {
+		if c.beforeDebugTargetWrite != nil {
+			c.beforeDebugTargetWrite("")
+		}
 		if err := c.ccProvider.ValidatePrivilegedOperationClusterConfig(ctx, configuredCluster); err != nil {
 			return fmt.Errorf("privileged target configuration changed during deployment: %w", err)
 		}
@@ -121,7 +130,6 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		}
 		return nil
 	}
-
 	// Handle impersonation configuration
 	if impConfig != nil && impConfig.ServiceAccountRef != nil {
 		// Use existing ServiceAccount - validate it exists
@@ -171,6 +179,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			if err := utils.ApplyObject(ctx, targetClient, rq); err != nil {
 				return fmt.Errorf("failed to apply resource quota: %w", err)
 			}
+			rqUID, err := captureResourceUID(ctx, targetClient, rq)
+			if err != nil {
+				return fmt.Errorf("failed to read resource quota after apply: %w", err)
+			}
 			log.Infow("ResourceQuota applied", "name", rq.Name)
 			ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
 				APIVersion: gvk.GroupVersion().String(),
@@ -178,6 +190,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				Name:       rq.Name,
 				Namespace:  rq.Namespace,
 				Source:     "debug-resourcequota",
+				UID:        rqUID,
 			})
 		}
 	}
@@ -196,6 +209,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			if err := utils.ApplyObject(ctx, targetClient, pdb); err != nil {
 				return fmt.Errorf("failed to apply pod disruption budget: %w", err)
 			}
+			pdbUID, err := captureResourceUID(ctx, targetClient, pdb)
+			if err != nil {
+				return fmt.Errorf("failed to read pod disruption budget after apply: %w", err)
+			}
 			log.Infow("PodDisruptionBudget applied", "name", pdb.Name)
 			ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
 				APIVersion: gvk.GroupVersion().String(),
@@ -203,6 +220,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				Name:       pdb.Name,
 				Namespace:  pdb.Namespace,
 				Source:     "debug-pdb",
+				UID:        pdbUID,
 			})
 		}
 	}
@@ -252,6 +270,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	if err := utils.ApplyObject(ctx, targetClient, workload); err != nil {
 		return fmt.Errorf("failed to apply workload: %w", err)
 	}
+	workloadUID, err := captureResourceUID(ctx, targetClient, workload)
+	if err != nil {
+		return fmt.Errorf("failed to read workload after apply: %w", err)
+	}
 	log.Infow("Debug workload applied", "name", workload.GetName())
 
 	// Record deployed resource using captured GVK
@@ -261,6 +283,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		Name:       workload.GetName(),
 		Namespace:  targetNs,
 		Source:     "debug-pod",
+		UID:        workloadUID,
 	})
 
 	log.Infow("Deployed debug workload",
@@ -344,6 +367,10 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 
 	// Merge pod-level annotations from the template manifest
 	annotations = mergeStringMaps(annotations, renderResult.PodAnnotations)
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	annotations[sourceSessionUIDAnnotation] = string(ds.UID)
 
 	workloadType := template.Spec.WorkloadType
 	if workloadType == "" {
@@ -561,6 +588,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		annotations = make(map[string]string)
 	}
 	annotations["breakglass.t-caas.telekom.com/source-session"] = fmt.Sprintf("%s/%s", ds.Namespace, ds.Name)
+	annotations[sourceSessionUIDAnnotation] = string(ds.UID)
 	obj.SetAnnotations(annotations)
 
 	// Deploy using Server-Side Apply for idempotency
@@ -568,6 +596,12 @@ func (c *DebugSessionController) deployPodTemplateResource(
 	//nolint:staticcheck // SA1019: client.Apply for Patch is still required for unstructured objects
 	if err := targetClient.Patch(ctx, obj, ctrlclient.Apply, ctrlclient.FieldOwner("breakglass-controller"), ctrlclient.ForceOwnership); err != nil {
 		return fmt.Errorf("SSA apply failed: %w", err)
+	}
+	created := &unstructured.Unstructured{}
+	created.SetAPIVersion(obj.GetAPIVersion())
+	created.SetKind(obj.GetKind())
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(obj), created); err != nil {
+		return fmt.Errorf("failed to read created pod template resource: %w", err)
 	}
 
 	// Track in session status
@@ -578,6 +612,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		Namespace:    obj.GetNamespace(),
 		Source:       "podTemplateString",
 		Created:      true,
+		UID:          string(created.GetUID()),
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	status.CreatedAt = &now
@@ -590,6 +625,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		Name:       obj.GetName(),
 		Namespace:  obj.GetNamespace(),
 		Source:     "pod-template",
+		UID:        string(created.GetUID()),
 	})
 
 	log.Infow("Deployed pod template resource",

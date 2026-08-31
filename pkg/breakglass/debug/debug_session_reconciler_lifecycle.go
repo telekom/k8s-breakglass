@@ -19,8 +19,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/retry"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -110,9 +108,6 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 
 	allowedPods := make([]breakglassv1alpha1.AllowedPodRef, 0, len(podList.Items))
 	for _, pod := range podList.Items {
-		if !c.podBelongsToTrackedWorkload(ctx, targetClient, ds, &pod) {
-			continue
-		}
 		ready := false
 		for _, cond := range pod.Status.Conditions {
 			if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
@@ -130,7 +125,6 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 		allowedPods = append(allowedPods, breakglassv1alpha1.AllowedPodRef{
 			Namespace:       pod.Namespace,
 			Name:            pod.Name,
-			UID:             string(pod.UID),
 			NodeName:        pod.Spec.NodeName,
 			Ready:           ready,
 			Phase:           string(pod.Status.Phase),
@@ -150,10 +144,9 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 				}
 			}
 			if !found {
-				// Find it in the old allowedPods to preserve its state only for the
-				// exact pod that received the ephemeral container.
+				// Find it in the old allowedPods to preserve its state
 				for _, oldAP := range ds.Status.AllowedPods {
-					if oldAP.Namespace == ec.Namespace && oldAP.Name == ec.PodName && oldAP.UID == ec.PodUID {
+					if oldAP.Namespace == ec.Namespace && oldAP.Name == ec.PodName {
 						allowedPods = append(allowedPods, oldAP)
 						break
 					}
@@ -171,61 +164,6 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 		return c.patchDebugSessionAllowedPodsAndAuxiliaryStatuses(ctx, ds, allowedPods, ds.Status.AuxiliaryResourceStatuses)
 	}
 	return c.patchDebugSessionAllowedPods(ctx, ds, allowedPods)
-}
-
-// podBelongsToTrackedWorkload treats labels as discovery only. Authorization follows
-// the UID of the controller created for this session, including Deployment ReplicaSets.
-func (c *DebugSessionController) podBelongsToTrackedWorkload(ctx context.Context, targetClient ctrlclient.Client, ds *breakglassv1alpha1.DebugSession, pod *corev1.Pod) bool {
-	for _, ref := range ds.Status.DeployedResources {
-		if ref.UID == "" || ref.Namespace != pod.Namespace || ref.Source != "debug-pod" {
-			continue
-		}
-		if ref.Kind == "Pod" && ref.Name == pod.Name && ref.UID == string(pod.UID) {
-			return true
-		}
-		owner := metav1.GetControllerOf(pod)
-		if owner == nil {
-			continue
-		}
-		switch ref.Kind {
-		case "DaemonSet":
-			if owner.Kind != "DaemonSet" || owner.Name != ref.Name || string(owner.UID) != ref.UID {
-				continue
-			}
-			workload := &appsv1.DaemonSet{}
-			if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, workload); err != nil || string(workload.UID) != ref.UID {
-				continue
-			}
-			if podMatchesAdmittedWorkloadTemplate(ctx, targetClient, pod, &workload.Spec.Template, true) {
-				return true
-			}
-		case "Deployment":
-			if owner.Kind != "ReplicaSet" || owner.APIVersion != "apps/v1" {
-				continue
-			}
-			rs := &appsv1.ReplicaSet{}
-			if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: pod.Namespace, Name: owner.Name}, rs); err != nil || rs.UID != owner.UID {
-				continue
-			}
-			rsOwner := metav1.GetControllerOf(rs)
-			if rsOwner == nil || rsOwner.Kind != "Deployment" || rsOwner.Name != ref.Name || string(rsOwner.UID) != ref.UID {
-				continue
-			}
-			workload := &appsv1.Deployment{}
-			if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, workload); err != nil || string(workload.UID) != ref.UID {
-				continue
-			}
-			if !podMatchesWorkloadTemplate(&corev1.Pod{Spec: rs.Spec.Template.Spec}, &workload.Spec.Template, false) {
-				continue
-			}
-			// Only the live Pod from the API list receives admission defaults;
-			// the ReplicaSet-to-Deployment template comparison above stays strict.
-			if podMatchesAdmittedWorkloadTemplate(ctx, targetClient, pod, &rs.Spec.Template, false) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (c *DebugSessionController) updateAuxiliaryResourceReadiness(
@@ -416,9 +354,15 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	if err := kubectlHandler.CleanupKubectlDebugResources(ctx, ds); err != nil {
 		// Check if the error is due to missing ClusterConfig - if so, treat as cleanup complete
 		if errors.Is(err, cluster.ErrClusterConfigNotFound) {
-			log.Warnw("ClusterConfig no longer exists; retaining cleanup inventory for retry",
+			log.Warnw("ClusterConfig no longer exists, treating cleanup as complete (orphaned session)",
 				"cluster", ds.Spec.Cluster)
-			return fmt.Errorf("cleanup blocked by missing ClusterConfig: %w", err)
+			// Clear deployed resources since we can't clean them up anyway
+			ds.Status.DeployedResources = nil
+			ds.Status.AllowedPods = nil
+			ds.Status.KubectlDebugStatus = nil
+			ds.Status.AuxiliaryResourceStatuses = nil
+			ds.Status.PodTemplateResourceStatuses = nil
+			return c.patchDebugSessionCleanupStatus(ctx, ds)
 		}
 		log.Errorw("Failed to cleanup kubectl-debug resources", "error", err)
 		cleanupErrors = append(cleanupErrors, err)
@@ -438,9 +382,15 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	if err != nil {
 		// Check if the error is due to missing ClusterConfig - if so, treat as cleanup complete
 		if errors.Is(err, cluster.ErrClusterConfigNotFound) {
-			log.Warnw("ClusterConfig no longer exists; retaining cleanup inventory for retry",
+			log.Warnw("ClusterConfig no longer exists, treating cleanup as complete (orphaned session)",
 				"cluster", ds.Spec.Cluster)
-			return fmt.Errorf("cleanup blocked by missing ClusterConfig: %w", err)
+			// Clear deployed resources since we can't clean them up anyway
+			ds.Status.DeployedResources = nil
+			ds.Status.AllowedPods = nil
+			ds.Status.KubectlDebugStatus = nil
+			ds.Status.AuxiliaryResourceStatuses = nil
+			ds.Status.PodTemplateResourceStatuses = nil
+			return c.patchDebugSessionCleanupStatus(ctx, ds)
 		}
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to get REST config: %w", err))
 		return errors.Join(cleanupErrors...)
@@ -561,7 +511,6 @@ func (c *DebugSessionController) cleanupDeployedResources(
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      ref.Name,
 					Namespace: ref.Namespace,
-					UID:       types.UID(ref.UID),
 				},
 			}
 		case "Deployment":
@@ -569,7 +518,6 @@ func (c *DebugSessionController) cleanupDeployedResources(
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      ref.Name,
 					Namespace: ref.Namespace,
-					UID:       types.UID(ref.UID),
 				},
 			}
 		case "ResourceQuota":
@@ -577,7 +525,6 @@ func (c *DebugSessionController) cleanupDeployedResources(
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      ref.Name,
 					Namespace: ref.Namespace,
-					UID:       types.UID(ref.UID),
 				},
 			}
 		case "PodDisruptionBudget":
@@ -585,7 +532,6 @@ func (c *DebugSessionController) cleanupDeployedResources(
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      ref.Name,
 					Namespace: ref.Namespace,
-					UID:       types.UID(ref.UID),
 				},
 			}
 		case "Pod":
@@ -593,7 +539,6 @@ func (c *DebugSessionController) cleanupDeployedResources(
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      ref.Name,
 					Namespace: ref.Namespace,
-					UID:       types.UID(ref.UID),
 				},
 			}
 		default:
@@ -607,8 +552,7 @@ func (c *DebugSessionController) cleanupDeployedResources(
 			continue
 		}
 
-		obj.GetObjectKind().SetGroupVersionKind(schema.FromAPIVersionAndKind(ref.APIVersion, ref.Kind))
-		if err := deleteTrackedResource(ctx, targetClient, ds, obj); err != nil {
+		if err := deleteOwnedResource(ctx, targetClient, obj, ref.UID, ds); err != nil {
 			if apierrors.IsNotFound(err) {
 				log.Debugw("Debug resource already deleted", "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace)
 				continue
@@ -624,6 +568,43 @@ func (c *DebugSessionController) cleanupDeployedResources(
 	ds.Status.DeployedResources = remainingDeployedResources
 	ds.Status.AllowedPods = allowedPodsForRemainingDeployedPods(ds.Status.AllowedPods, remainingDeployedResources)
 	return errors.Join(cleanupErrors...)
+}
+
+const sourceSessionUIDAnnotation = "breakglass.t-caas.telekom.com/source-session-uid"
+
+// deleteOwnedResource resolves the target object immediately before deletion and
+// verifies immutable ownership. A name is reusable after deletion, so deleting
+// a name-only placeholder can destroy a replacement belonging to another
+// session. Records written before UID tracking was introduced are only
+// deletable when the immutable session UID annotation is present and matches.
+func deleteOwnedResource(ctx context.Context, targetClient ctrlclient.Client, obj ctrlclient.Object, expectedUID string, session *breakglassv1alpha1.DebugSession) error {
+	live := obj.DeepCopyObject().(ctrlclient.Object)
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(obj), live); err != nil {
+		return err
+	}
+	if live.GetUID() == "" {
+		return fmt.Errorf("refusing to delete %s %s/%s: live UID is unavailable", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetNamespace(), obj.GetName())
+	}
+	if expectedUID != "" {
+		if string(live.GetUID()) != expectedUID {
+			return fmt.Errorf("refusing to delete %s %s/%s: UID changed from %s to %s", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetNamespace(), obj.GetName(), expectedUID, live.GetUID())
+		}
+	} else if session == nil || session.UID == "" || live.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
+		return fmt.Errorf("refusing to delete %s %s/%s: ownership identity is unavailable or changed", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetNamespace(), obj.GetName())
+	}
+	if live.GetUID() != "" {
+		uid := live.GetUID()
+		return targetClient.Delete(ctx, live, ctrlclient.Preconditions{UID: &uid})
+	}
+	return targetClient.Delete(ctx, live)
+}
+
+func captureResourceUID(ctx context.Context, targetClient ctrlclient.Client, obj ctrlclient.Object) (string, error) {
+	live := obj.DeepCopyObject().(ctrlclient.Object)
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(obj), live); err != nil {
+		return "", err
+	}
+	return string(live.GetUID()), nil
 }
 
 func allowedPodsForRemainingDeployedPods(
@@ -694,10 +675,8 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 		obj.SetGroupVersionKind(gvk)
 		obj.SetName(status.ResourceName)
 		obj.SetNamespace(status.Namespace)
-		uid := types.UID(status.UID)
-		obj.SetUID(uid)
 
-		if err := deleteTrackedResource(ctx, targetClient, ds, obj); err != nil {
+		if err := deleteOwnedResource(ctx, targetClient, obj, status.UID, ds); err != nil {
 			if apierrors.IsNotFound(err) {
 				log.Debugw("Pod template resource already deleted",
 					"kind", status.Kind,

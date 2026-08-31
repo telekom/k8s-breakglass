@@ -381,6 +381,10 @@ func (c *DebugSessionController) buildResourceQuota(ds *breakglassv1alpha1.Debug
 	if len(ds.Annotations) > 0 {
 		annotations = mergeStringMaps(annotations, ds.Annotations)
 	}
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	annotations[sourceSessionUIDAnnotation] = string(ds.UID)
 
 	return &corev1.ResourceQuota{
 		TypeMeta: metav1.TypeMeta{
@@ -416,6 +420,10 @@ func (c *DebugSessionController) buildPodDisruptionBudget(ds *breakglassv1alpha1
 	if len(ds.Annotations) > 0 {
 		annotations = mergeStringMaps(annotations, ds.Annotations)
 	}
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	annotations[sourceSessionUIDAnnotation] = string(ds.UID)
 
 	pdb := &policyv1.PodDisruptionBudget{
 		TypeMeta: metav1.TypeMeta{

@@ -886,6 +886,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: originalPod
       type:
         scalar: string
+    - name: uid
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugApprovalReasonConfig
   map:
     fields:
