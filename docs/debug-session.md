@@ -40,6 +40,8 @@ workloadType: DaemonSet  # or Deployment/Job
 
 `workloadType: Job` is intended for one-shot diagnostics. The controller enforces a single completion with bounded retries (`completions: 1`, `parallelism: 1`, `restartPolicy: Never`) and keeps the completed Job for inspection until normal debug-session cleanup removes it.
 
+Jobs are the supported one-shot workload type; the controller accepts `batch/v1` Job manifests (or a bare PodSpec rendered as a Job) and rejects other workload kinds in a workload template. Session constraints remain authoritative: caller-supplied selectors and retry/deadline settings are replaced with session-owned labels, one completion, zero retries, and the effective bounded duration. `activeDeadlineSeconds` is capped by the template or binding maximum; `ttlSecondsAfterFinished`, `suspend`, and caller-managed selectors are not retained.
+
 **Use cases:**
 - Node-level debugging requiring host namespaces
 - Running debug tools on all or selected nodes

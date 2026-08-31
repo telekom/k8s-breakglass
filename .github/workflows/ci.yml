@@ -32,6 +32,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Verify release provenance workflow
         run: make verify-release-provenance
+      - name: Run release security behavioral tests
+        run: make test-release-security
       - name: Verify documentation snippets
         run: make verify-docs-snippets
       - name: Verify PR gate contract behavior

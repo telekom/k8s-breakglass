@@ -25,12 +25,24 @@ package_name="$(basename -- "${package}")"
 jq -e --arg package "${package_name}" --arg digest "${digest}" '
   (.spdxVersion | type == "string") and
   (.creationInfo | type == "object") and
+  (
+    any((.packages // [])[]?;
+      type == "object" and
+      (.SPDXID | type == "string" and length > 0) and
+      (.name | type == "string" and length > 0)
+    ) or
+    any((.files // [])[]?;
+      type == "object" and
+      (.SPDXID | type == "string" and length > 0) and
+      (.fileName | type == "string" and length > 0)
+    )
+  ) and
   any(.annotations[]?;
     .annotationType == "OTHER" and
     .annotator == "Tool: k8s-breakglass-release" and
     .comment == ("Chart artifact: " + $package + " sha256:" + $digest)
   )
 ' "${sbom}" >/dev/null || {
-  echo "SBOM is not bound to chart package ${package_name}@sha256:${digest}" >&2
+  echo "SBOM lacks a meaningful SPDX packages/files graph or is not bound to chart package ${package_name}@sha256:${digest}" >&2
   exit 1
 }

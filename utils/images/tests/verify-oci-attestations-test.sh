@@ -100,10 +100,10 @@ write_index.call("malformed-image-index.json", malformed_image_descriptors)
 RUBY
 
 (cd "$test_root" && tar -cf "$test_root/good.tar" index.json blobs)
-for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image; do
+for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image; do
     mkdir "$test_root/$variant"
     index_variant="$variant"
-    if [ "$variant" = missing-image ]; then
+    if [ "$variant" = missing-image ] || [ "$variant" = corrupt-image ]; then
         cp "$test_root/index.json" "$test_root/$variant/index.json"
     else
         cp "$test_root/$index_variant-index.json" "$test_root/$variant/index.json"
@@ -111,12 +111,14 @@ for variant in bad missing-sbom missing-provenance empty-provenance bad-image-me
     cp -R "$test_root/blobs" "$test_root/$variant/"
     if [ "$variant" = missing-image ]; then
         rm "$test_root/$variant/blobs/sha256/$(cat "$test_root/amd64-image-digest")"
+    elif [ "$variant" = corrupt-image ]; then
+        printf '%s\n' 'not-json' >"$test_root/$variant/blobs/sha256/$(cat "$test_root/amd64-image-digest")"
     fi
     (cd "$test_root/$variant" && tar -cf "$test_root/$variant.tar" index.json blobs)
 done
 
 ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/good.tar" >/dev/null
-for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image; do
+for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image; do
     if ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/$variant.tar" >/dev/null 2>&1; then
         echo "invalid $variant archive was accepted" >&2
         exit 1

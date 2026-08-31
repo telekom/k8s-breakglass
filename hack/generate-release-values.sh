@@ -18,6 +18,11 @@ refs=("${refs_dir}"/*.ref)
 tmp_file="$(mktemp)"
 trap 'rm -f "${tmp_file}"' EXIT
 printf 'images:\n' >"${tmp_file}"
+# These profiles are deliberately not public utility declarations. Preserve
+# explicit non-runnable placeholders until an administrator supplies an
+# independently approved image through an overlay.
+printf '  dumpAccess:\n    repository: "example.invalid/breakglass/dump-reader-not-published"\n    digest: "sha256:%064d"\n' 0 >>"${tmp_file}"
+printf '  clusterValidation:\n    repository: "example.invalid/breakglass/cluster-validator-internal"\n    digest: "sha256:%064d"\n' 0 >>"${tmp_file}"
 seen_names=""
 for ref in "${refs[@]}"; do
   IFS='|' read -r name repository digest signature sbom provenance remainder <"${ref}"
@@ -54,7 +59,7 @@ done
 
 ruby -ryaml -e '
   values = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
-  expected = %w[workload network storage networkRepair nodeRecovery diagnosticArtifactCollector].sort
+  expected = %w[workload network storage networkRepair nodeRecovery diagnosticArtifactCollector dumpAccess clusterValidation].sort
   actual = values.fetch("images").keys.sort
   abort("release image set mismatch: #{actual.inspect}") unless actual == expected
 ' "${tmp_file}"
