@@ -825,6 +825,36 @@ func resourceOwnedByDebugSession(obj *unstructured.Unstructured, ds *breakglassv
 		obj.GetAnnotations()[DebugSessionUIDAnnotationKey] == identity
 }
 
+func hasDebugSessionUIDMarker(obj *unstructured.Unstructured) bool {
+	if obj == nil {
+		return false
+	}
+	_, label := obj.GetLabels()[DebugSessionUIDLabelKey]
+	_, annotation := obj.GetAnnotations()[DebugSessionUIDAnnotationKey]
+	return label || annotation
+}
+
+func hasDebugSessionLegacyMarker(obj *unstructured.Unstructured) bool {
+	if obj == nil {
+		return false
+	}
+	_, label := obj.GetLabels()["breakglass.t-caas.telekom.com/session"]
+	_, annotation := obj.GetAnnotations()["breakglass.t-caas.telekom.com/source-session"]
+	return label || annotation
+}
+
+func resourceMayBeDeletedByDebugSession(obj *unstructured.Unstructured, ds *breakglassv1alpha1.DebugSession) bool {
+	switch {
+	case hasDebugSessionUIDMarker(obj):
+		return resourceOwnedByDebugSession(obj, ds)
+	case hasDebugSessionLegacyMarker(obj):
+		return obj.GetLabels()["breakglass.t-caas.telekom.com/session"] == ds.Name &&
+			obj.GetAnnotations()["breakglass.t-caas.telekom.com/source-session"] == fmt.Sprintf("%s/%s", ds.Namespace, ds.Name)
+	default:
+		return true
+	}
+}
+
 // debugSessionIdentity returns the immutable identity used to fence a Job's
 // manual selector. UID is preferred because a deleted and recreated
 // DebugSession may legitimately reuse the same name; unit-created sessions do

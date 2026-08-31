@@ -102,7 +102,7 @@ run_storage() {
         --security-opt=no-new-privileges --tmpfs /tmp:rw,nosuid,nodev,size=64m \
         --mount "type=bind,src=$storage_volume,dst=/scratch" \
         --mount "type=bind,src=$storage_reports,dst=/reports" \
-        -e STORAGE_REPORT_DIR=/reports "$storage_image" "$@"
+        -e STORAGE_REPORT_DIR=/reports "$storage_image" mounted-volume "$@"
 }
 
 run_storage_read_only() {
@@ -110,7 +110,7 @@ run_storage_read_only() {
         --security-opt=no-new-privileges --tmpfs /tmp:rw,nosuid,nodev,size=64m \
         --mount "type=bind,src=$storage_read_only,dst=/scratch,readonly" \
         --mount "type=bind,src=$storage_reports,dst=/reports" \
-        -e STORAGE_REPORT_DIR=/reports "$storage_image" "$@"
+        -e STORAGE_REPORT_DIR=/reports "$storage_image" mounted-volume "$@"
 }
 
 run_dump() {
