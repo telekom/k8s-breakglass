@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -618,7 +619,8 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 				"breakglass.telekom.com/original-ns": originalNamespace,
 			},
 			Annotations: map[string]string{
-				sourceSessionUIDAnnotation: string(ds.UID),
+				sourceSessionUIDAnnotation:  string(ds.UID),
+				createOperationIDAnnotation: uuid.NewString(),
 			},
 		},
 		Spec: *originalPod.Spec.DeepCopy(),
@@ -849,7 +851,8 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 				"breakglass.telekom.com/requested-by": sanitizeLabel(user),
 			},
 			Annotations: map[string]string{
-				sourceSessionUIDAnnotation: string(ds.UID),
+				sourceSessionUIDAnnotation:  string(ds.UID),
+				createOperationIDAnnotation: uuid.NewString(),
 			},
 		},
 		Spec: corev1.PodSpec{
@@ -977,7 +980,7 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 // is eligible, and the observed UID is passed as an API delete precondition.
 func (h *KubectlDebugHandler) recoverAmbiguousCreatedPod(ctx context.Context, targetClient ctrlclient.Client, pod *corev1.Pod, createErr error) {
 	log := zap.S().Named("kubectl-debug")
-	if pod == nil || !isAmbiguousCreateError(createErr) || pod.Annotations[sourceSessionUIDAnnotation] == "" {
+	if pod == nil || !isAmbiguousCreateError(createErr) || pod.Annotations[sourceSessionUIDAnnotation] == "" || pod.Annotations[createOperationIDAnnotation] == "" {
 		return
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), orphanCleanupTimeout)
@@ -989,7 +992,7 @@ func (h *KubectlDebugHandler) recoverAmbiguousCreatedPod(ctx context.Context, ta
 		}
 		return
 	}
-	if live.UID == "" || live.Annotations[sourceSessionUIDAnnotation] != pod.Annotations[sourceSessionUIDAnnotation] {
+	if live.UID == "" || live.Annotations[sourceSessionUIDAnnotation] != pod.Annotations[sourceSessionUIDAnnotation] || live.Annotations[createOperationIDAnnotation] != pod.Annotations[createOperationIDAnnotation] {
 		log.Warnw("Preserved pod after ambiguous create failure because ownership could not be verified", "pod", pod.Name, "podNamespace", pod.Namespace, "createError", createErr)
 		return
 	}
@@ -1007,11 +1010,11 @@ func isAmbiguousCreateError(err error) bool {
 		return true
 	}
 	var netErr net.Error
-	if errors.As(err, &netErr) {
+	if errors.As(err, &netErr) && netErr.Timeout() {
 		return true
 	}
 	var urlErr *url.Error
-	return errors.As(err, &urlErr)
+	return errors.As(err, &urlErr) && urlErr.Timeout()
 }
 
 func namespaceAllowedForDebugPod(namespace string, labels map[string]string, constraints *breakglassv1alpha1.NamespaceConstraints) bool {

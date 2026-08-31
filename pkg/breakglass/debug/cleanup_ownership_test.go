@@ -206,22 +206,31 @@ func TestDeleteOrphanedPodPreservesReplacements(t *testing.T) {
 
 func TestRecoverAmbiguousCreatedPod(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		annotations map[string]string
-		createErr   error
-		wantGone    bool
+		name               string
+		annotations        map[string]string
+		requestAnnotations map[string]string
+		createErr          error
+		wantGone           bool
 	}{
-		{name: "accepted response lost", annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}, createErr: &url.Error{Op: "POST", URL: "https://api.invalid", Err: errors.New("connection reset")}, wantGone: true},
+		{name: "accepted response lost", annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid", createOperationIDAnnotation: "op-1"}, createErr: &url.Error{Op: "POST", URL: "https://api.invalid", Err: context.DeadlineExceeded}, wantGone: true},
+		{name: "connection refused preserved", annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid", createOperationIDAnnotation: "op-1"}, createErr: &url.Error{Op: "POST", URL: "https://api.invalid", Err: errors.New("connection refused")}, wantGone: false},
+		{name: "dns failure preserved", annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid", createOperationIDAnnotation: "op-1"}, createErr: &url.Error{Op: "POST", URL: "https://api.invalid", Err: errors.New("no such host")}, wantGone: false},
+		{name: "tls failure preserved", annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid", createOperationIDAnnotation: "op-1"}, createErr: &url.Error{Op: "POST", URL: "https://api.invalid", Err: errors.New("tls handshake failed")}, wantGone: false},
+		{name: "operation mismatch preserved", annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid", createOperationIDAnnotation: "other-operation"}, requestAnnotations: map[string]string{sourceSessionUIDAnnotation: "session-uid", createOperationIDAnnotation: "op-1"}, createErr: &url.Error{Op: "POST", URL: "https://api.invalid", Err: context.DeadlineExceeded}, wantGone: false},
 		{name: "already exists preserved", annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}, createErr: apierrors.NewAlreadyExists(corev1.Resource("pods"), "copy"), wantGone: false},
 		{name: "forbidden preserved", annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}, createErr: apierrors.NewForbidden(corev1.Resource("pods"), "copy", errors.New("denied")), wantGone: false},
 		{name: "invalid preserved", annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}, createErr: apierrors.NewInvalid(schema.GroupKind{Kind: "Pod"}, "copy", nil), wantGone: false},
-		{name: "unowned preserved", annotations: map[string]string{sourceSessionUIDAnnotation: "other-session"}, createErr: &url.Error{Op: "POST", URL: "https://api.invalid", Err: errors.New("connection reset")}, wantGone: false},
+		{name: "unowned preserved", annotations: map[string]string{sourceSessionUIDAnnotation: "other-session", createOperationIDAnnotation: "op-1"}, createErr: &url.Error{Op: "POST", URL: "https://api.invalid", Err: context.DeadlineExceeded}, wantGone: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "copy", Namespace: "default", UID: "created-uid", Annotations: tc.annotations}}
 			cl := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(pod).Build()
 			h := &KubectlDebugHandler{}
-			h.recoverAmbiguousCreatedPod(context.Background(), cl, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "copy", Namespace: "default", Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}}}, tc.createErr)
+			requestAnnotations := tc.requestAnnotations
+			if requestAnnotations == nil {
+				requestAnnotations = tc.annotations
+			}
+			h.recoverAmbiguousCreatedPod(context.Background(), cl, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "copy", Namespace: "default", Annotations: requestAnnotations}}, tc.createErr)
 			var got corev1.Pod
 			err := cl.Get(context.Background(), ctrlclient.ObjectKeyFromObject(pod), &got)
 			if (err == nil) != !tc.wantGone {

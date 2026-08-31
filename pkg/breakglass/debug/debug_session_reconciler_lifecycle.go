@@ -572,6 +572,8 @@ func (c *DebugSessionController) cleanupDeployedResources(
 
 const sourceSessionUIDAnnotation = "breakglass.t-caas.telekom.com/source-session-uid"
 
+const createOperationIDAnnotation = "breakglass.t-caas.telekom.com/create-operation-id"
+
 // deleteOwnedResource resolves the target object immediately before deletion and
 // verifies immutable ownership. A name is reusable after deletion, so deleting
 // a name-only placeholder can destroy a replacement belonging to another
