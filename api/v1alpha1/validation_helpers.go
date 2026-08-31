@@ -50,6 +50,13 @@ func ParseDuration(s string) (time.Duration, error) {
 	if s == "" {
 		return 0, nil
 	}
+	// Day durations are intentionally non-negative. time.ParseDuration accepts
+	// a leading minus for its supported units, but it does not understand the
+	// repository's day unit consistently (for example, "-1d"), so reject all
+	// negative values before dispatching to either parser.
+	if strings.HasPrefix(s, "-") {
+		return 0, fmt.Errorf("duration must not be negative")
+	}
 
 	// Check if the duration contains day units
 	if matches := dayPattern.FindStringSubmatch(s); matches != nil {
