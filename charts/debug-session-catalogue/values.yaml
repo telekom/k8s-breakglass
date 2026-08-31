@@ -158,7 +158,8 @@ profiles:
         required: true
         options:
           - value: link-cycle
-          - value: flush-neighbors
+          - value: neighbor-replace
+          - value: bridge-fdb-replace
           - value: restart-autonegotiation
       - name: confirmation
         displayName: Confirmation

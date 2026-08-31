@@ -28,12 +28,14 @@ spec:
         kubernetes.io/os: linux
       containers:
         - name: netdebug
-          image: ghcr.io/telekom/k8s-breakglass/network-debug:0.1.0
-          imagePullPolicy: IfNotPresent
+          # Non-runnable sample placeholder: replace with an independently
+          # verified release digest before enabling this deprecated object.
+          image: ghcr.io/telekom/k8s-breakglass/utils/network-debug@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          imagePullPolicy: Never
           stdin: true
           tty: true
           command: ["/usr/local/bin/net-debug"]
-          args: ["shell"]
+          args: ["--help"]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
