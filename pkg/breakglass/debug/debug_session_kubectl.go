@@ -250,7 +250,29 @@ func securityContextDigest(securityContext *corev1.SecurityContext) string {
 }
 
 func ephemeralContainerDigest(ephemeralContainer *corev1.EphemeralContainer) string {
-	encoded, err := json.Marshal(ephemeralContainer)
+	if ephemeralContainer == nil {
+		return ""
+	}
+	// Hash only fields controlled by the Breakglass request. The API server may
+	// default termination-message fields, env-related fields, and other
+	// EphemeralContainerCommon fields on read-back; those defaults must not turn
+	// an already-applied operation into Unknown.
+	canonical := struct {
+		Name            string   `json:"name"`
+		Image           string   `json:"image"`
+		Command         []string `json:"command,omitempty"`
+		TTY             bool     `json:"tty"`
+		Stdin           bool     `json:"stdin"`
+		SecurityContext string   `json:"securityContextDigest"`
+	}{
+		Name:            ephemeralContainer.Name,
+		Image:           ephemeralContainer.Image,
+		Command:         ephemeralContainer.Command,
+		TTY:             ephemeralContainer.TTY,
+		Stdin:           ephemeralContainer.Stdin,
+		SecurityContext: securityContextDigest(ephemeralContainer.SecurityContext),
+	}
+	encoded, err := json.Marshal(canonical)
 	if err != nil {
 		return ""
 	}

@@ -1157,9 +1157,8 @@ func TestKubectlDebugHandler_EphemeralOperationRecoveryRequiresExactContainerDig
 			EphemeralContainers: []corev1.EphemeralContainer{{
 				EphemeralContainerCommon: corev1.EphemeralContainerCommon{
 					Name:            "debugger",
-					Image:           "busybox:latest",
+					Image:           "busybox:other",
 					Command:         []string{"sh"},
-					Args:            []string{"extra"},
 					ImagePullPolicy: corev1.PullIfNotPresent,
 					TTY:             true,
 					Stdin:           true,
@@ -1176,6 +1175,26 @@ func TestKubectlDebugHandler_EphemeralOperationRecoveryRequiresExactContainerDig
 	require.Len(t, recovered.Status.KubectlDebugStatus.Operations, 1)
 	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationUnknown, recovered.Status.KubectlDebugStatus.Operations[0].State)
 	assert.Empty(t, recovered.Status.KubectlDebugStatus.EphemeralContainersInjected)
+}
+
+func TestEphemeralContainerDigestIgnoresAPIDefaultedFields(t *testing.T) {
+	requested := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+	readBack := requested
+	readBack.TerminationMessagePath = "/dev/termination-log"
+	readBack.TerminationMessagePolicy = corev1.TerminationMessageReadFile
+	intent := &breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{
+		Name:                  requested.Name,
+		Image:                 requested.Image,
+		Command:               requested.Command,
+		ContainerDigest:       ephemeralContainerDigest(&requested),
+		SecurityContextDigest: securityContextDigest(nil),
+		TTY:                   requested.TTY,
+		Stdin:                 requested.Stdin,
+	}
+
+	assert.True(t, ephemeralContainerIntentEqual(intent, readBack.Name, readBack.Image, readBack.Command, readBack.TTY, readBack.Stdin, readBack.SecurityContext, ephemeralContainerDigest(&readBack)))
+	readBack.Image = "busybox:other"
+	assert.False(t, ephemeralContainerIntentEqual(intent, readBack.Name, readBack.Image, readBack.Command, readBack.TTY, readBack.Stdin, readBack.SecurityContext, ephemeralContainerDigest(&readBack)))
 }
 
 func TestKubectlDebugHandler_InjectEphemeralContainerIdempotentWhenCompletedOperationExists(t *testing.T) {
