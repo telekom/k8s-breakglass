@@ -5313,6 +5313,27 @@ func TestDebugSessionController_CleanupPodTemplateResourcesPreservesReplacement(
 	assert.Equal(t, map[string]string{"tenant": "must-remain"}, unchanged.Data)
 }
 
+func TestDebugSessionController_CleanupPodTemplateResourcesPreservesUnmarkedReplacement(t *testing.T) {
+	scheme := testScheme()
+	session := newTestDebugSession("cleanup-unmarked-replacement", "test-template", "test-cluster", "user@example.com")
+	session.UID = "current-session-uid"
+	session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+		{Kind: "ConfigMap", APIVersion: "v1", ResourceName: "debug-config", Namespace: "default", Created: true},
+	}
+	replacement := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
+		Name: "debug-config", Namespace: "default",
+	}, Data: map[string]string{"tenant": "must-remain"}}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(replacement).Build()
+	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+	err := controller.cleanupPodTemplateResources(context.Background(), session, targetClient)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ownership precondition failed")
+	var unchanged corev1.ConfigMap
+	require.NoError(t, targetClient.Get(context.Background(), client.ObjectKeyFromObject(replacement), &unchanged))
+	assert.Equal(t, map[string]string{"tenant": "must-remain"}, unchanged.Data)
+}
+
 func TestDebugSessionController_CleanupPodTemplateResourcesMigratesLegacyOwnership(t *testing.T) {
 	scheme := testScheme()
 	session := newTestDebugSession("legacy-cleanup", "test-template", "test-cluster", "user@example.com")

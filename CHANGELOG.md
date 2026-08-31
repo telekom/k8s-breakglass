@@ -75,6 +75,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Debug-session pod-template cleanup now preserves live unmarked resources
+  whose names were reused, requiring exact UID ownership markers or both
+  valid legacy session markers before deletion.
+
 - **Diagnostic collector traversal bound**: Crashdump enumeration now uses
   bounded NUL spools and fixed directory/regular-file filters while retaining
   the 30-second process-group deadline, exact entry/candidate diagnostics, and
