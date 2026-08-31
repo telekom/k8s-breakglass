@@ -74,7 +74,12 @@ verify-release-provenance: ## Verify release image provenance signs the registry
 	bash hack/verify-release-provenance.sh
 	bash hack/verify-release-values.sh
 	bash hack/verify-release-refs.sh
+
+.PHONY: test-release-security
+test-release-security: ## Run release and OCI security behavioral tests.
+	bash hack/verify-release-security-wiring.sh
 	bash hack/test-chart-sbom.sh
+	bash hack/test-slsa-provenance.sh
 	bash hack/verify-catalogue-supply-chain-test.sh
 	bash utils/images/tests/verify-oci-attestations-test.sh
 
@@ -155,7 +160,7 @@ validate-fixtures: manifests ## Validate all e2e YAML fixtures decode and pass G
 	@echo "Fixture validation passed"
 
 .PHONY: verify
-verify: fmt vet lint-strict test verify-release-provenance vulncheck ## Run all verification checks (fmt, vet, lint, test, release workflow, vulncheck).
+verify: fmt vet lint-strict test verify-release-provenance test-release-security vulncheck ## Run all verification checks (fmt, vet, lint, test, release workflow, vulncheck).
 	go build ./...
 	@echo "All verification checks passed!"
 

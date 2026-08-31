@@ -29,11 +29,16 @@ output="${test_dir}/release-values.yaml"
 ruby -ryaml -e '
   values = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
   images = values.fetch("images")
-  abort("unexpected image count") unless images.size == 6
+  abort("unexpected image count") unless images.size == 8
+  abort("dump-access placeholder was not preserved") unless images.fetch("dumpAccess").fetch("repository") == "example.invalid/breakglass/dump-reader-not-published"
+  abort("cluster validator placeholder was not preserved") unless images.fetch("clusterValidation").fetch("repository") == "example.invalid/breakglass/cluster-validator-internal"
   images.each_value do |image|
     abort("unresolved image digest") unless image.fetch("digest").match?(/\Asha256:[0-9a-f]{64}\z/i)
   end
 ' "${output}"
+
+helm lint "${script_dir}/../charts/debug-session-catalogue" --strict --values "${output}" >/dev/null
+helm template release-proof "${script_dir}/../charts/debug-session-catalogue" --values "${output}" >/dev/null
 
 printf '%s\n' 'workload|ghcr.io/telekom/k8s-breakglass/workload-debug|not-a-digest' >"${test_dir}/refs/workload.ref"
 if "${script_dir}/generate-release-values.sh" "${test_dir}/refs" "${output}" >/dev/null 2>&1; then

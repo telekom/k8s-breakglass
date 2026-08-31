@@ -20,7 +20,10 @@ cat >"${sbom}" <<'EOF'
 {
   "spdxVersion": "SPDX-2.3",
   "creationInfo": {"created": "2026-08-27T00:00:00Z", "creators": ["Tool: syft"]},
-  "name": "debug-session-catalogue"
+  "name": "debug-session-catalogue",
+  "packages": [
+    {"SPDXID": "SPDXRef-Package-chart", "name": "debug-session-catalogue"}
+  ]
 }
 EOF
 
@@ -38,6 +41,13 @@ wrong_package="${test_dir}/other-chart-0.2.0.tgz"
 printf 'other chart payload\n' >"${wrong_package}"
 if "${script_dir}/verify-chart-sbom.sh" "${wrong_package}" "${sbom}" >/dev/null 2>&1; then
   echo "different chart package was accepted by the SBOM" >&2
+  exit 1
+fi
+
+empty_graph="${test_dir}/empty-graph.spdx.json"
+jq '.packages = [] | .files = []' "${sbom}" >"${empty_graph}"
+if "${script_dir}/verify-chart-sbom.sh" "${package}" "${empty_graph}" >/dev/null 2>&1; then
+  echo "SPDX SBOM with an empty packages/files graph was accepted" >&2
   exit 1
 fi
 

@@ -171,6 +171,9 @@ when "all"
   expect(storage_mounts.map { |mount| mount["mountPath"] }.sort == %w[/reports /scratch /tmp], "storage diagnostics mounts are incomplete")
   network = pod_by_profile.fetch("network-diagnostics")
   network_spec = value_at(network, "spec", "template", "spec")
+  network_container = value_at(network_spec, "containers").first
+  expect(network_container["args"] == ["report"], "network diagnostics catalogue profile must expose only the bounded report contract")
+  expect(!network_container["args"].include?("trace"), "network diagnostics catalogue profile must not advertise pwru tracing without its kernel contract")
   network_mounts = value_at(network_spec, "containers").first.fetch("volumeMounts")
   expect(network_mounts.any? { |mount| mount["name"] == "work" && mount["mountPath"] == "/work" }, "network diagnostics writable work path must be volume-backed")
   expect(value_at(network_spec, "volumes").any? { |volume| volume["name"] == "work" && volume.key?("emptyDir") }, "network diagnostics work path must use an emptyDir volume")
