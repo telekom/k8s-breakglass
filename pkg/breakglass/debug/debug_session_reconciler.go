@@ -415,6 +415,22 @@ func (c *DebugSessionController) terminalizeActiveSessionWithoutExpiry(ctx conte
 	}
 	c.log.Errorw("Debug session failed closed because its active lease is missing",
 		"debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
+	// This is an Active -> Failed transition, so release the active aggregates
+	// at the transition boundary.  handleFailedCleanup intentionally does not
+	// decrement them: it may run repeatedly while spoke cleanup is retried.
+	metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
+	if ds.Spec.TemplateRef != "" {
+		template, templateErr := c.getTemplate(ctx, ds.Spec.TemplateRef)
+		if templateErr == nil {
+			if updateErr := c.updateTemplateStatus(ctx, template, false); updateErr != nil {
+				c.log.Warnw("Failed to decrement template active session count after failed debug session",
+					"template", ds.Spec.TemplateRef, "error", updateErr)
+			}
+		} else {
+			c.log.Warnw("Failed to load template after failed debug session",
+				"template", ds.Spec.TemplateRef, "error", templateErr)
+		}
+	}
 	metrics.DebugSessionsFailed.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()
 	return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 }
@@ -1025,7 +1041,23 @@ func (c *DebugSessionController) createImpersonatedClient(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get REST config for cluster %s: %w", clusterName, err)
 	}
-	restCfg := rest.CopyConfig(sharedCfg)
+	return c.createImpersonatedClientFromRESTConfig(ctx, sharedCfg, clusterName, impConfig)
+}
+
+// createImpersonatedClientFromRESTConfig derives the impersonated client from
+// the already validated privileged-operation config. Callers performing a
+// multi-write operation must pass that exact snapshot; resolving the cluster
+// again here could reintroduce rotated credentials or bypass its fence.
+func (c *DebugSessionController) createImpersonatedClientFromRESTConfig(
+	ctx context.Context,
+	baseRestCfg *rest.Config,
+	clusterName string,
+	impConfig *breakglassv1alpha1.ImpersonationConfig,
+) (ctrlclient.Client, error) {
+	if baseRestCfg == nil {
+		return nil, fmt.Errorf("base REST config for cluster %s is nil", clusterName)
+	}
+	restCfg := rest.CopyConfig(baseRestCfg)
 
 	// If impersonation is configured, set up impersonation.
 	//
