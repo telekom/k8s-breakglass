@@ -24,6 +24,13 @@ on:
       - "hack/verify-utility-publication.sh"
       - "hack/verify-commit-check-runs.sh"
       - "hack/test-utility-publication.sh"
+      - "hack/docker-image-ownership.sh"
+      - "hack/docker-resource-ownership.sh"
+      - "hack/kind-ownership.sh"
+      - "hack/kubernetes-delete-uid.sh"
+      - "hack/kubernetes-storage-cleanup.sh"
+      - "hack/test-utility-workflow-paths.sh"
+      - "hack/test-utility-image-security-contract.sh"
       - ".github/workflows/utility-release.yml"
       - ".github/workflows/utility-image-security.yml"
       - ".github/workflows/workload-debug.yml"
@@ -65,6 +72,8 @@ jobs:
           hack/test-utility-release-contract.sh
           hack/test-utility-matrix-expansion.sh
           hack/test-utility-publication.sh
+          hack/test-utility-workflow-paths.sh
+          hack/test-utility-image-security-contract.sh
       - name: Set up Go for workflow schema validation
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
