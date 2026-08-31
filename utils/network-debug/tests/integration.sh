@@ -213,7 +213,7 @@ if [ "$create_status" -ne 0 ]; then
 	case "$create_status" in
 		2) requirement "refusing to reuse an existing kind cluster named $KIND_CLUSTER_NAME" ;;
 		3) requirement "could not inspect existing kind clusters before creating the disposable cluster" ;;
-		4) requirement "could not clean up a partial disposable kind cluster" ;;
+		4) requirement "could not prove ownership of the disposable kind cluster" ;;
 		*) requirement "could not create the disposable kind cluster" ;;
 	esac
 fi

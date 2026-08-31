@@ -13,22 +13,24 @@ run_id=$(printf '%s' "${GITHUB_RUN_ID:-local}-$$" | tr -cd 'a-zA-Z0-9-' | tr '[:
 cluster="pod-capture-proof-$run_id"; namespace="pod-capture-proof-$run_id"
 case "$cluster" in pod-capture-proof-[a-z0-9-]*) ;; *) requirement 'generated ownership name is unsafe' ;; esac
 temp_parent=${RUNNER_TEMP:-/tmp}; work_dir=$(mktemp -d "${temp_parent%/}/network-debug-pod-capture-proof.XXXXXX"); kubeconfig=$work_dir/kubeconfig
-cluster_create_attempted=false; namespace_created=false
+export KIND_BIN=kind DOCKER_BIN=docker KIND_CLUSTER_NAME="$cluster" KIND_NODE_IMAGE="$node_image" KUBECONFIG_FILE="$kubeconfig"
+export KIND_CLUSTER_CREATED=false KIND_CLUSTER_OWNER_IDS=''; namespace_created=false
+# shellcheck source=kind-ownership.sh
+. "$(dirname -- "$0")/kind-ownership.sh"
 cleanup() {
   status=$?; set +e
   if [ "$namespace_created" = true ] && [ -s "$kubeconfig" ]; then
     KUBECONFIG="$kubeconfig" kubectl delete namespace "$namespace" --wait=true --timeout=90s >/dev/null 2>&1
     KUBECONFIG="$kubeconfig" kubectl get namespace "$namespace" >/dev/null 2>&1 && status=1
   fi
-  if [ "$cluster_create_attempted" = true ]; then kind delete cluster --name "$cluster" >/dev/null 2>&1 || status=1; fi
-  kind get clusters 2>/dev/null | grep -Fx "$cluster" >/dev/null && status=1
+  kind_cleanup_owned_cluster >/dev/null 2>&1 || status=1
   case "$work_dir" in "${temp_parent%/}"/network-debug-pod-capture-proof.*) rm -rf -- "$work_dir" ;; *) status=1 ;; esac
   exit "$status"
 }
 trap cleanup EXIT; trap 'exit 130' HUP INT TERM
-if kind get clusters | grep -Fx "$cluster" >/dev/null; then requirement "refusing to reuse existing kind cluster $cluster"; fi
-cluster_create_attempted=true
-kind create cluster --name "$cluster" --image "$node_image" --kubeconfig "$kubeconfig" --wait 120s
+if ! kind_create_owned_cluster; then
+  requirement "kind cluster creation did not complete with provable ownership"
+fi
 kind load docker-image --name "$cluster" "$image"; export KUBECONFIG="$kubeconfig"
 kubectl create namespace "$namespace"; namespace_created=true
 kubectl label namespace "$namespace" pod-security.kubernetes.io/enforce=privileged --overwrite
