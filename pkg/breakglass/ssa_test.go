@@ -81,7 +81,7 @@ func TestPatchDebugSessionStatusWithOptimisticLockCannotRenewAtExpiry(t *testing
 	})
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "active and unexpired")
+	assert.Contains(t, err.Error(), "expired active session")
 	var stored breakglassv1alpha1.DebugSession
 	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &stored))
 	require.NotNil(t, stored.Status.ExpiresAt)
