@@ -82,6 +82,13 @@ type DebugSessionController struct {
 	brandingName   string
 	baseURL        string
 	disableEmail   bool
+	terminalRecordingImage string
+}
+
+// WithTerminalRecordingImage configures the deployment-owned terminal recorder image.
+func (c *DebugSessionController) WithTerminalRecordingImage(image string) *DebugSessionController {
+	c.terminalRecordingImage = image
+	return c
 }
 
 // NewDebugSessionController creates a new DebugSessionController

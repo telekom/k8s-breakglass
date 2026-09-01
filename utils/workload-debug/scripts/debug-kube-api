@@ -113,7 +113,7 @@ if [ -r "$token_file" ] && { [ "$server_override" -eq 0 ] || [ "$token_explicit"
         }
         auth_header=$auth_dir/header
         umask 077
-        printf 'Authorization: Bearer %s' "$token" >"$auth_header"
+        printf 'Authorization: Bearer %s\n' "$token" >"$auth_header"
         chmod 0600 "$auth_header"
         set -- "$@" --header "@$auth_header" "$url"
         "$limit_response" "$max_bytes" "$@"
