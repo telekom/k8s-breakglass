@@ -116,6 +116,7 @@ func newTestDebugSession(name, templateRef, cluster, user string) *breakglassv1a
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: "breakglass",
+			UID:       types.UID(name + "-uid"),
 		},
 		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:           cluster,
@@ -5115,7 +5116,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		session := newTestDebugSession("cleanup-missing-cluster-rest", "test-template", "missing-cluster", "user@example.com")
 		session.Generation = 5
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "node-debug-uid"},
 		}
 		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
 			{Name: "node-debug-pod", Namespace: "default"},
@@ -5172,6 +5173,10 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "node-debug-pod",
 					Namespace: "default",
+					UID:       "node-debug-uid",
+					Annotations: map[string]string{
+						sourceSessionUIDAnnotation: string(session.UID),
+					},
 				},
 			}).
 			Build()
@@ -5227,7 +5232,7 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
 			{APIVersion: "v1", Kind: "ConfigMap", Name: "aux-config", Namespace: "default", Source: "auxiliary:config"},
 			{APIVersion: "v1", Kind: "ConfigMap", Name: "pod-template-config", Namespace: "default", Source: "pod-template"},
-			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "node-debug-uid"},
 		}
 		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
 			{Name: "node-debug-pod", Namespace: "default"},
@@ -5242,6 +5247,10 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "node-debug-pod",
 					Namespace: "default",
+					UID:       "node-debug-uid",
+					Annotations: map[string]string{
+						sourceSessionUIDAnnotation: string(session.UID),
+					},
 				},
 			}).
 			Build()
@@ -5259,8 +5268,8 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 	t.Run("filters allowed pods to remaining pod refs", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-filter-allowed-pods", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-			{APIVersion: "v1", Kind: "Pod", Name: "failed-delete-pod", Namespace: "default", Source: "kubectl-debug-node"},
-			{APIVersion: "v1", Kind: "Pod", Name: "deleted-pod", Namespace: "default", Source: "kubectl-debug-node"},
+			{APIVersion: "v1", Kind: "Pod", Name: "failed-delete-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "failed-delete-uid"},
+			{APIVersion: "v1", Kind: "Pod", Name: "deleted-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "deleted-uid"},
 			{APIVersion: "v1", Kind: "ConfigMap", Name: "remaining-config", Namespace: "default", Source: "pod-template"},
 		}
 		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
@@ -5276,12 +5285,14 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "failed-delete-pod",
 						Namespace: "default",
+						UID:       "failed-delete-uid",
 					},
 				},
 				&corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "deleted-pod",
 						Namespace: "default",
+						UID:       "deleted-uid",
 					},
 				},
 			).
@@ -5332,6 +5343,7 @@ func TestDebugSessionController_CleanupPodTemplateResourcesPreservesFailures(t *
 			APIVersion:   "v1",
 			ResourceName: "debug-script",
 			Namespace:    "default",
+			UID:          "debug-script-uid",
 			Created:      true,
 		},
 	}
@@ -5342,6 +5354,7 @@ func TestDebugSessionController_CleanupPodTemplateResourcesPreservesFailures(t *
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "debug-script",
 				Namespace: "default",
+				UID:       "debug-script-uid",
 			},
 		}).
 		WithInterceptorFuncs(interceptor.Funcs{
