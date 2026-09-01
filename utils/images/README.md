@@ -6,14 +6,19 @@ SPDX-License-Identifier: Apache-2.0
 # Upstream utility images
 
 This directory contains generic, standalone images intended for approved
-Kubernetes debug sessions. Each image is multi-architecture (`linux/amd64`
-and `linux/arm64`), runs without privilege as UID/GID 65532, pins its base
-image and runtime dependencies, and carries signing/SBOM/provenance metadata.
+Kubernetes debug sessions. The `storage-debug` and `dump-reader` images are
+multi-architecture (`linux/amd64` and `linux/arm64`), run without privilege as
+UID/GID 65532, pin their base images and runtime dependencies, and carry
+signing/SBOM/provenance metadata. The
+`diagnostic-artifact-collector` is an explicit root-only exception for
+crashdump collection and uploader operation; its metadata documents that
+boundary.
 
 | Image | Purpose | Source access | Writes |
 | --- | --- | --- | --- |
 | [`storage-debug`](./storage-debug/) | Bounded fio/ioping checks and stable reports | Configured test mount | Temporary benchmark file and report only |
 | [`dump-reader`](./dump-reader/) | Existing-file metadata, SHA-256, and copy-out | Existing regular files | Separate configured output mount only |
+| [`diagnostic-artifact-collector`](./diagnostic-artifact-collector/) | Collect and upload approved crashdump artifacts | Explicitly configured host crashdump paths | Staged archive and uploader state |
 
 Build from each image directory with `docker buildx build --platform
 linux/amd64,linux/arm64`. Publish a manifest, generate an SBOM and provenance

@@ -111,6 +111,13 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 
 	allowedPods := make([]breakglassv1alpha1.AllowedPodRef, 0, len(podList.Items))
 	for _, pod := range podList.Items {
+<<<<<<< HEAD
+		// UID-bearing pods must belong to this concrete DebugSession instance.
+		// The owner-chain and recorded-resource checks below remain authoritative.
+		if podUID, hasUID := pod.Labels[DebugSessionUIDLabelKey]; hasUID &&
+			podUID != debugSessionIdentity(ds) {
+			continue
+		}
 		if !c.podBelongsToTrackedWorkload(ctx, targetClient, ds, &pod) {
 			continue
 		}

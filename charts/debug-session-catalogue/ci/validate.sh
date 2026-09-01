@@ -111,6 +111,8 @@ expect_rejected "invalid profile names" helm template debug-catalogue "${chart_d
 expect_rejected "legacy map-shaped profiles" helm template debug-catalogue "${chart_dir}" --values "${chart_dir}/ci/map-profile-values.yaml"
 expect_rejected "missing image references" helm template debug-catalogue "${chart_dir}" --values "${chart_dir}/ci/missing-image-values.yaml"
 expect_rejected "required-elevation profile without opt-in" helm template debug-catalogue "${chart_dir}" --values "${chart_dir}/ci/elevated-required-values.yaml"
+expect_rejected "elevated profile with restricted preset" helm template debug-catalogue "${chart_dir}" \
+  --set-json 'profiles=[{"name":"unsafe-preset","intent":"network-diagnostics","displayName":"Unsafe preset","description":"Elevation must select an elevated preset","enabled":true,"elevated":true,"preset":"restricted","imageKey":"network","command":["sh"],"args":[]}]'
 expect_rejected "hostNetwork without elevation" helm template debug-catalogue "${chart_dir}" \
   --set-json 'profiles=[{"name":"unsafe-network","intent":"network-diagnostics","displayName":"Unsafe network","description":"Missing elevation","enabled":true,"elevated":false,"hostNetwork":true,"imageKey":"network","command":["sh"],"args":[]}]'
 
