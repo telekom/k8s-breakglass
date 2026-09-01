@@ -401,7 +401,7 @@ func TestSessionManager_AuthorizationSelectionRefreshesStalePendingCache(t *test
 	assert.Equal(t, breakglassv1alpha1.SessionStateApproved, sessions[0].Status.State)
 }
 
-func TestSessionManager_AuthorizationSelectionNegativeCachesLiveMiss(t *testing.T) {
+func TestSessionManager_AuthorizationSelectionNegativeCachesLiveResponseWithoutEligibleSession(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
 
@@ -414,6 +414,17 @@ func TestSessionManager_AuthorizationSelectionNegativeCachesLiveMiss(t *testing.
 			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
 		}).
 		Build()
+	retainedSession := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "retained-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster: "tind-workload-01.tst.local-dev",
+			User:    "platform-requester@example.com",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:         breakglassv1alpha1.SessionStateExpired,
+			RetainedUntil: metav1.NewTime(time.Now().Add(time.Hour)),
+		},
+	}
 	liveReads := 0
 	liveReader := stubReader{
 		listFn: func(list client.ObjectList) error {
@@ -421,21 +432,78 @@ func TestSessionManager_AuthorizationSelectionNegativeCachesLiveMiss(t *testing.
 			if _, ok := list.(*breakglassv1alpha1.BreakglassSessionList); !ok {
 				return fmt.Errorf("unexpected list type %T", list)
 			}
+			list.(*breakglassv1alpha1.BreakglassSessionList).Items = []breakglassv1alpha1.BreakglassSession{retainedSession}
 			return nil
 		},
 	}
 	manager := NewSessionManagerWithClientAndReader(cachedClient, liveReader)
 
-	for range 2 {
+	for i := range 2 {
 		sessions, err := manager.GetClusterUserBreakglassSessions(
 			context.Background(),
 			"tind-workload-01.tst.local-dev",
 			"platform-requester@example.com",
 		)
 		require.NoError(t, err)
-		require.Empty(t, sessions)
+		if i == 0 {
+			require.Len(t, sessions, 1)
+			assert.Equal(t, breakglassv1alpha1.SessionStateExpired, sessions[0].Status.State)
+		} else {
+			require.Empty(t, sessions)
+		}
 	}
 	assert.Equal(t, 1, liveReads)
+}
+
+func TestSessionManager_RefreshReturnsNewGrantWhenCachedGrantCannotAuthorize(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	now := time.Now()
+	cached := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "cached-viewer"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cluster",
+			User:         "user@example.com",
+			GrantedGroup: "viewers",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(now.Add(time.Hour)),
+		},
+	}
+	newGrant := cached
+	newGrant.Name = "new-admin"
+	newGrant.Spec.GrantedGroup = "admins"
+	cachedClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(&cached).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+		}).
+		Build()
+	liveReader := stubReader{
+		listFn: func(list client.ObjectList) error {
+			list.(*breakglassv1alpha1.BreakglassSessionList).Items = []breakglassv1alpha1.BreakglassSession{cached, newGrant}
+			return nil
+		},
+	}
+	manager := NewSessionManagerWithClientAndReader(cachedClient, liveReader)
+
+	initial, err := manager.GetClusterUserBreakglassSessions(context.Background(), "cluster", "user@example.com")
+	require.NoError(t, err)
+	require.Len(t, initial, 1)
+	assert.Equal(t, "viewers", initial[0].Spec.GrantedGroup)
+
+	refreshed, didRefresh, err := manager.RefreshClusterUserBreakglassSessions(
+		context.Background(), "cluster", "user@example.com",
+	)
+	require.NoError(t, err)
+	assert.True(t, didRefresh)
+	require.Len(t, refreshed, 2)
+	assert.Equal(t, "admins", refreshed[1].Spec.GrantedGroup)
 }
 
 func TestSessionManager_AuthorizationSelectionDeduplicatesLiveFallback(t *testing.T) {
@@ -562,6 +630,7 @@ func TestSessionManager_LiveFallbackEvictsExpiredEntries(t *testing.T) {
 
 	manager.recordLiveReaderFallback("expired", now.Add(-2*liveReaderNegativeCacheTTL))
 	manager.recordLiveReaderFallback("fresh", now)
+	manager.liveReaderFallbackSuppressed("other", now)
 
 	manager.liveFallbackMu.Lock()
 	defer manager.liveFallbackMu.Unlock()

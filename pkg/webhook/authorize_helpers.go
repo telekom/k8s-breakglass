@@ -642,6 +642,25 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 
 			// Record session activity for idle timeout detection and usage analytics (#314)
 			wc.recordSessionActivity(s.sessions, sesName, s.clusterName, grp)
+		} else if len(s.sessions) > 0 {
+			// A different eligible cached session can hide a newly approved grant.
+			// Refresh only after the cached candidates fail this request's SAR.
+			if refreshed, ok, refreshErr := wc.sesManager.RefreshClusterUserBreakglassSessions(
+				s.ctx, s.clusterName, username,
+			); refreshErr != nil {
+				s.reqLog.With("error", refreshErr.Error()).Warn("Unable to refresh session candidates after authorization denial")
+			} else if ok {
+				s.sessions, s.idpMismatches = filterSessionsForAuthorization(refreshed, s.issuer, time.Now())
+				if allowedSession, grp, sesName, impersonated := wc.authorizeViaSessions(
+					s.ctx, rc, s.sessions, s.sar, s.clusterName, s.reqLog); allowedSession {
+					s.reqLog.With("sessionGroup", system.RedactGroupName(grp), "session", sesName, "impersonationGroup", system.RedactGroupName(impersonated)).
+						Debug("Authorized via refreshed breakglass session group")
+					s.allowed = true
+					s.allowSource = "session"
+					s.allowDetail = fmt.Sprintf("session=%s sessionGroup=%s impersonationGroup=%s", sesName, system.RedactGroupName(grp), system.RedactGroupName(impersonated))
+					wc.recordSessionActivity(s.sessions, sesName, s.clusterName, grp)
+				}
+			}
 		}
 	}
 	s.phases.EndPhase(PhaseSessionSARs) // End session_sars phase
