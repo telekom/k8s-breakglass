@@ -6,9 +6,9 @@ set -eu
 
 root=$(cd -- "$(dirname -- "$0")/.." && pwd)
 # shellcheck disable=SC1091
-. "$(cd -- "$root/../../../.." && pwd)/hack/docker-image-ownership.sh"
+. "$(cd -- "$root/../../.." && pwd)/hack/docker-image-ownership.sh"
 # shellcheck disable=SC1091
-. "$(cd -- "$root/../../../.." && pwd)/hack/docker-resource-ownership.sh"
+. "$(cd -- "$root/../../.." && pwd)/hack/docker-resource-ownership.sh"
 image=diagnostic-artifact-collector:test
 test_dir=$(mktemp -d /tmp/diagnostic-artifact-test.XXXXXX)
 root_volume=
