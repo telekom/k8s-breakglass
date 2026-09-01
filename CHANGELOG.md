@@ -81,6 +81,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Hardened catalogue release verification and debug workload rendering: exact
+  OCI attestation links, byte-identical chart reruns, strict release tags,
+  complete workload selectors, and rejected unknown pod overrides. (#1256)
 - Debug-session pod-template cleanup now preserves live unmarked resources
   whose names were reused, requiring exact UID ownership markers or both
   valid legacy session markers before deletion.

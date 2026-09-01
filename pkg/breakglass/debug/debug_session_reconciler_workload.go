@@ -367,13 +367,11 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 			},
 			Spec: appsv1.DaemonSetSpec{
 				Selector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{
-						DebugSessionLabelKey: ds.Name,
-					},
+					MatchLabels: debugSessionSelectorLabels(ds),
 				},
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
-						Labels:      labels,
+						Labels:      mergeStringMaps(labels, debugSessionSelectorLabels(ds)),
 						Annotations: annotations,
 					},
 					Spec: podSpec,
@@ -846,7 +844,9 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 				return nil, err
 			}
 		}
-		c.applyPodOverridesStruct(spec, overrides)
+		if err := c.applyPodOverridesStruct(spec, overrides); err != nil {
+			return nil, fmt.Errorf("apply pod overrides: %w", err)
+		}
 	}
 
 	// Apply static overrides from session template (legacy support)

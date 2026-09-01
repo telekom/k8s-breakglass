@@ -494,10 +494,33 @@ func TestApplyPodOverridesStruct(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			spec := tt.spec
-			controller.applyPodOverridesStruct(&spec, tt.overrides)
+			require.NoError(t, controller.applyPodOverridesStruct(&spec, tt.overrides))
 			assert.Equal(t, tt.wantSpec, spec)
 		})
 	}
+
+	t.Run("rejects unknown container", func(t *testing.T) {
+		err := controller.applyPodOverridesStruct(&corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "debug"}},
+		}, &breakglassv1alpha1.DebugPodSpecOverrides{
+			Containers: []breakglassv1alpha1.DebugContainerOverride{{Name: "typo"}},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unknown container")
+	})
+
+	t.Run("rejects duplicate container overrides", func(t *testing.T) {
+		err := controller.applyPodOverridesStruct(&corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "debug"}},
+		}, &breakglassv1alpha1.DebugPodSpecOverrides{
+			Containers: []breakglassv1alpha1.DebugContainerOverride{
+				{Name: "debug"},
+				{Name: "debug"},
+			},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "duplicate container")
+	})
 }
 
 func TestBuildPodSpec_WithTemplateString(t *testing.T) {

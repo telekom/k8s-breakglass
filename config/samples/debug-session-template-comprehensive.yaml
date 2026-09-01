@@ -391,7 +391,7 @@ spec:
   displayName: "Network Packet Capture"
   description: "TCPdump session for packet capture analysis - requires security approval"
   deprecated: true
-  deprecationMessage: "Deprecated legacy sample. Use the disabled dump-access catalogue profile with explicit elevation and an approved read-only source."
+  deprecationMessage: "Deprecated legacy sample. Use the disabled network-diagnostics catalogue profile with explicit elevation and approved images."
   mode: workload
   podTemplateRef:
     name: tcpdump-capture

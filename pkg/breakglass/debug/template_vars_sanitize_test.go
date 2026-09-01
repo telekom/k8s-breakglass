@@ -135,7 +135,7 @@ func TestPodOverridesTemplate_UserVarsCannotInjectHostNamespaces(t *testing.T) {
 
 			// And the escape must not have leaked into the applied pod spec either.
 			spec := &corev1.PodSpec{}
-			controller.applyPodOverridesStruct(spec, overrides)
+			require.NoError(t, controller.applyPodOverridesStruct(spec, overrides))
 			assert.False(t, spec.HostNetwork, "hostNetwork must remain disabled")
 			assert.False(t, spec.HostPID, "hostPID must remain disabled")
 			assert.False(t, spec.HostIPC, "hostIPC must remain disabled")
