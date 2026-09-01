@@ -78,17 +78,13 @@ These tests are not removed: their narrow unit/integration assertions remain
 valuable. They are explicitly not counted as evidence for the T-CaaS
 create/approve/authorize path.
 
-## Existing PRs checked
+## Related upstream PRs
 
-* [PR #1297](https://github.com/telekom/k8s-breakglass/pull/1297), draft,
-  `fix/webhook-session-index-registration`, base
-  `36c7ce67ddad7ac6b05d6e541f946a4972195eff`, head
-  `50f26e4d81bbb674c8e345fe510e0186df0b4246`. CI was still running when
-  audited; lint, unit, CodeQL, security and manifest checks were green.
-* [PR #1298](https://github.com/telekom/k8s-breakglass/pull/1298), draft,
-  `fix/bgctl-session-drop-request`, base
-  `36c7ce67ddad7ac6b05d6e541f946a4972195eff`, head
-  `2471e9bf11fa76cc5af3bf10a4c746471f99054d`. CI was still running when
-  audited; lint, unit, CodeQL, security and manifest checks were green.
-
-Neither PR is modified by this work.
+* [PR #1297](https://github.com/telekom/k8s-breakglass/pull/1297) registers
+  the shared session indexes used by the controller-enabled deployment path.
+* [PR #1298](https://github.com/telekom/k8s-breakglass/pull/1298) fixes the
+  empty JSON request body sent by `bgctl session drop`.
+* [PR #1299](https://github.com/telekom/k8s-breakglass/pull/1299) adds the
+  deployment-contract assertions in this audit.
+* [PR #1300](https://github.com/telekom/k8s-breakglass/pull/1300) covers
+  stale session-cache reads in the live webhook authorization path.

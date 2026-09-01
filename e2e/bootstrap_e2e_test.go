@@ -516,31 +516,33 @@ func TestBootstrapW003_DeploymentModel(t *testing.T) {
 		"deployment must configure the cluster check interval (T-CaaS uses 10m; the Kind overlay shortens it to 10s)",
 	)
 
-	// T-CaaS omits --enable-controllers and therefore relies on its CLI default
-	// (true). If the rendered deployment supplies an argument or environment
-	// override, verify that effective setting is still enabled.
-	controllersEnabled := true
-	controllerFlagSupplied := false
+	// T-CaaS omits --enable-controllers and therefore relies on the running
+	// controller effect below to verify the default. Explicit overrides must
+	// still leave controllers enabled.
+	var controllerOverride *bool
 	for arg := range args {
 		if strings.HasPrefix(arg, "--enable-controllers=") {
-			controllerFlagSupplied = true
-			controllersEnabled = isTruthy(arg[len("--enable-controllers="):])
+			enabled := isTruthy(arg[len("--enable-controllers="):])
+			controllerOverride = &enabled
 			break
 		}
 	}
-	if !controllerFlagSupplied {
+	if controllerOverride == nil {
 		for _, env := range container.Env {
 			if env.Name != "ENABLE_CONTROLLERS" {
 				continue
 			}
 			require.Nil(t, env.ValueFrom, "ENABLE_CONTROLLERS must not use an unresolved value source")
 			if env.Value != "" {
-				controllersEnabled = isTruthy(env.Value)
+				enabled := isTruthy(env.Value)
+				controllerOverride = &enabled
 			}
 		}
 	}
-	require.True(t, controllersEnabled,
-		"the T-CaaS deployment model must not disable controllers")
+	if controllerOverride != nil {
+		require.True(t, *controllerOverride,
+			"the T-CaaS deployment model must not disable controllers")
+	}
 
 	var configMount, tmpMount, certMount *corev1.VolumeMount
 	for i := range container.VolumeMounts {
@@ -629,14 +631,15 @@ func TestBootstrapW003_DeploymentModel(t *testing.T) {
 		cli.Get(ctx, client.ObjectKey{Name: "breakglass-e2e-idp"}, &idp),
 		"the bootstrap IdentityProvider must exist",
 	)
+	ready := false
 	for _, condition := range idp.Status.Conditions {
 		if breakglassv1alpha1.IdentityProviderConditionType(condition.Type) == breakglassv1alpha1.IdentityProviderConditionReady {
-			assert.Equal(t, metav1.ConditionTrue, condition.Status,
-				"the bootstrap IdentityProvider must be reconciled Ready when controllers are enabled")
-			return
+			ready = condition.Status == metav1.ConditionTrue
+			break
 		}
 	}
-	require.Fail(t, "the bootstrap IdentityProvider must have a Ready condition when controllers are enabled")
+	require.True(t, ready,
+		"the bootstrap IdentityProvider must be reconciled Ready, proving the effective controller default is enabled")
 }
 
 func hasAnyArg(args map[string]struct{}, expected ...string) bool {
