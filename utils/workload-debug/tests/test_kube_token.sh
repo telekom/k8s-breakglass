@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
 set -eu
 
 root=$(cd -- "$(dirname "$0")/.." && pwd)
@@ -31,9 +33,16 @@ if grep -F real-test-token "$fixture/curl.log" >/dev/null; then
     echo 'debug-kube-api leaked token in curl argv' >&2
     exit 1
 fi
-grep -F 'Authorization: Bearer real-test-token' "$fixture/curl.log.header" >/dev/null
-if grep -F '******' "$fixture/curl.log.header" >/dev/null; then
-    echo 'debug-kube-api used a hard-coded redacted token' >&2
+if [ -e "$fixture/curl.log.header" ]; then
+    echo 'debug-kube-api sent an implicit token to an overridden server' >&2
     exit 1
 fi
+PATH="$root/scripts:$fixture:$PATH" WORKLOAD_DEBUG_CURL_LOG="$fixture/curl-auth.log" \
+    KUBE_TOKEN_FILE="$token_file" debug-kube-api --server https://api.example.test \
+    --token "$token_file" /version >/dev/null
+if grep -F real-test-token "$fixture/curl-auth.log" >/dev/null; then
+    echo 'debug-kube-api leaked token in authenticated curl argv' >&2
+    exit 1
+fi
+grep -Fx 'Authorization: Bearer real-test-token' "$fixture/curl-auth.log.header" >/dev/null
 echo 'token handling test passed'
