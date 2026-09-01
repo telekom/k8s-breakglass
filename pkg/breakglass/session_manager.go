@@ -398,7 +398,7 @@ func (c *SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 		}
 		return filtered, nil
 	}
-	if len(bsl.Items) == 0 && c.liveReader != nil {
+	if c.liveReader != nil && !hasApprovedSession(bsl.Items) {
 		fallbackKey := cluster + "\x00" + user
 		if !c.allowLiveReaderFallback(fallbackKey, time.Now()) {
 			return bsl.Items, nil
@@ -426,19 +426,48 @@ func (c *SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 		}
 		if len(filtered) > 0 {
 			c.clearLiveReaderFallback(fallbackKey)
-			log.Infow("Fetched BreakglassSessions from live reader after empty cache lookup",
-				"count", len(filtered), "cluster", cluster, "user", user)
+			result := append([]breakglassv1alpha1.BreakglassSession(nil), bsl.Items...)
+			positions := make(map[string]int, len(result))
+			for _, s := range bsl.Items {
+				positions[s.Namespace+"/"+s.Name] = len(positions)
+			}
+			for _, s := range filtered {
+				key := s.Namespace + "/" + s.Name
+				if position, exists := positions[key]; exists {
+					result[position] = s
+					continue
+				}
+				positions[key] = len(result)
+				result = append(result, s)
+			}
+			log.Infow("Fetched BreakglassSessions from live reader after cache lookup found no approved session",
+				"count", len(result), "cluster", cluster, "user", user)
+			return result, nil
 		}
-		return filtered, nil
+		return bsl.Items, nil
 	}
 	log.Infow("Fetched BreakglassSessions (indexed)", "count", len(bsl.Items), "cluster", cluster, "user", user)
 	return bsl.Items, nil
+}
+
+func hasApprovedSession(sessions []breakglassv1alpha1.BreakglassSession) bool {
+	for _, session := range sessions {
+		if session.Status.State == breakglassv1alpha1.SessionStateApproved {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *SessionManager) allowLiveReaderFallback(key string, now time.Time) bool {
 	c.liveFallbackMu.Lock()
 	defer c.liveFallbackMu.Unlock()
 
+	for cachedKey, last := range c.liveFallbackAt {
+		if now.Sub(last) >= liveReaderNegativeCacheTTL {
+			delete(c.liveFallbackAt, cachedKey)
+		}
+	}
 	if last, ok := c.liveFallbackAt[key]; ok && now.Sub(last) < liveReaderNegativeCacheTTL {
 		return false
 	}
