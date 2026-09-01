@@ -57,6 +57,9 @@ cleanup() {
 	if [ -n "${volume_owner_id:-}" ]; then
 		docker_remove_resource_with_volumes "$docker_bin" container "$volume_owner_id" >/dev/null 2>&1 || true
 		if "$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1; then
+			"$docker_bin" volume rm "$volume_name" >/dev/null 2>&1 || true
+		fi
+		if "$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1; then
 			printf 'FAIL: disposable volume %s survived cleanup\n' "$volume_name" >&2
 			cleanup_failed=1
 		fi
@@ -242,6 +245,9 @@ destroy_fixture() {
 		fail "disposable container '$container_name' survived cleanup"
 	fi
 	docker_remove_resource_with_volumes "$docker_bin" container "$volume_owner_id" >/dev/null || fail "cleanup failed for volume '$volume_name'"
+	if "$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1; then
+		"$docker_bin" volume rm "$volume_name" >/dev/null || fail "cleanup failed for volume '$volume_name'"
+	fi
 	"$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1 && fail "disposable volume '$volume_name' survived cleanup"
 	container_name=
 	container_id=
