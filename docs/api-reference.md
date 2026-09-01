@@ -534,8 +534,7 @@ POST /api/breakglassSessions/{session-name}/withdraw
 Authorization: Bearer <token>
 ```
 
-This action does not accept a request body or `Content-Type` header. Non-empty
-bodies return `400 Bad Request`.
+This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
 
 **Status Code:** `200 OK`
 
@@ -588,7 +587,8 @@ POST /api/breakglassSessions/{session-name}/drop
 Authorization: Bearer <token>
 ```
 
-This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
+This action does not accept a request body. Clients should omit `Content-Type`
+when sending an empty request. Non-empty bodies return `400 Bad Request`.
 
 **Status Codes:**
 
