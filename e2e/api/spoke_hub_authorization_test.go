@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -232,6 +233,59 @@ func (s *SpokeHubAuthorizationSuite) TestUserWithApprovedSessionAllowed() {
 	t.Logf("✓ kubectl get pods succeeded:\n%s", strings.TrimSpace(output))
 
 	t.Log("=== Complete User Journey Test Passed! ===")
+}
+
+// TestRevokedSessionRemovesSpokeAccess verifies that an approved session is
+// removed from the hub webhook's selection path when an approver cancels it.
+// This is a new cross-cluster lifecycle assertion rather than a defect-fix
+// test: it exercises the real API, cache, webhook and tenant apiserver wiring.
+func (s *SpokeHubAuthorizationSuite) TestRevokedSessionRemovesSpokeAccess() {
+	t := s.T()
+	spokeCluster := s.mcCtx.Config.SpokeAClusterName
+	testUser := helpers.MultiClusterTestUsers.Employee
+
+	t.Log("=== Test: Revoking an approved session removes spoke access ===")
+	userToken := s.mcCtx.GetEmployeeToken(t, s.ctx)
+	userAPI := helpers.NewAPIClientWithAuth(userToken)
+	userAPI.BaseURL = s.mcCtx.Config.HubAPIURL
+	userAPI = userAPI.WithCleanupClient(s.hubClient, s.namespace)
+
+	session, err := userAPI.CreateSessionAndWaitForPending(s.ctx, t, helpers.SessionRequest{
+		Cluster: spokeCluster,
+		User:    testUser.Email,
+		Group:   "breakglass-read-only",
+		Reason:  "E2E Test - approved session revocation removes spoke access",
+	}, helpers.WaitForStateTimeout)
+	s.Require().NoError(err, "session should be created through the management API")
+	s.cleanup.Add(session)
+
+	s.Require().NoError(
+		s.approverAPI.ApproveSessionViaAPI(s.ctx, t, session.Name, session.Namespace),
+		"approver should approve the session through the management API",
+	)
+	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
+		breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+
+	kubeconfig := s.getOIDCKubeconfig(spokeCluster)
+	output, err := s.runKubectlWithToken(kubeconfig, userToken, "get", "pods", "-n", "default")
+	s.Require().NoError(err, "approved session should allow spoke access: %s", output)
+
+	s.Require().NoError(
+		s.approverAPI.CancelSessionViaAPI(s.ctx, t, session.Name, session.Namespace),
+		"approver should cancel the approved session through the management API",
+	)
+	helpers.WaitForSessionState(t, s.ctx, s.hubClient, session.Name, session.Namespace,
+		breakglassv1alpha1.SessionStateExpired, helpers.WaitForStateTimeout)
+
+	var deniedOutput string
+	require.Eventually(t, func() bool {
+		var requestErr error
+		deniedOutput, requestErr = s.runKubectlWithToken(kubeconfig, userToken, "get", "pods", "-n", "default")
+		return requestErr != nil &&
+			(strings.Contains(deniedOutput, "forbidden") || strings.Contains(deniedOutput, "Forbidden"))
+	}, 30*time.Second, helpers.PollInterval, "cancelled session must no longer allow spoke access")
+	t.Logf("Revoked-session authorization response: %s", strings.TrimSpace(deniedOutput))
+	t.Log("=== Session revocation removed spoke access as expected ===")
 }
 
 // TestSessionClusterScopeEnforced verifies that a session on one cluster does not
