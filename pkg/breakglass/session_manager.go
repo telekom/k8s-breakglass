@@ -434,8 +434,6 @@ func (c *SessionManager) RefreshClusterUserBreakglassSessions(ctx context.Contex
 	}
 	if sessionResultsEqual(cached, live) {
 		c.recordLiveReaderFallback(fallbackKey, time.Now())
-	} else {
-		c.clearLiveReaderFallback(fallbackKey)
 	}
 	return mergeSessionResults(cached, live), true, nil
 }
@@ -470,10 +468,9 @@ func (c *SessionManager) fetchLiveClusterUserBreakglassSessions(ctx context.Cont
 			}
 		}
 		if hasAuthorizationEligibleSession(filtered, time.Now()) {
-			c.clearLiveReaderFallback(fallbackKey)
-		} else {
-			c.recordLiveReaderFallback(fallbackKey, time.Now())
+			return liveFallbackResult{sessions: filtered, success: true}, nil
 		}
+		c.recordLiveReaderFallback(fallbackKey, time.Now())
 		return liveFallbackResult{sessions: filtered, success: true}, nil
 	})
 	fallback, ok := value.(liveFallbackResult)

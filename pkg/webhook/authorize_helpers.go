@@ -651,6 +651,9 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 				s.reqLog.With("error", refreshErr.Error()).Warn("Unable to refresh session candidates after authorization denial")
 			} else if ok {
 				s.sessions, s.idpMismatches = filterSessionsForAuthorization(refreshed, s.issuer, time.Now())
+				if wc.evaluateDenyPolicies(c, s) {
+					return false
+				}
 				if allowedSession, grp, sesName, impersonated := wc.authorizeViaSessions(
 					s.ctx, rc, s.sessions, s.sar, s.clusterName, s.reqLog); allowedSession {
 					s.reqLog.With("sessionGroup", system.RedactGroupName(grp), "session", sesName, "impersonationGroup", system.RedactGroupName(impersonated)).
