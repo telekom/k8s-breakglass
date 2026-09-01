@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -351,6 +352,54 @@ func TestSessionManager_AuthorizationSelectionUsesLiveReaderWhenCacheIsStale(t *
 	assert.Equal(t, "approved-session", sessions[0].Name)
 }
 
+func TestSessionManager_AuthorizationSelectionRefreshesStalePendingCache(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	cachedSession := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "approved-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User:    "platform-requester@example.com",
+			Cluster: "tind-workload-01.tst.local-dev",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStatePending,
+		},
+	}
+	liveSession := cachedSession.DeepCopy()
+	liveSession.Status.State = breakglassv1alpha1.SessionStateApproved
+	cachedClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cachedSession).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+		}).
+		Build()
+	liveReader := stubReader{
+		listFn: func(list client.ObjectList) error {
+			sessionList, ok := list.(*breakglassv1alpha1.BreakglassSessionList)
+			if !ok {
+				return fmt.Errorf("unexpected list type %T", list)
+			}
+			sessionList.Items = []breakglassv1alpha1.BreakglassSession{*liveSession}
+			return nil
+		},
+	}
+	manager := NewSessionManagerWithClientAndReader(cachedClient, liveReader)
+
+	sessions, err := manager.GetClusterUserBreakglassSessions(
+		context.Background(),
+		"tind-workload-01.tst.local-dev",
+		"platform-requester@example.com",
+	)
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, breakglassv1alpha1.SessionStateApproved, sessions[0].Status.State)
+}
+
 func TestSessionManager_AuthorizationSelectionNegativeCachesLiveMiss(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
@@ -386,6 +435,19 @@ func TestSessionManager_AuthorizationSelectionNegativeCachesLiveMiss(t *testing.
 		require.Empty(t, sessions)
 	}
 	assert.Equal(t, 1, liveReads)
+}
+
+func TestSessionManager_LiveFallbackEvictsExpiredEntries(t *testing.T) {
+	manager := &SessionManager{}
+	now := time.Now()
+
+	manager.allowLiveReaderFallback("expired", now.Add(-2*liveReaderNegativeCacheTTL))
+	manager.allowLiveReaderFallback("fresh", now)
+
+	manager.liveFallbackMu.Lock()
+	defer manager.liveFallbackMu.Unlock()
+	_, expiredPresent := manager.liveFallbackAt["expired"]
+	assert.False(t, expiredPresent)
 }
 
 func TestSessionManager_LoggerInjection(t *testing.T) {
