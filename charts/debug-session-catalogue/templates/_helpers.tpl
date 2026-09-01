@@ -43,6 +43,7 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
 {{- if and $hostNetwork (not $elevated) }}{{ fail (printf "profiles[%s] hostNetwork requires explicit elevated: true" $profile.name) }}{{ end }}
 {{- if and $hostNetwork (ne $preset "elevated-node") }}{{ fail (printf "profiles[%s] hostNetwork requires preset elevated-node" $profile.name) }}{{ end }}
 {{- if and $profile.hostPID (not $hostNetwork) }}{{ fail (printf "profiles[%s] hostPID requires explicit hostNetwork: true" $profile.name) }}{{ end }}
+{{- if and $elevated (eq $preset "restricted") }}{{ fail (printf "profiles[%s] elevated: true requires preset elevated or elevated-node" $profile.name) }}{{ end }}
 securityContext:
   runAsNonRoot: {{ not $elevated }}
   {{- if $elevated }}

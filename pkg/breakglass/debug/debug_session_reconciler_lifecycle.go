@@ -109,6 +109,13 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 
 	allowedPods := make([]breakglassv1alpha1.AllowedPodRef, 0, len(podList.Items))
 	for _, pod := range podList.Items {
+		// UID-bearing pods must belong to this concrete DebugSession instance.
+		// Pods without the UID label remain compatible with legacy workloads.
+		if podUID, hasUID := pod.Labels[DebugSessionUIDLabelKey]; hasUID &&
+			podUID != debugSessionIdentity(ds) {
+			continue
+		}
+
 		ready := false
 		for _, cond := range pod.Status.Conditions {
 			if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
