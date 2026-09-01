@@ -29,6 +29,6 @@ trap 'rm -f -- "${temporary}"' EXIT
 
 jq --arg package "${package_name}" --arg digest "${digest}" \
   --arg date "${annotation_date}" \
-  '.annotations = ((.annotations // []) | map(select((.comment // "") != ("Chart artifact: " + $package + " sha256:" + $digest))) + [{annotationDate:$date,annotationType:"OTHER",annotator:"Tool: k8s-breakglass-release",comment:("Chart artifact: " + $package + " sha256:" + $digest)}])' \
+  '.annotations = ((.annotations // []) | map(select((.annotator // "") != "Tool: k8s-breakglass-release" or (((.comment // "") | startswith("Chart artifact: ")) | not))) + [{annotationDate:$date,annotationType:"OTHER",annotator:"Tool: k8s-breakglass-release",comment:("Chart artifact: " + $package + " sha256:" + $digest)}])' \
   "${sbom}" >"${temporary}"
 mv -- "${temporary}" "${sbom}"

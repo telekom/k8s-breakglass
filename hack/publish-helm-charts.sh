@@ -9,10 +9,12 @@ chart_dir="${1:?chart package directory is required}"
 chart_repo="${2:?OCI chart repository is required}"
 release_tag="${3:?release tag is required}"
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-
-canonical_chart_digest() {
-  ruby "${script_dir}/canonical-helm-chart-digest.rb" "$1"
+package_digest() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
 }
 
 shopt -s nullglob
@@ -27,10 +29,10 @@ for chart_package in "${chart_packages[@]}"; do
   chart_name="$(printf '%s\n' "${chart_metadata}" | awk '/^name:/ {print $2}')"
   chart_version="$(printf '%s\n' "${chart_metadata}" | awk '/^version:/ {print $2}')"
   chart_app_version="$(printf '%s\n' "${chart_metadata}" | awk '/^appVersion:/ {print $2}' | tr -d '"')"
-  [ -n "${chart_name}" ] && [ -n "${chart_version}" ] && [ -n "${chart_app_version}" ] || {
+  if [ -z "${chart_name}" ] || [ -z "${chart_version}" ] || [ -z "${chart_app_version}" ]; then
     echo "Invalid chart metadata: ${chart_package}" >&2
     exit 1
-  }
+  fi
   [ "${chart_app_version}" = "${release_tag}" ] || {
     echo "${chart_name}:${chart_version} appVersion ${chart_app_version} does not match ${release_tag}" >&2
     exit 1
@@ -53,9 +55,7 @@ for chart_package in "${chart_packages[@]}"; do
     }
 
     # Metadata alone is not an identity check. Pull the remote package and
-    # compare its chart content before allowing a rerun to continue to
-    # signing. Archive timestamps and gzip headers are intentionally excluded
-    # so an equivalent repackaging remains idempotent.
+    # require byte identity before allowing a rerun to continue to signing.
     remote_dir="$(mktemp -d)"
     if ! helm pull "${remote}" --version "${chart_version}" --destination "${remote_dir}" >/dev/null 2>&1; then
       rm -rf "${remote_dir}"
@@ -68,22 +68,14 @@ for chart_package in "${chart_packages[@]}"; do
       echo "Pulled ${remote}:${chart_version} did not contain $(basename "${chart_package}")" >&2
       exit 1
     fi
-    if ! local_digest="$(canonical_chart_digest "${chart_package}")"; then
-      rm -rf "${remote_dir}"
-      echo "Could not canonicalize ${chart_package} for content comparison" >&2
-      exit 1
-    fi
-    if ! remote_digest="$(canonical_chart_digest "${remote_package}")"; then
-      rm -rf "${remote_dir}"
-      echo "Could not canonicalize pulled ${remote}:${chart_version} for content comparison" >&2
-      exit 1
-    fi
+    local_digest="$(package_digest "${chart_package}")"
+    remote_digest="$(package_digest "${remote_package}")"
     rm -rf "${remote_dir}"
     [ "${local_digest}" = "${remote_digest}" ] || {
-      echo "${chart_name}:${chart_version} exists but its package content differs; refusing to sign or replace it" >&2
+      echo "${chart_name}:${chart_version} exists but its package bytes differ; refusing to sign or replace it" >&2
       exit 1
     }
-    echo "Chart ${chart_name}:${chart_version} already present and content-equivalent; skipping push."
+    echo "Chart ${chart_name}:${chart_version} already present and byte-identical; skipping push."
     continue
   fi
 

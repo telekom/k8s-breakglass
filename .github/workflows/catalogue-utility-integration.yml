@@ -152,6 +152,8 @@ jobs:
         run: make -C utils/images multiarch
       - name: Execute fio, ioping, dump, boundary, and cleanup contracts
         run: make -C utils/images integration
+      - name: Verify malformed OCI attestations fail closed
+        run: make -C utils/images oci-attestation-test
 
   cluster-validation:
     name: Intent / cluster-validation behavior

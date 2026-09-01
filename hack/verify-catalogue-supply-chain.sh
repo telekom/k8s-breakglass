@@ -9,6 +9,9 @@
 # OCI artifact and is verified by digest with the same attestations.
 
 set -Eeuo pipefail
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${script_dir}/validate-release-tag.sh"
 
 usage() {
   cat <<'EOF'
@@ -62,7 +65,7 @@ if [[ -n "${SUPPLY_CHAIN_IDENTITY:-}" ]]; then
   identity_args=(--certificate-identity "${SUPPLY_CHAIN_IDENTITY}")
 else
   release_tag="${SUPPLY_CHAIN_RELEASE_TAG:-}"
-  [[ "${release_tag}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]] || \
+  validate_release_tag "${release_tag}" || \
     die "SUPPLY_CHAIN_RELEASE_TAG must be a semver release tag when no identity override is supplied"
   identity="https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/${release_tag}"
   identity_args=(--certificate-identity "${identity}")

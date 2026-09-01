@@ -30,6 +30,14 @@ EOF
 "${script_dir}/attach-chart-subject.sh" "${package}" "${sbom}"
 "${script_dir}/verify-chart-sbom.sh" "${package}" "${sbom}"
 
+conflicting="${test_dir}/conflicting.spdx.json"
+jq '.annotations += [{"annotationType":"OTHER","annotator":"Tool: k8s-breakglass-release","comment":"Chart artifact: other-chart-0.2.0.tgz sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]' \
+  "${sbom}" >"${conflicting}"
+if "${script_dir}/verify-chart-sbom.sh" "${package}" "${conflicting}" >/dev/null 2>&1; then
+  echo "SBOM with conflicting chart bindings was accepted" >&2
+  exit 1
+fi
+
 printf 'changed chart payload\n' >"${package}"
 if "${script_dir}/verify-chart-sbom.sh" "${package}" "${sbom}" >/dev/null 2>&1; then
   echo "changed chart package was accepted by its old SBOM" >&2

@@ -37,11 +37,12 @@ jq -e --arg package "${package_name}" --arg digest "${digest}" '
       (.fileName | type == "string" and length > 0)
     )
   ) and
-  any(.annotations[]?;
-    .annotationType == "OTHER" and
-    .annotator == "Tool: k8s-breakglass-release" and
-    .comment == ("Chart artifact: " + $package + " sha256:" + $digest)
-  )
+  ([.annotations[]? |
+    select(.annotationType == "OTHER" and .annotator == "Tool: k8s-breakglass-release" and
+      ((.comment // "") | startswith("Chart artifact: "))) ] | length == 1) and
+  ([.annotations[]? |
+    select(.annotationType == "OTHER" and .annotator == "Tool: k8s-breakglass-release" and
+      .comment == ("Chart artifact: " + $package + " sha256:" + $digest)) ] | length == 1)
 ' "${sbom}" >/dev/null || {
   echo "SBOM lacks a meaningful SPDX packages/files graph or is not bound to chart package ${package_name}@sha256:${digest}" >&2
   exit 1

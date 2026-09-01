@@ -433,6 +433,12 @@ jobs:
             dockerfile: utils/images/dump-reader/Dockerfile
             shell_paths: utils/images/dump-reader/bin/* utils/images/dump-reader/tests/*.sh
             metadata: utils/images/dump-reader/image-metadata.yaml
+          - name: oci-attestation
+            make_dir: utils/images
+            target: oci-attestation-test
+            dockerfile: utils/images/storage-debug/Dockerfile
+            shell_paths: utils/images/tests/verify-oci-attestations-test.sh
+            metadata: ""
           - name: diagnostic-artifact-collector
             make_dir: utils/images/diagnostic-artifact-collector
             target: test

@@ -8,13 +8,16 @@
 # Consumers of this directory must never fall back to the mutable chart tags.
 
 set -Eeuo pipefail
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${script_dir}/validate-release-tag.sh"
 
 values_file="${1:?catalogue values file is required}"
 output_dir="${2:?release reference directory is required}"
 release_tag="${3:?utility release tag is required}"
 
 [[ -f "${values_file}" ]] || { echo "catalogue values file is missing: ${values_file}" >&2; exit 1; }
-[[ "${release_tag}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]] || {
+validate_release_tag "${release_tag}" || {
   echo "utility release tag must be a semver release tag: ${release_tag}" >&2
   exit 1
 }

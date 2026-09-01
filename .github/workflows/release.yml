@@ -47,7 +47,8 @@ jobs:
       - name: Require version tag ref
         id: classify
         run: |
-          if [[ "${GITHUB_REF}" =~ ^refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+          source hack/validate-release-tag.sh
+          if validate_release_tag "${GITHUB_REF_NAME}"; then
             echo "Release ref is ${GITHUB_REF}"
           else
             echo "::error::Release workflow must run from a semver tag like v1.2.3 or v1.2.3-rc.1. Build metadata tags are not supported because Docker image tags cannot contain '+'. Got ${GITHUB_REF}"
@@ -686,7 +687,8 @@ jobs:
           SUPPLY_CHAIN_RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          [[ "${SUPPLY_CHAIN_RELEASE_TAG}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]] || {
+          source hack/validate-release-tag.sh
+          validate_release_tag "${SUPPLY_CHAIN_RELEASE_TAG}" || {
             echo "release tag is not a validated semver tag: ${SUPPLY_CHAIN_RELEASE_TAG}" >&2
             exit 1
           }
