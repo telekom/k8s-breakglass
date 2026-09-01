@@ -857,26 +857,8 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 				return nil, err
 			}
 		}
-		if overrides.HostNetwork != nil {
-			spec.HostNetwork = *overrides.HostNetwork
-		}
-		if overrides.HostPID != nil {
-			spec.HostPID = *overrides.HostPID
-		}
-		if overrides.HostIPC != nil {
-			spec.HostIPC = *overrides.HostIPC
-		}
-		// Static pod overrides have the same precedence as the templated
-		// override form.  In particular, retain nodeSelector: otherwise the
-		// field is accepted by the API but silently disappears before the
-		// workload is created.
-		if len(overrides.NodeSelector) > 0 {
-			if spec.NodeSelector == nil {
-				spec.NodeSelector = make(map[string]string, len(overrides.NodeSelector))
-			}
-			for key, value := range overrides.NodeSelector {
-				spec.NodeSelector[key] = value
-			}
+		if err := c.applyPodOverridesStruct(spec, overrides); err != nil {
+			return nil, fmt.Errorf("apply static pod overrides: %w", err)
 		}
 	}
 

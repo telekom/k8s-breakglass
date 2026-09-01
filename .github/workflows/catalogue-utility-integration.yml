@@ -155,6 +155,35 @@ jobs:
       - name: Verify malformed OCI attestations fail closed
         run: make -C utils/images oci-attestation-test
 
+  diagnostic-artifact-collector:
+    name: Intent / diagnostic-artifact-collection behavior
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Prove multi-architecture build
+        run: |
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            --provenance=true --sbom=true \
+            --file utils/images/diagnostic-artifact-collector/Dockerfile \
+            --output "type=oci,dest=${RUNNER_TEMP}/diagnostic-artifact-collector.oci.tar" \
+            utils/images/diagnostic-artifact-collector
+      - name: Install checksum-verified kind
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" --output kind
+          curl --fail --silent --show-error --location "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum" --output kind.sha256sum
+          sed 's#kind-linux-amd64#kind#' kind.sha256sum | sha256sum --check --status
+          install -m 0755 kind "${RUNNER_TEMP}/kind"
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+      - name: Execute real runtime and cleanup contract
+        run: make -C utils/images/diagnostic-artifact-collector kind-test
+
   cluster-validation:
     name: Intent / cluster-validation behavior
     runs-on: ubuntu-24.04

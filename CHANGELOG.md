@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Static pod overrides now apply the same validated container command and
+  argument fields as templated overrides.
+- Catalogue utility integration now includes a multi-architecture and real-kind
+  proof for the diagnostic artifact collector.
 - Cluster-validator pod checks now exclude only the exact in-cluster validator
   pod when both Downward API identity values match; incomplete identity fails
   safe by excluding nothing.
