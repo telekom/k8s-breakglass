@@ -168,7 +168,9 @@ func (c *Client) do(ctx context.Context, method, endpoint string, body any, out 
 		return err
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set(CorrelationIDHeader, correlationID)
 	if c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
