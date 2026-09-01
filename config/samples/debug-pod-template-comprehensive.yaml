@@ -252,8 +252,8 @@ metadata:
   name: tcpdump-capture
   annotations:
     breakglass.t-caas.telekom.com/deprecated: "true"
-    breakglass.t-caas.telekom.com/deprecation-message: "Do not apply: use the disabled dump-access catalogue profile with explicit elevation and a reviewed read-only source."
-    breakglass.t-caas.telekom.com/replacement: "debug-session-catalogue/dump-access"
+    breakglass.t-caas.telekom.com/deprecation-message: "Do not apply: use the disabled network-diagnostics catalogue profile with explicit elevation and approved images."
+    breakglass.t-caas.telekom.com/replacement: "debug-session-catalogue/network-diagnostics"
 spec:
   displayName: "TCPDump Capture"
   description: "Packet capture with tcpdump for traffic analysis"

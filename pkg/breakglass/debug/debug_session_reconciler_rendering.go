@@ -229,9 +229,9 @@ func (c *DebugSessionController) renderPodOverridesTemplate(templateStr string, 
 }
 
 // applyPodOverridesStruct applies rendered overrides to a pod spec.
-func (c *DebugSessionController) applyPodOverridesStruct(spec *corev1.PodSpec, overrides *breakglassv1alpha1.DebugPodSpecOverrides) {
+func (c *DebugSessionController) applyPodOverridesStruct(spec *corev1.PodSpec, overrides *breakglassv1alpha1.DebugPodSpecOverrides) error {
 	if overrides == nil {
-		return
+		return nil
 	}
 	if len(overrides.NodeSelector) > 0 {
 		if spec.NodeSelector == nil {
@@ -250,12 +250,19 @@ func (c *DebugSessionController) applyPodOverridesStruct(spec *corev1.PodSpec, o
 	if overrides.HostIPC != nil {
 		spec.HostIPC = *overrides.HostIPC
 	}
+	seen := make(map[string]struct{}, len(overrides.Containers))
 	for _, override := range overrides.Containers {
+		if _, ok := seen[override.Name]; ok {
+			return fmt.Errorf("pod override specifies duplicate container name %q", override.Name)
+		}
+		seen[override.Name] = struct{}{}
+		matched := false
 		for index := range spec.Containers {
 			container := &spec.Containers[index]
 			if container.Name != override.Name {
 				continue
 			}
+			matched = true
 			if override.Command != nil {
 				container.Command = append([]string(nil), override.Command...)
 			}
@@ -272,7 +279,11 @@ func (c *DebugSessionController) applyPodOverridesStruct(spec *corev1.PodSpec, o
 				container.Env = append(container.Env, override.Env...)
 			}
 		}
+		if !matched {
+			return fmt.Errorf("pod override references unknown container %q", override.Name)
+		}
 	}
+	return nil
 }
 
 func mergeStringMaps(base map[string]string, maps ...map[string]string) map[string]string {
