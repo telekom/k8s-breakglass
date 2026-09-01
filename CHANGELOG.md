@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   argument fields as templated overrides.
 - Catalogue utility integration now includes a multi-architecture and real-kind
   proof for the diagnostic artifact collector.
+- Release automation now builds, publishes, signs, and attests every catalogue
+  utility image before resolving immutable release references.
 - Cluster-validator pod checks now exclude only the exact in-cluster validator
   pod when both Downward API identity values match; incomplete identity fails
   safe by excluding nothing.
