@@ -277,6 +277,58 @@ func TestIsSessionRetained_TimeVariants(t *testing.T) {
 	}
 }
 
+func TestIsSessionAuthorizationEligible(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name    string
+		session breakglassv1alpha1.BreakglassSession
+		want    bool
+	}{
+		{
+			name: "approved and unexpired",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: metav1.NewTime(now.Add(time.Minute)),
+			}},
+			want: true,
+		},
+		{
+			name: "expired approved",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: metav1.NewTime(now.Add(-time.Minute)),
+			}},
+		},
+		{
+			name: "pending",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStatePending,
+				ExpiresAt: metav1.NewTime(now.Add(time.Minute)),
+			}},
+		},
+		{
+			name: "rejected approval",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:      breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt:  metav1.NewTime(now.Add(time.Minute)),
+				RejectedAt: metav1.NewTime(now.Add(-time.Minute)),
+			}},
+		},
+		{
+			name: "missing expiry",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateApproved,
+			}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, IsSessionAuthorizationEligible(tt.session, now))
+		})
+	}
+}
+
 // TestIsSessionValid tests the IsSessionValid function
 func TestIsSessionValid(t *testing.T) {
 	t.Run("empty state is invalid", func(t *testing.T) {

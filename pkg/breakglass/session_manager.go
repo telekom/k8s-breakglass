@@ -12,6 +12,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -23,12 +24,13 @@ import (
 // SessionManager is kubernetes client based object for managing CRUD operation on BreakglassSession custom resource.
 type SessionManager struct {
 	client.Client
-	reader          client.Reader
-	liveReader      client.Reader
-	liveFallbackMu  sync.Mutex
-	liveFallbackAt  map[string]time.Time
-	log             *zap.SugaredLogger
-	logFallbackOnce sync.Once
+	reader             client.Reader
+	liveReader         client.Reader
+	liveFallbackMu     sync.Mutex
+	liveFallbackAt     map[string]time.Time
+	liveFallbackFlight singleflight.Group
+	log                *zap.SugaredLogger
+	logFallbackOnce    sync.Once
 }
 
 const liveReaderNegativeCacheTTL = time.Second
@@ -398,68 +400,84 @@ func (c *SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 		}
 		return filtered, nil
 	}
-	if c.liveReader != nil && !hasApprovedSession(bsl.Items) {
+	if c.liveReader != nil && !hasAuthorizationEligibleSession(bsl.Items, time.Now()) {
 		fallbackKey := cluster + "\x00" + user
-		if !c.allowLiveReaderFallback(fallbackKey, time.Now()) {
+		if c.liveReaderFallbackSuppressed(fallbackKey, time.Now()) {
 			return bsl.Items, nil
 		}
-		var liveList breakglassv1alpha1.BreakglassSessionList
-		err := c.liveReader.List(ctx, &liveList, client.MatchingFields{
-			"spec.cluster": cluster,
-			"spec.user":    user,
-		})
-		if err != nil {
-			if IsFieldIndexError(err) {
+		value, _, _ := c.liveFallbackFlight.Do(fallbackKey, func() (interface{}, error) {
+			var liveList breakglassv1alpha1.BreakglassSessionList
+			err := c.liveReader.List(ctx, &liveList, client.MatchingFields{
+				"spec.cluster": cluster,
+				"spec.user":    user,
+			})
+			if err != nil && IsFieldIndexError(err) {
 				err = c.liveReader.List(ctx, &liveList)
 			}
-		}
-		if err != nil {
-			log.Warnw("Failed to refresh BreakglassSessions from live reader after empty cache lookup",
-				"cluster", cluster, "user", user, "error", err)
+			if err != nil {
+				log.Warnw("Failed to refresh BreakglassSessions from live reader after cache lookup found no eligible session",
+					"cluster", cluster, "user", user, "error", err)
+				return liveFallbackResult{}, nil
+			}
+			filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(liveList.Items))
+			for _, s := range liveList.Items {
+				if s.Spec.Cluster == cluster && s.Spec.User == user {
+					filtered = append(filtered, s)
+				}
+			}
+			if len(filtered) == 0 {
+				c.recordLiveReaderFallback(fallbackKey, time.Now())
+			} else {
+				c.clearLiveReaderFallback(fallbackKey)
+			}
+			return liveFallbackResult{sessions: filtered, success: true}, nil
+		})
+		fallback, ok := value.(liveFallbackResult)
+		if !ok || !fallback.success || len(fallback.sessions) == 0 {
 			return bsl.Items, nil
 		}
-		filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(liveList.Items))
-		for _, s := range liveList.Items {
-			if s.Spec.Cluster == cluster && s.Spec.User == user {
-				filtered = append(filtered, s)
-			}
-		}
-		if len(filtered) > 0 {
-			c.clearLiveReaderFallback(fallbackKey)
-			result := append([]breakglassv1alpha1.BreakglassSession(nil), bsl.Items...)
-			positions := make(map[string]int, len(result))
-			for _, s := range bsl.Items {
-				positions[s.Namespace+"/"+s.Name] = len(positions)
-			}
-			for _, s := range filtered {
-				key := s.Namespace + "/" + s.Name
-				if position, exists := positions[key]; exists {
-					result[position] = s
-					continue
-				}
-				positions[key] = len(result)
-				result = append(result, s)
-			}
-			log.Infow("Fetched BreakglassSessions from live reader after cache lookup found no approved session",
-				"count", len(result), "cluster", cluster, "user", user)
-			return result, nil
-		}
-		return bsl.Items, nil
+		result := mergeSessionResults(bsl.Items, fallback.sessions)
+		log.Infow("Fetched BreakglassSessions from live reader after cache lookup found no eligible session",
+			"count", len(result), "cluster", cluster, "user", user)
+		return result, nil
 	}
 	log.Infow("Fetched BreakglassSessions (indexed)", "count", len(bsl.Items), "cluster", cluster, "user", user)
 	return bsl.Items, nil
 }
 
-func hasApprovedSession(sessions []breakglassv1alpha1.BreakglassSession) bool {
+type liveFallbackResult struct {
+	sessions []breakglassv1alpha1.BreakglassSession
+	success  bool
+}
+
+func hasAuthorizationEligibleSession(sessions []breakglassv1alpha1.BreakglassSession, now time.Time) bool {
 	for _, session := range sessions {
-		if session.Status.State == breakglassv1alpha1.SessionStateApproved {
+		if IsSessionAuthorizationEligible(session, now) {
 			return true
 		}
 	}
 	return false
 }
 
-func (c *SessionManager) allowLiveReaderFallback(key string, now time.Time) bool {
+func mergeSessionResults(cached, live []breakglassv1alpha1.BreakglassSession) []breakglassv1alpha1.BreakglassSession {
+	result := append([]breakglassv1alpha1.BreakglassSession(nil), cached...)
+	positions := make(map[string]int, len(result))
+	for _, session := range result {
+		positions[session.Namespace+"/"+session.Name] = len(positions)
+	}
+	for _, session := range live {
+		key := session.Namespace + "/" + session.Name
+		if position, exists := positions[key]; exists {
+			result[position] = session
+			continue
+		}
+		positions[key] = len(result)
+		result = append(result, session)
+	}
+	return result
+}
+
+func (c *SessionManager) liveReaderFallbackSuppressed(key string, now time.Time) bool {
 	c.liveFallbackMu.Lock()
 	defer c.liveFallbackMu.Unlock()
 
@@ -469,13 +487,18 @@ func (c *SessionManager) allowLiveReaderFallback(key string, now time.Time) bool
 		}
 	}
 	if last, ok := c.liveFallbackAt[key]; ok && now.Sub(last) < liveReaderNegativeCacheTTL {
-		return false
+		return true
 	}
+	return false
+}
+
+func (c *SessionManager) recordLiveReaderFallback(key string, now time.Time) {
+	c.liveFallbackMu.Lock()
+	defer c.liveFallbackMu.Unlock()
 	if c.liveFallbackAt == nil {
 		c.liveFallbackAt = make(map[string]time.Time)
 	}
 	c.liveFallbackAt[key] = now
-	return true
 }
 
 func (c *SessionManager) clearLiveReaderFallback(key string) {

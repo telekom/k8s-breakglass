@@ -185,6 +185,13 @@ Notes on matching behavior
 
 - If a ClusterConfig is not present for the provided `{cluster-name}`, the webhook immediately denies the request with a human-friendly message (`Cluster "foo" is not registered with Breakglass`) and emits a `cluster-missing` reason in metrics. This reduces confusion for platform users and surfaces onboarding gaps early. Create the missing ClusterConfig or update the webhook URL path to match an existing name.
 
+### Split deployments
+
+The API and authorization webhook use the reconciler manager's shared cache to
+select `BreakglassSession` resources. The session field indexes remain enabled
+when controller reconcilers are disabled, so split deployments continue to
+discover approved sessions by cluster and user.
+
 ### Cache consistency after approval
 
 Authorization selection normally uses the indexed shared cache. If that cache
