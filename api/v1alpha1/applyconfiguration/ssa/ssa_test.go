@@ -1141,7 +1141,7 @@ func TestKubectlDebugStatusFrom(t *testing.T) {
 		require.NotNil(t, result)
 		require.Len(t, result.EphemeralContainersInjected, 1)
 		require.Len(t, result.CopiedPods, 1)
-		assert.Equal(t, "copy-uid", result.CopiedPods[0].UID)
+		assert.Equal(t, "copy-uid", *result.CopiedPods[0].UID)
 	})
 }
 
