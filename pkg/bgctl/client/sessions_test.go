@@ -285,6 +285,8 @@ func TestSessionsDrop(t *testing.T) {
 		require.Equal(t, "/api/breakglassSessions/session-123/drop", r.URL.Path)
 		require.Equal(t, http.MethodPost, r.Method)
 		require.Empty(t, r.Header.Get("Content-Type"))
+		_, contentTypePresent := r.Header["Content-Type"]
+		require.False(t, contentTypePresent)
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
 		require.Empty(t, body)
