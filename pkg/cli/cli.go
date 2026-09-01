@@ -157,7 +157,7 @@ func Parse() *Config {
 	flag.BoolVar(&config.EnableCleanup, "enable-cleanup", getEnvBool("ENABLE_CLEANUP", true),
 		"Enable the background cleanup routine for expired sessions. Use false when deploying a webhook-only instance")
 	flag.BoolVar(&config.EnableControllers, "enable-controllers", getEnvBool("ENABLE_CONTROLLERS", true),
-		"Enable Kubernetes reconcilers, controller field indexes, cache invalidation handlers, ClusterConfig checker, and escalation status updater")
+		"Enable Kubernetes reconcilers, cache invalidation handlers, ClusterConfig checker, and escalation status updater. Shared cache field indexes remain enabled")
 	flag.BoolVar(&config.EnableValidatingWebhooks, "enable-validating-webhooks", getEnvBool("ENABLE_VALIDATING_WEBHOOKS", true),
 		"Enable validating webhooks for breakglass CRDs. Disable when running a frontend/API-only instance")
 
