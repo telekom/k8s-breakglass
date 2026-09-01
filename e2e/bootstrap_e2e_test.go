@@ -623,6 +623,20 @@ func TestBootstrapW003_DeploymentModel(t *testing.T) {
 		}, &lease),
 		"leader election must create the configured Lease",
 	)
+
+	var idp breakglassv1alpha1.IdentityProvider
+	require.NoError(t,
+		cli.Get(ctx, client.ObjectKey{Name: "breakglass-e2e-idp"}, &idp),
+		"the bootstrap IdentityProvider must exist",
+	)
+	for _, condition := range idp.Status.Conditions {
+		if breakglassv1alpha1.IdentityProviderConditionType(condition.Type) == breakglassv1alpha1.IdentityProviderConditionReady {
+			assert.Equal(t, metav1.ConditionTrue, condition.Status,
+				"the bootstrap IdentityProvider must be reconciled Ready when controllers are enabled")
+			return
+		}
+	}
+	require.Fail(t, "the bootstrap IdentityProvider must have a Ready condition when controllers are enabled")
 }
 
 func hasAnyArg(args map[string]struct{}, expected ...string) bool {
