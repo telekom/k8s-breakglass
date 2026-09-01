@@ -101,7 +101,6 @@ func TestRecordingRetentionDuration(t *testing.T) {
 		{"2w", int64(14 * 24 * 60 * 60)},
 		{"1d12h", int64(36 * 60 * 60)},
 		{"1w2d3h", int64(219 * 60 * 60)},
-		{"1w2d3h", int64(219 * 60 * 60)},
 		{"1h", int64(60 * 60)},
 	} {
 		d, err := recordingRetentionDuration(tc.value)

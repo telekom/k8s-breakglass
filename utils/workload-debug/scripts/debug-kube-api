@@ -19,14 +19,6 @@ ca_file=${KUBE_CA_FILE:-/var/run/secrets/kubernetes.io/serviceaccount/ca.crt}
 token_file=${KUBE_TOKEN_FILE:-/var/run/secrets/kubernetes.io/serviceaccount/token}
 timeout_seconds=${WORKLOAD_DEBUG_TIMEOUT:-10}
 path=/version
-
-case "$timeout_seconds" in
-    ''|*[!0-9]*) printf '%s\n' 'debug-kube-api: timeout must be a positive integer' >&2; exit 2 ;;
-esac
-if [ "$timeout_seconds" -lt 1 ] || [ "$timeout_seconds" -gt 300 ]; then
-    printf '%s\n' 'debug-kube-api: timeout must be between 1 and 300' >&2
-    exit 2
-fi
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --server|--ca|--token)

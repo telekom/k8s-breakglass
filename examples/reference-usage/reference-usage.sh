@@ -132,7 +132,7 @@ verify_public_artifacts() {
   [[ "${VERIFY_SUPPLY_CHAIN}" == true ]] || return 0
   [[ "${MODE}" == published ]] || return 0
   command -v cosign >/dev/null 2>&1 || die "cosign is required for published artifact verification"
-  local identity="https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@.*"
+  local identity="https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/v[0-9].*"
   [[ -n "${PUBLISHED_IMAGE_DIGEST_REF}" ]] || die "published image was not resolved to an immutable digest"
   log "Verifying keyless signature for ${PUBLISHED_IMAGE_DIGEST_REF}"
   cosign verify "${PUBLISHED_IMAGE_DIGEST_REF}" \
@@ -391,8 +391,11 @@ YAML
 
 api_request() {
   local token="$1" method="$2" path="$3" payload="${4:-}" response status
+  local auth_header="${STATE_DIR}/authorization.header"
+  printf 'Authorization: Bearer %s\n' "${token}" > "${auth_header}"
+  chmod 600 "${auth_header}"
   local -a args=(-sS -o "${STATE_DIR}/response.json" -w '%{http_code}' -X "${method}" \
-    -H 'Accept: application/json' -H 'Content-Type: application/json' -H "Authorization: Bearer ${token}")
+    -H 'Accept: application/json' -H 'Content-Type: application/json' --header "@${auth_header}")
   [[ -n "${payload}" ]] && args+=(--data "${payload}")
   status="$(curl "${args[@]}" "${API_BASE}${path}")"
   response="$(< "${STATE_DIR}/response.json")"
@@ -600,11 +603,19 @@ debug_session_flow() {
 assert_zero_residual() {
   kubectl delete auditconfig "${REFERENCE_AUDIT_CONFIG_NAME}" --ignore-not-found >/dev/null
   kubectl delete roledefinition,binddefinition -A -l "${LABEL}=true" --ignore-not-found --wait >/dev/null
-  kubectl delete breakglasssession -A -l "${LABEL}=true" --ignore-not-found --wait >/dev/null
+  for session in "${SESSION_NAME}" "${REJECTED_SESSION_NAME}"; do
+    [[ -n "${session}" ]] && kubectl delete breakglasssession "${session}" -n "${NAMESPACE}" \
+      --ignore-not-found --wait >/dev/null
+  done
   kubectl delete breakglassescalation -A -l "${LABEL}=true" --ignore-not-found --wait >/dev/null
   [[ -n "${DEBUG_SESSION_NAME}" ]] && kubectl delete debugsession "${DEBUG_SESSION_NAME}" -n "${NAMESPACE}" --ignore-not-found --wait >/dev/null
   [[ -n "${ELEVATED_DEBUG_SESSION_NAME}" ]] && kubectl delete debugsession "${ELEVATED_DEBUG_SESSION_NAME}" -n "${NAMESPACE}" --ignore-not-found --wait >/dev/null
-  kubectl get breakglasssession -A -l "${LABEL}=true" -o name | grep -q . && die "reference sessions remain"
+  for session in "${SESSION_NAME}" "${REJECTED_SESSION_NAME}"; do
+    if [[ -n "${session}" ]] && kubectl get breakglasssession "${session}" -n "${NAMESPACE}" \
+      -o name 2>/dev/null | grep -q .; then
+      die "reference session ${session} remains"
+    fi
+  done
   kubectl get breakglassescalation -A -l "${LABEL}=true" -o name | grep -q . && die "reference escalations remain"
   kubectl get roledefinition,binddefinition -A -l "${LABEL}=true" -o name | grep -q . && die "auth-operator reference objects remain"
   kubectl wait --for=delete clusterrole/reference-restricted-role --timeout=60s >/dev/null 2>&1 || \
