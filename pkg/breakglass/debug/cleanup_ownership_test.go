@@ -220,7 +220,7 @@ func TestRecoverAmbiguousCreatedPod(t *testing.T) {
 		{name: "already exists preserved", annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}, createErr: apierrors.NewAlreadyExists(corev1.Resource("pods"), "copy"), wantGone: false},
 		{name: "forbidden preserved", annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}, createErr: apierrors.NewForbidden(corev1.Resource("pods"), "copy", errors.New("denied")), wantGone: false},
 		{name: "invalid preserved", annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}, createErr: apierrors.NewInvalid(schema.GroupKind{Kind: "Pod"}, "copy", nil), wantGone: false},
-		{name: "unowned preserved", annotations: map[string]string{sourceSessionUIDAnnotation: "other-session", createOperationIDAnnotation: "op-1"}, createErr: &url.Error{Op: "POST", URL: "https://api.invalid", Err: context.DeadlineExceeded}, wantGone: false},
+		{name: "unowned preserved", annotations: map[string]string{sourceSessionUIDAnnotation: "other-session", createOperationIDAnnotation: "op-1"}, requestAnnotations: map[string]string{sourceSessionUIDAnnotation: "session-uid", createOperationIDAnnotation: "op-1"}, createErr: &url.Error{Op: "POST", URL: "https://api.invalid", Err: context.DeadlineExceeded}, wantGone: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "copy", Namespace: "default", UID: "created-uid", Annotations: tc.annotations}}

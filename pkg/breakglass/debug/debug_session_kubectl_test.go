@@ -2388,6 +2388,7 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "pod-copy",
 					Namespace: "default",
+					UID:       "copy-uid",
 				},
 			}).
 			Build()
@@ -2404,7 +2405,7 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 				State: breakglassv1alpha1.DebugSessionStateTerminated,
 				KubectlDebugStatus: &breakglassv1alpha1.KubectlDebugStatus{
 					CopiedPods: []breakglassv1alpha1.CopiedPodRef{
-						{CopyName: "pod-copy", CopyNamespace: "default"},
+						{CopyName: "pod-copy", CopyNamespace: "default", UID: "copy-uid"},
 					},
 				},
 			},
@@ -2442,6 +2443,7 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "pod-copy",
 					Namespace: "default",
+					UID:       "copy-uid",
 				},
 			}).
 			Build()
@@ -2466,7 +2468,7 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 				}},
 				KubectlDebugStatus: &breakglassv1alpha1.KubectlDebugStatus{
 					CopiedPods: []breakglassv1alpha1.CopiedPodRef{
-						{CopyName: "pod-copy", CopyNamespace: "default"},
+						{CopyName: "pod-copy", CopyNamespace: "default", UID: "copy-uid"},
 					},
 				},
 			},
