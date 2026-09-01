@@ -642,7 +642,7 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 
 			// Record session activity for idle timeout detection and usage analytics (#314)
 			wc.recordSessionActivity(s.sessions, sesName, s.clusterName, grp)
-		} else if len(s.sessions) > 0 {
+		} else if len(s.sessions) > 0 || len(s.idpMismatches) > 0 {
 			// A different eligible cached session can hide a newly approved grant.
 			// Refresh only after the cached candidates fail this request's SAR.
 			if refreshed, ok, refreshErr := wc.sesManager.RefreshClusterUserBreakglassSessions(

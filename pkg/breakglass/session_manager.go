@@ -3,6 +3,7 @@ package breakglass
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -431,6 +432,11 @@ func (c *SessionManager) RefreshClusterUserBreakglassSessions(ctx context.Contex
 	if !refreshed || len(live) == 0 {
 		return cached, refreshed, nil
 	}
+	if sessionResultsEqual(cached, live) {
+		c.recordLiveReaderFallback(fallbackKey, time.Now())
+	} else {
+		c.clearLiveReaderFallback(fallbackKey)
+	}
 	return mergeSessionResults(cached, live), true, nil
 }
 
@@ -507,6 +513,25 @@ func mergeSessionResults(cached, live []breakglassv1alpha1.BreakglassSession) []
 		result = append(result, session)
 	}
 	return result
+}
+
+func sessionResultsEqual(left, right []breakglassv1alpha1.BreakglassSession) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	rightByKey := make(map[string]breakglassv1alpha1.BreakglassSession, len(right))
+	for _, session := range right {
+		rightByKey[session.Namespace+"/"+session.Name] = session
+	}
+	for _, session := range left {
+		other, ok := rightByKey[session.Namespace+"/"+session.Name]
+		if !ok ||
+			!reflect.DeepEqual(session.Spec, other.Spec) ||
+			!reflect.DeepEqual(session.Status, other.Status) {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *SessionManager) liveReaderFallbackSuppressed(key string, now time.Time) bool {
