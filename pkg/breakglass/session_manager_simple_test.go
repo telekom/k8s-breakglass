@@ -306,6 +306,51 @@ func TestSessionManager_FieldSelectorMethods(t *testing.T) {
 	})
 }
 
+func TestSessionManager_AuthorizationSelectionUsesLiveReaderWhenCacheIsStale(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	session := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "approved-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User:    "platform-requester@example.com",
+			Cluster: "tind-workload-01.tst.local-dev",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
+		},
+	}
+	cachedClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+		}).
+		Build()
+	liveReader := stubReader{
+		listFn: func(list client.ObjectList) error {
+			sessionList, ok := list.(*breakglassv1alpha1.BreakglassSessionList)
+			if !ok {
+				return fmt.Errorf("unexpected list type %T", list)
+			}
+			sessionList.Items = []breakglassv1alpha1.BreakglassSession{session}
+			return nil
+		},
+	}
+	manager := NewSessionManagerWithClientAndReader(cachedClient, liveReader)
+
+	sessions, err := manager.GetClusterUserBreakglassSessions(
+		context.Background(),
+		"tind-workload-01.tst.local-dev",
+		"platform-requester@example.com",
+	)
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, "approved-session", sessions[0].Name)
+}
+
 func TestSessionManager_LoggerInjection(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
 
