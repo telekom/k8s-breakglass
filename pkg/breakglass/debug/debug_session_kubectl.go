@@ -796,6 +796,7 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 		return err
 	}
 	ds = live
+	authorizationCandidate := ds.DeepCopy()
 
 	// Resolve the target client together with the exact live ClusterConfig that
 	// produced it. The same snapshot is checked again at the final write boundary.
@@ -891,6 +892,9 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 		}
 		return kubectlDebugRequestErrorf("an identical ephemeral-container operation is already in progress")
 	}
+	ensureKubectlDebugStatus(&ds.Status).Operations = append(
+		ensureKubectlDebugStatus(&ds.Status).Operations, operation,
+	)
 	if err := h.verifyPreparedEphemeralContainerOperation(ctx, ds, operation.ID); err != nil {
 		return err
 	}
@@ -898,19 +902,32 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	// Persisting intent is itself a potentially slow API operation. Re-fence
 	// after it succeeds so an operation that crossed expiry is never admitted;
 	// the prepared intent remains for the controller to mark failed.
-	live, err = h.liveSessionForMutation(ctx, ds, user)
+	live, err = h.liveSessionForMutation(ctx, authorizationCandidate, user)
 	if err != nil {
+		if completeErr := h.completeEphemeralContainerOperation(ctx, ds, operation.ID, breakglassv1alpha1.KubectlDebugOperationFailed, err.Error(), nil); completeErr != nil {
+			return fmt.Errorf("%w; failed to persist rejected operation: %v", err, completeErr)
+		}
 		return err
 	}
 	ds = live
 	namespaceAllowed, err = h.isNamespaceAllowedForEphemeral(ctx, ds, namespace, ecPolicy.AllowedNamespaces, ecPolicy.DeniedNamespaces)
 	if err != nil {
+		if completeErr := h.completeEphemeralContainerOperation(ctx, ds, operation.ID, breakglassv1alpha1.KubectlDebugOperationFailed, err.Error(), nil); completeErr != nil {
+			return fmt.Errorf("%w; failed to persist rejected operation: %v", err, completeErr)
+		}
 		return err
 	}
 	if !namespaceAllowed {
-		return kubectlDebugPolicyErrorf("namespace %s is no longer allowed for ephemeral container injection", namespace)
+		err := kubectlDebugPolicyErrorf("namespace %s is no longer allowed for ephemeral container injection", namespace)
+		if completeErr := h.completeEphemeralContainerOperation(ctx, ds, operation.ID, breakglassv1alpha1.KubectlDebugOperationFailed, err.Error(), nil); completeErr != nil {
+			return fmt.Errorf("%w; failed to persist rejected operation: %v", err, completeErr)
+		}
+		return err
 	}
 	if err := h.fencePrivilegedOperationClusterConfig(ctx, configuredCluster); err != nil {
+		if completeErr := h.completeEphemeralContainerOperation(ctx, ds, operation.ID, breakglassv1alpha1.KubectlDebugOperationFailed, err.Error(), nil); completeErr != nil {
+			return fmt.Errorf("%w; failed to persist rejected operation: %v", err, completeErr)
+		}
 		return err
 	}
 
