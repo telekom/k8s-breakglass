@@ -2974,6 +2974,11 @@ func TestBuildWorkload_FullDeploymentWithPodOverrides(t *testing.T) {
 				Spec: &breakglassv1alpha1.DebugPodSpecOverrides{
 					HostNetwork:  &hostNetTrue,
 					NodeSelector: nodeSelector,
+					Containers: []breakglassv1alpha1.DebugContainerOverride{{
+						Name:    "debug",
+						Command: []string{"sh", "-c"},
+						Args:    []string{"echo ready"},
+					}},
 				},
 			},
 			PodTemplateString: `apiVersion: apps/v1
@@ -3008,6 +3013,8 @@ spec:
 		"podOverrides hostNetwork=true should be applied to full Deployment template's PodSpec")
 	assert.Equal(t, "debug", deploy.Spec.Template.Spec.NodeSelector["node-pool"],
 		"podOverrides nodeSelector should be applied to full Deployment template's PodSpec")
+	assert.Equal(t, []string{"sh", "-c"}, deploy.Spec.Template.Spec.Containers[0].Command)
+	assert.Equal(t, []string{"echo ready"}, deploy.Spec.Template.Spec.Containers[0].Args)
 }
 
 func TestBuildWorkload_FullDeploymentLabelMerging(t *testing.T) {
