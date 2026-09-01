@@ -207,7 +207,7 @@ func (c *emptyUnindexedListClient) List(ctx context.Context, list client.ObjectL
 	return c.Client.List(ctx, list, opts...)
 }
 
-func TestAuthorizationSelectionUsesSharedIndexesWhenControllersDisabled(t *testing.T) {
+func assertAuthorizationSelectionUsesSharedIndexes(t *testing.T, enableControllers bool) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
 
@@ -221,7 +221,7 @@ func TestAuthorizationSelectionUsesSharedIndexesWhenControllersDisabled(t *testi
 			State: breakglassv1alpha1.SessionStateApproved,
 		},
 	}
-	plan := newControllerSetupPlan(false)
+	plan := newControllerSetupPlan(enableControllers)
 	builder := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(session)
@@ -248,6 +248,14 @@ func TestAuthorizationSelectionUsesSharedIndexesWhenControllersDisabled(t *testi
 	require.NoError(t, err)
 	require.Len(t, sessions, 1)
 	assert.Equal(t, "approved-session", sessions[0].Name)
+}
+
+func TestAuthorizationSelectionUsesSharedIndexesWhenControllersDisabled(t *testing.T) {
+	assertAuthorizationSelectionUsesSharedIndexes(t, false)
+}
+
+func TestAuthorizationSelectionUsesSharedIndexesWhenControllersEnabled(t *testing.T) {
+	assertAuthorizationSelectionUsesSharedIndexes(t, true)
 }
 
 func TestNewManager_MetricsServerOptions(t *testing.T) {
