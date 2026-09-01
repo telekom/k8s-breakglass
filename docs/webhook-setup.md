@@ -178,6 +178,12 @@ Notes on matching behavior
 
 - The `{cluster-name}` path segment is used by the webhook to determine which managed cluster the request targets. The webhook will match this value against the following, in order of relevance:
   - `ClusterConfig.metadata.name` (recommended canonical identifier)
+  - `BreakglassSession.spec.cluster` values present on active sessions
+  - Entries listed in `BreakglassEscalation.spec.allowed.clusters` for escalation-based checks
+
+- Make sure the value you expose in the webhook URL is identical (including case) to the `ClusterConfig` name or the cluster identifier used in session/escalation objects. URL-encode any characters that are not valid in a URL path.
+
+- If a ClusterConfig is not present for the provided `{cluster-name}`, the webhook immediately denies the request with a human-friendly message (`Cluster "foo" is not registered with Breakglass`) and emits a `cluster-missing` reason in metrics. This reduces confusion for platform users and surfaces onboarding gaps early. Create the missing ClusterConfig or update the webhook URL path to match an existing name.
 
 ### Split deployments
 
@@ -185,12 +191,6 @@ The API and authorization webhook use the reconciler manager's shared cache to
 select `BreakglassSession` resources. The session field indexes remain enabled
 when controller reconcilers are disabled, so split deployments continue to
 discover approved sessions by cluster and user.
-  - `BreakglassSession.spec.cluster` values present on active sessions
-  - Entries listed in `BreakglassEscalation.spec.allowed.clusters` for escalation-based checks
-
-- Make sure the value you expose in the webhook URL is identical (including case) to the `ClusterConfig` name or the cluster identifier used in session/escalation objects. URL-encode any characters that are not valid in a URL path.
-
-- If a ClusterConfig is not present for the provided `{cluster-name}`, the webhook immediately denies the request with a human-friendly message (`Cluster "foo" is not registered with Breakglass`) and emits a `cluster-missing` reason in metrics. This reduces confusion for platform users and surfaces onboarding gaps early. Create the missing ClusterConfig or update the webhook URL path to match an existing name.
 
 ### Authentication Methods
 
