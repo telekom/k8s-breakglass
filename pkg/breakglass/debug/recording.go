@@ -36,9 +36,9 @@ import (
 )
 
 var (
-	recordingAuthorizationPattern = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*)(bearer\s+)?[^\s,;]+`)
+	recordingAuthorizationPattern = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*)(?:[^\s,;]+\s+)?[^\s,;]+`)
 	recordingBearerPattern        = regexp.MustCompile(`(?i)(\bbearer\s+)[^\s,;]+`)
-	recordingSecretPattern        = regexp.MustCompile(`(?i)\b(token|password|passwd|secret)\b([=:]\s*|\s+)[^\s,;]+`)
+	recordingSecretPattern        = regexp.MustCompile(`(?i)((?:access[_-]?token|token|password|passwd|secret)(?:[=:]\s*|\s+))[^\s,;]+`)
 )
 
 const (
@@ -113,9 +113,9 @@ func safeRecordingFailure(reason string) string {
 	if reason == "" {
 		return "terminal recording failed"
 	}
-	reason = recordingAuthorizationPattern.ReplaceAllString(reason, "$1$2[REDACTED]")
+	reason = recordingAuthorizationPattern.ReplaceAllString(reason, "$1[REDACTED]")
 	reason = recordingBearerPattern.ReplaceAllString(reason, "$1[REDACTED]")
-	reason = recordingSecretPattern.ReplaceAllString(reason, "$1$2[REDACTED]")
+	reason = recordingSecretPattern.ReplaceAllString(reason, "$1[REDACTED]")
 	if len(reason) > 512 {
 		reason = reason[:512] + "..."
 	}

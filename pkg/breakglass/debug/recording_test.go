@@ -32,13 +32,13 @@ func (r *recordingReaderStub) OpenRecording(_ context.Context, _ *breakglassv1al
 
 func recordingFixture(enabled bool) (*breakglassv1alpha1.DebugSession, *breakglassv1alpha1.DebugSessionTemplate) {
 	return &breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: "debug-one", Namespace: "breakglass"},
-			Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "prod", TemplateRef: "netshoot"},
-		}, &breakglassv1alpha1.DebugSessionTemplate{
-			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
-				Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: enabled, RecordingRetention: "30d"},
-			},
-		}
+		ObjectMeta: metav1.ObjectMeta{Name: "debug-one", Namespace: "breakglass"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "prod", TemplateRef: "netshoot"},
+	}, &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: enabled, RecordingRetention: "30d"},
+		},
+	}
 }
 
 func TestInjectTerminalRecordingContract(t *testing.T) {
@@ -100,6 +100,7 @@ func TestRecordingRetentionDuration(t *testing.T) {
 		{"90d", int64(90 * 24 * 60 * 60)},
 		{"2w", int64(14 * 24 * 60 * 60)},
 		{"1d12h", int64(36 * 60 * 60)},
+		{"1w2d3h", int64(219 * 60 * 60)},
 		{"1w2d3h", int64(219 * 60 * 60)},
 		{"1h", int64(60 * 60)},
 	} {
@@ -234,9 +235,19 @@ func TestSafeRecordingFailureRedactsSecretsAndBoundsLength(t *testing.T) {
 	if got == "" || got == "sidecar rejected Authorization: Bearer super-secret-token" {
 		t.Fatalf("secret was not redacted: %q", got)
 	}
-	bearer := safeRecordingFailure("Authorization: Bearer " + "abc123")
-	if strings.Contains(bearer, "abc123") {
-		t.Fatalf("bearer token was not redacted: %q", bearer)
+	for _, input := range []string{
+		"Authorization: Bearer abc123",
+		"Authorization: Basic dXNlcjpwYXNz",
+		"Authorization: ******",
+		"Bearer oauth-secret",
+		"access_token=oauth-secret",
+		"access-token: oauth-secret",
+	} {
+		for _, secret := range []string{"abc123", "dXNlcjpwYXNz", "oauth-secret"} {
+			if got := safeRecordingFailure(input); strings.Contains(got, secret) {
+				t.Fatalf("credential was not redacted: %q", got)
+			}
+		}
 	}
 	long := safeRecordingFailure("token=" + string(make([]byte, 1024)))
 	if len(long) > 515 {

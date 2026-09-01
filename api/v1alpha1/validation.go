@@ -928,13 +928,10 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 		}{
 			{name: "maxDuration", value: template.Spec.Constraints.MaxDuration},
 			{name: "defaultDuration", value: template.Spec.Constraints.DefaultDuration},
-			{name: "approvalTimeout", value: template.Spec.Constraints.ApprovalTimeout},
-			{name: "idleTimeout", value: template.Spec.Constraints.IdleTimeout},
-			{name: "retainFor", value: template.Spec.Constraints.RetainFor},
 		}
 		for _, item := range constraintDurations {
 			if item.value != "" {
-				result.Errors = append(result.Errors, validateDurationFormat(item.value, constraintsPath.Child(item.name))...)
+				result.Errors = append(result.Errors, validatePositiveDurationFormat(item.value, constraintsPath.Child(item.name))...)
 			}
 		}
 	}

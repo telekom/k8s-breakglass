@@ -2630,6 +2630,9 @@ func TestParseDuration_InvalidFormats(t *testing.T) {
 		{"1d1x", "invalid unit after days"},
 		{"1y1d", "exceeds max days via mixed extended units"},
 		{"53w", "exceeds max days via week units"},
+		{"-1w", "negative week duration"},
+		{"-1y", "negative year duration"},
+		{"-1h", "negative standard duration"},
 		{fmt.Sprintf("%dd", maxDurationDays+1), "exceeds max days"},
 		{"999999999d", "exceeds max days (large value)"},
 	}

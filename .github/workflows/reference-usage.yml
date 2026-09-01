@@ -24,7 +24,7 @@ on:
         default: '0.2.0'
         type: string
       catalogue_digest:
-        description: Immutable OCI digest for the signed debug-session-catalogue chart
+        description: "Required in published mode: immutable OCI digest for the signed debug-session-catalogue chart"
         required: false
         default: ''
         type: string

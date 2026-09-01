@@ -23,8 +23,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// extendedDurationTermPattern parses signed duration terms, including
-// day/week/year units that Go's time.ParseDuration does not support.
+// extendedDurationTermPattern parses duration terms, including day/week/year
+// units that Go's time.ParseDuration does not support.
 var extendedDurationTermPattern = regexp.MustCompile(`([+-]?)(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h|d|w|y)`)
 
 // maxDurationDays is the upper bound for day values in ParseDuration to prevent
@@ -57,8 +57,9 @@ func ParseDuration(s string) (time.Duration, error) {
 	if s == "" {
 		return 0, nil
 	}
-	// Standard Go durations may be negative; extended day durations are not.
-	if strings.HasPrefix(s, "-") && strings.Contains(s, "d") {
+	// Durations are used for positive limits and timeouts throughout the API.
+	// Reject a minus anywhere so mixed expressions cannot bypass validation.
+	if strings.Contains(s, "-") {
 		return 0, fmt.Errorf("duration must be positive")
 	}
 

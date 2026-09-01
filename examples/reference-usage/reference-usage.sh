@@ -52,6 +52,7 @@ APPROVER_EMAIL="${REFERENCE_APPROVER_EMAIL:-reference-approver@example.com}"
 LABEL="reference-usage.example.com/run"
 RUN_ELEVATED="${REFERENCE_RUN_ELEVATED:-false}"
 VERIFY_SUPPLY_CHAIN="${REFERENCE_VERIFY_SUPPLY_CHAIN:-true}"
+VERIFY_GH_ATTESTATION="${REFERENCE_VERIFY_GH_ATTESTATION:-false}"
 PUBLISHED_IMAGE_DIGEST_REF=""
 STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/reference-usage.XXXXXX")"
 
@@ -85,6 +86,8 @@ validate_inputs() {
   done
   [[ "${RUN_ELEVATED}" == true || "${RUN_ELEVATED}" == false ]] || \
     die "REFERENCE_RUN_ELEVATED must be true or false"
+  [[ "${VERIFY_GH_ATTESTATION}" == true || "${VERIFY_GH_ATTESTATION}" == false ]] || \
+    die "REFERENCE_VERIFY_GH_ATTESTATION must be true or false"
   [[ "${APPROVER_EMAIL}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] || \
     die "REFERENCE_APPROVER_EMAIL must be a simple email address"
   [[ -n "${REFERENCE_AUDIT_WEBHOOK_URL}" ]] || \
@@ -143,7 +146,8 @@ verify_public_artifacts() {
   cosign verify-attestation "${PUBLISHED_IMAGE_DIGEST_REF}" --type slsaprovenance \
     --certificate-identity-regexp="${identity}" \
     --certificate-oidc-issuer="https://token.actions.githubusercontent.com" >/dev/null
-  if command -v gh >/dev/null 2>&1; then
+  if [[ "${VERIFY_GH_ATTESTATION}" == true ]]; then
+    command -v gh >/dev/null 2>&1 || die "gh is required when REFERENCE_VERIFY_GH_ATTESTATION=true"
     gh attestation verify "${PUBLISHED_IMAGE_DIGEST_REF}" --repo telekom/k8s-breakglass >/dev/null
   fi
 
@@ -288,7 +292,11 @@ YAML
   local catalogue_source="${CATALOGUE_CHART}"
   local -a chart_args=(upgrade --install "${CATALOGUE_RELEASE}" "${catalogue_source}" \
     --namespace "${DEBUG_NAMESPACE}" --values "${CATALOGUE_VALUES_FILE}" --wait --timeout 5m)
-  chart_args+=(--version "${CATALOGUE_VERSION}")
+  if [[ "${MODE}" == published && "${VERIFY_SUPPLY_CHAIN}" == true ]]; then
+    chart_args[3]="${CATALOGUE_CHART}@${CATALOGUE_CHART_DIGEST}"
+  else
+    chart_args+=(--version "${CATALOGUE_VERSION}")
+  fi
   helm "${chart_args[@]}"
   kubectl get debugsessiontemplate -l "app.kubernetes.io/name=debug-session-catalogue" >/dev/null
   for resource in debugsessiontemplate debugpodtemplate; do
@@ -413,7 +421,7 @@ wait_for_state() {
 
 webhook_check() {
   local expected="$1" resource="$2" payload response allowed
-  payload="$(jq -n --arg user "${REQUESTER_EMAIL}" --arg tenant "${TENANT}" --arg resource "${resource}" --arg group "${REFERENCE_REQUESTER_GROUP}" '{apiVersion:"authorization.k8s.io/v1",kind:"SubjectAccessReview",spec:{user:$user,groups:[$group],resourceAttributes:{verb:"get",resource:$resource,namespace:"default"}}}')"
+  payload="$(jq -n --arg user "${REQUESTER_EMAIL}" --arg base_group "${REFERENCE_REQUESTER_GROUP}" --arg escalated_group "${REFERENCE_ESCALATED_GROUP}" --arg resource "${resource}" --arg namespace "${NAMESPACE}" '{apiVersion:"authorization.k8s.io/v1",kind:"SubjectAccessReview",spec:{user:$user,groups:[$base_group,$escalated_group],resourceAttributes:{verb:"get",resource:$resource,namespace:$namespace}}}')"
   response="$(curl -sS -X POST -H 'Content-Type: application/json' --data "${payload}" "${API_BASE}/api/breakglass/webhook/authorize/${TENANT}")"
   allowed="$(jq -r '.status.allowed' <<<"${response}")"
   [[ "${allowed}" == "${expected}" ]] || die "webhook ${resource}: expected allowed=${expected}, got ${response}"
@@ -421,9 +429,11 @@ webhook_check() {
 
 reference_flow() {
   [[ -n "${REFERENCE_TOKEN_HELPER}" ]] || die "REFERENCE_TOKEN_HELPER is required for the selected identity fixture"
-  REQUESTER_TOKEN="$(HOST_HEADER="${KEYCLOAK_ISSUER_HOST}" PORT="${KEYCLOAK_PORT:-8443}" \
+  local issuer_host="${KEYCLOAK_ISSUER_HOST:-}"
+  [[ -n "${issuer_host}" ]] || die "KEYCLOAK_ISSUER_HOST is required from the selected reference environment"
+  REQUESTER_TOKEN="$(HOST_HEADER="${issuer_host}" PORT="${KEYCLOAK_PORT:-8443}" \
     "${REFERENCE_TOKEN_HELPER}" "${REQUESTER_USERNAME}" "${REQUESTER_PASSWORD}")"
-  APPROVER_TOKEN="$(HOST_HEADER="${KEYCLOAK_ISSUER_HOST}" PORT="${KEYCLOAK_PORT:-8443}" \
+  APPROVER_TOKEN="$(HOST_HEADER="${issuer_host}" PORT="${KEYCLOAK_PORT:-8443}" \
     "${REFERENCE_TOKEN_HELPER}" "${APPROVER_USERNAME}" "${APPROVER_PASSWORD}")"
 
   log "Checking restricted access is denied before approval"

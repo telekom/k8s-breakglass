@@ -39,6 +39,9 @@ type queuedMockSink struct {
 	failCount    int
 	writeDelay   time.Duration
 	writtenCount atomic.Int64
+	blockFirst   <-chan struct{}
+	firstStarted chan<- struct{}
+	writeCount   atomic.Int64
 }
 
 func newQueuedMockSink(name string) *queuedMockSink {
@@ -49,6 +52,12 @@ func newQueuedMockSink(name string) *queuedMockSink {
 }
 
 func (s *queuedMockSink) Write(_ context.Context, event *Event) error {
+	if s.writeCount.Add(1) == 1 && s.blockFirst != nil {
+		if s.firstStarted != nil {
+			close(s.firstStarted)
+		}
+		<-s.blockFirst
+	}
 	if s.writeDelay > 0 {
 		time.Sleep(s.writeDelay)
 	}
@@ -134,11 +143,37 @@ func TestIsolatedMultiSink_PropagatesSensitiveWriteFailure(t *testing.T) {
 
 	// Force the per-sink queue-full fallback, which is the only synchronous
 	// delivery path available to a sensitive event.
-	ims.sinks[0].queue <- &Event{Type: EventResourceGet}
-	time.Sleep(25 * time.Millisecond)
-	ims.sinks[0].queue <- &Event{Type: EventResourceList}
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	failing.blockFirst = releaseFirst
+	failing.firstStarted = firstStarted
+	require.Eventually(t, func() bool {
+		select {
+		case ims.sinks[0].queue <- &Event{Type: EventResourceGet}:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond, "first event was not queued")
+	require.Eventually(t, func() bool {
+		select {
+		case <-firstStarted:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond, "first sink write did not start")
+	require.Eventually(t, func() bool {
+		select {
+		case ims.sinks[0].queue <- &Event{Type: EventResourceList}:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond, "second event was not queued")
 	err := ims.Write(context.Background(), &Event{Type: EventSessionRevoked})
 	assert.Error(t, err)
+	close(releaseFirst)
 }
 
 func TestIsolatedMultiSink_WriteBatchMatchesSensitiveErrorPropagation(t *testing.T) {
@@ -150,15 +185,41 @@ func TestIsolatedMultiSink_WriteBatchMatchesSensitiveErrorPropagation(t *testing
 	}, zap.NewNop())
 	defer func() { _ = ims.Close() }()
 
-	ims.sinks[0].queue <- &Event{Type: EventResourceGet}
-	time.Sleep(25 * time.Millisecond)
-	ims.sinks[0].queue <- &Event{Type: EventResourceList}
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	failing.blockFirst = releaseFirst
+	failing.firstStarted = firstStarted
+	require.Eventually(t, func() bool {
+		select {
+		case ims.sinks[0].queue <- &Event{Type: EventResourceGet}:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond, "first event was not queued")
+	require.Eventually(t, func() bool {
+		select {
+		case <-firstStarted:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond, "first sink write did not start")
+	require.Eventually(t, func() bool {
+		select {
+		case ims.sinks[0].queue <- &Event{Type: EventResourceList}:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond, "second event was not queued")
 
 	err := ims.WriteBatch(context.Background(), []*Event{{Type: EventSessionValidated}})
 	assert.NoError(t, err)
 
 	err = ims.WriteBatch(context.Background(), []*Event{{Type: EventSessionRevoked}})
 	assert.Error(t, err)
+	close(releaseFirst)
 }
 
 func TestQueuedSink_QueueOverflow(t *testing.T) {

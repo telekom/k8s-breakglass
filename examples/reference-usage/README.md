@@ -66,8 +66,9 @@ Published mode installs the public OCI chart at:
 
 `oci://ghcr.io/telekom/k8s-breakglass/charts/debug-session-catalogue`
 
-`CATALOGUE_VERSION` defaults to the chart's `0.2.0` version. Published mode
-uses the OCI reference and `--version ${CATALOGUE_VERSION}`. Override
+`CATALOGUE_VERSION` defaults to the chart's `0.2.0` version for source mode.
+Published mode uses the OCI reference with `@${CATALOGUE_CHART_DIGEST}`.
+Override
 `CATALOGUE_CHART` and `CATALOGUE_VERSION` only for another public chart
 publication; no private registry login or secret is part of the contract.
 
