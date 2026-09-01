@@ -17,7 +17,7 @@ kubernetes_delete_uid() {
 	# changing the DeleteOptions document.
 	local delete_options
 	delete_options=$(jq -n --arg uid "$uid" \
-		'{apiVersion:"meta.k8s.io/v1",kind:"DeleteOptions",preconditions:{uid:$uid},propagationPolicy:"Foreground"}') ||
+		'{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid},propagationPolicy:"Foreground"}') ||
 		return 1
 	"$kubectl_bin" --kubeconfig "$kubeconfig" delete --raw "$path" -f - <<<"$delete_options"
 }
