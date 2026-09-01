@@ -57,19 +57,28 @@ create_owned_volume() {
 	volume_var=$3
 	docker run -d --name "$owner_name" --user 0 --network none --read-only --cap-drop=ALL \
 		--security-opt no-new-privileges --mount type=volume,destination=/owned \
-		--entrypoint /bin/sh "$image" -c 'while :; do sleep 60; done' >/dev/null || exit 1
-	owner_id=$(docker_capture_resource_id docker container "$owner_name") || exit 1
-	volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/owned"}}{{.Name}}{{end}}{{end}}' "$owner_id") || exit 1
-	[ -n "$volume" ] || exit 1
+		--entrypoint /bin/sh "$image" -c 'while :; do sleep 60; done' >/dev/null || return 1
+	owner_id=$(docker_capture_resource_id docker container "$owner_name") || {
+		docker_remove_resource_with_volumes docker container "$owner_name" >/dev/null 2>&1 || true
+		return 1
+	}
+	volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/owned"}}{{.Name}}{{end}}{{end}}' "$owner_id") || {
+		docker_remove_resource_with_volumes docker container "$owner_id" >/dev/null 2>&1 || true
+		return 1
+	}
+	[ -n "$volume" ] || {
+		docker_remove_resource_with_volumes docker container "$owner_id" >/dev/null 2>&1 || true
+		return 1
+	}
 	case "$owner_id_var" in
 		root_volume_owner_id) root_volume_owner_id=$owner_id ;;
 		upload_volume_owner_id) upload_volume_owner_id=$owner_id ;;
-		*) exit 1 ;;
+		*) docker_remove_resource_with_volumes docker container "$owner_id" >/dev/null 2>&1 || true; return 1 ;;
 	esac
 	case "$volume_var" in
 		root_volume) root_volume=$volume ;;
 		upload_volume) upload_volume=$volume ;;
-		*) exit 1 ;;
+		*) docker_remove_resource_with_volumes docker container "$owner_id" >/dev/null 2>&1 || true; return 1 ;;
 	esac
 }
 

@@ -7,9 +7,7 @@
 # left untouched; deleting the tag itself would reintroduce a TOCTOU race.
 docker_remove_image_if_id() {
 	[ "$#" -eq 3 ] || return 2
-	docker_bin=$1
-	tag=$2
-	expected_id=$3
+	local docker_bin=$1 tag=$2 expected_id=$3 current_id
 	[ -n "$expected_id" ] || return 2
 	current_id=$("$docker_bin" image inspect --format '{{.Id}}' "$tag" 2>/dev/null) || return 1
 	[ "$current_id" = "$expected_id" ] || return 3
