@@ -23,6 +23,7 @@ import (
 type SessionManager struct {
 	client.Client
 	reader          client.Reader
+	liveReader      client.Reader
 	log             *zap.SugaredLogger
 	logFallbackOnce sync.Once
 }
@@ -82,17 +83,19 @@ func NewSessionManager(contextName string) (*SessionManager, error) {
 // configured with the Breakglass scheme.
 // Configuration is applied via functional options (WithSessionLogger).
 func NewSessionManagerWithClient(c client.Client, opts ...SessionManagerOption) *SessionManager {
-	return NewSessionManagerWithClientAndReader(c, c, opts...)
+	return NewSessionManagerWithClientAndReader(c, nil, opts...)
 }
 
 // NewSessionManagerWithClientAndReader allows using a cached client for writes and an optional reader
 // (e.g., APIReader) for consistent reads when required.
 // Configuration is applied via functional options (WithSessionLogger).
 func NewSessionManagerWithClientAndReader(c client.Client, reader client.Reader, opts ...SessionManagerOption) *SessionManager {
-	if reader == nil {
-		reader = c
-	}
 	sm := &SessionManager{Client: c, reader: reader}
+	if reader == nil {
+		sm.reader = c
+	} else {
+		sm.liveReader = reader
+	}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(sm)
@@ -387,6 +390,25 @@ func (c *SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 			if s.Spec.Cluster == cluster && s.Spec.User == user {
 				filtered = append(filtered, s)
 			}
+		}
+		return filtered, nil
+	}
+	if len(bsl.Items) == 0 && c.liveReader != nil {
+		var liveList breakglassv1alpha1.BreakglassSessionList
+		if err := c.liveReader.List(ctx, &liveList); err != nil {
+			log.Warnw("Failed to refresh BreakglassSessions from live reader after empty cache lookup",
+				"cluster", cluster, "user", user, "error", err)
+			return bsl.Items, nil
+		}
+		filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(liveList.Items))
+		for _, s := range liveList.Items {
+			if s.Spec.Cluster == cluster && s.Spec.User == user {
+				filtered = append(filtered, s)
+			}
+		}
+		if len(filtered) > 0 {
+			log.Infow("Fetched BreakglassSessions from live reader after empty cache lookup",
+				"count", len(filtered), "cluster", cluster, "user", user)
 		}
 		return filtered, nil
 	}

@@ -178,6 +178,12 @@ Notes on matching behavior
 
 - The `{cluster-name}` path segment is used by the webhook to determine which managed cluster the request targets. The webhook will match this value against the following, in order of relevance:
   - `ClusterConfig.metadata.name` (recommended canonical identifier)
+
+### Cache consistency after approval
+
+Authorization selection normally uses the indexed shared cache. If that cache
+has not observed a newly approved session yet, the selection path refreshes
+from the live API reader before deciding that no session exists.
   - `BreakglassSession.spec.cluster` values present on active sessions
   - Entries listed in `BreakglassEscalation.spec.allowed.clusters` for escalation-based checks
 
