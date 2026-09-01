@@ -172,7 +172,7 @@ func TestControllerSetupPlan(t *testing.T) {
 			name:              "controllers disabled",
 			enableControllers: false,
 			want: controllerSetupPlan{
-				registerControllerIndexes: false,
+				registerControllerIndexes: true,
 				registerReconcilers:       false,
 				attachCachedReconcilers:   false,
 			},

@@ -178,6 +178,13 @@ Notes on matching behavior
 
 - The `{cluster-name}` path segment is used by the webhook to determine which managed cluster the request targets. The webhook will match this value against the following, in order of relevance:
   - `ClusterConfig.metadata.name` (recommended canonical identifier)
+
+### Split deployments
+
+The API and authorization webhook use the reconciler manager's shared cache to
+select `BreakglassSession` resources. The session field indexes remain enabled
+when controller reconcilers are disabled, so split deployments continue to
+discover approved sessions by cluster and user.
   - `BreakglassSession.spec.cluster` values present on active sessions
   - Entries listed in `BreakglassEscalation.spec.allowed.clusters` for escalation-based checks
 

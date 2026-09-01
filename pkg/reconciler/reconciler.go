@@ -112,6 +112,8 @@ func InformerSyncCheck(cache CacheSyncer) func(req *http.Request) error {
 }
 
 type controllerSetupPlan struct {
+	// Cached clients are shared by API and webhook paths, so these indexes are
+	// required even when reconcilers are disabled.
 	registerControllerIndexes bool
 	registerReconcilers       bool
 	attachCachedReconcilers   bool
@@ -119,7 +121,7 @@ type controllerSetupPlan struct {
 
 func newControllerSetupPlan(enableControllers bool) controllerSetupPlan {
 	return controllerSetupPlan{
-		registerControllerIndexes: enableControllers,
+		registerControllerIndexes: true,
 		registerReconcilers:       enableControllers,
 		attachCachedReconcilers:   enableControllers,
 	}
@@ -170,8 +172,6 @@ func Setup(
 		if err := indexer.AssertIndexesRegistered(log); err != nil {
 			return fmt.Errorf("index registration assertion failed: %w", err)
 		}
-	} else {
-		log.Infow("Controller field indexes disabled via --enable-controllers=false")
 	}
 
 	if plan.registerReconcilers {
