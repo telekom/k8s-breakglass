@@ -54,6 +54,10 @@ type DebugSessionStatusApplyConfiguration struct {
 	ResolvedTemplate *DebugSessionTemplateSpecApplyConfiguration `json:"resolvedTemplate,omitempty"`
 	// resolvedBinding caches information about the binding used (if any).
 	ResolvedBinding *ResolvedBindingRefApplyConfiguration `json:"resolvedBinding,omitempty"`
+	// resolvedBindingSpec is the immutable binding snapshot approved for activation.
+	ResolvedBindingSpec *DebugSessionClusterBindingSpecApplyConfiguration `json:"resolvedBindingSpec,omitempty"`
+	// resolvedPodTemplate is the immutable pod-template snapshot approved for activation.
+	ResolvedPodTemplate *DebugPodTemplateSpecApplyConfiguration `json:"resolvedPodTemplate,omitempty"`
 	// auxiliaryResourceStatuses tracks the state of deployed auxiliary resources.
 	AuxiliaryResourceStatuses []AuxiliaryResourceStatusApplyConfiguration `json:"auxiliaryResourceStatuses,omitempty"`
 	// podTemplateResourceStatuses tracks the state of additional resources deployed
@@ -213,6 +217,22 @@ func (b *DebugSessionStatusApplyConfiguration) WithResolvedTemplate(value *Debug
 // If called multiple times, the ResolvedBinding field is set to the value of the last call.
 func (b *DebugSessionStatusApplyConfiguration) WithResolvedBinding(value *ResolvedBindingRefApplyConfiguration) *DebugSessionStatusApplyConfiguration {
 	b.ResolvedBinding = value
+	return b
+}
+
+// WithResolvedBindingSpec sets the ResolvedBindingSpec field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ResolvedBindingSpec field is set to the value of the last call.
+func (b *DebugSessionStatusApplyConfiguration) WithResolvedBindingSpec(value *DebugSessionClusterBindingSpecApplyConfiguration) *DebugSessionStatusApplyConfiguration {
+	b.ResolvedBindingSpec = value
+	return b
+}
+
+// WithResolvedPodTemplate sets the ResolvedPodTemplate field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ResolvedPodTemplate field is set to the value of the last call.
+func (b *DebugSessionStatusApplyConfiguration) WithResolvedPodTemplate(value *DebugPodTemplateSpecApplyConfiguration) *DebugSessionStatusApplyConfiguration {
+	b.ResolvedPodTemplate = value
 	return b
 }
 
