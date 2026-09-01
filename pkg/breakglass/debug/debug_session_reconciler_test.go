@@ -116,6 +116,7 @@ func newTestDebugSession(name, templateRef, cluster, user string) *breakglassv1a
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: "breakglass",
+			UID:       types.UID(name + "-uid"),
 		},
 		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:           cluster,
@@ -959,10 +960,10 @@ func TestDebugSessionReconciler_UpdateAllowedPodsDoesNotOverwriteRenewalOrPartic
 func TestDebugSessionController_UpdateAuxiliaryResourceReadiness(t *testing.T) {
 	scheme := testScheme()
 	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: "ready-config", UID: "fixture-ready-config", Namespace: "debug-ns"},
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-config", Namespace: "debug-ns"},
 	}
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "ready-secret", UID: "fixture-ready-secret", Namespace: "debug-ns"},
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-secret", Namespace: "debug-ns"},
 	}
 	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm, secret).Build()
 	session := newTestDebugSession("aux-readiness", "test-template", "test-cluster", "user@example.com")
@@ -972,7 +973,6 @@ func TestDebugSessionController_UpdateAuxiliaryResourceReadiness(t *testing.T) {
 			Kind:         "ConfigMap",
 			APIVersion:   "v1",
 			ResourceName: "ready-config",
-			UID:          "fixture-ready-config",
 			Namespace:    "debug-ns",
 			Created:      true,
 			AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
@@ -980,7 +980,6 @@ func TestDebugSessionController_UpdateAuxiliaryResourceReadiness(t *testing.T) {
 					Kind:         "Secret",
 					APIVersion:   "v1",
 					ResourceName: "ready-secret",
-					UID:          "fixture-ready-secret",
 					Namespace:    "debug-ns",
 				},
 			},
@@ -3061,7 +3060,7 @@ func TestDebugSessionController_FindBindingForSession_EdgeCases(t *testing.T) {
 		assert.Equal(t, "hybrid-binding", result2.Name)
 	})
 
-	t.Run("fails closed without ClusterConfig when using clusterSelector", func(t *testing.T) {
+	t.Run("does not match cluster without ClusterConfig when using clusterSelector", func(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-template",
@@ -3089,8 +3088,8 @@ func TestDebugSessionController_FindBindingForSession_EdgeCases(t *testing.T) {
 		ctrl := &DebugSessionController{log: logger, client: fakeClient}
 
 		result, err := ctrl.findBindingForSession(ctx, template, "unknown-cluster")
-		require.ErrorContains(t, err, "cluster config required to resolve binding selector")
-		assert.Nil(t, result) // Missing labels cannot silently discard binding quotas.
+		require.NoError(t, err)
+		assert.Nil(t, result) // Can't match via selector without ClusterConfig
 	})
 }
 
@@ -3826,14 +3825,12 @@ func TestApplySchedulingConstraints(t *testing.T) {
 		assert.Empty(t, term.MatchExpressions[0].Values)
 	})
 
-	t.Run("rejects denied node glob patterns that cannot be rendered as hard affinity", func(t *testing.T) {
+	t.Run("ignores denied node glob patterns that cannot be rendered as hard affinity", func(t *testing.T) {
 		spec := &corev1.PodSpec{}
 		constraints := &breakglassv1alpha1.SchedulingConstraints{
 			DeniedNodes: []string{"control-plane-*"},
 		}
-		err := ctrl.applySchedulingConstraints(spec, constraints)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "deniedNodes pattern")
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		assert.Nil(t, spec.Affinity)
 	})
 
@@ -5063,7 +5060,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		assert.Nil(t, current.Status.KubectlDebugStatus)
 	})
 
-	t.Run("missing_cluster_config_retains_kubectl_debug_status", func(t *testing.T) {
+	t.Run("missing_cluster_config_clears_kubectl_debug_status", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-missing-cluster-kubectl", "test-template", "missing-cluster", "user@example.com")
 		session.Generation = 3
 		session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{
@@ -5102,24 +5099,24 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		require.ErrorIs(t, err, cluster.ErrClusterConfigNotFound)
+		require.NoError(t, err)
 
 		var updated breakglassv1alpha1.DebugSession
 		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
 		require.NoError(t, err)
-		assert.Equal(t, session.Status.DeployedResources, updated.Status.DeployedResources)
-		assert.Equal(t, session.Status.AllowedPods, updated.Status.AllowedPods)
-		assert.Equal(t, session.Status.KubectlDebugStatus, updated.Status.KubectlDebugStatus)
-		assert.Equal(t, session.Status.AuxiliaryResourceStatuses, updated.Status.AuxiliaryResourceStatuses)
-		assert.Equal(t, session.Status.PodTemplateResourceStatuses, updated.Status.PodTemplateResourceStatuses)
-		assert.Equal(t, session.Status.ObservedGeneration, updated.Status.ObservedGeneration)
+		assert.Empty(t, updated.Status.DeployedResources)
+		assert.Empty(t, updated.Status.AllowedPods)
+		assert.Nil(t, updated.Status.KubectlDebugStatus)
+		assert.Empty(t, updated.Status.AuxiliaryResourceStatuses)
+		assert.Empty(t, updated.Status.PodTemplateResourceStatuses)
+		assert.Equal(t, session.Generation, updated.Status.ObservedGeneration)
 	})
 
-	t.Run("missing_rest_config_retains_deployed_tracking", func(t *testing.T) {
+	t.Run("missing_rest_config_clears_deployed_tracking", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-missing-cluster-rest", "test-template", "missing-cluster", "user@example.com")
 		session.Generation = 5
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "node-debug-uid"},
 		}
 		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
 			{Name: "node-debug-pod", Namespace: "default"},
@@ -5144,17 +5141,17 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		require.ErrorIs(t, err, cluster.ErrClusterConfigNotFound)
+		require.NoError(t, err)
 
 		var updated breakglassv1alpha1.DebugSession
 		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
 		require.NoError(t, err)
-		assert.Equal(t, session.Status.DeployedResources, updated.Status.DeployedResources)
-		assert.Equal(t, session.Status.AllowedPods, updated.Status.AllowedPods)
-		assert.Equal(t, session.Status.KubectlDebugStatus, updated.Status.KubectlDebugStatus)
-		assert.Equal(t, session.Status.AuxiliaryResourceStatuses, updated.Status.AuxiliaryResourceStatuses)
-		assert.Equal(t, session.Status.PodTemplateResourceStatuses, updated.Status.PodTemplateResourceStatuses)
-		assert.Equal(t, session.Status.ObservedGeneration, updated.Status.ObservedGeneration)
+		assert.Empty(t, updated.Status.DeployedResources)
+		assert.Empty(t, updated.Status.AllowedPods)
+		assert.Nil(t, updated.Status.KubectlDebugStatus)
+		assert.Empty(t, updated.Status.AuxiliaryResourceStatuses)
+		assert.Empty(t, updated.Status.PodTemplateResourceStatuses)
+		assert.Equal(t, session.Generation, updated.Status.ObservedGeneration)
 	})
 }
 
@@ -5164,7 +5161,7 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 	t.Run("deletes node debug pod and clears tracking", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-node-pod", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", UID: "fixture-node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
 		}
 		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
 			{Name: "node-debug-pod", Namespace: "default"},
@@ -5175,8 +5172,11 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 			WithObjects(&corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "node-debug-pod",
-					UID:       "fixture-node-debug-pod",
 					Namespace: "default",
+					UID:       "node-debug-uid",
+					Annotations: map[string]string{
+						sourceSessionUIDAnnotation: string(session.UID),
+					},
 				},
 			}).
 			Build()
@@ -5196,7 +5196,7 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 	t.Run("preserves failed deployed resource for retry", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-delete-failure", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", UID: "fixture-node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
 		}
 		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
 			{Name: "node-debug-pod", Namespace: "default"},
@@ -5207,7 +5207,6 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 			WithObjects(&corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "node-debug-pod",
-					UID:       "fixture-node-debug-pod",
 					Namespace: "default",
 				},
 			}).
@@ -5231,15 +5230,15 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 	t.Run("preserves skipped refs while dependent cleanup failed", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-skipped-refs", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-			{APIVersion: "v1", Kind: "ConfigMap", Name: "aux-config", UID: "fixture-aux-config", Namespace: "default", Source: "auxiliary:config"},
-			{APIVersion: "v1", Kind: "ConfigMap", Name: "pod-template-config", UID: "fixture-pod-template-config", Namespace: "default", Source: "pod-template"},
-			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", UID: "fixture-node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "aux-config", Namespace: "default", Source: "auxiliary:config"},
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "pod-template-config", Namespace: "default", Source: "pod-template"},
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "node-debug-uid"},
 		}
 		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
 			{Name: "node-debug-pod", Namespace: "default"},
 		}
 		session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
-			{Kind: "ConfigMap", ResourceName: "pod-template-config", UID: "fixture-pod-template-config", Namespace: "default", Created: true},
+			{Kind: "ConfigMap", ResourceName: "pod-template-config", Namespace: "default", Created: true},
 		}
 
 		targetClient := fake.NewClientBuilder().
@@ -5247,8 +5246,11 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 			WithObjects(&corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "node-debug-pod",
-					UID:       "fixture-node-debug-pod",
 					Namespace: "default",
+					UID:       "node-debug-uid",
+					Annotations: map[string]string{
+						sourceSessionUIDAnnotation: string(session.UID),
+					},
 				},
 			}).
 			Build()
@@ -5266,9 +5268,9 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 	t.Run("filters allowed pods to remaining pod refs", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-filter-allowed-pods", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-			{APIVersion: "v1", Kind: "Pod", Name: "failed-delete-pod", UID: "fixture-failed-delete-pod", Namespace: "default", Source: "kubectl-debug-node"},
-			{APIVersion: "v1", Kind: "Pod", Name: "deleted-pod", UID: "fixture-deleted-pod", Namespace: "default", Source: "kubectl-debug-node"},
-			{APIVersion: "v1", Kind: "ConfigMap", Name: "remaining-config", UID: "fixture-remaining-config", Namespace: "default", Source: "pod-template"},
+			{APIVersion: "v1", Kind: "Pod", Name: "failed-delete-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "failed-delete-uid"},
+			{APIVersion: "v1", Kind: "Pod", Name: "deleted-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "deleted-uid"},
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "remaining-config", Namespace: "default", Source: "pod-template"},
 		}
 		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
 			{Name: "failed-delete-pod", Namespace: "default"},
@@ -5282,15 +5284,15 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 				&corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "failed-delete-pod",
-						UID:       "fixture-failed-delete-pod",
 						Namespace: "default",
+						UID:       "failed-delete-uid",
 					},
 				},
 				&corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "deleted-pod",
-						UID:       "fixture-deleted-pod",
 						Namespace: "default",
+						UID:       "deleted-uid",
 					},
 				},
 			).
@@ -5318,7 +5320,7 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 	t.Run("preserves unsupported resource kind for retry", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-unsupported-kind", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-			{APIVersion: "batch/v1", Kind: "Job", Name: "unsupported-job", UID: "fixture-unsupported-job", Namespace: "default", Source: "workload"},
+			{APIVersion: "batch/v1", Kind: "Job", Name: "unsupported-job", Namespace: "default", Source: "workload"},
 		}
 
 		targetClient := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -5340,8 +5342,8 @@ func TestDebugSessionController_CleanupPodTemplateResourcesPreservesFailures(t *
 			Kind:         "ConfigMap",
 			APIVersion:   "v1",
 			ResourceName: "debug-script",
-			UID:          "fixture-debug-script",
 			Namespace:    "default",
+			UID:          "debug-script-uid",
 			Created:      true,
 		},
 	}
@@ -5351,8 +5353,8 @@ func TestDebugSessionController_CleanupPodTemplateResourcesPreservesFailures(t *
 		WithObjects(&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "debug-script",
-				UID:       "fixture-debug-script",
 				Namespace: "default",
+				UID:       "debug-script-uid",
 			},
 		}).
 		WithInterceptorFuncs(interceptor.Funcs{

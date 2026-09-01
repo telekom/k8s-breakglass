@@ -2709,7 +2709,14 @@ func TestCreatePodCopy_StatusFailureDeletesOrphan(t *testing.T) {
 	sourceNS := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
 	copiesNS := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug-copies", UID: "debug-copies-uid"}}
 	targetClient := fake.NewClientBuilder().WithScheme(scheme).
-		WithObjects(originalPod, sourceNS, copiesNS).Build()
+		WithObjects(originalPod, sourceNS, copiesNS).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, cl ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.CreateOption) error {
+				obj.SetUID("copy-uid")
+				return cl.Create(ctx, obj, opts...)
+			},
+		}).
+		Build()
 
 	statusErr := errors.New("simulated status patch failure")
 	hubClient := fake.NewClientBuilder().
