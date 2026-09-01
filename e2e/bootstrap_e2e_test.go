@@ -520,19 +520,23 @@ func TestBootstrapW003_DeploymentModel(t *testing.T) {
 	// (true). If the rendered deployment supplies an argument or environment
 	// override, verify that effective setting is still enabled.
 	controllersEnabled := true
+	controllerFlagSupplied := false
 	for arg := range args {
 		if strings.HasPrefix(arg, "--enable-controllers=") {
+			controllerFlagSupplied = true
 			controllersEnabled = isTruthy(arg[len("--enable-controllers="):])
 			break
 		}
 	}
-	for _, env := range container.Env {
-		if env.Name != "ENABLE_CONTROLLERS" {
-			continue
-		}
-		require.Nil(t, env.ValueFrom, "ENABLE_CONTROLLERS must not use an unresolved value source")
-		if env.Value != "" {
-			controllersEnabled = isTruthy(env.Value)
+	if !controllerFlagSupplied {
+		for _, env := range container.Env {
+			if env.Name != "ENABLE_CONTROLLERS" {
+				continue
+			}
+			require.Nil(t, env.ValueFrom, "ENABLE_CONTROLLERS must not use an unresolved value source")
+			if env.Value != "" {
+				controllersEnabled = isTruthy(env.Value)
+			}
 		}
 	}
 	require.True(t, controllersEnabled,
@@ -601,7 +605,7 @@ func TestBootstrapW003_DeploymentModel(t *testing.T) {
 	require.NotNil(t, podNamespaceEnv.ValueFrom.FieldRef, "POD_NAMESPACE must use a fieldRef")
 	assert.Equal(t, "metadata.namespace", podNamespaceEnv.ValueFrom.FieldRef.FieldPath)
 
-	expectedPorts := map[int32]bool{8080: false, 8081: false, 8082: false, 8083: false}
+	expectedPorts := map[int32]bool{8080: false, 8081: false, 8082: false, 8083: false, 9443: false}
 	for _, port := range container.Ports {
 		if _, ok := expectedPorts[port.ContainerPort]; ok {
 			expectedPorts[port.ContainerPort] = true

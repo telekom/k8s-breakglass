@@ -15,9 +15,9 @@ in CI as the `Multi-Cluster E2E Tests` job.
 
 | Suite | Shape exercised | Evidence |
 | --- | --- | --- |
-| `e2e/bootstrap_e2e_test.go` | One Kind management cluster; CRDs, Keycloak, MailHog, controller deployment, generated webhook kubeconfig and ClusterConfig bootstrap. | `e2e/bootstrap_e2e_test.go:422-475` |
+| `e2e/bootstrap_e2e_test.go` | One Kind management cluster; controller deployment wiring, generated webhook kubeconfig and ClusterConfig bootstrap. | `e2e/bootstrap_e2e_test.go:422-475`, `:462-622` |
 | `e2e/api/*` without `multicluster` | Single cluster API/UI-facing flows; most sessions are created through API helpers. | `e2e/api/approval_workflow_test.go:56-67`, `e2e/helpers/api.go` |
-| `e2e/api/*` with `multicluster` | One hub plus two real Kind spokes. Spokes use structured authentication and authorization, OIDC tokens, and the hub's authorization route. | `e2e/kind-setup-multi.sh:137-218`, `e2e/api/spoke_hub_authorization_test.go:145-220` |
+| `e2e/api/*` with `multicluster` | One hub plus two real Kind spokes. Spokes use structured authentication and authorization, OIDC tokens, and the hub's authorization route. | `e2e/kind-setup-multi.sh:137-218`, `e2e/api/spoke_hub_authorization_test.go:145-236` |
 | `e2e/cli` | CLI flows against the configured test cluster; shell coverage is opt-in. | `Makefile:183-184`, `.github/workflows/ci.yml:1098-1107` |
 | `pkg/*_test.go` | Unit tests, including fake clients, controller logic, webhook logic, limits, OIDC parsing and email behavior. | `Makefile:121-123` |
 | `pkg/api/api_end_to_end_test.go` | In-process API-to-session/controller integration, not a deployed management/tenant topology. | `pkg/api/api_end_to_end_test.go:1-70` |
@@ -40,16 +40,16 @@ T-CaaS shape is not exercised.
 | `--enable-controllers` on and off | partial: default-on only | partial: default-on only | covered for parser and setup plan | No deployed controller-off session-selection test on the default branch |
 | Deployed flag combination | partial: `config/deployment/app.yaml:31-50` | partial: overlay-derived | gap | Added deployment-contract assertions in this change |
 | ConfigMap-mounted `--config-path` | covered by `TestBootstrapW003_DeploymentModel` (live Deployment and ConfigMap) | covered: hub setup uses the mounted overlay ConfigMap | covered by config loader tests | — |
-| Different tenant cluster authorizes through management webhook | gap | covered by `spoke_hub_authorization_test.go:145-220` | gap | Existing path is HTTP in the Kind harness, not the T-CaaS external TLS path |
-| Create → approve → real webhook session selection | partial | covered by `spoke_hub_authorization_test.go:174-220` | misleading cases below | Existing test is the primary regression guard |
+| Different tenant cluster authorizes through management webhook | gap | covered by `spoke_hub_authorization_test.go:145-236` | gap | Existing path is HTTP in the Kind harness, not the T-CaaS external TLS path |
+| Create → approve → real webhook session selection | partial | covered by `spoke_hub_authorization_test.go:174-236` | misleading cases below | Existing test is the primary regression guard |
 | OIDC prefixes and group claims | partial | partial: plain `groups` claims and two realms | covered for prefix stripping | TDI/TDG prefix/delimiter combinations are not deployed |
 | Four-eyes approval and self-approval rejection | covered through API approval suites | partial | covered | No cross-cluster authorization assertion after four-eyes approval |
-| Revocation and expiry remove access | partial | covered: revocation at `spoke_hub_authorization_test.go:237-289`, expiry at `:421+` | covered | — |
+| Revocation and expiry remove access | partial | covered: revocation at `spoke_hub_authorization_test.go:238-289`, expiry at `:421+` | covered | — |
 | Per-user, total and group-overridden session limits | gap in deployed E2E | gap in deployed E2E | covered extensively | Expensive setup needed for API lifecycle assertions |
 | Leader election namespace/id | partial: `TestBootstrapW003_DeploymentModel` verifies the live Lease | partial: no multi-replica failover test | partial parser/resource-lock tests | No multi-replica failover test |
 | Email enabled and `--disable-email` | enabled MailHog smoke | disabled path is not deployed | covered with fakes | No deployed toggle matrix |
 | Webhook TLS/cert path | validating webhook resources are installed | CA is generated, but SAR route uses hub HTTP API NodePort | partial | The cross-cluster harness does not currently exercise `:9443` TLS |
-| Metrics and health ports (`8081`, `8082`, `8083`) | metrics/health partial | `8081` partial | covered in server tests | No deployed assertion for all three endpoints |
+| Metrics, health and webhook ports (`8081`, `8082`, `8083`, `9443`) | metrics/health partial | `8081` partial | covered in server tests | No deployed assertion for all endpoints |
 | `authorizedTTL`/`unauthorizedTTL` authorization caching | gap | gap: cache explicitly disabled in `kind-setup-multi.sh:185-190` | gap | Needs a Kubernetes apiserver configuration test |
 
 ## Tests that bypass production wiring
