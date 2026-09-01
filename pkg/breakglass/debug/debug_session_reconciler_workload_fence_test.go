@@ -73,7 +73,11 @@ func newDeploymentFenceFixture(t *testing.T) (*DebugSessionController, *breakgla
 		ObjectMeta: metav1.ObjectMeta{Name: "template"},
 		Spec:       breakglassv1alpha1.DebugSessionTemplateSpec{Mode: breakglassv1alpha1.DebugSessionModeWorkload, PodTemplateString: "apiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: debug\n    image: busybox\n", WorkloadType: breakglassv1alpha1.DebugWorkloadDeployment},
 	}
-	hub := fake.NewClientBuilder().WithScheme(s).WithObjects(cc, secret, ds, template).Build()
+	hub := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(cc, secret, ds, template).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
 	target := fake.NewClientBuilder().WithScheme(s).WithObjects(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug"}}).Build()
 	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, cluster.NewClientProvider(hub, zap.NewNop().Sugar()))
 	c.targetClientFactory = func(_ *rest.Config) (client.Client, error) { return target, nil }
@@ -102,7 +106,7 @@ func TestDeployDebugResourcesRejectsSessionInvalidationBeforeEachWrite(t *testin
 				live := &breakglassv1alpha1.DebugSession{}
 				require.NoError(t, c.client.Get(context.Background(), client.ObjectKeyFromObject(ds), live))
 				live.Status.State = breakglassv1alpha1.DebugSessionStateExpired
-				require.NoError(t, c.client.Update(context.Background(), live))
+				require.NoError(t, c.client.Status().Update(context.Background(), live))
 			}
 			err := c.deployDebugResources(context.Background(), ds, template)
 			require.Error(t, err)
@@ -117,6 +121,20 @@ func TestDeployDebugResourcesRejectsSessionInvalidationBeforeEachWrite(t *testin
 			require.Empty(t, pdbs.Items)
 		})
 	}
+}
+
+func TestActivateSessionEstablishesLeaseBeforeDeployment(t *testing.T) {
+	c, ds, template, target := newDeploymentFenceFixture(t)
+	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
+	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{Required: false}
+
+	_, err := c.activateSession(context.Background(), ds, template, nil)
+	require.NoError(t, err)
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, ds.Status.State)
+	require.NotNil(t, ds.Status.ExpiresAt)
+
+	deployment := &appsv1.Deployment{}
+	require.NoError(t, target.Get(context.Background(), client.ObjectKey{Namespace: "breakglass-debug", Name: ds.Name}, deployment))
 }
 
 func TestDeployDebugResourcesRejectsClusterConfigRotationBeforeWrite(t *testing.T) {
@@ -185,7 +203,7 @@ metadata:
 		live := &breakglassv1alpha1.DebugSession{}
 		require.NoError(t, c.client.Get(context.Background(), client.ObjectKeyFromObject(ds), live))
 		live.Status.State = breakglassv1alpha1.DebugSessionStateExpired
-		require.NoError(t, c.client.Update(context.Background(), live))
+		require.NoError(t, c.client.Status().Update(context.Background(), live))
 	}
 	err := c.deployDebugResources(context.Background(), ds, template)
 	require.Error(t, err)
@@ -212,7 +230,7 @@ func TestDeployDebugResourcesFencesEveryAuxiliaryDocument(t *testing.T) {
 		live := &breakglassv1alpha1.DebugSession{}
 		require.NoError(t, c.client.Get(context.Background(), client.ObjectKeyFromObject(ds), live))
 		live.Status.State = breakglassv1alpha1.DebugSessionStateExpired
-		require.NoError(t, c.client.Update(context.Background(), live))
+		require.NoError(t, c.client.Status().Update(context.Background(), live))
 	}
 	err := c.deployDebugResources(context.Background(), ds, template)
 	t.Logf("deploy error: %v; fence callbacks: %d", err, writeBoundaries)

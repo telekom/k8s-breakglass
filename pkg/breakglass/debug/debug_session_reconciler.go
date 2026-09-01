@@ -567,6 +567,18 @@ func releaseSessionMetricSeries(sessionName string) {
 func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 
+	// Establish the bounded lease durably before deploying any target resources.
+	// The session remains Pending/PendingApproval during deployment, so API
+	// authorization cannot use the lease until activation completes.
+	duration := c.parseDuration(ds.Spec.RequestedDuration, effectiveDebugSessionConstraints(template, binding))
+	activationStartedAt := metav1.Now()
+	expiresAt := metav1.NewTime(activationStartedAt.Add(duration))
+	ds.Status.ExpiresAt = &expiresAt
+	ds.Status.Message = "Activating debug session"
+	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// Only deploy workloads for workload or hybrid mode
 	mode := template.Spec.Mode
 	if mode == "" {
@@ -580,14 +592,8 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		}
 	}
 
-	// Calculate expiration
-	duration := c.parseDuration(ds.Spec.RequestedDuration, effectiveDebugSessionConstraints(template, binding))
-	now := metav1.Now()
-	expiresAt := metav1.NewTime(now.Add(duration))
-
 	ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
-	ds.Status.StartsAt = &now
-	ds.Status.ExpiresAt = &expiresAt
+	ds.Status.StartsAt = &activationStartedAt
 	ds.Status.Message = "Debug session active"
 
 	// Cache AllowedPodOperations merged from template and binding for webhook enforcement
@@ -604,7 +610,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		Email:       ds.Spec.RequestedByEmail,
 		DisplayName: ds.Spec.RequestedByDisplayName,
 		Role:        breakglassv1alpha1.ParticipantRoleOwner,
-		JoinedAt:    now,
+		JoinedAt:    activationStartedAt,
 	}}
 
 	// Setup terminal sharing if enabled
