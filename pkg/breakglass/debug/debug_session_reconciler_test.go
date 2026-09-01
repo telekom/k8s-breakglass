@@ -1231,7 +1231,7 @@ func TestDebugSessionReconciler_HandleActiveExpiresWhenRecoveryFails(t *testing.
 				Stdin:                 true,
 			},
 			RequestedBy: "user@example.com",
-			PreparedAt:  metav1.Now(),
+			PreparedAt:  stalePreparedAt(),
 		}},
 	}
 

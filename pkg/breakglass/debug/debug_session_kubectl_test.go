@@ -38,6 +38,10 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 )
 
+func stalePreparedAt() metav1.Time {
+	return metav1.NewTime(time.Now().Add(-ephemeralOperationRecoveryGrace - time.Second))
+}
+
 // mockClientProvider is a test implementation of ClientProviderInterface
 type mockClientProvider struct {
 	clients       map[string]ctrlclient.Client
@@ -964,6 +968,60 @@ func TestKubectlDebugHandler_EphemeralOperationIntentPrecedesTargetMutation(t *t
 	assert.Empty(t, storedPod.Spec.EphemeralContainers)
 }
 
+func TestKubectlDebugHandler_PrepareEphemeralOperationRejectsDuplicateTuple(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	hubClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	container := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+	first := newEphemeralContainerOperation(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+	}, container, "test-user@example.com")
+	second := first
+	second.ID = "different-operation"
+
+	existing, err := handler.prepareEphemeralContainerOperation(context.Background(), session, first)
+	require.NoError(t, err)
+	assert.Nil(t, existing)
+	existing, err = handler.prepareEphemeralContainerOperation(context.Background(), session, second)
+	require.NoError(t, err)
+	require.NotNil(t, existing)
+	assert.Equal(t, first.ID, existing.ID)
+
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	require.Len(t, stored.Status.KubectlDebugStatus.Operations, 1)
+	assert.Equal(t, first.ID, stored.Status.KubectlDebugStatus.Operations[0].ID)
+}
+
+func TestKubectlDebugHandler_RecoverySkipsFreshPreparedOperation(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	container := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+	operation := newEphemeralContainerOperation(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+	}, container, "test-user@example.com")
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{operation}}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+	}).Build()
+	hubClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+	require.NoError(t, handler.RecoverPendingKubectlDebugOperations(context.Background(), session))
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationPrepared, stored.Status.KubectlDebugStatus.Operations[0].State)
+}
+
 func TestKubectlDebugHandler_EphemeralOperationRecoversAfterOutcomeWriteFailure(t *testing.T) {
 	scheme := newKubectlTestScheme()
 	statusPatches := 0
@@ -1012,6 +1070,7 @@ func TestKubectlDebugHandler_EphemeralOperationRecoversAfterOutcomeWriteFailure(
 	var changedPod corev1.Pod
 	require.NoError(t, targetClient.Get(context.Background(), ctrlclient.ObjectKey{Namespace: "default", Name: "target"}, &changedPod))
 	require.Len(t, changedPod.Spec.EphemeralContainers, 1, "the target mutation must remain observable for recovery")
+	afterFailure.Status.KubectlDebugStatus.Operations[0].PreparedAt = stalePreparedAt()
 
 	// A fresh handler models a controller restart. Once the status writer is
 	// healthy again, recovery inspects the exact Pod UID and container request,
@@ -1052,7 +1111,7 @@ func TestKubectlDebugHandler_EphemeralOperationAmbiguousTargetIsNotGuessed(t *te
 	prepared.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{{
 		ID: "ambiguous-operation", Kind: kubectlDebugOperationKindEphemeralContainer, State: breakglassv1alpha1.KubectlDebugOperationPrepared,
 		TargetPod:          breakglassv1alpha1.KubectlDebugOperationTargetPod{Namespace: "default", Name: "target", UID: "original-uid"},
-		EphemeralContainer: desired, RequestedBy: "test-user@example.com", PreparedAt: metav1.Now(),
+		EphemeralContainer: desired, RequestedBy: "test-user@example.com", PreparedAt: stalePreparedAt(),
 	}}}
 	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "replacement-uid"},
@@ -1092,7 +1151,7 @@ func TestKubectlDebugHandler_EphemeralOperationRecoveryRequiresTTYAndStdinMatch(
 				Stdin:                 true,
 			},
 			RequestedBy: "test-user@example.com",
-			PreparedAt:  metav1.Now(),
+			PreparedAt:  stalePreparedAt(),
 		}},
 	}
 	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Pod{
@@ -1147,7 +1206,7 @@ func TestKubectlDebugHandler_EphemeralOperationRecoveryRequiresExactContainerDig
 				Stdin:                 true,
 			},
 			RequestedBy: "test-user@example.com",
-			PreparedAt:  metav1.Now(),
+			PreparedAt:  stalePreparedAt(),
 		}},
 	}
 	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Pod{
@@ -1223,7 +1282,7 @@ func TestKubectlDebugHandler_InjectEphemeralContainerIdempotentWhenCompletedOper
 				Stdin:                 true,
 			},
 			RequestedBy: "test-user@example.com",
-			PreparedAt:  metav1.Now(),
+			PreparedAt:  stalePreparedAt(),
 		}},
 	}
 	pod := &corev1.Pod{
@@ -1291,7 +1350,7 @@ func TestKubectlDebugHandler_CompleteEphemeralContainerOperationDoesNotOverwrite
 				Stdin:                 true,
 			},
 			RequestedBy: "test-user@example.com",
-			PreparedAt:  metav1.Now(),
+			PreparedAt:  stalePreparedAt(),
 		}},
 	}
 	hubClient := fake.NewClientBuilder().
@@ -2751,7 +2810,7 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 				TTY:                   true,
 				Stdin:                 true,
 			},
-			PreparedAt: metav1.Now(),
+			PreparedAt: stalePreparedAt(),
 			Message:    "target Pod disappeared before the prepared operation outcome could be confirmed",
 		}
 		session := &breakglassv1alpha1.DebugSession{
@@ -2870,7 +2929,7 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 								TTY:                   true,
 								Stdin:                 true,
 							},
-							PreparedAt: metav1.Now(),
+							PreparedAt: stalePreparedAt(),
 							Message:    "target Pod changed during recovery",
 						},
 					},

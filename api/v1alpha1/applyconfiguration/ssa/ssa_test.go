@@ -31,6 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -1134,6 +1135,28 @@ func TestKubectlDebugStatusFrom(t *testing.T) {
 					CreatedAt:         now,
 				},
 			},
+			Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+				ID:    "operation-1",
+				Kind:  "ephemeral-container",
+				State: breakglassv1alpha1.KubectlDebugOperationPrepared,
+				TargetPod: breakglassv1alpha1.KubectlDebugOperationTargetPod{
+					Namespace: "app-ns",
+					Name:      "target-pod",
+					UID:       "pod-uid",
+				},
+				EphemeralContainer: breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{
+					Name:                  "debugger",
+					Image:                 "busybox:latest",
+					Command:               []string{"sh"},
+					ContainerDigest:       "digest",
+					SecurityContextDigest: "security-digest",
+					TTY:                   true,
+					Stdin:                 true,
+				},
+				RequestedBy: "admin@example.com",
+				PreparedAt:  now,
+				Message:     "prepared",
+			}},
 		}
 
 		result := KubectlDebugStatusFrom(status)
@@ -1141,7 +1164,11 @@ func TestKubectlDebugStatusFrom(t *testing.T) {
 		require.NotNil(t, result)
 		require.Len(t, result.EphemeralContainersInjected, 1)
 		require.Len(t, result.CopiedPods, 1)
-		assert.Equal(t, "copy-uid", result.CopiedPods[0].UID)
+		assert.Equal(t, "copy-uid", *result.CopiedPods[0].UID)
+		require.Len(t, result.Operations, 1)
+		assert.Equal(t, "operation-1", *result.Operations[0].ID)
+		assert.Equal(t, types.UID("pod-uid"), *result.Operations[0].TargetPod.UID)
+		assert.Equal(t, "digest", *result.Operations[0].EphemeralContainer.ContainerDigest)
 	})
 }
 

@@ -397,7 +397,7 @@ spec:
     notifyOnApproval: true
     notifyOnExpiry: true
     notifyOnTermination: true
-  expirationBehavior: terminate   # or notify-only
+  expirationBehavior: terminate   # notify-only is deprecated and also enforces hard expiry
   gracePeriodBeforeExpiry: 15m
 
   # Optional: Resource controls

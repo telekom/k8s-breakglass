@@ -116,6 +116,8 @@ const orphanCleanupTimeout = 30 * time.Second
 
 const kubectlDebugOperationKindEphemeralContainer = "ephemeral-container"
 
+const ephemeralOperationRecoveryGrace = 5 * time.Second
+
 // ClientProviderInterface abstracts the cluster.ClientProvider for testing
 type ClientProviderInterface interface {
 	GetClient(ctx context.Context, clusterName string) (ctrlclient.Client, error)
@@ -387,16 +389,53 @@ func (h *KubectlDebugHandler) prepareEphemeralContainerOperation(
 	ctx context.Context,
 	ds *breakglassv1alpha1.DebugSession,
 	operation breakglassv1alpha1.KubectlDebugOperation,
-) error {
-	return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+) (*breakglassv1alpha1.KubectlDebugOperation, error) {
+	var existing *breakglassv1alpha1.KubectlDebugOperation
+	err := h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		kubectlStatus := ensureKubectlDebugStatus(status)
-		for _, existing := range kubectlStatus.Operations {
-			if existing.ID == operation.ID {
+		for index := range kubectlStatus.Operations {
+			candidate := &kubectlStatus.Operations[index]
+			if candidate.ID == operation.ID {
+				return
+			}
+			if (candidate.State == breakglassv1alpha1.KubectlDebugOperationPrepared ||
+				candidate.State == breakglassv1alpha1.KubectlDebugOperationCompleted) &&
+				candidate.Kind == operation.Kind &&
+				candidate.TargetPod == operation.TargetPod &&
+				candidate.EphemeralContainer.ContainerDigest == operation.EphemeralContainer.ContainerDigest {
+				copy := *candidate
+				existing = &copy
 				return
 			}
 		}
 		kubectlStatus.Operations = append(kubectlStatus.Operations, operation)
 	})
+	return existing, err
+}
+
+func (h *KubectlDebugHandler) verifyPreparedEphemeralContainerOperation(
+	ctx context.Context,
+	ds *breakglassv1alpha1.DebugSession,
+	operationID string,
+) error {
+	reader := h.reader
+	if reader == nil {
+		reader = h.client
+	}
+	if reader == nil {
+		return kubectlDebugInternalErrorf("debug session live reader is not configured")
+	}
+	live := &breakglassv1alpha1.DebugSession{}
+	if err := reader.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), live); err != nil {
+		return kubectlDebugInternalErrorf("read debug session after persisting operation intent: %w", err)
+	}
+	operation := findKubectlDebugOperation(&live.Status, operationID)
+	if operation == nil || operation.State != breakglassv1alpha1.KubectlDebugOperationPrepared {
+		return kubectlDebugPolicyErrorf("ephemeral-container operation %s is no longer prepared", operationID)
+	}
+	ds.Status = live.Status
+	ds.ResourceVersion = live.ResourceVersion
+	return nil
 }
 
 func (h *KubectlDebugHandler) completeEphemeralContainerOperation(
@@ -470,6 +509,9 @@ func (h *KubectlDebugHandler) RecoverPendingKubectlDebugOperations(ctx context.C
 	}
 
 	for _, operation := range pending {
+		if !operation.PreparedAt.IsZero() && time.Since(operation.PreparedAt.Time) < ephemeralOperationRecoveryGrace {
+			continue
+		}
 		pod := &corev1.Pod{}
 		err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: operation.TargetPod.Namespace, Name: operation.TargetPod.Name}, pod)
 		if err != nil {
@@ -510,7 +552,7 @@ func (h *KubectlDebugHandler) RecoverPendingKubectlDebugOperations(ctx context.C
 			break
 		}
 		if !found {
-			if outcomeErr := h.completeEphemeralContainerOperation(ctx, ds, operation.ID, breakglassv1alpha1.KubectlDebugOperationFailed, "target Pod does not contain the prepared ephemeral container", nil); outcomeErr != nil {
+			if outcomeErr := h.completeEphemeralContainerOperation(ctx, ds, operation.ID, breakglassv1alpha1.KubectlDebugOperationUnknown, "target Pod does not contain the prepared ephemeral container after the operation may have been attempted", nil); outcomeErr != nil {
 				return outcomeErr
 			}
 			continue
@@ -838,9 +880,19 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	}
 	ds = live
 	operation := newEphemeralContainerOperation(freshPod, ephemeralContainer, user)
-	if err := h.prepareEphemeralContainerOperation(ctx, ds, operation); err != nil {
+	existing, err := h.prepareEphemeralContainerOperation(ctx, ds, operation)
+	if err != nil {
 		// No target mutation has happened if durable intent cannot be written.
 		return fmt.Errorf("failed to persist ephemeral-container operation intent: %w", err)
+	}
+	if existing != nil {
+		if existing.State == breakglassv1alpha1.KubectlDebugOperationCompleted {
+			return nil
+		}
+		return kubectlDebugRequestErrorf("an identical ephemeral-container operation is already in progress")
+	}
+	if err := h.verifyPreparedEphemeralContainerOperation(ctx, ds, operation.ID); err != nil {
+		return err
 	}
 
 	// Persisting intent is itself a potentially slow API operation. Re-fence
@@ -851,6 +903,13 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 		return err
 	}
 	ds = live
+	namespaceAllowed, err = h.isNamespaceAllowedForEphemeral(ctx, ds, namespace, ecPolicy.AllowedNamespaces, ecPolicy.DeniedNamespaces)
+	if err != nil {
+		return err
+	}
+	if !namespaceAllowed {
+		return kubectlDebugPolicyErrorf("namespace %s is no longer allowed for ephemeral container injection", namespace)
+	}
 	if err := h.fencePrivilegedOperationClusterConfig(ctx, configuredCluster); err != nil {
 		return err
 	}

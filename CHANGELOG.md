@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Durable kubectl-debug operation outcomes (PR #1278)**: Ephemeral-container
+  intent is persisted before the target mutation, with exact target/request
+  matching during recovery and terminal evidence retained through cleanup.
+
 - **Hard expiry and authorization caching**: Authorization now fails closed
   at the exact `expiresAt` boundary or when a session is marked for deletion,
   cannot be resurrected by stale writes or cached decisions, and shipped
