@@ -15,7 +15,7 @@ in CI as the `Multi-Cluster E2E Tests` job.
 
 | Suite | Shape exercised | Evidence |
 | --- | --- | --- |
-| `e2e/bootstrap_e2e_test.go` | One Kind management cluster; controller deployment wiring, generated webhook kubeconfig and ClusterConfig bootstrap. | `e2e/bootstrap_e2e_test.go:422-625`, `:646-821` |
+| `e2e/bootstrap_e2e_test.go` | One Kind management cluster; controller deployment wiring, generated webhook kubeconfig and ClusterConfig bootstrap. | `e2e/bootstrap_e2e_test.go:421-643`, `:663-837` |
 | `e2e/api/*` without `multicluster` | Single cluster API/UI-facing flows; most sessions are created through API helpers. | `e2e/api/approval_workflow_test.go:56-67`, `e2e/helpers/api.go` |
 | `e2e/api/*` with `multicluster` | One hub plus two real Kind spokes. Spokes use structured authentication and authorization, OIDC tokens, and the hub's authorization route. | `e2e/kind-setup-multi.sh:137-218`, `e2e/api/spoke_hub_authorization_test.go:145-236` |
 | `e2e/cli` | CLI flows against the configured test cluster; shell coverage is opt-in. | `Makefile:183-184`, `.github/workflows/ci.yml:1098-1107` |
@@ -50,7 +50,7 @@ T-CaaS shape is not exercised.
 | Email enabled and `--disable-email` | enabled MailHog smoke | disabled path is not deployed | covered with fakes | No deployed toggle matrix |
 | Webhook TLS/cert path | validating webhook resources are installed | CA is generated, but SAR route uses hub HTTP API NodePort | partial | The cross-cluster harness does not currently exercise `:9443` TLS |
 | Metrics, health and webhook ports (`8081`, `8082`, `8083`, `9443`) | metrics/health partial | `8081` partial | covered in server tests | No deployed assertion for all endpoints |
-| `authorizedTTL`/`unauthorizedTTL` authorization caching | gap | gap: cache explicitly disabled in `kind-setup-multi.sh:185-190` | gap | Needs a Kubernetes apiserver configuration test |
+| `authorizedTTL`/`unauthorizedTTL` authorization caching | gap | gap: cache explicitly disabled in `kind-setup-multi.sh:199-202` | gap | Needs a Kubernetes apiserver configuration test |
 
 ## Tests that bypass production wiring
 
