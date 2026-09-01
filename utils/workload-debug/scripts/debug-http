@@ -81,7 +81,7 @@ esac
 # values exactly (including spaces). Header values are supplied by the caller.
 set -- curl --silent --show-error --fail-with-body \
     --connect-timeout "$timeout_seconds" --max-time "$timeout_seconds" \
-    --max-filesize "$max_bytes"
+    --max-filesize "$max_bytes" --include
 case "$method" in
     HEAD) set -- "$@" --head ;;
     OPTIONS) set -- "$@" --request OPTIONS ;;
