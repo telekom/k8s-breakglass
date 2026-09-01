@@ -12,9 +12,12 @@ kubernetes_delete_uid() {
 	local kubectl_bin=${KUBECTL_BIN:-kubectl}
 	[ -n "$uid" ] || return 2
 	command -v "$kubectl_bin" >/dev/null 2>&1 || return 2
+	command -v jq >/dev/null 2>&1 || return 2
 	# --arg prevents a future API UID containing JSON metacharacters from
 	# changing the DeleteOptions document.
-	jq -n --arg uid "$uid" \
-		'{apiVersion:"meta.k8s.io/v1",kind:"DeleteOptions",preconditions:{uid:$uid},propagationPolicy:"Foreground"}' |
-		"$kubectl_bin" --kubeconfig "$kubeconfig" delete --raw "$path" -f -
+	local delete_options
+	delete_options=$(jq -n --arg uid "$uid" \
+		'{apiVersion:"meta.k8s.io/v1",kind:"DeleteOptions",preconditions:{uid:$uid},propagationPolicy:"Foreground"}') ||
+		return 1
+	"$kubectl_bin" --kubeconfig "$kubeconfig" delete --raw "$path" -f - <<<"$delete_options"
 }

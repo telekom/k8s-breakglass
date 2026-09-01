@@ -29,6 +29,7 @@ case "${1:-}" in
   platform-subjects)
     [[ $# == 3 ]] || die 'platform-subjects IMAGE INDEX_DIGEST'
     [[ "$3" =~ $digest_re ]] || die 'invalid index digest'
+    command -v jq >/dev/null 2>&1 || die 'jq is required'
     raw="$(docker buildx imagetools inspect --raw "$2@$3")"
     jq -e '[.manifests[] | select(.platform.os != "unknown") | [.platform.os,.platform.architecture]] | sort == [["linux","amd64"],["linux","arm64"]]' <<<"${raw}" >/dev/null || die 'index must contain exactly linux/amd64 and linux/arm64'
     for arch in amd64 arm64; do
