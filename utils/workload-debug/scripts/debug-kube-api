@@ -37,6 +37,14 @@ while [ "$#" -gt 0 ]; do
 done
 [ "$#" -eq 0 ] || { usage >&2; exit 2; }
 
+case "$timeout_seconds" in
+    ''|*[!0-9]*) printf '%s\n' 'debug-kube-api: timeout must be a positive integer' >&2; exit 2 ;;
+esac
+if [ "$timeout_seconds" -lt 1 ] || [ "$timeout_seconds" -gt 300 ]; then
+    printf '%s\n' 'debug-kube-api: timeout must be between 1 and 300' >&2
+    exit 2
+fi
+
 if [ -z "$server" ]; then
     printf '%s\n' 'debug-kube-api: --server is required outside a Kubernetes Pod' >&2
     exit 2
