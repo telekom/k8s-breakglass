@@ -48,12 +48,14 @@ if SUPPLY_CHAIN_RELEASE_TAG=v1.2.3 PATH="${TEST_DIR}/bin:${PATH}" "${SCRIPT_DIR}
   exit 1
 fi
 
-if SUPPLY_CHAIN_RELEASE_TAG=v1.2 PATH="${TEST_DIR}/bin:${PATH}" "${SCRIPT_DIR}/verify-catalogue-supply-chain.sh" \
-  --images-file "${TEST_DIR}/images" \
-  --chart 'ghcr.io/example/catalogue@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
-  >/dev/null 2>&1; then
-  echo "non-semver release tag was accepted for exact identity binding" >&2
-  exit 1
-fi
+for invalid_tag in v1.2 v1.2.3-. v1.2.3-a..b v1.2.3-01; do
+  if SUPPLY_CHAIN_RELEASE_TAG="${invalid_tag}" PATH="${TEST_DIR}/bin:${PATH}" "${SCRIPT_DIR}/verify-catalogue-supply-chain.sh" \
+    --images-file "${TEST_DIR}/images" \
+    --chart 'ghcr.io/example/catalogue@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
+    >/dev/null 2>&1; then
+    echo "invalid semver release tag was accepted for exact identity binding: ${invalid_tag}" >&2
+    exit 1
+  fi
+done
 
 echo "catalogue supply-chain verification behavior passed"

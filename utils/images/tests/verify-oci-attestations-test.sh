@@ -41,7 +41,9 @@ end
                   { "_type" => "https://in-toto.io/Statement/v1", "subject" => [{ "name" => "ghcr.io/example/utility", "digest" => { "sha256" => image_digest } }], "predicateType" => "https://slsa.dev/provenance/v1", "predicate" => { "buildDefinition" => { "buildType" => "https://example.invalid/build" }, "runDetails" => { "builder" => { "id" => "https://example.invalid/builder" } } } }
                 end
     layer = write_blob.call(JSON.generate(statement), "application/vnd.in-toto+json")
-    attestation = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.manifest.v1+json", "layers" => [layer], "subject" => { "digest" => "sha256:#{image_digest}" } }
+    # BuildKit links index-style attestations through the descriptor annotation;
+    # the attestation manifest itself need not carry an OCI subject field.
+    attestation = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.manifest.v1+json", "layers" => [layer] }
     attestation_payload = JSON.generate(attestation)
     attestation_digest = Digest::SHA256.hexdigest(attestation_payload)
     File.write(File.join(blob_dir, attestation_digest), attestation_payload)

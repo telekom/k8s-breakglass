@@ -71,10 +71,12 @@ if PATH="${test_dir}/bin:${PATH}" "${script_dir}/resolve-release-refs.sh" \
   exit 1
 fi
 
-if PATH="${test_dir}/bin:${PATH}" "${script_dir}/resolve-release-refs.sh" \
-  "${test_dir}/values.yaml" "${test_dir}/refs" v0.1 >/dev/null 2>&1; then
-  echo "non-semver release tag was accepted for exact identity binding" >&2
-  exit 1
-fi
+for invalid_tag in v0.1 v1.2.3-. v1.2.3-a..b v1.2.3-01; do
+  if PATH="${test_dir}/bin:${PATH}" "${script_dir}/resolve-release-refs.sh" \
+    "${test_dir}/values.yaml" "${test_dir}/refs" "${invalid_tag}" >/dev/null 2>&1; then
+    echo "invalid semver release tag was accepted: ${invalid_tag}" >&2
+    exit 1
+  fi
+done
 
 echo "Release reference production behavior passed"

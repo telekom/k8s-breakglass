@@ -94,8 +94,6 @@ attestations.each do |descriptor|
   reference_digest = descriptor.dig("annotations", "vnd.docker.reference.digest").to_s
   fail_archive("attestation has no image subject reference") unless image_digests.include?(reference_digest)
   manifest = JSON.parse(read_blob(archive, descriptor, "attestation manifest"))
-  subject_digest = manifest.dig("subject", "digest")
-  fail_archive("attestation subject is missing or does not match its reference") unless subject_digest == reference_digest
   layers = manifest["layers"]
   fail_archive("attestation manifest has no layers") unless layers.is_a?(Array) && !layers.empty?
 
