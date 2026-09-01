@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
@@ -24,9 +25,13 @@ type SessionManager struct {
 	client.Client
 	reader          client.Reader
 	liveReader      client.Reader
+	liveFallbackMu  sync.Mutex
+	liveFallbackAt  map[string]time.Time
 	log             *zap.SugaredLogger
 	logFallbackOnce sync.Once
 }
+
+const liveReaderNegativeCacheTTL = time.Second
 
 // getLogger returns the injected logger or falls back to the global logger.
 // Callers should prefer passing a logger via WithSessionLogger to avoid
@@ -394,8 +399,21 @@ func (c *SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 		return filtered, nil
 	}
 	if len(bsl.Items) == 0 && c.liveReader != nil {
+		fallbackKey := cluster + "\x00" + user
+		if !c.allowLiveReaderFallback(fallbackKey, time.Now()) {
+			return bsl.Items, nil
+		}
 		var liveList breakglassv1alpha1.BreakglassSessionList
-		if err := c.liveReader.List(ctx, &liveList); err != nil {
+		err := c.liveReader.List(ctx, &liveList, client.MatchingFields{
+			"spec.cluster": cluster,
+			"spec.user":    user,
+		})
+		if err != nil {
+			if IsFieldIndexError(err) {
+				err = c.liveReader.List(ctx, &liveList)
+			}
+		}
+		if err != nil {
 			log.Warnw("Failed to refresh BreakglassSessions from live reader after empty cache lookup",
 				"cluster", cluster, "user", user, "error", err)
 			return bsl.Items, nil
@@ -407,6 +425,7 @@ func (c *SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 			}
 		}
 		if len(filtered) > 0 {
+			c.clearLiveReaderFallback(fallbackKey)
 			log.Infow("Fetched BreakglassSessions from live reader after empty cache lookup",
 				"count", len(filtered), "cluster", cluster, "user", user)
 		}
@@ -414,6 +433,26 @@ func (c *SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 	}
 	log.Infow("Fetched BreakglassSessions (indexed)", "count", len(bsl.Items), "cluster", cluster, "user", user)
 	return bsl.Items, nil
+}
+
+func (c *SessionManager) allowLiveReaderFallback(key string, now time.Time) bool {
+	c.liveFallbackMu.Lock()
+	defer c.liveFallbackMu.Unlock()
+
+	if last, ok := c.liveFallbackAt[key]; ok && now.Sub(last) < liveReaderNegativeCacheTTL {
+		return false
+	}
+	if c.liveFallbackAt == nil {
+		c.liveFallbackAt = make(map[string]time.Time)
+	}
+	c.liveFallbackAt[key] = now
+	return true
+}
+
+func (c *SessionManager) clearLiveReaderFallback(key string) {
+	c.liveFallbackMu.Lock()
+	defer c.liveFallbackMu.Unlock()
+	delete(c.liveFallbackAt, key)
 }
 
 // GetBreakglassSessions with custom field selector string.
