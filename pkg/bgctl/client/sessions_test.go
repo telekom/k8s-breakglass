@@ -165,6 +165,7 @@ func TestSessionsRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/api/breakglassSessions", r.URL.Path)
 		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
 		var req SessionRequest
 		err := json.NewDecoder(r.Body).Decode(&req)
@@ -284,6 +285,9 @@ func TestSessionsDrop(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/api/breakglassSessions/session-123/drop", r.URL.Path)
 		require.Equal(t, http.MethodPost, r.Method)
+		require.Empty(t, r.Header.Get("Content-Type"))
+		_, contentTypePresent := r.Header["Content-Type"]
+		require.False(t, contentTypePresent)
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
 		require.Empty(t, body)
