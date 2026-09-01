@@ -256,6 +256,14 @@ type DebugSessionStatus struct {
 	// +optional
 	ResolvedBinding *ResolvedBindingRef `json:"resolvedBinding,omitempty"`
 
+	// resolvedBindingSpec is the immutable binding snapshot approved for activation.
+	// +optional
+	ResolvedBindingSpec *DebugSessionClusterBindingSpec `json:"resolvedBindingSpec,omitempty"`
+
+	// resolvedPodTemplate is the immutable pod-template snapshot approved for activation.
+	// +optional
+	ResolvedPodTemplate *DebugPodTemplateSpec `json:"resolvedPodTemplate,omitempty"`
+
 	// auxiliaryResourceStatuses tracks the state of deployed auxiliary resources.
 	// +optional
 	AuxiliaryResourceStatuses []AuxiliaryResourceStatus `json:"auxiliaryResourceStatuses,omitempty"`

@@ -255,6 +255,16 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	resolvedTemplate := template.Spec.DeepCopy()
 	resolvedTemplate.Constraints = effectiveDebugSessionConstraints(template, binding)
 	ds.Status.ResolvedTemplate = resolvedTemplate
+	if binding != nil {
+		ds.Status.ResolvedBindingSpec = binding.Spec.DeepCopy()
+	}
+	if template.Spec.PodTemplateRef != nil {
+		podTemplate, podErr := c.getPodTemplate(ctx, template.Spec.PodTemplateRef.Name)
+		if podErr != nil {
+			return c.failSession(ctx, ds, fmt.Sprintf("pod template not found: %v", podErr))
+		}
+		ds.Status.ResolvedPodTemplate = podTemplate.Spec.DeepCopy()
+	}
 
 	// Check if approval is required (checks both template and binding approvers)
 	requiresApproval := c.requiresApproval(template, binding, ds)
@@ -567,13 +577,40 @@ func releaseSessionMetricSeries(sessionName string) {
 func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 
+	if ds.Status.ResolvedTemplate != nil {
+		approvedTemplate := template.DeepCopy()
+		approvedTemplate.Spec = *ds.Status.ResolvedTemplate.DeepCopy()
+		template = approvedTemplate
+	}
+	if ds.Status.ResolvedBindingSpec != nil {
+		approvedBinding := binding
+		if approvedBinding == nil {
+			approvedBinding = &breakglassv1alpha1.DebugSessionClusterBinding{}
+		} else {
+			approvedBinding = approvedBinding.DeepCopy()
+		}
+		approvedBinding.Spec = *ds.Status.ResolvedBindingSpec.DeepCopy()
+		binding = approvedBinding
+	}
+
 	// Establish the bounded lease durably before deploying any target resources.
 	// The session remains Pending/PendingApproval during deployment, so API
 	// authorization cannot use the lease until activation completes.
 	duration := c.parseDuration(ds.Spec.RequestedDuration, effectiveDebugSessionConstraints(template, binding))
 	activationStartedAt := metav1.Now()
-	expiresAt := metav1.NewTime(activationStartedAt.Add(duration))
-	ds.Status.ExpiresAt = &expiresAt
+	var expiresAt metav1.Time
+	if ds.Status.ExpiresAt != nil && !ds.Status.ExpiresAt.IsZero() {
+		if !time.Now().UTC().Before(ds.Status.ExpiresAt.Time) {
+			return c.failSession(ctx, ds, "activation lease expired before deployment completed")
+		}
+		// Reuse the original bounded lease after a restart or retry; never
+		// extend activation by recomputing expiry from a later attempt.
+		expiresAt = *ds.Status.ExpiresAt
+		activationStartedAt = metav1.NewTime(expiresAt.Add(-duration))
+	} else {
+		expiresAt = metav1.NewTime(activationStartedAt.Add(duration))
+		ds.Status.ExpiresAt = &expiresAt
+	}
 	ds.Status.Message = "Activating debug session"
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err

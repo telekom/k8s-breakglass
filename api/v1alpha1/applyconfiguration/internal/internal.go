@@ -1689,6 +1689,12 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: resolvedBinding
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ResolvedBindingRef
+    - name: resolvedBindingSpec
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionClusterBindingSpec
+    - name: resolvedPodTemplate
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodTemplateSpec
     - name: resolvedTemplate
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplateSpec

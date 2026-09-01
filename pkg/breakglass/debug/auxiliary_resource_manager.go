@@ -649,16 +649,14 @@ func (m *AuxiliaryResourceManager) deployResourceWithFence(
 		annotations[sourceSessionUIDAnnotation] = string(session.UID)
 		obj.SetAnnotations(annotations)
 
-		// Deploy the resource using Server-Side Apply (SSA) for idempotency.
-		// SSA will create or update the resource, handling existing resources automatically.
-		// Note: We use our own field owner and force ownership to take over any existing resources.
+		// Create atomically and recover only a resource marked for this session.
 		obj.SetManagedFields(nil)
 		if fence != nil {
 			if err := fence(); err != nil {
 				return status, err
 			}
 		}
-		if err := utils.ApplyUnstructured(ctx, targetClient, obj); err != nil {
+		if err := createOrRecoverTargetObject(ctx, targetClient, obj, session); err != nil {
 			status.Error = fmt.Sprintf("SSA apply failed for %s/%s: %v", obj.GetKind(), obj.GetName(), err)
 			return status, fmt.Errorf("failed to apply resource %s/%s: %w", obj.GetKind(), obj.GetName(), err)
 		}
