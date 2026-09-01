@@ -56,10 +56,7 @@ cleanup() {
 	fi
 	if [ -n "${volume_owner_id:-}" ]; then
 		docker_remove_resource_with_volumes "$docker_bin" container "$volume_owner_id" >/dev/null 2>&1 || true
-		if "$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1; then
-			"$docker_bin" volume rm "$volume_name" >/dev/null 2>&1 || true
-		fi
-		if "$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1; then
+		if ! remove_captured_volume; then
 			printf 'FAIL: disposable volume %s survived cleanup\n' "$volume_name" >&2
 			cleanup_failed=1
 		fi
@@ -74,6 +71,17 @@ cleanup() {
 	exit "$exit_code"
 }
 trap cleanup EXIT
+
+remove_captured_volume() {
+	attempt=0
+	while [ "$attempt" -lt 10 ]; do
+		"$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1 || return 0
+		"$docker_bin" volume rm "$volume_name" >/dev/null 2>&1 || true
+		attempt=$((attempt + 1))
+		sleep 1
+	done
+	! "$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1
+}
 
 # shellcheck disable=SC1091
 . "$root_dir/../../hack/docker-image-ownership.sh"
@@ -245,10 +253,7 @@ destroy_fixture() {
 		fail "disposable container '$container_name' survived cleanup"
 	fi
 	docker_remove_resource_with_volumes "$docker_bin" container "$volume_owner_id" >/dev/null || fail "cleanup failed for volume '$volume_name'"
-	if "$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1; then
-		"$docker_bin" volume rm "$volume_name" >/dev/null || fail "cleanup failed for volume '$volume_name'"
-	fi
-	"$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1 && fail "disposable volume '$volume_name' survived cleanup"
+	remove_captured_volume || fail "cleanup failed for volume '$volume_name'"
 	container_name=
 	container_id=
 	volume_name=
