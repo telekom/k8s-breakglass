@@ -9,10 +9,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 )
 
 // fakeCacheSyncer implements CacheSyncer for testing.
@@ -180,6 +184,70 @@ func TestControllerSetupPlan(t *testing.T) {
 			assert.Equal(t, tt.want, newControllerSetupPlan(tt.enableControllers))
 		})
 	}
+}
+
+type emptyUnindexedListClient struct {
+	client.Client
+	indexed bool
+}
+
+// emptyUnindexedListClient models the cache behavior observed in the
+// authorization deployment: an unregistered field selector produces an empty
+// list instead of a list error.
+func (c *emptyUnindexedListClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if !c.indexed {
+		var listOptions client.ListOptions
+		for _, opt := range opts {
+			opt.ApplyToList(&listOptions)
+		}
+		if listOptions.FieldSelector != nil && listOptions.FieldSelector.String() != "" {
+			return nil
+		}
+	}
+	return c.Client.List(ctx, list, opts...)
+}
+
+func TestAuthorizationSelectionUsesSharedIndexesWhenControllersDisabled(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "approved-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User:    "platform-requester@example.com",
+			Cluster: "tind-workload-01.tst.local-dev",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
+		},
+	}
+	plan := newControllerSetupPlan(false)
+	builder := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session)
+	if plan.registerControllerIndexes {
+		builder = builder.
+			WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+				return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+			}).
+			WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+				return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+			})
+	}
+	cachedClient := builder.Build()
+
+	manager := breakglass.NewSessionManagerWithClient(&emptyUnindexedListClient{
+		Client:  cachedClient,
+		indexed: plan.registerControllerIndexes,
+	})
+	sessions, err := manager.GetClusterUserBreakglassSessions(
+		context.Background(),
+		"tind-workload-01.tst.local-dev",
+		"platform-requester@example.com",
+	)
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, "approved-session", sessions[0].Name)
 }
 
 func TestNewManager_MetricsServerOptions(t *testing.T) {
