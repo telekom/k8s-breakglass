@@ -55,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Authorization webhook session selection**: Register shared BreakglassSession
+  field indexes even when reconcilers are disabled, so approved sessions remain
+  discoverable by the SubjectAccessReview path (PR #1297).
 - **`bgctl session drop` empty requests**: Omit the JSON `Content-Type` header
   for empty drop requests, matching the API's empty-body contract (PR #1298).
 - **Diagnostic collector traversal bound**: Crashdump enumeration now uses

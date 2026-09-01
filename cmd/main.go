@@ -684,8 +684,8 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 	}
 
 	// Reconciler manager stays running for shared manager services such as
-	// health checks, metrics, and clients. Controller-specific indexes and
-	// reconcilers are gated by --enable-controllers.
+	// health checks, metrics, clients, and field indexes. Reconcilers are gated
+	// by --enable-controllers.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

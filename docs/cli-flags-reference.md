@@ -601,6 +601,27 @@ When **disabled**:
 
 ---
 
+#### `--enable-controllers`
+
+Enable Kubernetes reconcilers and controller-specific background handlers.
+Shared cache field indexes remain enabled when this flag is `false` because the
+API and authorization webhook continue to use the shared cache.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `true` |
+| **Environment** | `ENABLE_CONTROLLERS` |
+| **Example** | `--enable-controllers=false` |
+
+When **disabled**:
+- Kubernetes reconcilers do not run
+- Cache invalidation handlers, the ClusterConfig checker, and escalation status updater do not run
+- Shared session-selection field indexes remain registered
+- Useful for API/webhook-only split deployments
+
+---
+
 ### Interval Configuration
 
 #### `--cluster-config-check-interval`
