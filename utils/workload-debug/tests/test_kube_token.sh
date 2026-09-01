@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
 #!/bin/sh
 set -eu
 
@@ -26,7 +28,7 @@ chmod +x "$fixture/curl"
 token_file=$fixture/token
 echo real-test-token >"$token_file"
 PATH="$root/scripts:$fixture:$PATH" WORKLOAD_DEBUG_CURL_LOG="$fixture/curl.log" \
-    KUBE_TOKEN_FILE="$token_file" debug-kube-api --server https://api.example.test /version >/dev/null
+    KUBE_TOKEN_FILE="$token_file" debug-kube-api --server https://api.example.test --token "$token_file" /version >/dev/null
 if grep -F real-test-token "$fixture/curl.log" >/dev/null; then
     echo 'debug-kube-api leaked token in curl argv' >&2
     exit 1
