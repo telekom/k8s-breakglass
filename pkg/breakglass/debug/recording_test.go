@@ -32,13 +32,13 @@ func (r *recordingReaderStub) OpenRecording(_ context.Context, _ *breakglassv1al
 
 func recordingFixture(enabled bool) (*breakglassv1alpha1.DebugSession, *breakglassv1alpha1.DebugSessionTemplate) {
 	return &breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: "debug-one", Namespace: "breakglass"},
-			Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "prod", TemplateRef: "netshoot"},
-		}, &breakglassv1alpha1.DebugSessionTemplate{
-			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
-				Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: enabled, RecordingRetention: "30d"},
-			},
-		}
+		ObjectMeta: metav1.ObjectMeta{Name: "debug-one", Namespace: "breakglass"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "prod", TemplateRef: "netshoot"},
+	}, &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: enabled, RecordingRetention: "30d"},
+		},
+	}
 }
 
 func TestInjectTerminalRecordingContract(t *testing.T) {
@@ -66,6 +66,30 @@ func TestInjectTerminalRecordingContract(t *testing.T) {
 	}
 }
 
+func TestBuildPodSpecInjectsTerminalRecording(t *testing.T) {
+	ds, template := recordingFixture(true)
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
+					Containers: []corev1.Container{{Name: "debug", Image: "example/debug"}},
+				},
+			},
+		},
+	}
+	controller := &DebugSessionController{
+		log:                    zap.NewNop().Sugar(),
+		terminalRecordingImage: "registry.example/recorder@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
+	result, err := controller.buildPodSpec(ds, template, podTemplate)
+	if err != nil {
+		t.Fatalf("build pod spec: %v", err)
+	}
+	if len(result.PodSpec.Containers) != 2 || result.PodSpec.Containers[1].Name != "terminal-recorder" {
+		t.Fatalf("expected production pod rendering to inject recorder sidecar, got %#v", result.PodSpec.Containers)
+	}
+}
+
 func recordingEnvValue(env []corev1.EnvVar, name, want string) bool {
 	for _, item := range env {
 		if item.Name == name && item.Value == want {
@@ -82,7 +106,7 @@ func TestInjectTerminalRecordingFailsClosed(t *testing.T) {
 		t.Fatal("expected missing sidecar image to fail")
 	}
 	template.Spec.Audit.RecordingRetention = "not-a-duration"
-	if err := injectTerminalRecording(spec, ds, template, "example/recorder:v1"); err == nil {
+	if err := injectTerminalRecording(spec, ds, template, "example/recorder@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"); err == nil {
 		t.Fatal("expected invalid retention to fail")
 	}
 	template.Spec.Audit.RecordingRetention = "30d"
@@ -99,6 +123,7 @@ func TestRecordingRetentionDuration(t *testing.T) {
 	}{
 		{"90d", int64(90 * 24 * 60 * 60)},
 		{"2w", int64(14 * 24 * 60 * 60)},
+		{"1d12h", int64(36 * 60 * 60)},
 		{"1h", int64(60 * 60)},
 	} {
 		d, err := recordingRetentionDuration(tc.value)

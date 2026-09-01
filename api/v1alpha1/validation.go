@@ -977,6 +977,13 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 		result.Errors = append(result.Errors, validateDurationFormat(template.Spec.GracePeriodBeforeExpiry, specPath.Child("gracePeriodBeforeExpiry"))...)
 	}
 
+	if template.Spec.Audit != nil && template.Spec.Audit.EnableTerminalRecording &&
+		template.Spec.Audit.RecordingRetention != "" {
+		result.Errors = append(result.Errors,
+			validateDurationFormat(template.Spec.Audit.RecordingRetention,
+				specPath.Child("audit").Child("recordingRetention"))...)
+	}
+
 	// Validate podCopy config if specified
 	if template.Spec.KubectlDebug != nil && template.Spec.KubectlDebug.PodCopy != nil && template.Spec.KubectlDebug.PodCopy.TTL != "" {
 		result.Errors = append(result.Errors, validateDurationFormat(template.Spec.KubectlDebug.PodCopy.TTL, specPath.Child("kubectlDebug").Child("podCopy").Child("ttl"))...)

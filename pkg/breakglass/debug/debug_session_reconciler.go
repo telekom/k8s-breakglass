@@ -67,16 +67,23 @@ const (
 
 // DebugSessionController manages DebugSession lifecycle
 type DebugSessionController struct {
-	log          *zap.SugaredLogger
-	client       ctrlclient.Client
-	ccProvider   *cluster.ClientProvider
-	auditService *audit.Service
-	auditManager *audit.Manager
-	mailService  breakglass.MailEnqueuer
-	auxiliaryMgr *AuxiliaryResourceManager
-	brandingName string
-	baseURL      string
-	disableEmail bool
+	log                    *zap.SugaredLogger
+	client                 ctrlclient.Client
+	ccProvider             *cluster.ClientProvider
+	auditService           *audit.Service
+	auditManager           *audit.Manager
+	mailService            breakglass.MailEnqueuer
+	auxiliaryMgr           *AuxiliaryResourceManager
+	brandingName           string
+	baseURL                string
+	disableEmail           bool
+	terminalRecordingImage string
+}
+
+// WithTerminalRecordingImage configures the deployment-owned terminal recorder image.
+func (c *DebugSessionController) WithTerminalRecordingImage(image string) *DebugSessionController {
+	c.terminalRecordingImage = image
+	return c
 }
 
 // NewDebugSessionController creates a new DebugSessionController

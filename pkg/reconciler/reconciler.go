@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -322,6 +323,7 @@ func Setup(
 		log.Debugw("Setting up DebugSession reconciler")
 		debugSessionReconciler := debug.NewDebugSessionController(log, mgr.GetClient(), ccProvider).
 			WithAuditService(auditService).
+			WithTerminalRecordingImage(os.Getenv("BREAKGLASS_TERMINAL_RECORDING_IMAGE")).
 			WithMailService(mailService, frontendConfig.BrandingName, frontendConfig.BaseURL, disableEmail)
 		if err := debugSessionReconciler.SetupWithManager(mgr); err != nil {
 			return fmt.Errorf("failed to setup DebugSession reconciler with manager: %w", err)
