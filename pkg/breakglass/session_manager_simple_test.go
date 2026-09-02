@@ -319,7 +319,8 @@ func TestSessionManager_AuthorizationSelectionUsesLiveReaderWhenCacheIsStale(t *
 			Cluster: "tind-workload-01.tst.local-dev",
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
-			State: breakglassv1alpha1.SessionStateApproved,
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
 		},
 	}
 	cachedClient := fake.NewClientBuilder().
@@ -364,7 +365,8 @@ func TestSessionManager_AuthorizationSelectionRefreshesStalePendingCache(t *test
 			Cluster: "tind-workload-01.tst.local-dev",
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
-			State: breakglassv1alpha1.SessionStatePending,
+			State:     breakglassv1alpha1.SessionStatePending,
+			ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
 		},
 	}
 	liveSession := cachedSession.DeepCopy()
