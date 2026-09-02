@@ -633,6 +633,9 @@ func IsSessionActive(session breakglassv1alpha1.BreakglassSession) bool {
 // they reserve capacity after approval until their scheduled activation window
 // expires.
 func IsSessionOccupyingSlot(session breakglassv1alpha1.BreakglassSession) bool {
+	if !session.DeletionTimestamp.IsZero() {
+		return false
+	}
 	switch session.Status.State {
 	case breakglassv1alpha1.SessionStatePending:
 		return IsSessionPendingApproval(session)
