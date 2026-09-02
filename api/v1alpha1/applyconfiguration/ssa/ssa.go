@@ -286,6 +286,9 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	if status.ResolvedBinding != nil {
 		result.WithResolvedBinding(ResolvedBindingRefFrom(status.ResolvedBinding))
 	}
+	if status.ResolvedBindingSnapshotCaptured {
+		result.WithResolvedBindingSnapshotCaptured(true)
+	}
 	if status.ResolvedBindingSpec != nil {
 		result.WithResolvedBindingSpec(*status.ResolvedBindingSpec.DeepCopy())
 	}
