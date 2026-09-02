@@ -1722,6 +1722,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: resolvedBinding
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ResolvedBindingRef
+    - name: resolvedBindingSnapshotCaptured
+      type:
+        scalar: boolean
     - name: resolvedBindingSpec
       type:
         namedType: io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.JSON

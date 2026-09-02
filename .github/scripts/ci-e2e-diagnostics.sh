@@ -104,7 +104,7 @@ ci_redact_diagnostic_stream() {
       $_ = "-----BEGIN PRIVATE KEY----- [REDACTED]\n";
       next;
     }
-	s~^([[:space:]]*(?:authorization|proxy-authorization|cookie|set-cookie|api-key|x-[a-z0-9-]*(?:api-key|token|secret|password|credential|cookie))[[:space:]]*:[[:space:]]*).*$~$1[REDACTED]~ig;
+	s~^([[:space:]]*(?:[<>][[:space:]]*)?(?:authorization|proxy-authorization|cookie|set-cookie|api-key|x-[a-z0-9-]*(?:api-key|token|secret|password|credential|cookie))[[:space:]]*:[[:space:]]*).*$~$1[REDACTED]~ig;
     s~((?:authorization|proxy-authorization)\s*[:=]\s*(?:Bearer|Basic)\s+)[^\s,"}]+~$1[REDACTED]~ig;
     s~("(?:access[_-]?token|refresh[_-]?token|id[_-]?token|subject[_-]?token|actor[_-]?token|auth[_-]?token|bearer[_-]?token|session[_-]?token|token|secret|client[_-]?secret|api[_-]?key|password|passwd|private[_-]?key|credential|credentials|cookie)"\s*:\s*)"(?:\\.|[^"\\])*"~$1"[REDACTED]"~ig;
     s~^([[:space:]]*(?:access[_-]?token|refresh[_-]?token|id[_-]?token|subject[_-]?token|actor[_-]?token|auth[_-]?token|bearer[_-]?token|session[_-]?token|token|secret|client[_-]?secret|api[_-]?key|password|passwd|private[_-]?key|credential|credentials|cookie)[[:space:]]*:[[:space:]]*)(?:"(?:\\.|[^"\\])*"|\047(?:\\.|[^\047\\])*\047|[^#\r\n]*?)([[:space:]]*(?:#.*)?\r?\n?)$~$1[REDACTED]$2~ig;

@@ -256,6 +256,7 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	resolvedTemplate := template.Spec.DeepCopy()
 	resolvedTemplate.Constraints = effectiveDebugSessionConstraints(template, binding)
 	ds.Status.ResolvedTemplate = resolvedTemplate
+	ds.Status.ResolvedBindingSnapshotCaptured = true
 	if binding != nil {
 		ds.Status.ResolvedBinding = &breakglassv1alpha1.ResolvedBindingRef{
 			Name:      binding.Name,
@@ -303,20 +304,24 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 		if err != nil {
 			return c.failSession(ctx, ds, fmt.Sprintf("template not found: %s", ds.Spec.TemplateRef))
 		}
-		// Find binding for merging allowed pod operations.
-		// Same indeterminate-vs-absent reasoning as handlePending: the binding can only
-		// narrow AllowedPodOperations, so activating without it would grant a strictly
-		// wider set than the approver saw. Requeue instead of guessing.
-		var binding *breakglassv1alpha1.DebugSessionClusterBinding
-		if ds.Spec.BindingRef != nil {
-			var bErr error
-			binding, bErr = c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace)
-			if bErr != nil {
-				return c.deferOnUnresolvedBinding(ctx, ds, bErr)
+		if ds.Status.ResolvedTemplate == nil || !ds.Status.ResolvedBindingSnapshotCaptured {
+			if ds.Spec.BindingRef != nil {
+				if _, err := c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace); err != nil {
+					return c.deferOnUnresolvedBinding(ctx, ds, err)
+				}
 			}
+			return ctrl.Result{}, fmt.Errorf("approved activation snapshots are missing")
 		}
-		if binding == nil {
-			binding, _ = c.findBindingForSession(ctx, template, ds.Spec.Cluster)
+		var binding *breakglassv1alpha1.DebugSessionClusterBinding
+		if ds.Status.ResolvedBindingSpec != nil {
+			binding = &breakglassv1alpha1.DebugSessionClusterBinding{}
+			if err := json.Unmarshal(ds.Status.ResolvedBindingSpec.Raw, &binding.Spec); err != nil {
+				return c.failSession(ctx, ds, fmt.Sprintf("invalid approved binding snapshot: %v", err))
+			}
+			if ds.Status.ResolvedBinding != nil {
+				binding.Name = ds.Status.ResolvedBinding.Name
+				binding.Namespace = ds.Status.ResolvedBinding.Namespace
+			}
 		}
 		return c.activateSession(ctx, ds, template, binding)
 	}

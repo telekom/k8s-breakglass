@@ -57,6 +57,9 @@ type DebugSessionStatusApplyConfiguration struct {
 	ResolvedBinding *ResolvedBindingRefApplyConfiguration `json:"resolvedBinding,omitempty"`
 	// resolvedBindingSpec is the immutable binding snapshot approved for activation.
 	ResolvedBindingSpec *apiextensionsv1.JSON `json:"resolvedBindingSpec,omitempty"`
+	// resolvedBindingSnapshotCaptured distinguishes an approved no-binding
+	// decision from a session created before snapshot persistence was available.
+	ResolvedBindingSnapshotCaptured *bool `json:"resolvedBindingSnapshotCaptured,omitempty"`
 	// resolvedPodTemplate is the immutable pod-template snapshot approved for activation.
 	ResolvedPodTemplate *apiextensionsv1.JSON `json:"resolvedPodTemplate,omitempty"`
 	// auxiliaryResourceStatuses tracks the state of deployed auxiliary resources.
@@ -226,6 +229,14 @@ func (b *DebugSessionStatusApplyConfiguration) WithResolvedBinding(value *Resolv
 // If called multiple times, the ResolvedBindingSpec field is set to the value of the last call.
 func (b *DebugSessionStatusApplyConfiguration) WithResolvedBindingSpec(value apiextensionsv1.JSON) *DebugSessionStatusApplyConfiguration {
 	b.ResolvedBindingSpec = &value
+	return b
+}
+
+// WithResolvedBindingSnapshotCaptured sets the ResolvedBindingSnapshotCaptured field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ResolvedBindingSnapshotCaptured field is set to the value of the last call.
+func (b *DebugSessionStatusApplyConfiguration) WithResolvedBindingSnapshotCaptured(value bool) *DebugSessionStatusApplyConfiguration {
+	b.ResolvedBindingSnapshotCaptured = &value
 	return b
 }
 
