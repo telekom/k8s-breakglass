@@ -427,6 +427,27 @@ func (c *SessionManager) RefreshClusterUserBreakglassSessions(ctx context.Contex
 	if err != nil || c.liveReader == nil {
 		return cached, false, err
 	}
+	return c.refreshClusterUserBreakglassSessions(ctx, cluster, user, cached)
+}
+
+// RefreshClusterUserBreakglassSessionsWithCached refreshes a previously loaded
+// cluster/user result without issuing a second cached lookup.
+func (c *SessionManager) RefreshClusterUserBreakglassSessionsWithCached(ctx context.Context,
+	cluster string,
+	user string,
+	cached []breakglassv1alpha1.BreakglassSession,
+) ([]breakglassv1alpha1.BreakglassSession, bool, error) {
+	if c.liveReader == nil {
+		return cached, false, nil
+	}
+	return c.refreshClusterUserBreakglassSessions(ctx, cluster, user, cached)
+}
+
+func (c *SessionManager) refreshClusterUserBreakglassSessions(ctx context.Context,
+	cluster string,
+	user string,
+	cached []breakglassv1alpha1.BreakglassSession,
+) ([]breakglassv1alpha1.BreakglassSession, bool, error) {
 	fallbackKey := cluster + "\x00" + user
 	live, refreshed := c.fetchLiveClusterUserBreakglassSessions(ctx, cluster, user, fallbackKey, c.getLogger())
 	if !refreshed {
