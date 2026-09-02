@@ -110,7 +110,8 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			liveSession.Status.ExpiresAt == nil || !time.Now().UTC().Before(liveSession.Status.ExpiresAt.Time) {
 			return fmt.Errorf("debug session is no longer active before deployment mutation")
 		}
-		activationInProgress := liveSession.Status.State == breakglassv1alpha1.DebugSessionStatePending ||
+		activationInProgress := liveSession.Status.State == "" ||
+			liveSession.Status.State == breakglassv1alpha1.DebugSessionStatePending ||
 			liveSession.Status.State == breakglassv1alpha1.DebugSessionStatePendingApproval
 		if liveSession.Status.State != breakglassv1alpha1.DebugSessionStateActive && !activationInProgress {
 			return fmt.Errorf("debug session is no longer active before deployment mutation")
