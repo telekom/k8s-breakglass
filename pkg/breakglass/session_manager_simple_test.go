@@ -20,18 +20,72 @@ import (
 )
 
 type stubReader struct {
-	listFn func(list client.ObjectList) error
+	listFn         func(list client.ObjectList) error
+	listFnWithOpts func(list client.ObjectList, opts []client.ListOption) error
 }
 
 func (s stubReader) Get(_ context.Context, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
 	return nil
 }
 
-func (s stubReader) List(_ context.Context, list client.ObjectList, _ ...client.ListOption) error {
+func (s stubReader) List(_ context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if s.listFnWithOpts != nil {
+		return s.listFnWithOpts(list, opts)
+	}
 	if s.listFn != nil {
 		return s.listFn(list)
 	}
 	return nil
+}
+
+func TestSessionManager_LiveFallbackSelectorsAndErrors(t *testing.T) {
+	t.Run("passes cluster and user selectors", func(t *testing.T) {
+		var got client.ListOptions
+		reader := stubReader{listFnWithOpts: func(list client.ObjectList, opts []client.ListOption) error {
+			for _, opt := range opts {
+				opt.ApplyToList(&got)
+			}
+			return nil
+		}}
+		manager := &SessionManager{liveReader: reader}
+		_, refreshed := manager.fetchLiveClusterUserBreakglassSessions(
+			context.Background(), "cluster", "user", "cluster\x00user", zap.NewNop().Sugar(),
+		)
+		require.True(t, refreshed)
+		assert.Contains(t, got.FieldSelector.String(), "spec.cluster=cluster")
+		assert.Contains(t, got.FieldSelector.String(), "spec.user=user")
+	})
+
+	t.Run("falls back only for unsupported selectors", func(t *testing.T) {
+		calls := 0
+		reader := stubReader{listFn: func(list client.ObjectList) error {
+			calls++
+			if calls == 1 {
+				return fmt.Errorf("no index with name spec.cluster")
+			}
+			return nil
+		}}
+		manager := &SessionManager{liveReader: reader}
+		_, refreshed := manager.fetchLiveClusterUserBreakglassSessions(
+			context.Background(), "cluster", "user", "cluster\x00user", zap.NewNop().Sugar(),
+		)
+		require.True(t, refreshed)
+		assert.Equal(t, 2, calls)
+	})
+
+	t.Run("does not retry non-selector errors", func(t *testing.T) {
+		calls := 0
+		reader := stubReader{listFn: func(list client.ObjectList) error {
+			calls++
+			return fmt.Errorf("forbidden")
+		}}
+		manager := &SessionManager{liveReader: reader}
+		_, refreshed := manager.fetchLiveClusterUserBreakglassSessions(
+			context.Background(), "cluster", "user", "cluster\x00user", zap.NewNop().Sugar(),
+		)
+		assert.False(t, refreshed)
+		assert.Equal(t, 1, calls)
+	})
 }
 
 func TestSessionManager_Simple(t *testing.T) {

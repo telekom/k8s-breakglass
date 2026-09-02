@@ -36,6 +36,7 @@ type SessionManager struct {
 }
 
 const liveReaderNegativeCacheTTL = time.Second
+const liveReaderRefreshTimeout = 10 * time.Second
 
 // getLogger returns the injected logger or falls back to the global logger.
 // Callers should prefer passing a logger via WithSessionLogger to avoid
@@ -468,14 +469,16 @@ func (c *SessionManager) fetchLiveClusterUserBreakglassSessions(ctx context.Cont
 	if c.liveReaderFallbackSuppressed(fallbackKey, time.Now()) {
 		return nil, false
 	}
-	value, _, _ := c.liveFallbackFlight.Do(fallbackKey, func() (interface{}, error) {
+	resultCh := c.liveFallbackFlight.DoChan(fallbackKey, func() (interface{}, error) {
+		opCtx, cancel := context.WithTimeout(context.Background(), liveReaderRefreshTimeout)
+		defer cancel()
 		var liveList breakglassv1alpha1.BreakglassSessionList
-		err := c.liveReader.List(ctx, &liveList, client.MatchingFields{
+		err := c.liveReader.List(opCtx, &liveList, client.MatchingFields{
 			"spec.cluster": cluster,
 			"spec.user":    user,
 		})
 		if err != nil && IsFieldIndexError(err) {
-			err = c.liveReader.List(ctx, &liveList)
+			err = c.liveReader.List(opCtx, &liveList)
 		}
 		if err != nil {
 			log.Warnw("Failed to refresh BreakglassSessions from live reader after cache lookup found no eligible session",
@@ -494,6 +497,13 @@ func (c *SessionManager) fetchLiveClusterUserBreakglassSessions(ctx context.Cont
 		c.recordLiveReaderFallback(fallbackKey, time.Now())
 		return liveFallbackResult{sessions: filtered, success: true}, nil
 	})
+	var value interface{}
+	select {
+	case result := <-resultCh:
+		value = result.Val
+	case <-ctx.Done():
+		return nil, false
+	}
 	fallback, ok := value.(liveFallbackResult)
 	if !ok || !fallback.success {
 		return nil, false
