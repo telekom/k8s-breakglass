@@ -52,6 +52,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			// immutable identity captured while resolving the live binding.
 			name = ds.Status.ResolvedBinding.Name
 			namespace = ds.Status.ResolvedBinding.Namespace
+			displayName = ds.Status.ResolvedBinding.DisplayName
 		}
 		ds.Status.ResolvedBinding = &breakglassv1alpha1.ResolvedBindingRef{
 			Name:        name,

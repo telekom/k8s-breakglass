@@ -311,10 +311,6 @@ type PodTemplateResourceStatus struct {
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
 
-	// uid is the immutable identity of the deployed resource.
-	// +optional
-	UID string `json:"uid,omitempty"`
-
 	// source identifies where this resource came from.
 	// Either "podTemplateString" or "debugPodTemplate:<name>".
 	// +optional

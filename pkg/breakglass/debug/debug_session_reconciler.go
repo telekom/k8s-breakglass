@@ -259,8 +259,9 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	ds.Status.ResolvedBindingSnapshotCaptured = true
 	if binding != nil {
 		ds.Status.ResolvedBinding = &breakglassv1alpha1.ResolvedBindingRef{
-			Name:      binding.Name,
-			Namespace: binding.Namespace,
+			Name:        binding.Name,
+			Namespace:   binding.Namespace,
+			DisplayName: breakglassv1alpha1.GetEffectiveDisplayName(binding, template.Spec.DisplayName, template.Name),
 		}
 		if raw, marshalErr := json.Marshal(binding.Spec); marshalErr == nil {
 			ds.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: raw}

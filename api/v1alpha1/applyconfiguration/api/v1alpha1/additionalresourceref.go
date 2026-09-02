@@ -25,8 +25,6 @@ type AdditionalResourceRefApplyConfiguration struct {
 	ResourceName *string `json:"resourceName,omitempty"`
 	// namespace is where the resource was created.
 	Namespace *string `json:"namespace,omitempty"`
-	// uid is the immutable identity of the deployed resource.
-	UID *string `json:"uid,omitempty"`
 	// ready indicates if the resource has reached its desired state (computed via kstatus).
 	Ready *bool `json:"ready,omitempty"`
 	// readinessStatus is the kstatus status of the resource.
@@ -43,13 +41,6 @@ func AdditionalResourceRef() *AdditionalResourceRefApplyConfiguration {
 	return &AdditionalResourceRefApplyConfiguration{}
 }
 
-// WithUID sets the UID field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the UID field is set to the value of the last call.
-func (b *AdditionalResourceRefApplyConfiguration) WithUID(value string) *AdditionalResourceRefApplyConfiguration {
-	b.UID = &value
-	return b
-}
 
 // WithKind sets the Kind field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
