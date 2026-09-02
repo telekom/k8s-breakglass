@@ -606,10 +606,14 @@ func TestSessionManager_AuthorizationSelectionDeduplicatesLiveFallback(t *testin
 
 	var wg sync.WaitGroup
 	results := make(chan []breakglassv1alpha1.BreakglassSession, 2)
-	call := func() {
+	secondStarted := make(chan struct{})
+	call := func(started chan struct{}) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			if started != nil {
+				close(started)
+			}
 			sessions, err := manager.GetClusterUserBreakglassSessions(
 				context.Background(),
 				"tind-workload-01.tst.local-dev",
@@ -619,10 +623,10 @@ func TestSessionManager_AuthorizationSelectionDeduplicatesLiveFallback(t *testin
 			results <- sessions
 		}()
 	}
-	call()
+	call(nil)
 	<-started
-	call()
-	time.Sleep(20 * time.Millisecond)
+	call(secondStarted)
+	<-secondStarted
 	close(release)
 	wg.Wait()
 	close(results)

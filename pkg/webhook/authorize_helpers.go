@@ -337,17 +337,9 @@ func (wc *WebhookController) checkEarlyDebugSession(c *gin.Context, s *authorize
 // evaluateDenyPolicies runs global and per-session deny-policy evaluation.
 // Returns handled=true if a deny response was written.
 func (wc *WebhookController) evaluateDenyPolicies(c *gin.Context, s *authorizeState) bool {
-	return wc.evaluateDenyPoliciesInternal(c, s, true, true)
-}
-
-func (wc *WebhookController) evaluateDenyPoliciesInternal(c *gin.Context, s *authorizeState, refreshOnSessionDeny, trackPhase bool) bool {
-	if trackPhase {
-		s.phases.StartPhase() // Start deny_policy phase
-	}
+	s.phases.StartPhase() // Start deny_policy phase
 	if s.sar.Spec.ResourceAttributes == nil {
-		if trackPhase {
-			s.phases.EndPhase(PhaseDenyPolicy)
-		}
+		s.phases.EndPhase(PhaseDenyPolicy)
 		return false
 	}
 	ra := s.sar.Spec.ResourceAttributes
@@ -382,10 +374,10 @@ func (wc *WebhookController) evaluateDenyPoliciesInternal(c *gin.Context, s *aut
 			}
 			needsLabels, checkErr := wc.denyEval.RequiresNamespaceLabels(s.ctx, actions...)
 			if checkErr != nil {
-				return wc.denyPolicyEvaluationFailure(c, s, act, "namespace-label-check", checkErr, trackPhase)
+				return wc.denyPolicyEvaluationFailure(c, s, act, "namespace-label-check", checkErr)
 			}
 			if needsLabels {
-				return wc.denyPolicyEvaluationFailure(c, s, act, "namespace-labels", err, trackPhase)
+				return wc.denyPolicyEvaluationFailure(c, s, act, "namespace-labels", err)
 			}
 			// NamespaceLabels will be nil; pattern-only namespace rules remain evaluable.
 		} else {
@@ -410,7 +402,7 @@ func (wc *WebhookController) evaluateDenyPoliciesInternal(c *gin.Context, s *aut
 	// Global deny-policy evaluation
 	if denied, pol, podSecResult, derr := wc.denyEval.MatchWithDetails(s.ctx, act); derr != nil {
 		s.reqLog.With("error", derr.Error(), "action", act).Error("deny evaluation error")
-		return wc.denyPolicyEvaluationFailure(c, s, act, "global", derr, trackPhase)
+		return wc.denyPolicyEvaluationFailure(c, s, act, "global", derr)
 	} else {
 		// Emit pod security audit event if we have a result
 		if podSecResult != nil {
@@ -443,9 +435,7 @@ func (wc *WebhookController) evaluateDenyPoliciesInternal(c *gin.Context, s *aut
 			wc.emitPolicyDenialAudit(s.ctx, s.sar.Spec.User, s.groups, s.clusterName, &s.sar, pol, "global")
 
 			reason := wc.buildDenyPolicyReason(s, pol)
-			if trackPhase {
-				s.phases.EndPhase(PhaseDenyPolicy)
-			}
+			s.phases.EndPhase(PhaseDenyPolicy)
 			s.phases.LogSummary()
 			c.JSON(http.StatusOK, &SubjectAccessReviewResponse{
 				ApiVersion: s.sar.APIVersion,
@@ -462,7 +452,7 @@ func (wc *WebhookController) evaluateDenyPoliciesInternal(c *gin.Context, s *aut
 		if denied, pol, podSecResult, derr := wc.denyEval.MatchWithDetails(s.ctx, act); derr != nil {
 			s.reqLog.With("error", derr.Error(), "session", sess.Name, "action", act).
 				Error("deny evaluation error for session")
-			return wc.denyPolicyEvaluationFailure(c, s, act, "session", derr, trackPhase)
+			return wc.denyPolicyEvaluationFailure(c, s, act, "session", derr)
 		} else {
 			// Emit pod security audit event if we have a result
 			if podSecResult != nil {
@@ -495,10 +485,8 @@ func (wc *WebhookController) evaluateDenyPoliciesInternal(c *gin.Context, s *aut
 				wc.emitPolicyDenialAudit(s.ctx, s.sar.Spec.User, s.groups, s.clusterName, &s.sar, pol, "session:"+sess.Name)
 
 				reason := wc.buildDenyPolicyReason(s, pol)
-				if trackPhase {
-					s.phases.EndPhase(PhaseDenyPolicy) // End deny_policy phase (early exit)
-					s.phases.LogSummary()              // Log timing summary
-				}
+				s.phases.EndPhase(PhaseDenyPolicy) // End deny_policy phase (early exit)
+				s.phases.LogSummary()              // Log timing summary
 				c.JSON(http.StatusOK, &SubjectAccessReviewResponse{
 					ApiVersion: s.sar.APIVersion,
 					Kind:       s.sar.Kind,
@@ -509,9 +497,7 @@ func (wc *WebhookController) evaluateDenyPoliciesInternal(c *gin.Context, s *aut
 		}
 	}
 
-	if trackPhase {
-		s.phases.EndPhase(PhaseDenyPolicy) // End deny_policy phase
-	}
+	s.phases.EndPhase(PhaseDenyPolicy) // End deny_policy phase
 	return false
 }
 
@@ -521,7 +507,6 @@ func (wc *WebhookController) denyPolicyEvaluationFailure(
 	act policy.Action,
 	scope string,
 	err error,
-	trackPhase bool,
 ) bool {
 	s.reqLog.With("error", err.Error(), "scope", scope, "action", act).
 		Error("deny policy evaluation failed closed")
@@ -532,10 +517,8 @@ func (wc *WebhookController) denyPolicyEvaluationFailure(
 		Observe(time.Since(s.startTime).Seconds())
 
 	reason := wc.finalizeReason("DenyPolicy evaluation failed; request denied fail-closed", false, s.clusterName)
-	if trackPhase {
-		s.phases.EndPhase(PhaseDenyPolicy)
-		s.phases.LogSummary()
-	}
+	s.phases.EndPhase(PhaseDenyPolicy)
+	s.phases.LogSummary()
 	c.JSON(http.StatusOK, &SubjectAccessReviewResponse{
 		ApiVersion: s.sar.APIVersion,
 		Kind:       s.sar.Kind,
