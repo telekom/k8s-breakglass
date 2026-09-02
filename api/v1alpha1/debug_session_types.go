@@ -717,7 +717,8 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedBindingSpec"), newObj.Status.ResolvedBindingSpec,
 			"resolvedBindingSpec is immutable once persisted"))
 	}
-	if oldObj.Status.ResolvedTemplate != nil && !reflect.DeepEqual(oldObj.Status.ResolvedPodTemplate, newObj.Status.ResolvedPodTemplate) {
+	if (oldObj.Status.ResolvedTemplate != nil || oldObj.Status.ResolvedPodTemplate != nil) &&
+		!reflect.DeepEqual(oldObj.Status.ResolvedPodTemplate, newObj.Status.ResolvedPodTemplate) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedPodTemplate"), newObj.Status.ResolvedPodTemplate,
 			"resolvedPodTemplate is immutable once the resolved template is persisted"))
 	}
