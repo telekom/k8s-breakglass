@@ -1521,6 +1521,11 @@ spec:
                 - name
                 - namespace
                 type: object
+              resolvedBindingSnapshotCaptured:
+                description: |-
+                  resolvedBindingSnapshotCaptured distinguishes an approved no-binding
+                  decision from a session created before snapshot persistence was available.
+                type: boolean
               resolvedBindingSpec:
                 description: resolvedBindingSpec is the immutable binding snapshot
                   approved for activation.
