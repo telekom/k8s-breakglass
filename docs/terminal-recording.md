@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # DebugSession terminal recording
 
 `DebugSessionTemplate.spec.audit.enableTerminalRecording` controls terminal
