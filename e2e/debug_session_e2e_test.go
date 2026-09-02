@@ -1169,12 +1169,16 @@ func TestDebugSession_E2E_EphemeralContainerInjection(t *testing.T) {
 		breakglassv1alpha1.DebugSessionStateActive, defaultTimeout)
 
 	// Inject ephemeral container via API
+	runAsNonRoot := true
 	err = api.InjectEphemeralContainer(ctx, t, session.Name, helpers.EphemeralContainerRequest{
 		Namespace:     "default",
 		PodName:       targetPod.Name,
 		ContainerName: "debugger",
 		Image:         "busybox:latest",
 		Command:       []string{"sh"},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsNonRoot: &runAsNonRoot,
+		},
 	})
 	require.NoError(t, err, "ephemeral container injection must use the supported API-mediated path")
 	t.Log("Ephemeral container injected successfully")
