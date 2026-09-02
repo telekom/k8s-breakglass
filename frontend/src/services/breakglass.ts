@@ -22,6 +22,7 @@ export type SessionSearchParams = {
   mine?: boolean;
   approver?: boolean;
   approvedByMe?: boolean;
+  activeOnly?: boolean;
   state?: string;
   cluster?: string;
   user?: string;
@@ -121,7 +122,7 @@ export default class BreakglassService {
     try {
       debug("BreakglassService.fetchActiveSessions", "Fetching active sessions");
       const r = await this.client.get("/breakglassSessions", {
-        params: { state: "approved", mine: true, approver: false },
+        params: { state: "approved", mine: true, approver: false, activeOnly: true },
       });
       const data = normalizeList<SessionCR>(r.data);
       debug("BreakglassService.fetchActiveSessions", "Fetched active sessions", { count: data.length });
@@ -400,7 +401,9 @@ export default class BreakglassService {
     try {
       debug("BreakglassService.fetchMySessions", "Fetching my sessions");
       const [activeResp, timedOutResp, historical] = await Promise.all([
-        this.client.get("/breakglassSessions", { params: { mine: true, approver: false, state: "approved" } }),
+        this.client.get("/breakglassSessions", {
+          params: { mine: true, approver: false, state: "approved", activeOnly: true },
+        }),
         this.client.get("/breakglassSessions", { params: { mine: true, approver: false, state: "timeout" } }),
         this.fetchHistoricalSessions(),
       ]);

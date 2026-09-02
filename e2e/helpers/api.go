@@ -1102,11 +1102,12 @@ func CreateKeycloakClientSecret(t *testing.T, ctx context.Context, cli client.Cl
 
 // EphemeralContainerRequest is the request body for injecting an ephemeral container
 type EphemeralContainerRequest struct {
-	Namespace     string   `json:"namespace"`
-	PodName       string   `json:"podName"`
-	ContainerName string   `json:"containerName"`
-	Image         string   `json:"image"`
-	Command       []string `json:"command,omitempty"`
+	Namespace       string                  `json:"namespace"`
+	PodName         string                  `json:"podName"`
+	ContainerName   string                  `json:"containerName"`
+	Image           string                  `json:"image"`
+	Command         []string                `json:"command,omitempty"`
+	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
 }
 
 // PodCopyRequest is the request body for creating a pod copy

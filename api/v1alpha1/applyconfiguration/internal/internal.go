@@ -56,6 +56,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: resourceName
       type:
         scalar: string
+    - name: uid
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.AllowedPodOperations
   map:
     fields:
@@ -413,6 +416,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
     - name: resourceName
+      type:
+        scalar: string
+    - name: uid
       type:
         scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.BindingReference
@@ -863,6 +869,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
     - name: originalPod
+      type:
+        scalar: string
+    - name: uid
       type:
         scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugApprovalReasonConfig
@@ -1680,6 +1689,15 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: resolvedBinding
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ResolvedBindingRef
+    - name: resolvedBindingSnapshotCaptured
+      type:
+        scalar: boolean
+    - name: resolvedBindingSpec
+      type:
+        namedType: io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.JSON
+    - name: resolvedPodTemplate
+      type:
+        namedType: io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.JSON
     - name: resolvedTemplate
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplateSpec
@@ -2951,6 +2969,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
     - name: source
+      type:
+        scalar: string
+    - name: uid
       type:
         scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.ReasonConfig

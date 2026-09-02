@@ -519,30 +519,42 @@ func matchesAuthIdentifier(value string, identifiers []string) bool {
 	return false
 }
 
-// IsSessionRejected returns true if session is in Rejected state (state-first validation)
+// IsSessionRejected returns true if session is in Rejected state. Terminal
+// state is checked before lease timestamps by the access predicates.
 func IsSessionRejected(session breakglassv1alpha1.BreakglassSession) bool {
-	// CRITICAL: Check STATE FIRST - state is the ultimate truth
+	// CRITICAL: Check terminal state first; timestamps cannot revive it.
 	return session.Status.State == breakglassv1alpha1.SessionStateRejected
 }
 
-// IsSessionWithdrawn returns true if session is in Withdrawn state (state-first validation)
+// IsSessionWithdrawn returns true if session is in Withdrawn state. Terminal
+// state is checked before lease timestamps by the access predicates.
 func IsSessionWithdrawn(session breakglassv1alpha1.BreakglassSession) bool {
-	// CRITICAL: Check STATE FIRST - state is the ultimate truth
+	// CRITICAL: Check terminal state first; timestamps cannot revive it.
 	return session.Status.State == breakglassv1alpha1.SessionStateWithdrawn
 }
 
-// IsSessionExpired returns true if session is in Expired state OR (state is Approved AND ExpiresAt passed).
+// IsSessionExpired returns true if session is in Expired state OR (state is Approved
+// AND ExpiresAt is missing or has been reached).
 // State-first: Check terminal Expired state first, then timestamp for Approved state.
 func IsSessionExpired(session breakglassv1alpha1.BreakglassSession) bool {
+	return isSessionExpiredAt(session, time.Now())
+}
+
+// isSessionExpiredAt is the clock-injectable implementation of IsSessionExpired.
+// An Approved session without an expiry is invalid and must fail closed: approval
+// alone never grants unbounded access. The expiry boundary is inclusive, so an
+// ExpiresAt equal to now is already expired.
+func isSessionExpiredAt(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
 	// CRITICAL: Check STATE FIRST
 	// If state is explicitly Expired, it is definitely expired
 	if session.Status.State == breakglassv1alpha1.SessionStateExpired {
 		return true
 	}
 
-	// For Approved state, check if the timestamp has passed (timestamp is secondary check)
+	// For Approved state, a missing timestamp is invalid and the expiry boundary
+	// is inclusive (timestamp is secondary check).
 	if session.Status.State == breakglassv1alpha1.SessionStateApproved {
-		return !session.Status.ExpiresAt.Time.IsZero() && time.Now().After(session.Status.ExpiresAt.Time)
+		return session.Status.ExpiresAt.IsZero() || !now.Before(session.Status.ExpiresAt.Time)
 	}
 
 	// All other states (terminal or non-Approved) are not considered expired by this function
@@ -566,11 +578,15 @@ func IsSessionTerminalState(state breakglassv1alpha1.BreakglassSessionState) boo
 }
 
 func IsSessionValid(session breakglassv1alpha1.BreakglassSession) bool {
+	return isSessionValidAt(session, time.Now())
+}
+
+func isSessionValidAt(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
 	if session.Status.State == "" {
 		return false
 	}
-	// CRITICAL: Check terminal states FIRST. State is the ultimate truth.
-	// Even if timestamps suggest validity, terminal states are never valid.
+	// CRITICAL: Check terminal states FIRST. Even if timestamps suggest validity,
+	// terminal states are never valid.
 	if IsSessionTerminalState(session.Status.State) {
 		return false
 	}
@@ -583,25 +599,25 @@ func IsSessionValid(session breakglassv1alpha1.BreakglassSession) bool {
 
 	// Session is not valid if it has a scheduled start time in the future
 	if session.Spec.ScheduledStartTime != nil && !session.Spec.ScheduledStartTime.IsZero() {
-		if time.Now().Before(session.Spec.ScheduledStartTime.Time) {
+		if now.Before(session.Spec.ScheduledStartTime.Time) {
 			return false
 		}
 	}
 
-	// Only now check if it has expired based on ExpiresAt timestamp
-	// But only for approved sessions (which should have ExpiresAt set)
-	if session.Status.State == breakglassv1alpha1.SessionStateApproved && IsSessionExpired(session) {
+	// Only now check if it has expired based on ExpiresAt timestamp. Approved
+	// sessions without ExpiresAt fail closed in IsSessionExpired.
+	if session.Status.State == breakglassv1alpha1.SessionStateApproved && isSessionExpiredAt(session, now) {
 		return false
 	}
 
 	return true
 }
 
-// IsSessionActive returns if session can be approved or was already approved
-// A session is active if it's valid and not in a terminal state.
-// State is the primary determinant; timestamps are secondary validators.
+// IsSessionActive returns whether the session can be approved or was already
+// approved. An Approved session is active only while its non-zero lease is
+// strictly in the future; terminal state always takes precedence.
 func IsSessionActive(session breakglassv1alpha1.BreakglassSession) bool {
-	// CRITICAL: Check terminal states FIRST. State is the ultimate truth.
+	// CRITICAL: Check terminal states FIRST; timestamps cannot revive a terminal state.
 	if IsSessionTerminalState(session.Status.State) {
 		return false
 	}
@@ -617,13 +633,18 @@ func IsSessionActive(session breakglassv1alpha1.BreakglassSession) bool {
 // they reserve capacity after approval until their scheduled activation window
 // expires.
 func IsSessionOccupyingSlot(session breakglassv1alpha1.BreakglassSession) bool {
+	if !session.DeletionTimestamp.IsZero() {
+		return false
+	}
 	switch session.Status.State {
 	case breakglassv1alpha1.SessionStatePending:
 		return IsSessionPendingApproval(session)
 	case breakglassv1alpha1.SessionStateApproved:
 		return IsSessionActive(session)
 	case breakglassv1alpha1.SessionStateWaitingForScheduledTime:
-		return session.Status.ExpiresAt.IsZero() || !time.Now().After(session.Status.ExpiresAt.Time)
+		// A malformed scheduled session without an expiry must not reserve a
+		// slot indefinitely. Exact-boundary expiry is inactive as well.
+		return !session.Status.ExpiresAt.IsZero() && time.Now().Before(session.Status.ExpiresAt.Time)
 	default:
 		return false
 	}
@@ -633,23 +654,34 @@ func IsSessionOccupyingSlot(session breakglassv1alpha1.BreakglassSession) bool {
 // breakglass access. Unlike IsSessionActive, it does not include pending
 // requests that still occupy session-limit slots.
 func IsSessionAccessActive(session breakglassv1alpha1.BreakglassSession) bool {
-	if session.Status.State != breakglassv1alpha1.SessionStateApproved {
-		return false
-	}
-	return IsSessionValid(session)
+	return isSessionAccessActiveAt(session, time.Now())
 }
 
-func isSessionTokenValid(session breakglassv1alpha1.BreakglassSession) bool {
+// IsSessionAccessActiveAt evaluates access using the supplied decision time.
+// Callers making a multi-step authorization decision can use one timestamp for
+// all final expiry checks.
+func IsSessionAccessActiveAt(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
+	return isSessionAccessActiveAt(session, now)
+}
+
+func isSessionAccessActiveAt(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
+	if !session.DeletionTimestamp.IsZero() || session.Status.State != breakglassv1alpha1.SessionStateApproved {
+		return false
+	}
+	return isSessionValidAt(session, now)
+}
+
+func isSessionTokenValidAt(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
 	if session.Status.State == "" {
 		return false
 	}
 	if IsSessionTerminalState(session.Status.State) {
 		return false
 	}
-	if IsSessionApprovalTimedOut(session) {
+	if isSessionApprovalTimedOutAt(session, now) {
 		return false
 	}
-	return session.Status.State != breakglassv1alpha1.SessionStateApproved || !IsSessionExpired(session)
+	return session.Status.State != breakglassv1alpha1.SessionStateApproved || !isSessionExpiredAt(session, now)
 }
 
 // isOwnedByEscalation checks if a session is owned by the given escalation by matching

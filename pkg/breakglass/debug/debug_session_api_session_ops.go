@@ -242,6 +242,23 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 
 	newRenewalCount := session.Status.RenewalCount + 1
 
+	// Re-read immediately before the status patch. The status mutation path and
+	// admission webhook both repeat the strict time check at the API boundary.
+	live := &breakglassv1alpha1.DebugSession{}
+	if err := c.reader().Get(apiCtx, ctrlclient.ObjectKeyFromObject(session), live); err != nil {
+		reqLog.Errorw("Failed to re-read debug session before renewal", "session", name, "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to renew session")
+		return
+	}
+	if live.UID != session.UID || live.ResourceVersion != session.ResourceVersion ||
+		!canRenewDebugSession(live, identity) || live.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
+		live.Status.ExpiresAt == nil || !time.Now().Before(live.Status.ExpiresAt.Time) {
+		apiresponses.RespondConflict(ctx, "debug session changed or expired before renewal; refresh the session before retrying")
+		return
+	}
+	session = live
+	newExpiry = metav1.NewTime(session.Status.ExpiresAt.Add(extendBy))
+
 	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.ExpiresAt = &newExpiry
 		status.RenewalCount = newRenewalCount

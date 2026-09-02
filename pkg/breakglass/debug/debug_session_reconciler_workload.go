@@ -8,7 +8,7 @@ import (
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/pkg/utils"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -22,7 +22,12 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 
 	// Get pod template if referenced
 	var podTemplate *breakglassv1alpha1.DebugPodTemplate
-	if template.Spec.PodTemplateRef != nil {
+	if ds.Status.ResolvedPodTemplate != nil {
+		podTemplate = &breakglassv1alpha1.DebugPodTemplate{}
+		if err := json.Unmarshal(ds.Status.ResolvedPodTemplate.Raw, &podTemplate.Spec); err != nil {
+			return fmt.Errorf("decode approved pod-template snapshot: %w", err)
+		}
+	} else if template.Spec.PodTemplateRef != nil {
 		var err error
 		podTemplate, err = c.getPodTemplate(ctx, template.Spec.PodTemplateRef.Name)
 		if err != nil {
@@ -30,33 +35,11 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		}
 	}
 
-	// Get binding if session was created via a binding
 	var binding *breakglassv1alpha1.DebugSessionClusterBinding
-	if ds.Spec.BindingRef != nil {
-		var err error
-		binding, err = c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace)
-		if err != nil {
-			log.Warnw("Failed to get binding by ref, will try auto-discovery",
-				"binding", ds.Spec.BindingRef.Name,
-				"namespace", ds.Spec.BindingRef.Namespace,
-				"error", err)
-			// Non-fatal: try auto-discovery below
-		}
-	}
-
-	// Auto-discover binding if not found via BindingRef
-	// This enables binding configuration to apply even when sessions are created
-	// without explicitly setting BindingRef (e.g., via the unified API)
-	if binding == nil {
-		discoveredBinding, err := c.findBindingForSession(ctx, template, ds.Spec.Cluster)
-		if err != nil {
-			log.Warnw("Failed to auto-discover binding, continuing without binding config",
-				"error", err)
-		} else if discoveredBinding != nil {
-			log.Infow("Auto-discovered binding for session",
-				"binding", discoveredBinding.Name,
-				"namespace", discoveredBinding.Namespace)
-			binding = discoveredBinding
+	if ds.Status.ResolvedBindingSpec != nil {
+		binding = &breakglassv1alpha1.DebugSessionClusterBinding{}
+		if err := json.Unmarshal(ds.Status.ResolvedBindingSpec.Raw, &binding.Spec); err != nil {
+			return fmt.Errorf("decode approved binding snapshot: %w", err)
 		}
 	}
 
@@ -93,15 +76,53 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	}
 
 	// Create base client for spoke cluster (no impersonation yet)
-	baseRestCfg, restErr := c.ccProvider.GetRESTConfig(ctx, ds.Spec.Cluster)
+	baseRestCfg, configuredCluster, restErr := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)
 	if restErr != nil {
 		return fmt.Errorf("failed to get REST config for cluster %s: %w", ds.Spec.Cluster, restErr)
 	}
-	baseClient, baseErr := ctrlclient.New(baseRestCfg, ctrlclient.Options{})
+	defer c.ccProvider.ReleasePrivilegedOperationClusterConfig(configuredCluster)
+	var baseClient ctrlclient.Client
+	var baseErr error
+	if c.targetClientFactory != nil {
+		baseClient, baseErr = c.targetClientFactory(baseRestCfg)
+	} else {
+		baseClient, baseErr = ctrlclient.New(baseRestCfg, ctrlclient.Options{})
+	}
 	if baseErr != nil {
 		return fmt.Errorf("failed to create base client for cluster %s: %w", ds.Spec.Cluster, baseErr)
 	}
-
+	fence := func() error {
+		if c.beforeDebugTargetWrite != nil {
+			c.beforeDebugTargetWrite("")
+		}
+		if err := c.ccProvider.ValidatePrivilegedOperationClusterConfig(ctx, configuredCluster); err != nil {
+			return fmt.Errorf("privileged target configuration changed during deployment: %w", err)
+		}
+		liveSession := &breakglassv1alpha1.DebugSession{}
+		reader := c.reader
+		if reader == nil {
+			reader = c.client
+		}
+		if err := reader.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), liveSession); err != nil {
+			return fmt.Errorf("read live debug session before deployment mutation: %w", err)
+		}
+		if liveSession.UID != ds.UID || !liveSession.DeletionTimestamp.IsZero() ||
+			liveSession.Status.ExpiresAt == nil || !time.Now().UTC().Before(liveSession.Status.ExpiresAt.Time) {
+			return fmt.Errorf("debug session is no longer active before deployment mutation")
+		}
+		activationInProgress := liveSession.Status.State == "" ||
+			liveSession.Status.State == breakglassv1alpha1.DebugSessionStatePending ||
+			liveSession.Status.State == breakglassv1alpha1.DebugSessionStatePendingApproval
+		if liveSession.Status.State != breakglassv1alpha1.DebugSessionStateActive && !activationInProgress {
+			return fmt.Errorf("debug session is no longer active before deployment mutation")
+		}
+		if activationInProgress &&
+			(liveSession.Status.Approval == nil ||
+				(liveSession.Status.Approval.Required && liveSession.Status.Approval.ApprovedAt == nil)) {
+			return fmt.Errorf("debug session is not approved for deployment")
+		}
+		return nil
+	}
 	// Handle impersonation configuration
 	if impConfig != nil && impConfig.ServiceAccountRef != nil {
 		// Use existing ServiceAccount - validate it exists
@@ -110,7 +131,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		}
 
 		// Create impersonated client
-		targetClient, err = c.createImpersonatedClient(ctx, ds.Spec.Cluster, impConfig)
+		targetClient, err = c.createImpersonatedClientFromRESTConfig(ctx, baseRestCfg, ds.Spec.Cluster, impConfig)
 		if err != nil {
 			return fmt.Errorf("failed to create impersonated client: %w", err)
 		}
@@ -144,18 +165,31 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			return fmt.Errorf("failed to build resource quota: %w", rqErr)
 		}
 		if rq != nil {
+			if err := fence(); err != nil {
+				return err
+			}
 			gvk := rq.GetObjectKind().GroupVersionKind()
-			if err := utils.ApplyObject(ctx, targetClient, rq); err != nil {
+			ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
+				APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: rq.Name, Namespace: rq.Namespace, Source: "debug-resourcequota",
+			})
+			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+				return fmt.Errorf("failed to persist resource quota intent: %w", err)
+			}
+			if err := fence(); err != nil {
+				return err
+			}
+			if err := createOrRecoverTargetObject(ctx, targetClient, rq, ds); err != nil {
 				return fmt.Errorf("failed to apply resource quota: %w", err)
 			}
+			rqUID, err := captureResourceUID(ctx, targetClient, rq)
+			if err != nil {
+				return fmt.Errorf("failed to read resource quota after apply: %w", err)
+			}
 			log.Infow("ResourceQuota applied", "name", rq.Name)
-			ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
-				APIVersion: gvk.GroupVersion().String(),
-				Kind:       gvk.Kind,
-				Name:       rq.Name,
-				Namespace:  rq.Namespace,
-				Source:     "debug-resourcequota",
-			})
+			ds.Status.DeployedResources[len(ds.Status.DeployedResources)-1].UID = rqUID
+			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+				return fmt.Errorf("failed to persist resource quota outcome: %w", err)
+			}
 		}
 	}
 
@@ -166,18 +200,31 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			return fmt.Errorf("failed to build pod disruption budget: %w", pdbErr)
 		}
 		if pdb != nil {
+			if err := fence(); err != nil {
+				return err
+			}
 			gvk := pdb.GetObjectKind().GroupVersionKind()
-			if err := utils.ApplyObject(ctx, targetClient, pdb); err != nil {
+			ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
+				APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: pdb.Name, Namespace: pdb.Namespace, Source: "debug-pdb",
+			})
+			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+				return fmt.Errorf("failed to persist PDB intent: %w", err)
+			}
+			if err := fence(); err != nil {
+				return err
+			}
+			if err := createOrRecoverTargetObject(ctx, targetClient, pdb, ds); err != nil {
 				return fmt.Errorf("failed to apply pod disruption budget: %w", err)
 			}
+			pdbUID, err := captureResourceUID(ctx, targetClient, pdb)
+			if err != nil {
+				return fmt.Errorf("failed to read pod disruption budget after apply: %w", err)
+			}
 			log.Infow("PodDisruptionBudget applied", "name", pdb.Name)
-			ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
-				APIVersion: gvk.GroupVersion().String(),
-				Kind:       gvk.Kind,
-				Name:       pdb.Name,
-				Namespace:  pdb.Namespace,
-				Source:     "debug-pdb",
-			})
+			ds.Status.DeployedResources[len(ds.Status.DeployedResources)-1].UID = pdbUID
+			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+				return fmt.Errorf("failed to persist PDB outcome: %w", err)
+			}
 		}
 	}
 
@@ -194,7 +241,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			"count", len(podTemplateResources),
 			"debugSession", ds.Name)
 		for _, res := range podTemplateResources {
-			if err := c.deployPodTemplateResource(ctx, targetClient, ds, res, targetNs); err != nil {
+			if err := c.deployPodTemplateResource(ctx, targetClient, ds, res, targetNs, fence); err != nil {
 				return fmt.Errorf("failed to deploy pod template resource %s/%s: %w", res.GetKind(), res.GetName(), err)
 			}
 		}
@@ -203,7 +250,12 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	auxiliaryResourcesConfigured := c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0
 	auxStatuses := startAuxiliaryStatusTracking(ds, auxiliaryResourcesConfigured)
 	if auxiliaryResourcesConfigured {
-		beforeStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhase(ctx, ds, &template.Spec, binding, targetClient, targetNs, true)
+		if err := fence(); err != nil {
+			return err
+		}
+		beforeStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(ctx, ds, &template.Spec, binding, targetClient, targetNs, true, fence, func(status breakglassv1alpha1.AuxiliaryResourceStatus) error {
+			return c.persistAuxiliaryStatus(ctx, ds, status)
+		})
 		auxStatuses = append(auxStatuses, beforeStatuses...)
 		ds.Status.AuxiliaryResourceStatuses = auxStatuses
 		if auxErr != nil {
@@ -214,19 +266,33 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	// Capture GVK before Apply call as Kubernetes client may clear TypeMeta
 	gvk := workload.GetObjectKind().GroupVersionKind()
 
-	if err := utils.ApplyObject(ctx, targetClient, workload); err != nil {
+	if err := fence(); err != nil {
+		return err
+	}
+	ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
+		APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: workload.GetName(), Namespace: targetNs, Source: "debug-pod",
+	})
+	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+		return fmt.Errorf("failed to persist workload intent: %w", err)
+	}
+	if err := fence(); err != nil {
+		return err
+	}
+	if err := createOrRecoverTargetObject(ctx, targetClient, workload, ds); err != nil {
 		return fmt.Errorf("failed to apply workload: %w", err)
+	}
+
+	workloadUID, err := captureResourceUID(ctx, targetClient, workload)
+	if err != nil {
+		return fmt.Errorf("failed to read workload after apply: %w", err)
 	}
 	log.Infow("Debug workload applied", "name", workload.GetName())
 
 	// Record deployed resource using captured GVK
-	ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
-		APIVersion: gvk.GroupVersion().String(),
-		Kind:       gvk.Kind,
-		Name:       workload.GetName(),
-		Namespace:  targetNs,
-		Source:     "debug-pod",
-	})
+	ds.Status.DeployedResources[len(ds.Status.DeployedResources)-1].UID = workloadUID
+	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+		return fmt.Errorf("failed to persist workload outcome: %w", err)
+	}
 
 	log.Infow("Deployed debug workload",
 		"name", workload.GetName(),
@@ -234,7 +300,12 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		"kind", gvk.Kind)
 
 	if auxiliaryResourcesConfigured {
-		afterStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhase(ctx, ds, &template.Spec, binding, targetClient, targetNs, false)
+		if err := fence(); err != nil {
+			return err
+		}
+		afterStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(ctx, ds, &template.Spec, binding, targetClient, targetNs, false, fence, func(status breakglassv1alpha1.AuxiliaryResourceStatus) error {
+			return c.persistAuxiliaryStatus(ctx, ds, status)
+		})
 		auxStatuses = append(auxStatuses, afterStatuses...)
 		ds.Status.AuxiliaryResourceStatuses = auxStatuses
 		if auxErr != nil {
@@ -242,6 +313,40 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		}
 	}
 
+	return nil
+}
+
+func (c *DebugSessionController) persistAuxiliaryStatus(ctx context.Context, ds *breakglassv1alpha1.DebugSession, status breakglassv1alpha1.AuxiliaryResourceStatus) error {
+	for i := range ds.Status.AuxiliaryResourceStatuses {
+		if ds.Status.AuxiliaryResourceStatuses[i].Name == status.Name {
+			ds.Status.AuxiliaryResourceStatuses[i] = status
+			return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+		}
+	}
+	ds.Status.AuxiliaryResourceStatuses = append(ds.Status.AuxiliaryResourceStatuses, status)
+	return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+}
+
+// createOrRecoverTargetObject never adopts a resource owned by another session.
+// A same-session object is recovered only when its immutable session marker
+// matches, allowing retries after a lost response without changing its spec.
+func createOrRecoverTargetObject(ctx context.Context, targetClient ctrlclient.Client, obj ctrlclient.Object, session *breakglassv1alpha1.DebugSession) error {
+	if err := targetClient.Create(ctx, obj); err == nil {
+		return nil
+	} else if !apierrors.IsAlreadyExists(err) {
+		return err
+	}
+
+	existing := obj.DeepCopyObject().(ctrlclient.Object)
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(obj), existing); err != nil {
+		return err
+	}
+	annotations := existing.GetAnnotations()
+	if annotations[sourceSessionUIDAnnotation] != string(session.UID) {
+		return fmt.Errorf("target resource %s/%s already exists and is owned by another session", obj.GetNamespace(), obj.GetName())
+	}
+	obj.SetUID(existing.GetUID())
+	obj.SetResourceVersion(existing.GetResourceVersion())
 	return nil
 }
 
@@ -306,6 +411,10 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 
 	// Merge pod-level annotations from the template manifest
 	annotations = mergeStringMaps(annotations, renderResult.PodAnnotations)
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	annotations[sourceSessionUIDAnnotation] = string(ds.UID)
 
 	workloadType := template.Spec.WorkloadType
 	if workloadType == "" {
@@ -498,6 +607,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 	ds *breakglassv1alpha1.DebugSession,
 	obj *unstructured.Unstructured,
 	targetNs string,
+	fences ...func() error,
 ) error {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 
@@ -523,16 +633,11 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		annotations = make(map[string]string)
 	}
 	annotations["breakglass.t-caas.telekom.com/source-session"] = fmt.Sprintf("%s/%s", ds.Namespace, ds.Name)
+	annotations[sourceSessionUIDAnnotation] = string(ds.UID)
 	obj.SetAnnotations(annotations)
 
-	// Deploy using Server-Side Apply for idempotency
-	obj.SetManagedFields(nil)
-	//nolint:staticcheck // SA1019: client.Apply for Patch is still required for unstructured objects
-	if err := targetClient.Patch(ctx, obj, ctrlclient.Apply, ctrlclient.FieldOwner("breakglass-controller"), ctrlclient.ForceOwnership); err != nil {
-		return fmt.Errorf("SSA apply failed: %w", err)
-	}
-
-	// Track in session status
+	// Persist an intent before the target write so a crash cannot hide a
+	// resource that must be recovered or cleaned up.
 	status := breakglassv1alpha1.PodTemplateResourceStatus{
 		Kind:         obj.GetKind(),
 		APIVersion:   obj.GetAPIVersion(),
@@ -541,9 +646,36 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		Source:       "podTemplateString",
 		Created:      true,
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	status.CreatedAt = &now
 	ds.Status.PodTemplateResourceStatuses = append(ds.Status.PodTemplateResourceStatuses, status)
+	if c.client != nil {
+		if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+			return fmt.Errorf("failed to persist pod template resource intent: %w", err)
+		}
+	}
+	if len(fences) > 0 && fences[0] != nil {
+		if err := fences[0](); err != nil {
+			return err
+		}
+	}
+
+	// Create without adopting an object belonging to another session.
+	obj.SetManagedFields(nil)
+	if err := createOrRecoverTargetObject(ctx, targetClient, obj, ds); err != nil {
+		return fmt.Errorf("create pod template resource failed: %w", err)
+	}
+	// Record the target UID as the durable outcome.
+	statusRef := &ds.Status.PodTemplateResourceStatuses[len(ds.Status.PodTemplateResourceStatuses)-1]
+	statusRef.UID = string(obj.GetUID())
+	if statusRef.UID == "" {
+		return fmt.Errorf("created pod template resource %s/%s has no UID", obj.GetNamespace(), obj.GetName())
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	statusRef.CreatedAt = &now
+	if c.client != nil {
+		if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+			return fmt.Errorf("failed to persist pod template resource outcome: %w", err)
+		}
+	}
 
 	// Add to deployed resources list
 	ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
@@ -552,6 +684,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		Name:       obj.GetName(),
 		Namespace:  obj.GetNamespace(),
 		Source:     "pod-template",
+		UID:        statusRef.UID,
 	})
 
 	log.Infow("Deployed pod template resource",

@@ -15,6 +15,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/jsonutil"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -78,7 +79,10 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 
 	// Set status to Withdrawn
 	// IMPORTANT: Do NOT clear existing timestamps (ApprovedAt, ExpiresAt, etc.)
-	// We want to preserve history. Only set state and withdrawal-specific timestamp.
+	// We want to preserve history. Clamp any malformed lease so the terminal
+	// transition cannot make the recorded expiry later than the natural boundary.
+	now := time.Now().UTC()
+	bs.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(bs.Status.ExpiresAt, now)
 	bs.Status.WithdrawnAt = metav1.Now() // Record when withdrawn
 	bs.Status.State = breakglassv1alpha1.SessionStateWithdrawn
 	// short reason for UI
@@ -89,7 +93,7 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 
 	// Set RetainedUntil for withdrawn sessions
 	retainFor := ParseRetainFor(bs.Spec, reqLog)
-	bs.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
+	bs.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
 
 	bs.SetCondition(metav1.Condition{
 		Type:               string(breakglassv1alpha1.SessionConditionTypeCanceled),
@@ -166,7 +170,8 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		!bs.Status.ApprovedAt.IsZero() {
 		// Approved session dropped - transition to Expired
 		// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
-		bs.Status.ExpiresAt = metav1.NewTime(time.Now().UTC())
+		now := time.Now().UTC()
+		bs.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(bs.Status.ExpiresAt, now)
 		bs.Status.State = breakglassv1alpha1.SessionStateExpired
 		bs.SetCondition(metav1.Condition{
 			Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
@@ -179,18 +184,20 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 
 		// Set RetainedUntil for expired sessions
 		retainFor := ParseRetainFor(bs.Spec, reqLog)
-		bs.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
+		bs.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
 	} else {
 		// Pending or other state -> behave like withdraw
 		// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
-		bs.Status.WithdrawnAt = metav1.Now() // Record when withdrawn
+		now := time.Now().UTC()
+		bs.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(bs.Status.ExpiresAt, now)
+		bs.Status.WithdrawnAt = metav1.NewTime(now) // Record when withdrawn
 		bs.Status.State = breakglassv1alpha1.SessionStateWithdrawn
 		bs.Status.Approver = ""
 		bs.Status.Approvers = nil
 
 		// Set RetainedUntil for withdrawn sessions
 		retainFor := ParseRetainFor(bs.Spec, reqLog)
-		bs.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
+		bs.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
 
 		bs.SetCondition(metav1.Condition{
 			Type:               string(breakglassv1alpha1.SessionConditionTypeCanceled),
@@ -256,12 +263,13 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 
 	// Transition to expired immediately
 	// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
-	bs.Status.ExpiresAt = metav1.NewTime(time.Now().UTC())
+	now := time.Now().UTC()
+	bs.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(bs.Status.ExpiresAt, now)
 	bs.Status.State = breakglassv1alpha1.SessionStateExpired
 
 	// Set RetainedUntil for expired sessions
 	retainFor := ParseRetainFor(bs.Spec, reqLog)
-	bs.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
+	bs.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
 
 	// record approver who canceled
 	approverEmail, _ := wc.identityProvider.GetEmail(c)

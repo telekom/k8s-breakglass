@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,6 +41,31 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+type stagedDebugSessionReader struct {
+	mu     sync.Mutex
+	first  client.Reader
+	second client.Reader
+	key    client.ObjectKey
+}
+
+func (r *stagedDebugSessionReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*breakglassv1alpha1.DebugSession); ok && key == r.key {
+		r.mu.Lock()
+		reader := r.first
+		if reader == nil {
+			reader = r.second
+		}
+		r.first = nil
+		r.mu.Unlock()
+		return reader.Get(ctx, key, obj, opts...)
+	}
+	return r.second.Get(ctx, key, obj, opts...)
+}
+
+func (r *stagedDebugSessionReader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	return r.second.List(ctx, list, opts...)
+}
 
 // setupTestRouter creates a gin router with the debug session controller for testing
 func setupTestRouter(t *testing.T, objects ...client.Object) (*gin.Engine, *DebugSessionAPIController) {
@@ -708,6 +734,81 @@ func TestHandleInjectEphemeralContainer_ValidationErrorClassification(t *testing
 	}
 }
 
+func TestHandleInjectEphemeralContainer_UsesLiveSessionBeforeUpdate(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	expiresAt := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	active := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "active-session",
+			Namespace: "default",
+			UID:       "debug-session-uid",
+			Labels:    map[string]string{DebugSessionLabelKey: "active-session"},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "test-user",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &expiresAt,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
+						Enabled:           true,
+						AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"default"}},
+					},
+				},
+			},
+		},
+	}
+	liveTerminated := active.DeepCopy()
+	liveTerminated.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+
+	cachedClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(active.DeepCopy()).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	liveReader := &stagedDebugSessionReader{
+		first:  fake.NewClientBuilder().WithScheme(scheme).WithObjects(active.DeepCopy()).Build(),
+		second: fake.NewClientBuilder().WithScheme(scheme).WithObjects(liveTerminated).Build(),
+		key:    client.ObjectKey{Name: active.Name, Namespace: active.Namespace},
+	}
+	targetClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "app-pod", Namespace: "default", UID: "target-pod-uid"},
+			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "busybox"}}},
+		}).
+		Build()
+
+	ctrl := NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), cachedClient, nil, nil).
+		WithAPIReader(liveReader).
+		WithClusterClients(&mockClientProvider{clients: map[string]client.Client{"test-cluster": targetClient}})
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "test-user", "", nil)
+	body, err := json.Marshal(InjectEphemeralContainerRequest{
+		Namespace:     "default",
+		PodName:       "app-pod",
+		ContainerName: "debugger",
+		Image:         "busybox",
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, "/api/debugSessions/active-session/injectEphemeralContainer?namespace=default", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Contains(t, rr.Body.String(), "debug session is no longer active")
+
+	storedPod := &corev1.Pod{}
+	require.NoError(t, targetClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "app-pod"}, storedPod))
+	assert.Empty(t, storedPod.Spec.EphemeralContainers, "a terminated live session must not update the target Pod")
+}
+
 func TestKubectlDebugMutationHandlers_ViewerParticipantForbidden(t *testing.T) {
 	now := metav1.Now()
 	session := &breakglassv1alpha1.DebugSession{
@@ -943,6 +1044,92 @@ func TestHandleCreatePodCopy_ActiveSessionExpired(t *testing.T) {
 	assert.Contains(t, rr.Body.String(), "expired session")
 }
 
+func TestHandleCreatePodCopy_FinalFenceUsesLiveReader(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	expiresAt := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	active := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session-12345678",
+			Namespace: "default",
+			UID:       "debug-session-uid",
+			Labels: map[string]string{
+				DebugSessionLabelKey: "test-session-12345678",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "test-user",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &expiresAt,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					PodCopy: &breakglassv1alpha1.PodCopyConfig{
+						Enabled:         true,
+						TargetNamespace: "debug-copies",
+					},
+				},
+			},
+		},
+	}
+	liveTerminated := active.DeepCopy()
+	liveTerminated.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+
+	cachedClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(active.DeepCopy()).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	stageReader := &stagedDebugSessionReader{
+		first: fake.NewClientBuilder().WithScheme(scheme).WithObjects(active.DeepCopy()).Build(),
+		second: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(liveTerminated.DeepCopy()).
+			Build(),
+		key: client.ObjectKey{Name: active.Name, Namespace: active.Namespace},
+	}
+
+	targetClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "production"}},
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug-copies", UID: "debug-copies-uid"}},
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "app-pod",
+					Namespace: "production",
+					UID:       "source-pod-uid",
+				},
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "nginx:stable"}}},
+			},
+		).
+		Build()
+
+	ctrl := NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), cachedClient, nil, nil).
+		WithAPIReader(stageReader).
+		WithClusterClients(&mockClientProvider{clients: map[string]client.Client{"test-cluster": targetClient}})
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "test-user", "", nil)
+
+	body, err := json.Marshal(CreatePodCopyRequest{Namespace: "production", PodName: "app-pod"})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, "/api/debugSessions/test-session-12345678/createPodCopy?namespace=default", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Contains(t, rr.Body.String(), "debug session is no longer active")
+
+	copyName := fmt.Sprintf("debug-copy-%s-%s", "app-pod", active.Name[:8])
+	storedCopy := &corev1.Pod{}
+	err = targetClient.Get(context.Background(), client.ObjectKey{Namespace: "debug-copies", Name: copyName}, storedCopy)
+	assert.True(t, apierrors.IsNotFound(err))
+}
+
 func TestHandleCreatePodCopy_UserNotParticipant(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1138,6 +1325,84 @@ func TestHandleCreateNodeDebugPod_ActiveSessionExpired(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 	assertErrorResponse(t, rr, "BAD_REQUEST")
 	assert.Contains(t, rr.Body.String(), "expired session")
+}
+
+func TestHandleCreateNodeDebugPod_FinalFenceUsesLiveReader(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	expiresAt := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	active := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session-12345678",
+			Namespace: "default",
+			UID:       "debug-session-uid",
+			Labels: map[string]string{
+				DebugSessionLabelKey: "test-session-12345678",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "test-user",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &expiresAt,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode:            breakglassv1alpha1.DebugSessionModeKubectlDebug,
+				TargetNamespace: "breakglass-debug",
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					NodeDebug: &breakglassv1alpha1.NodeDebugConfig{
+						Enabled: true,
+					},
+				},
+			},
+		},
+	}
+	liveTerminated := active.DeepCopy()
+	liveTerminated.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+
+	cachedClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(active.DeepCopy()).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	stageReader := &stagedDebugSessionReader{
+		first: fake.NewClientBuilder().WithScheme(scheme).WithObjects(active.DeepCopy()).Build(),
+		second: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(liveTerminated.DeepCopy()).
+			Build(),
+		key: client.ObjectKey{Name: active.Name, Namespace: active.Namespace},
+	}
+
+	targetClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug", UID: "breakglass-debug-uid"}},
+			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1", UID: "worker-uid"}},
+		).
+		Build()
+
+	ctrl := NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), cachedClient, nil, nil).
+		WithAPIReader(stageReader).
+		WithClusterClients(&mockClientProvider{clients: map[string]client.Client{"test-cluster": targetClient}})
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "test-user", "", nil)
+
+	body, err := json.Marshal(CreateNodeDebugPodRequest{NodeName: "worker-1"})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, "/api/debugSessions/test-session-12345678/createNodeDebugPod?namespace=default", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Contains(t, rr.Body.String(), "debug session is no longer active")
+
+	debugPodName := fmt.Sprintf("node-debugger-%s-%s", "worker-1", active.Name[:8])
+	debugPod := &corev1.Pod{}
+	err = targetClient.Get(context.Background(), client.ObjectKey{Namespace: "breakglass-debug", Name: debugPodName}, debugPod)
+	assert.True(t, apierrors.IsNotFound(err))
 }
 
 // ============================================================================

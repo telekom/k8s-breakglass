@@ -185,10 +185,11 @@ contexts:
 current-context: webhook
 ```
 
-Update API server authorization config (`/etc/kubernetes/authorization-config.yaml`):
+Update API server authorization config (`/etc/kubernetes/authorization-config.yaml`).
+The structured configuration below requires Kubernetes 1.34 or later:
 
 ```yaml
-apiVersion: apiserver.config.k8s.io/v1beta1
+apiVersion: apiserver.config.k8s.io/v1
 kind: AuthorizationConfiguration
 authorizers:
   - type: Node
@@ -199,9 +200,13 @@ authorizers:
     name: breakglass
     webhook:
       timeout: 3s
-      authorizedTTL: 30s
+      # Required for exact BreakglassSession expiry; do not cache allows.
+      authorizedTTL: 5m
+      cacheAuthorizedRequests: false
+      cacheUnauthorizedRequests: false
       unauthorizedTTL: 30s
       subjectAccessReviewVersion: v1
+      matchConditionSubjectAccessReviewVersion: v1
       failurePolicy: Deny
       connectionInfo:
         type: KubeConfigFile
@@ -210,6 +215,13 @@ authorizers:
         - expression: "'system:authenticated' in request.groups"
         - expression: "!request.user.startsWith('system:')"
 ```
+
+For older Kubernetes versions, use legacy webhook mode with
+`--authorization-mode=Node,RBAC,Webhook`, configure the webhook kubeconfig,
+and set both `--authorization-webhook-cache-authorized-ttl=0s` and
+`--authorization-webhook-cache-unauthorized-ttl=0s` instead of structured
+authorization configuration. A positive authorized cache TTL can outlive a
+session and is not supported.
 
 Restart kube-apiserver:
 

@@ -152,6 +152,9 @@ func NewWebhookSink(cfg WebhookSinkConfig, logger *zap.Logger) *WebhookSink {
 
 	httpClient := &http.Client{
 		Timeout: timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 	if cfg.TLS != nil {
 		defaultTransport, ok := http.DefaultTransport.(*http.Transport)
@@ -212,7 +215,7 @@ func (s *WebhookSink) Write(ctx context.Context, event *Event) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		s.eventsFailed++
 		s.logger.Debug("webhook returned error",
 			zap.String("url", s.url),
@@ -275,7 +278,7 @@ func (s *WebhookSink) WriteBatch(ctx context.Context, events []*Event) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		s.eventsFailed += int64(len(events))
 		s.logger.Debug("webhook batch returned error",
 			zap.String("url", s.batchURL),

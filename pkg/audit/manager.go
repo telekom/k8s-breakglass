@@ -19,6 +19,7 @@ package audit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -289,7 +290,14 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 // Metrics are incremented per-sink on success and failure.
 func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
 	if len(m.directSinks) == 0 {
-		if err := m.sink.Write(ctx, event); err != nil {
+		durable, err := validateSynchronousSink(m.sink, event)
+		if err != nil {
+			return err
+		}
+		if !durable {
+			return fmt.Errorf("required audit event %q is configured for sink %q without a durable delivery receipt", event.Type, m.sink.Name())
+		}
+		if err := writeSynchronousSink(ctx, m.sink, event); err != nil {
 			metrics.AuditSinkErrors.WithLabelValues(m.sink.Name(), "sensitive_sync_fallback").Inc()
 			return err
 		}
@@ -302,10 +310,20 @@ func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
 		metrics.AuditSensitiveEventsSyncWritten.WithLabelValues(m.sink.Name()).Inc()
 		return nil
 	}
-	var errs []error
-	anySucceeded := false
+	durableReceipt := false
 	for _, s := range m.directSinks {
-		if err := s.Write(ctx, event); err != nil {
+		durable, err := validateSynchronousSink(s, event)
+		if err != nil {
+			return err
+		}
+		durableReceipt = durableReceipt || durable
+	}
+	if !durableReceipt {
+		return fmt.Errorf("required audit event %q has no sink with a durable delivery receipt", event.Type)
+	}
+	var errs []error
+	for _, s := range m.directSinks {
+		if err := writeSynchronousSink(ctx, s, event); err != nil {
 			m.logger.Error("direct sink write failed for sensitive event",
 				zap.String("sink", s.Name()),
 				zap.String("event_id", event.ID),
@@ -313,7 +331,6 @@ func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
 			metrics.AuditSinkErrors.WithLabelValues(s.Name(), "sensitive_sync_fallback").Inc()
 			errs = append(errs, err)
 		} else {
-			anySucceeded = true
 			// Per-sink Prometheus counter reflects actual sink delivery.
 			metrics.AuditEventsProcessed.WithLabelValues(s.Name()).Inc()
 			metrics.AuditSensitiveEventsSyncWritten.WithLabelValues(s.Name()).Inc()
@@ -322,18 +339,126 @@ func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
 	// Increment in-memory counters once per event (not once per sink) so that
 	// ManagerStats.ProcessedEvents is not artificially inflated when multiple
 	// direct sinks are configured.
-	if anySucceeded {
+	if len(errs) == 0 {
 		m.processedEvents.Add(1)
 		m.sensitiveEventsSyncWritten.Add(1)
 	}
 	return errors.Join(errs...)
 }
 
-// EmitSync sends an audit event synchronously.
-// Use sparingly - for critical events only.
+func validateSynchronousSink(sink Sink, event *Event) (bool, error) {
+	sinkName := sink.Name()
+	switch sink := sink.(type) {
+	case *filteredBatchSink:
+		if !sink.filter.allows(event) {
+			return false, fmt.Errorf("required audit event %q is filtered out by sink %q", event.Type, sinkName)
+		}
+		return validateSynchronousSink(sink.sink, event)
+	case *filteredSink:
+		if !sink.filter.allows(event) {
+			return false, fmt.Errorf("required audit event %q is filtered out by sink %q", event.Type, sinkName)
+		}
+		return validateSynchronousSink(sink.sink, event)
+	case *CircuitBreakerSink:
+		return validateSynchronousSink(sink.sink, event)
+	case *MultiSink:
+		durableReceipt := false
+		for _, child := range sink.sinks {
+			durable, err := validateSynchronousSink(child, event)
+			if err != nil {
+				return false, err
+			}
+			durableReceipt = durableReceipt || durable
+		}
+		return durableReceipt, nil
+	case *IsolatedMultiSink:
+		durableReceipt := false
+		for _, child := range sink.sinks {
+			durable, err := validateSynchronousSink(child, event)
+			if err != nil {
+				return false, err
+			}
+			durableReceipt = durableReceipt || durable
+		}
+		return durableReceipt, nil
+	case *QueuedSink:
+		return validateSynchronousSink(sink.sink, event)
+	case *KafkaSink:
+		if sink.writer == nil {
+			return false, fmt.Errorf("audit sink %q is not initialized", sink.Name())
+		}
+		if sink.writer.Async {
+			return false, fmt.Errorf("audit sink %q uses asynchronous delivery", sink.Name())
+		}
+		if sink.writer.RequiredAcks == 0 {
+			return false, fmt.Errorf("audit sink %q does not require broker acknowledgements", sink.Name())
+		}
+		return true, nil
+	case *KubernetesEventSink:
+		if len(sink.includeTypes) > 0 && !sink.includeTypes[event.Type] {
+			return false, fmt.Errorf("required audit event %q is filtered out by sink %q", event.Type, sinkName)
+		}
+		return false, nil
+	case *LogSink:
+		return false, nil
+	case *WebhookSink:
+		return true, nil
+	case interface{ SupportsSynchronousDelivery() bool }:
+		if sink.SupportsSynchronousDelivery() {
+			return true, nil
+		}
+		return false, fmt.Errorf("audit sink %q does not support synchronous delivery", sinkName)
+	}
+	return false, fmt.Errorf("audit sink %q has unknown synchronous delivery semantics", sinkName)
+}
+
+func writeSynchronousSink(ctx context.Context, sink Sink, event *Event) error {
+	switch sink := sink.(type) {
+	case *filteredBatchSink:
+		if !sink.filter.allows(event) {
+			return nil
+		}
+		return writeSynchronousSink(ctx, sink.sink, event)
+	case *filteredSink:
+		if !sink.filter.allows(event) {
+			return nil
+		}
+		return writeSynchronousSink(ctx, sink.sink, event)
+	case *CircuitBreakerSink:
+		return writeSynchronousSink(ctx, sink.sink, event)
+	case *MultiSink:
+		var errs []error
+		for _, child := range sink.sinks {
+			errs = append(errs, writeSynchronousSink(ctx, child, event))
+		}
+		return errors.Join(errs...)
+	case *IsolatedMultiSink:
+		var errs []error
+		for _, child := range sink.sinks {
+			errs = append(errs, writeSynchronousSink(ctx, child, event))
+		}
+		return errors.Join(errs...)
+	case *QueuedSink:
+		return writeSynchronousSink(ctx, sink.sink, event)
+	default:
+		return sink.Write(ctx, event)
+	}
+}
+
+// EmitSync sends an audit event synchronously to every configured direct sink.
+// It never traverses queued or isolated sink wrappers.
 func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
+	// Keep the manager alive for the complete direct write. Close takes the
+	// exclusive lock before closing the async queue and sink, so a concurrent
+	// Close cannot race a synchronous sink write or close a sink underneath it.
+	m.closeMu.RLock()
+	defer m.closeMu.RUnlock()
+	if m.closed.Load() {
+		return errors.New("audit manager is closed")
+	}
+
 	if !eventTypeAllowed(event.Type, m.config.IncludeEventTypes, m.config.ExcludeEventTypes) {
-		return nil
+		return fmt.Errorf("required audit event %q is filtered out by manager configuration", event.Type)
 	}
 
 	// Assign ID if not set
@@ -351,7 +476,7 @@ func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
 		event.Severity = SeverityForEventType(event.Type)
 	}
 
-	return m.sink.Write(ctx, event)
+	return m.syncWriteDirect(ctx, event)
 }
 
 // shouldSample returns true if the event should be sampled (dropped).

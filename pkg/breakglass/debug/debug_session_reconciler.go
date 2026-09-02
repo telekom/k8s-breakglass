@@ -36,6 +36,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -62,6 +63,7 @@ const (
 type DebugSessionController struct {
 	log          *zap.SugaredLogger
 	client       ctrlclient.Client
+	reader       ctrlclient.Reader
 	ccProvider   *cluster.ClientProvider
 	auditService *audit.Service
 	auditManager *audit.Manager
@@ -70,6 +72,12 @@ type DebugSessionController struct {
 	brandingName string
 	baseURL      string
 	disableEmail bool
+	// targetClientFactory and beforeDebugTargetWrite are nil in production. They
+	// are narrow seams for deployment fence tests: the former keeps tests from
+	// needing a live spoke API, while the latter injects a hub-side change after
+	// preparation and before the next authorization fence.
+	targetClientFactory    func(*rest.Config) (ctrlclient.Client, error)
+	beforeDebugTargetWrite func(string)
 }
 
 // NewDebugSessionController creates a new DebugSessionController
@@ -77,9 +85,19 @@ func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client,
 	return &DebugSessionController{
 		log:          log,
 		client:       client,
+		reader:       client,
 		ccProvider:   ccProvider,
 		auxiliaryMgr: NewAuxiliaryResourceManager(log.Named("auxiliary"), client),
 	}
+}
+
+// WithLiveReader configures the uncached reader used for final authorization
+// fences during target-cluster deployment.
+func (c *DebugSessionController) WithLiveReader(reader ctrlclient.Reader) *DebugSessionController {
+	if reader != nil {
+		c.reader = reader
+	}
+	return c
 }
 
 // WithAuditManager sets the audit manager for the controller
@@ -172,6 +190,10 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	log = log.With("state", ds.Status.State, "cluster", ds.Spec.Cluster)
+	if ds.Status.State == breakglassv1alpha1.DebugSessionStateActive &&
+		(ds.Status.ExpiresAt == nil || ds.Status.ExpiresAt.IsZero()) {
+		return c.terminalizeActiveSessionWithoutExpiry(ctx, ds)
+	}
 
 	switch ds.Status.State {
 	case "", breakglassv1alpha1.DebugSessionStatePending:
@@ -234,6 +256,25 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	resolvedTemplate := template.Spec.DeepCopy()
 	resolvedTemplate.Constraints = effectiveDebugSessionConstraints(template, binding)
 	ds.Status.ResolvedTemplate = resolvedTemplate
+	ds.Status.ResolvedBindingSnapshotCaptured = true
+	if binding != nil {
+		ds.Status.ResolvedBinding = &breakglassv1alpha1.ResolvedBindingRef{
+			Name:      binding.Name,
+			Namespace: binding.Namespace,
+		}
+		if raw, marshalErr := json.Marshal(binding.Spec); marshalErr == nil {
+			ds.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: raw}
+		}
+	}
+	if template.Spec.PodTemplateRef != nil {
+		podTemplate, podErr := c.getPodTemplate(ctx, template.Spec.PodTemplateRef.Name)
+		if podErr != nil {
+			return c.failSession(ctx, ds, fmt.Sprintf("pod template not found: %v", podErr))
+		}
+		if raw, marshalErr := json.Marshal(podTemplate.Spec); marshalErr == nil {
+			ds.Status.ResolvedPodTemplate = &apiextensionsv1.JSON{Raw: raw}
+		}
+	}
 
 	// Check if approval is required (checks both template and binding approvers)
 	requiresApproval := c.requiresApproval(template, binding, ds)
@@ -263,20 +304,24 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 		if err != nil {
 			return c.failSession(ctx, ds, fmt.Sprintf("template not found: %s", ds.Spec.TemplateRef))
 		}
-		// Find binding for merging allowed pod operations.
-		// Same indeterminate-vs-absent reasoning as handlePending: the binding can only
-		// narrow AllowedPodOperations, so activating without it would grant a strictly
-		// wider set than the approver saw. Requeue instead of guessing.
-		var binding *breakglassv1alpha1.DebugSessionClusterBinding
-		if ds.Spec.BindingRef != nil {
-			var bErr error
-			binding, bErr = c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace)
-			if bErr != nil {
-				return c.deferOnUnresolvedBinding(ctx, ds, bErr)
+		if ds.Status.ResolvedTemplate == nil || !ds.Status.ResolvedBindingSnapshotCaptured {
+			if ds.Spec.BindingRef != nil {
+				if _, err := c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace); err != nil {
+					return c.deferOnUnresolvedBinding(ctx, ds, err)
+				}
 			}
+			return ctrl.Result{}, fmt.Errorf("approved activation snapshots are missing")
 		}
-		if binding == nil {
-			binding, _ = c.findBindingForSession(ctx, template, ds.Spec.Cluster)
+		var binding *breakglassv1alpha1.DebugSessionClusterBinding
+		if ds.Status.ResolvedBindingSpec != nil {
+			binding = &breakglassv1alpha1.DebugSessionClusterBinding{}
+			if err := json.Unmarshal(ds.Status.ResolvedBindingSpec.Raw, &binding.Spec); err != nil {
+				return c.failSession(ctx, ds, fmt.Sprintf("invalid approved binding snapshot: %v", err))
+			}
+			if ds.Status.ResolvedBinding != nil {
+				binding.Name = ds.Status.ResolvedBinding.Name
+				binding.Namespace = ds.Status.ResolvedBinding.Namespace
+			}
 		}
 		return c.activateSession(ctx, ds, template, binding)
 	}
@@ -324,6 +369,9 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 // handleActive manages an active debug session
 func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
+	if ds.Status.ExpiresAt == nil || ds.Status.ExpiresAt.IsZero() {
+		return c.terminalizeActiveSessionWithoutExpiry(ctx, ds)
+	}
 
 	// Emit expiring-soon status message when within grace period
 	if ds.Status.ExpiresAt != nil && ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry != "" {
@@ -346,20 +394,6 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 
 	// Check expiration
 	if ds.Status.ExpiresAt != nil && time.Now().After(ds.Status.ExpiresAt.Time) {
-		if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.ExpirationBehavior == "notify-only" {
-			if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
-				status.Message = "Session expired (notify-only)"
-				status.ExpiresAt = nil
-			}); err != nil {
-				if apierrors.IsConflict(err) {
-					log.Debugw("skipping notify-only expiration status update after concurrent debug session change", "error", err)
-					return ctrl.Result{}, nil
-				}
-				return ctrl.Result{}, err
-			}
-			log.Info("Debug session expired")
-			return ctrl.Result{}, nil
-		}
 		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 			status.State = breakglassv1alpha1.DebugSessionStateExpired
 			status.Message = "Session expired"
@@ -370,6 +404,16 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 			}
 			return ctrl.Result{}, err
 		}
+		notificationSession := ds.DeepCopy()
+		if notificationSession.Status.ResolvedTemplate != nil && notificationSession.Status.ResolvedTemplate.ExpirationBehavior == "notify-only" {
+			log.Warn("deprecated notify-only expiration still enforces hard expiry")
+			if notificationSession.Status.ResolvedTemplate.Notification == nil {
+				notificationSession.Status.ResolvedTemplate.Notification = &breakglassv1alpha1.DebugSessionNotificationConfig{}
+			}
+			notificationSession.Status.ResolvedTemplate.Notification.Enabled = true
+			notificationSession.Status.ResolvedTemplate.Notification.NotifyOnExpiry = true
+		}
+		c.sendDebugSessionExpiredEmail(*notificationSession)
 		log.Info("Debug session expired")
 		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
@@ -389,6 +433,46 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 	}
 
 	return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
+}
+
+func (c *DebugSessionController) terminalizeActiveSessionWithoutExpiry(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
+	const reason = "Active debug session has no expiry; access was revoked"
+	if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.State = breakglassv1alpha1.DebugSessionStateFailed
+		status.Message = reason
+	}); err != nil {
+		return ctrl.Result{}, err
+	}
+	c.log.Errorw("Debug session failed closed because its active lease is missing",
+		"debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
+	// This is an Active -> Failed transition, so release the active aggregates
+	// at the transition boundary.  handleFailedCleanup intentionally does not
+	// decrement them: it may run repeatedly while spoke cleanup is retried.
+	metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
+	if ds.Spec.TemplateRef != "" {
+		template, templateErr := c.getTemplate(ctx, ds.Spec.TemplateRef)
+		if templateErr == nil {
+			if updateErr := c.updateTemplateStatus(ctx, template, false); updateErr != nil {
+				c.log.Warnw("Failed to decrement template active session count after failed debug session",
+					"template", ds.Spec.TemplateRef, "error", updateErr)
+			}
+		} else {
+			c.log.Warnw("Failed to load template after failed debug session",
+				"template", ds.Spec.TemplateRef, "error", templateErr)
+		}
+	}
+	metrics.DebugSessionsFailed.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()
+	return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+}
+
+func (c *DebugSessionController) sendDebugSessionExpiredEmail(ds breakglassv1alpha1.DebugSession) {
+	routine := breakglass.CleanupRoutine{
+		Log:          c.log,
+		MailService:  c.mailService,
+		DisableEmail: c.disableEmail,
+		BrandingName: c.brandingName,
+	}
+	routine.SendDebugSessionExpiredEmail(ds)
 }
 
 // handleFailedCleanup finishes cleanup for a session already in the terminal
@@ -507,6 +591,57 @@ func releaseSessionMetricSeries(sessionName string) {
 func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 
+	if template.Spec.PodTemplateRef != nil && ds.Status.ResolvedPodTemplate == nil {
+		return c.failSession(ctx, ds, "approved pod-template snapshot is missing")
+	}
+	if binding != nil && ds.Status.ResolvedBindingSpec == nil {
+		return c.failSession(ctx, ds, "approved binding snapshot is missing")
+	}
+	if ds.Status.ResolvedTemplate != nil {
+		approvedTemplate := template.DeepCopy()
+		approvedTemplate.Spec = *ds.Status.ResolvedTemplate.DeepCopy()
+		template = approvedTemplate
+	}
+	if ds.Status.ResolvedBindingSpec != nil {
+		approvedBinding := binding
+		if approvedBinding == nil {
+			approvedBinding = &breakglassv1alpha1.DebugSessionClusterBinding{}
+		} else {
+			approvedBinding = approvedBinding.DeepCopy()
+		}
+		if ds.Status.ResolvedBinding != nil {
+			approvedBinding.Name = ds.Status.ResolvedBinding.Name
+			approvedBinding.Namespace = ds.Status.ResolvedBinding.Namespace
+		}
+		if err := json.Unmarshal(ds.Status.ResolvedBindingSpec.Raw, &approvedBinding.Spec); err != nil {
+			return ctrl.Result{}, fmt.Errorf("decode approved binding snapshot: %w", err)
+		}
+		binding = approvedBinding
+	}
+
+	// Establish the bounded lease durably before deploying any target resources.
+	// The session remains Pending/PendingApproval during deployment, so API
+	// authorization cannot use the lease until activation completes.
+	duration := c.parseDuration(ds.Spec.RequestedDuration, effectiveDebugSessionConstraints(template, binding))
+	activationStartedAt := metav1.Now()
+	var expiresAt metav1.Time
+	if ds.Status.ExpiresAt != nil && !ds.Status.ExpiresAt.IsZero() {
+		if !time.Now().UTC().Before(ds.Status.ExpiresAt.Time) {
+			return c.failSession(ctx, ds, "activation lease expired before deployment completed")
+		}
+		// Reuse the original bounded lease after a restart or retry; never
+		// extend activation by recomputing expiry from a later attempt.
+		expiresAt = *ds.Status.ExpiresAt
+		activationStartedAt = metav1.NewTime(expiresAt.Add(-duration))
+	} else {
+		expiresAt = metav1.NewTime(activationStartedAt.Add(duration))
+		ds.Status.ExpiresAt = &expiresAt
+	}
+	ds.Status.Message = "Activating debug session"
+	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// Only deploy workloads for workload or hybrid mode
 	mode := template.Spec.Mode
 	if mode == "" {
@@ -520,14 +655,8 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		}
 	}
 
-	// Calculate expiration
-	duration := c.parseDuration(ds.Spec.RequestedDuration, effectiveDebugSessionConstraints(template, binding))
-	now := metav1.Now()
-	expiresAt := metav1.NewTime(now.Add(duration))
-
 	ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
-	ds.Status.StartsAt = &now
-	ds.Status.ExpiresAt = &expiresAt
+	ds.Status.StartsAt = &activationStartedAt
 	ds.Status.Message = "Debug session active"
 
 	// Cache AllowedPodOperations merged from template and binding for webhook enforcement
@@ -544,7 +673,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		Email:       ds.Spec.RequestedByEmail,
 		DisplayName: ds.Spec.RequestedByDisplayName,
 		Role:        breakglassv1alpha1.ParticipantRoleOwner,
-		JoinedAt:    now,
+		JoinedAt:    activationStartedAt,
 	}}
 
 	// Setup terminal sharing if enabled
@@ -552,6 +681,9 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		ds.Status.TerminalSharing = c.setupTerminalSharing(ds, template)
 	}
 
+	if err := c.validateActivationBeforePublish(ctx, ds); err != nil {
+		return c.failSession(ctx, ds, fmt.Sprintf("activation authorization changed before publishing Active: %v", err))
+	}
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -572,6 +704,39 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		"terminalSharing", ds.Status.TerminalSharing != nil)
 
 	return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
+}
+
+func (c *DebugSessionController) validateActivationBeforePublish(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	if c.ccProvider != nil {
+		_, configuredCluster, err := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)
+		if err != nil {
+			return fmt.Errorf("read privileged target configuration: %w", err)
+		}
+		defer c.ccProvider.ReleasePrivilegedOperationClusterConfig(configuredCluster)
+		if err := c.ccProvider.ValidatePrivilegedOperationClusterConfig(ctx, configuredCluster); err != nil {
+			return fmt.Errorf("privileged target configuration changed during activation: %w", err)
+		}
+	}
+
+	reader := c.reader
+	if reader == nil {
+		reader = c.client
+	}
+	live := &breakglassv1alpha1.DebugSession{}
+	if err := reader.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), live); err != nil {
+		return fmt.Errorf("read live debug session before publishing Active: %w", err)
+	}
+	if live.UID != ds.UID || !live.DeletionTimestamp.IsZero() ||
+		live.Status.State != "" &&
+			live.Status.State != breakglassv1alpha1.DebugSessionStatePending &&
+			live.Status.State != breakglassv1alpha1.DebugSessionStatePendingApproval ||
+		live.Status.ExpiresAt == nil || !time.Now().UTC().Before(live.Status.ExpiresAt.Time) {
+		return fmt.Errorf("debug session is no longer authorized for activation")
+	}
+	if live.Status.Approval == nil || (live.Status.Approval.Required && live.Status.Approval.ApprovedAt == nil) {
+		return fmt.Errorf("debug session approval is no longer valid")
+	}
+	return nil
 }
 
 // failSession marks a session as failed and logs the failure
@@ -779,7 +944,7 @@ func (c *DebugSessionController) sendWebhookEvent(ctx context.Context, dest brea
 // getTemplate retrieves a DebugSessionTemplate by name
 func (c *DebugSessionController) getTemplate(ctx context.Context, name string) (*breakglassv1alpha1.DebugSessionTemplate, error) {
 	template := &breakglassv1alpha1.DebugSessionTemplate{}
-	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
+	if err := c.approvalReader().Get(ctx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
 		return nil, err
 	}
 	return template, nil
@@ -788,7 +953,7 @@ func (c *DebugSessionController) getTemplate(ctx context.Context, name string) (
 // getPodTemplate retrieves a DebugPodTemplate by name
 func (c *DebugSessionController) getPodTemplate(ctx context.Context, name string) (*breakglassv1alpha1.DebugPodTemplate, error) {
 	template := &breakglassv1alpha1.DebugPodTemplate{}
-	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
+	if err := c.approvalReader().Get(ctx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
 		return nil, err
 	}
 	return template, nil
@@ -797,7 +962,7 @@ func (c *DebugSessionController) getPodTemplate(ctx context.Context, name string
 // getBinding retrieves a DebugSessionClusterBinding by name and namespace
 func (c *DebugSessionController) getBinding(ctx context.Context, name, namespace string) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
 	binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
-	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: namespace}, binding); err != nil {
+	if err := c.approvalReader().Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: namespace}, binding); err != nil {
 		return nil, err
 	}
 	return binding, nil
@@ -869,14 +1034,14 @@ func (c *DebugSessionController) deferOnUnresolvedBinding(
 // Returns nil if no matching binding is found.
 func (c *DebugSessionController) findBindingForSession(ctx context.Context, template *breakglassv1alpha1.DebugSessionTemplate, clusterName string) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
 	bindingList := &breakglassv1alpha1.DebugSessionClusterBindingList{}
-	if err := c.client.List(ctx, bindingList); err != nil {
+	if err := c.approvalReader().List(ctx, bindingList); err != nil {
 		return nil, fmt.Errorf("failed to list cluster bindings: %w", err)
 	}
 
 	// Get cluster config for label-based matching
 	var clusterConfig *breakglassv1alpha1.ClusterConfig
 	clusterConfigList := &breakglassv1alpha1.ClusterConfigList{}
-	if err := c.client.List(ctx, clusterConfigList); err == nil {
+	if err := c.approvalReader().List(ctx, clusterConfigList); err == nil {
 		for i := range clusterConfigList.Items {
 			if clusterConfigList.Items[i].Name == clusterName {
 				clusterConfig = &clusterConfigList.Items[i]
@@ -906,6 +1071,13 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 	}
 
 	return nil, nil // No matching binding found (not an error)
+}
+
+func (c *DebugSessionController) approvalReader() ctrlclient.Reader {
+	if c.reader != nil {
+		return c.reader
+	}
+	return c.client
 }
 
 // bindingMatchesTemplate checks if a binding references the given template
@@ -987,7 +1159,23 @@ func (c *DebugSessionController) createImpersonatedClient(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get REST config for cluster %s: %w", clusterName, err)
 	}
-	restCfg := rest.CopyConfig(sharedCfg)
+	return c.createImpersonatedClientFromRESTConfig(ctx, sharedCfg, clusterName, impConfig)
+}
+
+// createImpersonatedClientFromRESTConfig derives the impersonated client from
+// the already validated privileged-operation config. Callers performing a
+// multi-write operation must pass that exact snapshot; resolving the cluster
+// again here could reintroduce rotated credentials or bypass its fence.
+func (c *DebugSessionController) createImpersonatedClientFromRESTConfig(
+	ctx context.Context,
+	baseRestCfg *rest.Config,
+	clusterName string,
+	impConfig *breakglassv1alpha1.ImpersonationConfig,
+) (ctrlclient.Client, error) {
+	if baseRestCfg == nil {
+		return nil, fmt.Errorf("base REST config for cluster %s is nil", clusterName)
+	}
+	restCfg := rest.CopyConfig(baseRestCfg)
 
 	// If impersonation is configured, set up impersonation.
 	//

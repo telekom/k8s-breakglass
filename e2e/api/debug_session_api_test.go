@@ -2503,11 +2503,12 @@ func TestDebugSessionAPIListFiltering(t *testing.T) {
 
 // InjectEphemeralContainerRequest represents the request to inject an ephemeral container
 type InjectEphemeralContainerRequest struct {
-	Namespace     string   `json:"namespace"`
-	PodName       string   `json:"podName"`
-	ContainerName string   `json:"containerName"`
-	Image         string   `json:"image"`
-	Command       []string `json:"command,omitempty"`
+	Namespace       string                  `json:"namespace"`
+	PodName         string                  `json:"podName"`
+	ContainerName   string                  `json:"containerName"`
+	Image           string                  `json:"image"`
+	Command         []string                `json:"command,omitempty"`
+	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
 }
 
 // CreatePodCopyRequest represents the request to create a debug copy of a pod
@@ -2760,11 +2761,15 @@ func TestDebugSessionAPIKubectlDebugMode(t *testing.T) {
 	})
 
 	t.Run("InjectEphemeralContainerNonExistentPod", func(t *testing.T) {
+		runAsNonRoot := true
 		reqBody := InjectEphemeralContainerRequest{
 			Namespace:     "default",
 			PodName:       "nonexistent-pod-xyz",
 			ContainerName: "debug",
 			Image:         "busybox:latest",
+			SecurityContext: &corev1.SecurityContext{
+				RunAsNonRoot: &runAsNonRoot,
+			},
 		}
 		status, err := apiClient.InjectEphemeralContainer(ctx, t, sessionName, reqBody)
 		// Should fail because pod doesn't exist
@@ -2815,11 +2820,9 @@ func TestDebugSessionAPIKubectlDebugMode(t *testing.T) {
 			NodeName: "nonexistent-node-xyz",
 		}
 		status, _, err := apiClient.CreateNodeDebugPod(ctx, t, sessionName, reqBody)
-		// The API creates the pod successfully; Kubernetes scheduler will fail to place it
-		// on the nonexistent node later. The API doesn't validate node existence upfront.
-		require.NoError(t, err)
-		assert.Equal(t, http.StatusOK, status)
-		t.Logf("CreateNodeDebugPod with nonexistent node: status=%d (pod created, will fail to schedule)", status)
+		require.Error(t, err)
+		assert.NotEqual(t, http.StatusOK, status)
+		t.Logf("CreateNodeDebugPod with nonexistent node correctly rejected: status=%d", status)
 	})
 
 	t.Run("KubectlDebugWithoutAuth", func(t *testing.T) {

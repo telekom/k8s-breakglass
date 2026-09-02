@@ -229,8 +229,10 @@ See [Webhook Setup Guide](./docs/webhook-setup.md) for complete configuration in
 
 **API Server Configuration Example:**
 
+For Kubernetes 1.34 and later (structured authorization configuration):
+
 ```yaml
-apiVersion: apiserver.config.k8s.io/v1beta1
+apiVersion: apiserver.config.k8s.io/v1
 kind: AuthorizationConfiguration
 authorizers:
   - type: Node
@@ -240,13 +242,30 @@ authorizers:
   - type: Webhook
     name: breakglass
     webhook:
+      # Required for exact BreakglassSession expiry; do not cache allows.
+      authorizedTTL: 5m
+      cacheAuthorizedRequests: false
+      cacheUnauthorizedRequests: false
       unauthorizedTTL: 30s
       timeout: 3s
+      subjectAccessReviewVersion: v1
       failurePolicy: Deny
       connectionInfo:
         type: KubeConfigFile
         kubeConfigFile: /etc/kubernetes/breakglass-authz.kubeconfig
 ```
+
+Clusters older than 1.34 must use the legacy webhook mode and disable both
+decision caches:
+
+```text
+--authorization-mode=Node,RBAC,Webhook
+--authorization-webhook-config-file=/etc/kubernetes/breakglass-webhook-config.yaml
+--authorization-webhook-cache-authorized-ttl=0s
+--authorization-webhook-cache-unauthorized-ttl=0s
+```
+
+Do not use a positive authorized cache TTL for session-derived access.
 
 ## 📖 Custom Resources
 

@@ -286,6 +286,15 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	if status.ResolvedBinding != nil {
 		result.WithResolvedBinding(ResolvedBindingRefFrom(status.ResolvedBinding))
 	}
+	if status.ResolvedBindingSnapshotCaptured {
+		result.WithResolvedBindingSnapshotCaptured(true)
+	}
+	if status.ResolvedBindingSpec != nil {
+		result.WithResolvedBindingSpec(*status.ResolvedBindingSpec.DeepCopy())
+	}
+	if status.ResolvedPodTemplate != nil {
+		result.WithResolvedPodTemplate(*status.ResolvedPodTemplate.DeepCopy())
+	}
 
 	return result
 }
@@ -546,6 +555,9 @@ func DeployedResourceRefFrom(r *breakglassv1alpha1.DeployedResourceRef) *ac.Depl
 	if r.Namespace != "" {
 		result.WithNamespace(r.Namespace)
 	}
+	if r.UID != "" {
+		result.WithUID(r.UID)
+	}
 
 	return result
 }
@@ -604,6 +616,9 @@ func AuxiliaryResourceStatusFrom(s *breakglassv1alpha1.AuxiliaryResourceStatus) 
 		WithCreated(s.Created).
 		WithReady(s.Ready).
 		WithDeleted(s.Deleted)
+	if s.UID != "" {
+		result.WithUID(s.UID)
+	}
 
 	if s.Category != "" {
 		result.WithCategory(s.Category)
@@ -651,6 +666,9 @@ func AdditionalResourceRefFrom(r *breakglassv1alpha1.AdditionalResourceRef) *ac.
 		WithResourceName(r.ResourceName).
 		WithReady(r.Ready).
 		WithDeleted(r.Deleted)
+	if r.UID != "" {
+		result.WithUID(r.UID)
+	}
 
 	if r.Namespace != "" {
 		result.WithNamespace(r.Namespace)
@@ -671,6 +689,9 @@ func PodTemplateResourceStatusFrom(s *breakglassv1alpha1.PodTemplateResourceStat
 		WithCreated(s.Created).
 		WithReady(s.Ready).
 		WithDeleted(s.Deleted)
+	if s.UID != "" {
+		result.WithUID(s.UID)
+	}
 	if s.Kind != "" {
 		result.WithKind(s.Kind)
 	}
@@ -769,6 +790,9 @@ func CopiedPodRefFrom(c *breakglassv1alpha1.CopiedPodRef) *ac.CopiedPodRefApplyC
 		WithCopyName(c.CopyName).
 		WithCopyNamespace(c.CopyNamespace).
 		WithCreatedAt(c.CreatedAt)
+	if c.UID != "" {
+		result.WithUID(c.UID)
+	}
 
 	if c.ExpiresAt != nil {
 		result.WithExpiresAt(*c.ExpiresAt)

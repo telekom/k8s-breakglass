@@ -501,6 +501,7 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 				APIVersion:      "v1",
 				ResourceName:    "debug-sa",
 				Namespace:       "debug-ns",
+				UID:             "auxiliary-uid",
 				Created:         true,
 				CreatedAt:       &createdAt,
 				Ready:           true,
@@ -513,6 +514,7 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 						APIVersion:      "rbac.authorization.k8s.io/v1",
 						ResourceName:    "debug-role",
 						Namespace:       "debug-ns",
+						UID:             "additional-uid",
 						Ready:           true,
 						ReadinessStatus: "Current",
 						Deleted:         false,
@@ -534,6 +536,7 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 				Deleted:         true,
 				DeletedAt:       &deletedAt,
 				Error:           "cleanup pending",
+				UID:             "pod-template-uid",
 			},
 		}
 
@@ -554,17 +557,20 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 		auxiliaryStatus := updated.Status.AuxiliaryResourceStatuses[0]
 		assert.Equal(t, "debug-rbac", auxiliaryStatus.Name)
 		assert.Equal(t, "debug-sa", auxiliaryStatus.ResourceName)
+		assert.Equal(t, "auxiliary-uid", auxiliaryStatus.UID)
 		assert.True(t, auxiliaryStatus.Created)
 		assert.True(t, auxiliaryStatus.Ready)
 		assert.False(t, auxiliaryStatus.Deleted)
 		require.Len(t, auxiliaryStatus.AdditionalResources, 1)
 		assert.Equal(t, "debug-role", auxiliaryStatus.AdditionalResources[0].ResourceName)
+		assert.Equal(t, "additional-uid", auxiliaryStatus.AdditionalResources[0].UID)
 		assert.False(t, auxiliaryStatus.AdditionalResources[0].Deleted)
 
 		require.Len(t, updated.Status.PodTemplateResourceStatuses, 1)
 		podTemplateStatus := updated.Status.PodTemplateResourceStatuses[0]
 		assert.Equal(t, "ConfigMap", podTemplateStatus.Kind)
 		assert.Equal(t, "debug-config", podTemplateStatus.ResourceName)
+		assert.Equal(t, "pod-template-uid", podTemplateStatus.UID)
 		assert.True(t, podTemplateStatus.Created)
 		assert.False(t, podTemplateStatus.Ready)
 		assert.True(t, podTemplateStatus.Deleted)
@@ -1124,6 +1130,7 @@ func TestKubectlDebugStatusFrom(t *testing.T) {
 					OriginalNamespace: "app-ns",
 					CopyName:          "debug-copy",
 					CopyNamespace:     "debug-ns",
+					UID:               "copy-uid",
 					CreatedAt:         now,
 				},
 			},
@@ -1134,6 +1141,7 @@ func TestKubectlDebugStatusFrom(t *testing.T) {
 		require.NotNil(t, result)
 		require.Len(t, result.EphemeralContainersInjected, 1)
 		require.Len(t, result.CopiedPods, 1)
+		assert.Equal(t, "copy-uid", *result.CopiedPods[0].UID)
 	})
 }
 

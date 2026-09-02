@@ -234,14 +234,12 @@ func TestSessionStateTransitions(t *testing.T) {
 
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
-		// Now expire it (this is testing controller behavior, done via status update)
+		// End the approved session through the owner API. This exercises a valid
+		// Approved -> Expired transition and preserves the existing lease fence.
 		var toExpire breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &toExpire)
 		require.NoError(t, err)
-
-		toExpire.Status.State = breakglassv1alpha1.SessionStateExpired
-		toExpire.Status.ReasonEnded = "timeExpired"
-		err = cli.Status().Update(ctx, &toExpire)
+		err = apiClient.DropSessionViaAPI(ctx, t, session.Name, namespace)
 		require.NoError(t, err)
 
 		// Verify

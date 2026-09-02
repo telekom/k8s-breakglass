@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"context"
 	"reflect"
+	"time"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -255,6 +256,19 @@ type DebugSessionStatus struct {
 	// +optional
 	ResolvedBinding *ResolvedBindingRef `json:"resolvedBinding,omitempty"`
 
+	// resolvedBindingSpec is the immutable binding snapshot approved for activation.
+	// +optional
+	ResolvedBindingSpec *apiextensionsv1.JSON `json:"resolvedBindingSpec,omitempty"`
+
+	// resolvedBindingSnapshotCaptured distinguishes an approved no-binding
+	// decision from a session created before snapshot persistence was available.
+	// +optional
+	ResolvedBindingSnapshotCaptured bool `json:"resolvedBindingSnapshotCaptured,omitempty"`
+
+	// resolvedPodTemplate is the immutable pod-template snapshot approved for activation.
+	// +optional
+	ResolvedPodTemplate *apiextensionsv1.JSON `json:"resolvedPodTemplate,omitempty"`
+
 	// auxiliaryResourceStatuses tracks the state of deployed auxiliary resources.
 	// +optional
 	AuxiliaryResourceStatuses []AuxiliaryResourceStatus `json:"auxiliaryResourceStatuses,omitempty"`
@@ -268,6 +282,11 @@ type DebugSessionStatus struct {
 
 // PodTemplateResourceStatus tracks the state of resources deployed from multi-doc pod templates.
 type PodTemplateResourceStatus struct {
+	// uid is the immutable Kubernetes UID observed when the resource was created.
+	// Cleanup must match this UID before deleting a name-reused replacement.
+	// +optional
+	UID string `json:"uid,omitempty"`
+
 	// kind is the Kubernetes kind of the resource.
 	// +optional
 	Kind string `json:"kind,omitempty"`
@@ -520,6 +539,11 @@ type EphemeralContainerRef struct {
 
 // CopiedPodRef tracks a debug copy of a pod.
 type CopiedPodRef struct {
+	// uid is the immutable UID of the copied pod observed after creation.
+	// Cleanup must match this UID before deleting a name-reused replacement.
+	// +optional
+	UID string `json:"uid,omitempty"`
+
 	// originalPod is the name of the original pod.
 	// +required
 	OriginalPod string `json:"originalPod"`
@@ -571,7 +595,7 @@ type DebugSession struct {
 	Status DebugSessionStatus `json:"status,omitempty"`
 }
 
-//+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-debugsession,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=debugsessions,verbs=create;update,versions=v1alpha1,name=debugsession.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
+//+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-debugsession,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=debugsessions;debugsessions/status,verbs=create;update,versions=v1alpha1,name=debugsession.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
 
 // SetCondition updates or adds a condition in the DebugSession status
 func (ds *DebugSession) SetCondition(condition metav1.Condition) {
@@ -587,6 +611,11 @@ func (ds *DebugSession) GetCondition(condType string) *metav1.Condition {
 func (ds *DebugSession) ValidateCreate(ctx context.Context, obj *DebugSession) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
 	result := ValidateDebugSession(obj)
+	if obj.Status.State == DebugSessionStateActive &&
+		(obj.Status.ExpiresAt == nil || obj.Status.ExpiresAt.IsZero() || !time.Now().Before(obj.Status.ExpiresAt.Time)) {
+		result.Errors = append(result.Errors, field.Invalid(field.NewPath("status").Child("expiresAt"),
+			obj.Status.ExpiresAt, "an active debug session must have a future expiry"))
+	}
 	if result.IsValid() {
 		return nil, nil
 	}
@@ -609,7 +638,44 @@ func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) fie
 	}
 
 	checkTime(oldObj.Status.StartsAt, newObj.Status.StartsAt, statusPath.Child("startsAt"))
-	checkTime(oldObj.Status.ExpiresAt, newObj.Status.ExpiresAt, statusPath.Child("expiresAt"))
+
+	oldExpiry := oldObj.Status.ExpiresAt
+	newExpiry := newObj.Status.ExpiresAt
+	if oldObj.Status.State == DebugSessionStateActive && (oldExpiry == nil || oldExpiry.IsZero()) {
+		if !isTerminalDebugSessionState(newObj.Status.State) {
+			errs = append(errs, field.Invalid(statusPath.Child("state"), newObj.Status.State,
+				"an active debug session with a missing expiry must become terminal"))
+		}
+		if newExpiry != nil && !newExpiry.IsZero() {
+			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), newExpiry.Time,
+				"a missing active expiry cannot be added later"))
+		}
+	}
+	if oldExpiry != nil && !oldExpiry.IsZero() {
+		if newExpiry == nil || newExpiry.IsZero() {
+			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), nil, "timestamp must not be cleared once set"))
+		} else if newExpiry.Time.Before(oldExpiry.Time) {
+			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), newExpiry.Time, "timestamp must not move backwards"))
+		} else if newExpiry.Time.After(oldExpiry.Time) &&
+			(oldObj.Status.State != DebugSessionStateActive || newObj.Status.State != DebugSessionStateActive ||
+				!time.Now().Before(oldExpiry.Time) || newObj.Status.RenewalCount != oldObj.Status.RenewalCount+1) {
+			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), newExpiry.Time,
+				"an expiry may only be extended by one renewal while the session is active and unexpired"))
+		}
+	}
+	if newObj.Status.RenewalCount < oldObj.Status.RenewalCount {
+		errs = append(errs, field.Invalid(statusPath.Child("renewalCount"), newObj.Status.RenewalCount,
+			"renewalCount must not decrease"))
+	}
+	if isTerminalDebugSessionState(oldObj.Status.State) && newObj.Status.State != oldObj.Status.State {
+		errs = append(errs, field.Invalid(statusPath.Child("state"), newObj.Status.State,
+			"a terminal debug session state cannot change"))
+	}
+	if newObj.Status.State == DebugSessionStateActive &&
+		(newExpiry == nil || newExpiry.IsZero() || !time.Now().Before(newExpiry.Time)) {
+		errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), newExpiry,
+			"an active debug session must have a future expiry"))
+	}
 
 	if oldObj.Status.Approval != nil {
 		if newObj.Status.Approval == nil {
@@ -626,6 +692,10 @@ func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) fie
 	return errs
 }
 
+func isTerminalDebugSessionState(state DebugSessionState) bool {
+	return state == DebugSessionStateExpired || state == DebugSessionStateTerminated || state == DebugSessionStateFailed
+}
+
 func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *DebugSession) (admission.Warnings, error) {
 	var allErrs field.ErrorList
 
@@ -639,6 +709,28 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 	}
 
 	allErrs = append(allErrs, validateDebugSessionMonotonicStatusFields(oldObj, newObj)...)
+	if oldObj.Status.ResolvedTemplate != nil && !reflect.DeepEqual(oldObj.Status.ResolvedTemplate, newObj.Status.ResolvedTemplate) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplate"), newObj.Status.ResolvedTemplate,
+			"resolvedTemplate is immutable once persisted"))
+	}
+	if oldObj.Status.ResolvedBindingSpec != nil && !reflect.DeepEqual(oldObj.Status.ResolvedBindingSpec, newObj.Status.ResolvedBindingSpec) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedBindingSpec"), newObj.Status.ResolvedBindingSpec,
+			"resolvedBindingSpec is immutable once persisted"))
+	}
+	if (oldObj.Status.ResolvedTemplate != nil || oldObj.Status.ResolvedPodTemplate != nil) &&
+		!reflect.DeepEqual(oldObj.Status.ResolvedPodTemplate, newObj.Status.ResolvedPodTemplate) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedPodTemplate"), newObj.Status.ResolvedPodTemplate,
+			"resolvedPodTemplate is immutable once the resolved template is persisted"))
+	}
+	if oldObj.Status.ResolvedBindingSnapshotCaptured && !newObj.Status.ResolvedBindingSnapshotCaptured {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedBindingSnapshotCaptured"),
+			newObj.Status.ResolvedBindingSnapshotCaptured, "resolved binding snapshot capture marker cannot be cleared"))
+	}
+	if oldObj.Status.ResolvedBindingSnapshotCaptured &&
+		!reflect.DeepEqual(oldObj.Status.ResolvedBinding, newObj.Status.ResolvedBinding) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedBinding"), newObj.Status.ResolvedBinding,
+			"resolvedBinding is immutable once its snapshot is captured"))
+	}
 
 	if len(allErrs) == 0 {
 		return nil, nil

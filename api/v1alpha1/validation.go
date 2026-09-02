@@ -951,7 +951,9 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 	if template.Spec.Notification != nil {
 		result.Errors = append(result.Errors, validateDebugSessionNotificationConfig(template.Spec.Notification, specPath.Child("notification"))...)
 	}
-
+	if template.Spec.ExpirationBehavior == "notify-only" {
+		result.Warnings = append(result.Warnings, "spec.expirationBehavior notify-only is deprecated; use terminate with notification.notifyOnExpiry")
+	}
 	// Validate request reason config if specified
 	if template.Spec.RequestReason != nil {
 		result.Errors = append(result.Errors, validateDebugRequestReasonConfig(template.Spec.RequestReason, specPath.Child("requestReason"))...)

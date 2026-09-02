@@ -6525,6 +6525,7 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 	now := metav1.Now()
 
 	t.Run("leave session successfully", func(t *testing.T) {
+		expiresAt := metav1.NewTime(now.Add(time.Hour))
 		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
@@ -6539,8 +6540,9 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 				RequestedBy: "alice@example.com",
 			},
 			Status: breakglassv1alpha1.DebugSessionStatus{
-				State:    breakglassv1alpha1.DebugSessionStateActive,
-				StartsAt: &now,
+				State:     breakglassv1alpha1.DebugSessionStateActive,
+				StartsAt:  &now,
+				ExpiresAt: &expiresAt,
 				Participants: []breakglassv1alpha1.DebugSessionParticipant{
 					{User: "alice@example.com", Role: breakglassv1alpha1.ParticipantRoleOwner, JoinedAt: now},
 					{User: "bob@example.com", Role: breakglassv1alpha1.ParticipantRoleViewer, JoinedAt: now},

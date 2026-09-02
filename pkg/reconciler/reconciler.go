@@ -321,6 +321,7 @@ func Setup(
 		// Register DebugSession Reconciler with controller-runtime manager
 		log.Debugw("Setting up DebugSession reconciler")
 		debugSessionReconciler := debug.NewDebugSessionController(log, mgr.GetClient(), ccProvider).
+			WithLiveReader(mgr.GetAPIReader()).
 			WithAuditService(auditService).
 			WithMailService(mailService, frontendConfig.BrandingName, frontendConfig.BaseURL, disableEmail)
 		if err := debugSessionReconciler.SetupWithManager(mgr); err != nil {
@@ -334,13 +335,13 @@ func Setup(
 			mgr.GetClient(),
 			log,
 			mgr.GetEventRecorder("breakglass-audit-controller"),
-			func(ctx context.Context, auditConfigs []*breakglassv1alpha1.AuditConfig) error {
+			func(ctx context.Context, auditConfigs []*breakglassv1alpha1.AuditConfig, configuredUnavailable bool) error {
 				// Reload audit service with aggregated configuration from all AuditConfigs
 				if auditService == nil {
 					log.Warnw("AuditConfig changed but audit service is nil - skipping reload")
 					return nil
 				}
-				if err := auditService.ReloadMultiple(ctx, auditConfigs); err != nil {
+				if err := auditService.ReloadMultipleWithAvailability(ctx, auditConfigs, configuredUnavailable); err != nil {
 					log.Errorw("Failed to reload audit service", "error", err)
 					return err
 				}

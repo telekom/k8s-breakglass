@@ -160,10 +160,11 @@ func TestIsSessionExpired(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name      string
-		state     breakglassv1alpha1.BreakglassSessionState
-		expiresAt *time.Time
-		expected  bool
+		name       string
+		state      breakglassv1alpha1.BreakglassSessionState
+		expiresAt  *time.Time
+		deletingAt *metav1.Time
+		expected   bool
 	}{
 		{
 			name:     "expired state returns true regardless of timestamp",
@@ -183,9 +184,9 @@ func TestIsSessionExpired(t *testing.T) {
 			expected:  false,
 		},
 		{
-			name:     "approved state with zero expiry returns false",
+			name:     "approved state with zero expiry fails closed",
 			state:    breakglassv1alpha1.SessionStateApproved,
-			expected: false,
+			expected: true,
 		},
 		{
 			name:      "pending state with past expiry returns false (not approved)",
@@ -217,6 +218,117 @@ func TestIsSessionExpired(t *testing.T) {
 			}
 			result := IsSessionExpired(session)
 			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestSessionExpiryAndTokenValidityBoundaries(t *testing.T) {
+	now := time.Date(2026, time.August, 28, 12, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name        string
+		session     breakglassv1alpha1.BreakglassSession
+		expired     bool
+		tokenValid  bool
+		accessValid bool
+	}{
+		{
+			name: "approved session without expiry fails closed",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateApproved,
+			}},
+			expired: true, tokenValid: false, accessValid: false,
+		},
+		{
+			name: "approved session at expiry boundary is expired",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: metav1.NewTime(now),
+			}},
+			expired: true, tokenValid: false, accessValid: false,
+		},
+		{
+			name: "approved session one nanosecond before expiry is expired",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: metav1.NewTime(now.Add(-time.Nanosecond)),
+			}},
+			expired: true, tokenValid: false, accessValid: false,
+		},
+		{
+			name: "approved session one nanosecond after expiry is active",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: metav1.NewTime(now.Add(time.Nanosecond)),
+			}},
+			expired: false, tokenValid: true, accessValid: true,
+		},
+		{
+			name: "approved session with future expiry remains valid",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: metav1.NewTime(now.Add(time.Hour)),
+			}},
+			expired: false, tokenValid: true, accessValid: true,
+		},
+		{
+			name: "terminal session cannot be resurrected by future expiry",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateExpired,
+				ExpiresAt: metav1.NewTime(now.Add(time.Hour)),
+			}},
+			expired: true, tokenValid: false, accessValid: false,
+		},
+		{
+			name: "rejected session cannot be resurrected by future expiry",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateRejected, ExpiresAt: metav1.NewTime(now.Add(time.Hour)),
+			}},
+			expired: false, tokenValid: false, accessValid: false,
+		},
+		{
+			name: "withdrawn session cannot be resurrected by future expiry",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateWithdrawn, ExpiresAt: metav1.NewTime(now.Add(time.Hour)),
+			}},
+			expired: false, tokenValid: false, accessValid: false,
+		},
+		{
+			name: "idle-expired session cannot be resurrected by future expiry",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateIdleExpired, ExpiresAt: metav1.NewTime(now.Add(time.Hour)),
+			}},
+			expired: false, tokenValid: false, accessValid: false,
+		},
+		{
+			name: "approval-timeout session cannot be resurrected by future expiry",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateTimeout, ExpiresAt: metav1.NewTime(now.Add(time.Hour)),
+			}},
+			expired: false, tokenValid: false, accessValid: false,
+		},
+		{
+			name: "pending session does not grant access",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStatePending,
+				TimeoutAt: metav1.NewTime(now.Add(time.Hour)),
+			}},
+			expired: false, tokenValid: true, accessValid: false,
+		},
+		{
+			name: "scheduled waiting session does not grant access",
+			session: breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+			}},
+			expired: false, tokenValid: true, accessValid: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expired, isSessionExpiredAt(tt.session, now))
+			assert.Equal(t, tt.tokenValid, isSessionTokenValidAt(tt.session, now))
+			assert.Equal(t, tt.accessValid, isSessionAccessActiveAt(tt.session, now))
 		})
 	}
 }
@@ -378,10 +490,11 @@ func TestIsSessionActive(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name      string
-		state     breakglassv1alpha1.BreakglassSessionState
-		expiresAt *time.Time
-		expected  bool
+		name       string
+		state      breakglassv1alpha1.BreakglassSessionState
+		expiresAt  *time.Time
+		deletingAt *metav1.Time
+		expected   bool
 	}{
 		{
 			name:      "approved session with valid expiry is active",
@@ -466,6 +579,11 @@ func TestIsSessionOccupyingSlot(t *testing.T) {
 			expected:  false,
 		},
 		{
+			name:     "waiting scheduled session without expiry does not occupy slot",
+			state:    breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+			expected: false,
+		},
+		{
 			name:      "pending session past timeout no longer occupies slot",
 			state:     breakglassv1alpha1.SessionStatePending,
 			timeoutAt: func() *time.Time { t := now.Add(-time.Hour); return &t }(),
@@ -510,10 +628,11 @@ func TestIsSessionAccessActive(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name      string
-		state     breakglassv1alpha1.BreakglassSessionState
-		expiresAt *time.Time
-		expected  bool
+		name       string
+		state      breakglassv1alpha1.BreakglassSessionState
+		expiresAt  *time.Time
+		deletingAt *metav1.Time
+		expected   bool
 	}{
 		{
 			name:      "approved session with valid expiry grants access",
@@ -538,6 +657,13 @@ func TestIsSessionAccessActive(t *testing.T) {
 			expected:  false,
 		},
 		{
+			name:       "deleting approved session is immediately revoked",
+			state:      breakglassv1alpha1.SessionStateApproved,
+			expiresAt:  func() *time.Time { t := now.Add(1 * time.Hour); return &t }(),
+			deletingAt: func() *metav1.Time { t := metav1.NewTime(now); return &t }(),
+			expected:   false,
+		},
+		{
 			name:     "rejected session does not grant access",
 			state:    breakglassv1alpha1.SessionStateRejected,
 			expected: false,
@@ -547,6 +673,7 @@ func TestIsSessionAccessActive(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			session := breakglassv1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{DeletionTimestamp: tt.deletingAt},
 				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State: tt.state,
 				},

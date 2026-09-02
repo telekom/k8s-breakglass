@@ -36,6 +36,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   node-level operation lock, and cleanup/expiry integration define the
   supported operational boundary.
 
+### Fixed
+
+- **Hard expiry and authorization caching**: Authorization now fails closed
+  at the exact `expiresAt` boundary or when a session is marked for deletion,
+  cannot be resurrected by stale writes or cached decisions, and shipped
+  Kubernetes 1.34+ examples disable both
+  positive and negative webhook decision caches. Blocking audit enrichment now
+  precedes the last live fence, mutable `ClusterConfig` security identity and
+  kubectl-debug Namespace UID and label policy are fenced at the final boundary,
+  duplicate cleanup checks the complete live duplicate set and ordering before
+  each change, then atomically revokes access and stores a stable terminal
+  intent before required delivery. It drains legacy pending terminal tuples
+  after upgrade, requires every
+  configured sink to accept required events, and rejects non-acknowledged Kafka
+  or non-durable Event/log-only delivery. Intentionally disabling audit now
+  releases current and legacy pending duplicate-cleanup intents without changing
+  their saved decision tuple. Webhook sinks reject redirects and accept only
+  successful POST responses. DebugSession terminal states are also
+  monotonic on the actual status mutation path, malformed active sessions with
+  no expiry are terminalized without acquiring a later lease, and renewal has a final live/time fence,
+  and bounded CI diagnostics redact quoted credentials and complete private-key
+  blocks before upload.
+- **Expiry notification recovery**: Session expiry and approval-timeout email
+  enqueue intents are stored with the terminal status. A transient enqueue
+  failure or unavailable configured provider leaves the intent pending for a
+  later cleanup run while hard expiry remains effective. Queue acceptance is
+  recorded as best-effort asynchronous handoff, not delivery. Intentionally
+  disabled email explicitly acknowledges pending intents so cleanup can proceed.
+- **Audit configuration availability**: The audit service and AuditConfig
+  reconciler now distinguish intentional disablement from enabled configuration
+  that is invalid or unavailable. Duplicate cleanup only skips its audit when
+  auditing is intentionally disabled; otherwise it keeps the terminal intent
+  pending and fails closed.
+- **DebugSession `notify-only` expiry**: The deprecated `notify-only` value is
+  now an expiry-notification compatibility alias with mandatory hard expiry.
+  It can no longer keep access or resources active after `expiresAt`. New
+  templates should use `terminate` with `notification.notifyOnExpiry`.
+
 ### Removed
 
 - **Broad `flush-neighbors` network action (breaking)**: Removed the prior
@@ -473,7 +511,7 @@ non-buggy case:
 - **SBOM generation re-enabled**: Release workflow now generates SPDX-JSON SBOM via Syft (anchore/sbom-action) and uploads it to the GitHub Release
 - **SLSA provenance attestation re-enabled**: Assemble job now generates and pushes SLSA Build L1 provenance via actions/attest-build-provenance
 - **Design decision: Keep Create() for DebugSession creation** (#382): Documented the rationale for using `Create()` instead of SSA with pre-check `Get()` for debug session creation. Added conflict detection tests verifying `AlreadyExists` behavior and immutability guarantees.
-- **Duplicate session cleanup**: Periodic cleanup now detects and terminates duplicate active BreakglassSession resources sharing the same (cluster, user, grantedGroup) triple. Keeps the best candidate (by state priority: Approved > WaitingForScheduledTime > Pending, then by age) and withdraws or expires the rest. Prevents split-brain grant accumulation in multi-replica deployments.
+- **Duplicate session cleanup**: Periodic cleanup now detects and terminates duplicate active BreakglassSession resources sharing the same (cluster, user, grantedGroup) triple. Keeps the best candidate by state priority (`Approved` > `WaitingForScheduledTime` > `Pending`), then oldest creation time, then name, and withdraws or expires the rest. Prevents split-brain grant accumulation in multi-replica deployments.
 - **Idle timeout design & session activity tracking** (#8, #312, #314): Added design document for idle timeout and last-used fields (`docs/design/idle-timeout.md`). Implemented full idle timeout and activity tracking feature:
   - **Activity tracking**: Authorization webhook records session activity via a buffered `ActivityTracker` that flushes aggregated updates to the BreakglassSession status using controller-runtime's `client.Status().Patch` with `client.MergeFrom` and retry-on-conflict semantics (no Server-Side Apply / dedicated field manager). Failed flushes are re-queued (up to 5 retries) and ticker-driven flushes use bounded contexts to prevent hangs.
   - **Idle timeout expiration**: New `IdleExpired` terminal state for sessions that exceed their configured `spec.idleTimeout`. The idle baseline is `status.lastActivity`; sessions where `lastActivity` has not been set (no webhook requests recorded yet) are skipped to avoid false positives. Idle expiry runs alongside time-based expiry in the cleanup routine with retry, audit events, and email notifications.

@@ -227,7 +227,7 @@ func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx cont
 
 		// Update the session status to Expired
 		session.Status.State = breakglassv1alpha1.SessionStateExpired
-		session.Status.ExpiresAt = now
+		session.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(session.Status.ExpiresAt, now.Time)
 		session.Status.ReasonEnded = "clusterDeleted"
 		session.SetCondition(metav1.Condition{
 			Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
@@ -292,7 +292,8 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 
 		// Skip sessions that are already in cleanup or already cleaned up.
 		if session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
-			session.Status.State == breakglassv1alpha1.DebugSessionStateExpired {
+			session.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
+			session.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
 			continue
 		}
 
@@ -300,12 +301,24 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 			"session", session.Name, "namespace", session.Namespace, "cluster", clusterName,
 			"previousState", session.Status.State)
 
-		// Update the session status to Terminated so the debug-session reconciler
-		// performs resource cleanup.
-		session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
-		session.Status.Message = fmt.Sprintf("Session terminated: ClusterConfig %q was deleted", clusterName)
-
-		if err := ssa.ApplyDebugSessionStatus(ctx, r.Client, session); err != nil {
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			live := &breakglassv1alpha1.DebugSession{}
+			if err := r.Get(ctx, client.ObjectKeyFromObject(session), live); err != nil {
+				return err
+			}
+			if live.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
+				live.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
+				live.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
+				return nil
+			}
+			base := live.DeepCopy()
+			live.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+			live.Status.Message = fmt.Sprintf("Session terminated: ClusterConfig %q was deleted", clusterName)
+			if live.Generation > 0 {
+				live.Status.ObservedGeneration = live.Generation
+			}
+			return r.Status().Patch(ctx, live, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+		}); err != nil {
 			log.Warnw("Failed to terminate DebugSession", "session", session.Name, "error", err)
 			terminateErrs = append(terminateErrs, fmt.Errorf("terminate DebugSession %s/%s: %w", session.Namespace, session.Name, err))
 			continue

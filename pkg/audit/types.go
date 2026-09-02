@@ -8,7 +8,7 @@ import (
 )
 
 // EventType represents the type of audit event.
-// The audit trail is EXTREMELY granular and captures all actions on a cluster.
+// The audit trail is granular and captures configured Breakglass actions on a cluster.
 type EventType string
 
 const (
@@ -25,6 +25,9 @@ const (
 	EventSessionExtended    EventType = "session.extended"
 	EventSessionValidated   EventType = "session.validated"
 	EventSessionInvalidated EventType = "session.invalidated"
+	// EventSessionTerminationIntent records a durable terminal decision before
+	// the corresponding session status transition is committed.
+	EventSessionTerminationIntent EventType = "session.termination_intent"
 	// EventSessionApprovalUnverifiedGroups records that an approval authorization
 	// decision was made using unverified (JWT-claim) approver groups because the
 	// cluster-side group lookup failed. The approval is still granted to avoid
@@ -473,7 +476,8 @@ func IsSensitiveEvent(eventType EventType) bool {
 	switch eventType {
 	case EventSessionRequested, EventSessionApproved, EventSessionDenied,
 		EventSessionRejected, EventSessionExpired,
-		EventSessionRevoked, EventSessionWithdrawn, EventSessionDropped,
+		EventSessionRevoked, EventSessionWithdrawn, EventSessionDropped, EventSessionInvalidated,
+		EventSessionTerminationIntent,
 		EventSessionApprovalUnverifiedGroups,
 		EventAccessDenied, EventAccessDeniedPolicy,
 		EventPolicyViolation, EventSecretAccessed, EventSecretCreated,
