@@ -255,7 +255,9 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		if err := fence(); err != nil {
 			return err
 		}
-		beforeStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFence(ctx, ds, &template.Spec, binding, targetClient, targetNs, true, fence)
+		beforeStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(ctx, ds, &template.Spec, binding, targetClient, targetNs, true, fence, func(status breakglassv1alpha1.AuxiliaryResourceStatus) error {
+			return c.persistAuxiliaryStatus(ctx, ds, status)
+		})
 		auxStatuses = append(auxStatuses, beforeStatuses...)
 		ds.Status.AuxiliaryResourceStatuses = auxStatuses
 		if auxErr != nil {
@@ -303,15 +305,29 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		if err := fence(); err != nil {
 			return err
 		}
-		afterStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFence(ctx, ds, &template.Spec, binding, targetClient, targetNs, false, fence)
+		afterStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(ctx, ds, &template.Spec, binding, targetClient, targetNs, false, fence, func(status breakglassv1alpha1.AuxiliaryResourceStatus) error {
+			return c.persistAuxiliaryStatus(ctx, ds, status)
+		})
 		auxStatuses = append(auxStatuses, afterStatuses...)
 		ds.Status.AuxiliaryResourceStatuses = auxStatuses
 		if auxErr != nil {
 			return fmt.Errorf("failed to deploy auxiliary resources after workload: %w", auxErr)
 		}
+
 	}
 
 	return nil
+}
+
+func (c *DebugSessionController) persistAuxiliaryStatus(ctx context.Context, ds *breakglassv1alpha1.DebugSession, status breakglassv1alpha1.AuxiliaryResourceStatus) error {
+	for i := range ds.Status.AuxiliaryResourceStatuses {
+		if ds.Status.AuxiliaryResourceStatuses[i].Name == status.Name {
+			ds.Status.AuxiliaryResourceStatuses[i] = status
+			return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+		}
+	}
+	ds.Status.AuxiliaryResourceStatuses = append(ds.Status.AuxiliaryResourceStatuses, status)
+	return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
 }
 
 // createOrRecoverTargetObject never adopts a resource owned by another session.
