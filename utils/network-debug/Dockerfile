@@ -33,7 +33,7 @@ RUN set -eux; \
 	case "${module_json}" in *'"Hash": "'"${PWRU_COMMIT}"'"'*) ;; *) exit 1 ;; esac; \
 	mkdir -p /src/pwru /out; \
 	cp -a "$(go env GOPATH)/pkg/mod/github.com/cilium/pwru@${PWRU_VERSION}/." /src/pwru/; \
-	test "$(grep '^go ' /src/pwru/go.mod | awk '{print $2}')" = "1.25.0"; \
+	test "$(awk '$1 == "go" { print $2 }' /src/pwru/go.mod)" = "1.25.0"; \
 	chmod +x /src/pwru/libpcap/configure; \
 	make VERSION="${PWRU_VERSION}" TARGET_GOARCH="${TARGETARCH:-amd64}" GOARCH="${TARGETARCH:-amd64}" pwru; \
 	install -m 0755 pwru /out/pwru
