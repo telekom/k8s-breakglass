@@ -21,12 +21,20 @@ cat >"$fixture/curl" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 body=
+request=
 for arg in "$@"; do
 	case "$arg" in
 		--data) data_next=true ;;
-		*) if [ "${data_next:-false}" = true ]; then body=$arg; data_next=false; fi ;;
+		--request) request_next=true ;;
+		*)
+			if [ "${data_next:-false}" = true ]; then body=$arg; data_next=false; fi
+			if [ "${request_next:-false}" = true ]; then request=$arg; request_next=false; fi
+			;;
 	esac
 done
+if [ "$request" != DELETE ]; then
+	exit 0
+fi
 printf '%s\n' "$body" >"${DELETE_BODY:?}"
 case "${DELETE_MODE:-same}" in
 same) exit 0 ;;
