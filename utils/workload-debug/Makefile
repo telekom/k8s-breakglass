@@ -16,6 +16,8 @@ OCI_ARCHIVE ?= workload-debug.oci.tar
 test:
 	./tests/test_helpers.sh
 	./tests/test_kind_lifecycle.sh
+	./tests/test_command_safety.sh
+	./tests/test_kube_token.sh
 
 test-kind-lifecycle:
 	./tests/test_kind_lifecycle.sh
