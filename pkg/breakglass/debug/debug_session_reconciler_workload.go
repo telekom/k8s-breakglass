@@ -32,33 +32,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		}
 	}
 
-	// Get binding if session was created via a binding
 	var binding *breakglassv1alpha1.DebugSessionClusterBinding
-	if ds.Spec.BindingRef != nil {
-		var err error
-		binding, err = c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace)
-		if err != nil {
-			log.Warnw("Failed to get binding by ref, will try auto-discovery",
-				"binding", ds.Spec.BindingRef.Name,
-				"namespace", ds.Spec.BindingRef.Namespace,
-				"error", err)
-			// Non-fatal: try auto-discovery below
-		}
-	}
-
-	// Auto-discover binding if not found via BindingRef
-	// This enables binding configuration to apply even when sessions are created
-	// without explicitly setting BindingRef (e.g., via the unified API)
-	if binding == nil {
-		discoveredBinding, err := c.findBindingForSession(ctx, template, ds.Spec.Cluster)
-		if err != nil {
-			log.Warnw("Failed to auto-discover binding, continuing without binding config",
-				"error", err)
-		} else if discoveredBinding != nil {
-			log.Infow("Auto-discovered binding for session",
-				"binding", discoveredBinding.Name,
-				"namespace", discoveredBinding.Namespace)
-			binding = discoveredBinding
+	if ds.Status.ResolvedBindingSpec != nil {
+		binding = &breakglassv1alpha1.DebugSessionClusterBinding{
+			Spec: *ds.Status.ResolvedBindingSpec.DeepCopy(),
 		}
 	}
 

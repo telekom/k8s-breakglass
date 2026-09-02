@@ -7,6 +7,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -117,6 +118,15 @@ func PatchDebugSessionStatusWithReader(
 func validateDebugSessionStatusMutation(oldStatus, newStatus breakglassv1alpha1.DebugSessionStatus, now time.Time) error {
 	if isTerminalDebugSessionState(oldStatus.State) && newStatus.State != oldStatus.State {
 		return fmt.Errorf("terminal state %q cannot change to %q", oldStatus.State, newStatus.State)
+	}
+	if oldStatus.ResolvedTemplate != nil && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedTemplate, newStatus.ResolvedTemplate) {
+		return fmt.Errorf("approved resolved template snapshot is immutable")
+	}
+	if oldStatus.ResolvedBindingSpec != nil && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedBindingSpec, newStatus.ResolvedBindingSpec) {
+		return fmt.Errorf("approved resolved binding snapshot is immutable")
+	}
+	if oldStatus.ResolvedPodTemplate != nil && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedPodTemplate, newStatus.ResolvedPodTemplate) {
+		return fmt.Errorf("approved resolved pod-template snapshot is immutable")
 	}
 	oldExpiryMissing := oldStatus.ExpiresAt == nil || oldStatus.ExpiresAt.IsZero()
 	newExpiryMissing := newStatus.ExpiresAt == nil || newStatus.ExpiresAt.IsZero()
