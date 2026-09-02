@@ -21,7 +21,7 @@ kubernetes_delete_uid() {
 		'{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid},propagationPolicy:"Foreground"}') ||
 		return 1
 	(
-		local proxy_pid proxy_port=${KUBECTL_PROXY_PORT:-18080}
+		local proxy_pid proxy_port=${KUBECTL_PROXY_PORT:-$((49152 + RANDOM % 16384))} ready=false
 		# shellcheck disable=SC2317 # invoked by the EXIT trap below
 		cleanup_proxy() {
 			[ -n "${proxy_pid:-}" ] || return 0
@@ -35,10 +35,12 @@ kubernetes_delete_uid() {
 		for _ in 1 2 3 4 5; do
 			if curl --fail --silent --show-error \
 				--output /dev/null "http://127.0.0.1:${proxy_port}/api"; then
+				ready=true
 				break
 			fi
 			sleep 1
 		done
+		[ "$ready" = true ] || return 1
 		curl --fail --silent --show-error --request DELETE \
 			--header 'Content-Type: application/json' \
 			--data "$delete_options" \
