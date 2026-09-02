@@ -727,7 +727,8 @@ func (c *DebugSessionController) validateActivationBeforePublish(ctx context.Con
 		return fmt.Errorf("read live debug session before publishing Active: %w", err)
 	}
 	if live.UID != ds.UID || !live.DeletionTimestamp.IsZero() ||
-		live.Status.State != breakglassv1alpha1.DebugSessionStatePending &&
+		live.Status.State != "" &&
+			live.Status.State != breakglassv1alpha1.DebugSessionStatePending &&
 			live.Status.State != breakglassv1alpha1.DebugSessionStatePendingApproval ||
 		live.Status.ExpiresAt == nil || !time.Now().UTC().Before(live.Status.ExpiresAt.Time) {
 		return fmt.Errorf("debug session is no longer authorized for activation")
