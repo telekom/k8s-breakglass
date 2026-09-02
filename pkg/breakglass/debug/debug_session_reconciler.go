@@ -681,6 +681,9 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		ds.Status.TerminalSharing = c.setupTerminalSharing(ds, template)
 	}
 
+	if err := c.validateActivationBeforePublish(ctx, ds); err != nil {
+		return c.failSession(ctx, ds, fmt.Sprintf("activation authorization changed before publishing Active: %v", err))
+	}
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -701,6 +704,38 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		"terminalSharing", ds.Status.TerminalSharing != nil)
 
 	return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
+}
+
+func (c *DebugSessionController) validateActivationBeforePublish(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	if c.ccProvider != nil {
+		_, configuredCluster, err := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)
+		if err != nil {
+			return fmt.Errorf("read privileged target configuration: %w", err)
+		}
+		defer c.ccProvider.ReleasePrivilegedOperationClusterConfig(configuredCluster)
+		if err := c.ccProvider.ValidatePrivilegedOperationClusterConfig(ctx, configuredCluster); err != nil {
+			return fmt.Errorf("privileged target configuration changed during activation: %w", err)
+		}
+	}
+
+	reader := c.reader
+	if reader == nil {
+		reader = c.client
+	}
+	live := &breakglassv1alpha1.DebugSession{}
+	if err := reader.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), live); err != nil {
+		return fmt.Errorf("read live debug session before publishing Active: %w", err)
+	}
+	if live.UID != ds.UID || !live.DeletionTimestamp.IsZero() ||
+		live.Status.State != breakglassv1alpha1.DebugSessionStatePending &&
+			live.Status.State != breakglassv1alpha1.DebugSessionStatePendingApproval ||
+		live.Status.ExpiresAt == nil || !time.Now().UTC().Before(live.Status.ExpiresAt.Time) {
+		return fmt.Errorf("debug session is no longer authorized for activation")
+	}
+	if live.Status.Approval == nil || (live.Status.Approval.Required && live.Status.Approval.ApprovedAt == nil) {
+		return fmt.Errorf("debug session approval is no longer valid")
+	}
+	return nil
 }
 
 // failSession marks a session as failed and logs the failure
