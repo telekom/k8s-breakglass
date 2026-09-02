@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-FROM golang:1.27@sha256:c5b07c17f54c5f22230c4b4da6e90249165cf55368e01a52808cb92064e18836 AS kubestr-builder
+FROM golang:1.27@sha256:4013ae0f9e7994f8535c58c811f8f863fbed38b72e0d51e6592156f758d66146 AS kubestr-builder
 
 ARG TARGETARCH
 ARG KUBESTR_VERSION=v0.4.49
@@ -48,6 +48,8 @@ LABEL org.opencontainers.image.title="Storage diagnostics utilities" \
 RUN apk add --no-cache \
       "fio=${FIO_VERSION}" \
       "ioping=${IOPING_VERSION}" \
+      "libcrypto3=3.5.8-r0" \
+      "libssl3=3.5.8-r0" \
     && addgroup -S -g 65532 debug \
     && adduser -S -D -H -u 65532 -G debug debug \
     && install -d -o debug -g debug /scratch /reports /usr/share/storage-debug \
