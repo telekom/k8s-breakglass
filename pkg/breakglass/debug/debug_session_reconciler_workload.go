@@ -313,7 +313,6 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		if auxErr != nil {
 			return fmt.Errorf("failed to deploy auxiliary resources after workload: %w", auxErr)
 		}
-
 	}
 
 	return nil
