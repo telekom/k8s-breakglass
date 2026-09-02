@@ -397,7 +397,9 @@ The E2E realm includes 53 users and 75+ groups for comprehensive test coverage. 
 
 The target Kubernetes cluster's API server must be configured to accept OIDC tokens from Keycloak. There are two approaches:
 
-### Option A: Structured Authentication Configuration (Kubernetes 1.30+)
+### Option A: Structured Authentication Configuration (Kubernetes 1.34+)
+
+For Kubernetes 1.30–1.33, use the equivalent `apiserver.config.k8s.io/v1beta1` API version in this example; `v1` is supported starting with Kubernetes 1.34.
 
 Create an `AuthenticationConfiguration` file and pass it via `--authentication-config`:
 

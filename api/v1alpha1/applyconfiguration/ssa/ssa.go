@@ -21,6 +21,7 @@ package ssa
 
 import (
 	"context"
+	"encoding/json"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
@@ -285,6 +286,18 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	// Set resolved binding
 	if status.ResolvedBinding != nil {
 		result.WithResolvedBinding(ResolvedBindingRefFrom(status.ResolvedBinding))
+	}
+	if status.ResolvedBindingSpec != nil {
+		var bindingSpec ac.DebugSessionClusterBindingSpecApplyConfiguration
+		if raw, err := json.Marshal(status.ResolvedBindingSpec); err == nil && json.Unmarshal(raw, &bindingSpec) == nil {
+			result.WithResolvedBindingSpec(&bindingSpec)
+		}
+	}
+	if status.ResolvedPodTemplate != nil {
+		var podTemplate ac.DebugPodTemplateSpecApplyConfiguration
+		if raw, err := json.Marshal(status.ResolvedPodTemplate); err == nil && json.Unmarshal(raw, &podTemplate) == nil {
+			result.WithResolvedPodTemplate(&podTemplate)
+		}
 	}
 
 	return result
