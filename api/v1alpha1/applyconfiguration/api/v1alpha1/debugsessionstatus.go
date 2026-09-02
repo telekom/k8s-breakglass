@@ -10,6 +10,7 @@ package v1alpha1
 
 import (
 	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	metav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
@@ -55,9 +56,9 @@ type DebugSessionStatusApplyConfiguration struct {
 	// resolvedBinding caches information about the binding used (if any).
 	ResolvedBinding *ResolvedBindingRefApplyConfiguration `json:"resolvedBinding,omitempty"`
 	// resolvedBindingSpec is the immutable binding snapshot approved for activation.
-	ResolvedBindingSpec *DebugSessionClusterBindingSpecApplyConfiguration `json:"resolvedBindingSpec,omitempty"`
+	ResolvedBindingSpec *apiextensionsv1.JSON `json:"resolvedBindingSpec,omitempty"`
 	// resolvedPodTemplate is the immutable pod-template snapshot approved for activation.
-	ResolvedPodTemplate *DebugPodTemplateSpecApplyConfiguration `json:"resolvedPodTemplate,omitempty"`
+	ResolvedPodTemplate *apiextensionsv1.JSON `json:"resolvedPodTemplate,omitempty"`
 	// auxiliaryResourceStatuses tracks the state of deployed auxiliary resources.
 	AuxiliaryResourceStatuses []AuxiliaryResourceStatusApplyConfiguration `json:"auxiliaryResourceStatuses,omitempty"`
 	// podTemplateResourceStatuses tracks the state of additional resources deployed
@@ -223,16 +224,16 @@ func (b *DebugSessionStatusApplyConfiguration) WithResolvedBinding(value *Resolv
 // WithResolvedBindingSpec sets the ResolvedBindingSpec field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the ResolvedBindingSpec field is set to the value of the last call.
-func (b *DebugSessionStatusApplyConfiguration) WithResolvedBindingSpec(value *DebugSessionClusterBindingSpecApplyConfiguration) *DebugSessionStatusApplyConfiguration {
-	b.ResolvedBindingSpec = value
+func (b *DebugSessionStatusApplyConfiguration) WithResolvedBindingSpec(value apiextensionsv1.JSON) *DebugSessionStatusApplyConfiguration {
+	b.ResolvedBindingSpec = &value
 	return b
 }
 
 // WithResolvedPodTemplate sets the ResolvedPodTemplate field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the ResolvedPodTemplate field is set to the value of the last call.
-func (b *DebugSessionStatusApplyConfiguration) WithResolvedPodTemplate(value *DebugPodTemplateSpecApplyConfiguration) *DebugSessionStatusApplyConfiguration {
-	b.ResolvedPodTemplate = value
+func (b *DebugSessionStatusApplyConfiguration) WithResolvedPodTemplate(value apiextensionsv1.JSON) *DebugSessionStatusApplyConfiguration {
+	b.ResolvedPodTemplate = &value
 	return b
 }
 

@@ -1691,10 +1691,10 @@ var schemaYAML = typed.YAMLObject(`types:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ResolvedBindingRef
     - name: resolvedBindingSpec
       type:
-        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionClusterBindingSpec
+        namedType: io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.JSON
     - name: resolvedPodTemplate
       type:
-        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodTemplateSpec
+        namedType: io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.JSON
     - name: resolvedTemplate
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplateSpec

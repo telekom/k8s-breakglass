@@ -36,6 +36,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -256,14 +257,18 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	resolvedTemplate.Constraints = effectiveDebugSessionConstraints(template, binding)
 	ds.Status.ResolvedTemplate = resolvedTemplate
 	if binding != nil {
-		ds.Status.ResolvedBindingSpec = binding.Spec.DeepCopy()
+		if raw, marshalErr := json.Marshal(binding.Spec); marshalErr == nil {
+			ds.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: raw}
+		}
 	}
 	if template.Spec.PodTemplateRef != nil {
 		podTemplate, podErr := c.getPodTemplate(ctx, template.Spec.PodTemplateRef.Name)
 		if podErr != nil {
 			return c.failSession(ctx, ds, fmt.Sprintf("pod template not found: %v", podErr))
 		}
-		ds.Status.ResolvedPodTemplate = podTemplate.Spec.DeepCopy()
+		if raw, marshalErr := json.Marshal(podTemplate.Spec); marshalErr == nil {
+			ds.Status.ResolvedPodTemplate = &apiextensionsv1.JSON{Raw: raw}
+		}
 	}
 
 	// Check if approval is required (checks both template and binding approvers)
@@ -589,7 +594,9 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		} else {
 			approvedBinding = approvedBinding.DeepCopy()
 		}
-		approvedBinding.Spec = *ds.Status.ResolvedBindingSpec.DeepCopy()
+		if err := json.Unmarshal(ds.Status.ResolvedBindingSpec.Raw, &approvedBinding.Spec); err != nil {
+			return ctrl.Result{}, fmt.Errorf("decode approved binding snapshot: %w", err)
+		}
 		binding = approvedBinding
 	}
 

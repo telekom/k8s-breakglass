@@ -2244,12 +2244,12 @@ func (in *DebugSessionStatus) DeepCopyInto(out *DebugSessionStatus) {
 	}
 	if in.ResolvedBindingSpec != nil {
 		in, out := &in.ResolvedBindingSpec, &out.ResolvedBindingSpec
-		*out = new(DebugSessionClusterBindingSpec)
+		*out = new(apiextensionsv1.JSON)
 		(*in).DeepCopyInto(*out)
 	}
 	if in.ResolvedPodTemplate != nil {
 		in, out := &in.ResolvedPodTemplate, &out.ResolvedPodTemplate
-		*out = new(DebugPodTemplateSpec)
+		*out = new(apiextensionsv1.JSON)
 		(*in).DeepCopyInto(*out)
 	}
 	if in.AuxiliaryResourceStatuses != nil {

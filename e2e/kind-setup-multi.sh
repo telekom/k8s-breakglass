@@ -605,7 +605,7 @@ setup_hub_cluster() {
   
   # Apply CRDs
   log "Applying CRDs..."
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f config/crd/bases/
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply --server-side -f config/crd/bases/
   
   # Install cert-manager to provide Certificate and Issuer CRDs
   log "Installing cert-manager..."
