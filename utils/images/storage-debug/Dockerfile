@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-FROM golang:1.27@sha256:c5b07c17f54c5f22230c4b4da6e90249165cf55368e01a52808cb92064e18836 AS kubestr-builder
+FROM golang:1.27@sha256:4013ae0f9e7994f8535c58c811f8f863fbed38b72e0d51e6592156f758d66146 AS kubestr-builder
 
 ARG TARGETARCH
 ARG KUBESTR_VERSION=v0.4.49
@@ -10,7 +10,14 @@ ARG KUBESTR_COMMIT=01940ed37be9a0c7a70d80cd26c648eaa11e5174
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} GOPROXY=https://proxy.golang.org
 RUN git clone --depth=1 --branch "${KUBESTR_VERSION}" https://github.com/kastenhq/kubestr.git /src/kubestr \
     && test "$(git -C /src/kubestr rev-parse HEAD)" = "${KUBESTR_COMMIT}" \
-    && go -C /src/kubestr build -trimpath -ldflags='-s -w' -o /out/kubestr . \
+    && go -C /src/kubestr get \
+        github.com/moby/spdystream@v0.5.1 \
+        golang.org/x/crypto@v0.53.0 \
+        golang.org/x/net@v0.56.0 \
+        golang.org/x/oauth2@v0.27.0 \
+        golang.org/x/text@v0.39.0 \
+    && go -C /src/kubestr mod tidy \
+    && go -C /src/kubestr build -mod=mod -trimpath -ldflags='-s -w' -o /out/kubestr . \
     && test -x /out/kubestr
 
 FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
@@ -35,11 +42,14 @@ LABEL org.opencontainers.image.title="Storage diagnostics utilities" \
       io.telekom.breakglass.intent="storage-diagnostics" \
       io.telekom.breakglass.image.role="debug-storage"
 
-# fio and ioping are deliberately version-pinned. Alpine's busybox provides the
-# small POSIX utilities used by the scripts, so no floating package is pulled in.
+# Install only the exact fio and ioping versions required by the utility
+# contract. Do not upgrade the inherited package set: the base digest and
+# exact package selections must remain reproducible as one Alpine release.
 RUN apk add --no-cache \
       "fio=${FIO_VERSION}" \
       "ioping=${IOPING_VERSION}" \
+      "libcrypto3=3.5.8-r0" \
+      "libssl3=3.5.8-r0" \
     && addgroup -S -g 65532 debug \
     && adduser -S -D -H -u 65532 -G debug debug \
     && install -d -o debug -g debug /scratch /reports /usr/share/storage-debug \

@@ -4,7 +4,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Integration proof for the node-maintenance image. Every container uses a
-# disposable Docker network namespace (--network none) and named volume. The
+# disposable Docker network namespace (--network none) and an anonymous volume
+# owned by a dedicated container. The
 # runner's network namespaces are never joined or changed.
 set -eu
 
@@ -18,9 +19,14 @@ prefix="node-maintenance-it-$$"
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/node-maintenance-integration.XXXXXX")
 built_image=0
 image_owned=0
+image_owned_id=
 container_name=
 volume_name=
+volume_owner_name=
+volume_owner_id=
 holder_name=
+container_id=
+holder_id=
 
 fail() {
 	printf 'FAIL: %s\n' "$*" >&2
@@ -35,28 +41,28 @@ cleanup() {
 	exit_code=$?
 	cleanup_failed=0
 	if [ -n "${holder_name:-}" ]; then
-		"$docker_bin" rm -f "$holder_name" >/dev/null 2>&1 || true
-		if "$docker_bin" container inspect "$holder_name" >/dev/null 2>&1; then
+		if [ -n "${holder_id:-}" ]; then docker_remove_resource_id "$docker_bin" container "$holder_id" >/dev/null 2>&1 || true; fi
+		if [ -n "${holder_id:-}" ] && "$docker_bin" inspect "$holder_id" >/dev/null 2>&1; then
 			printf 'FAIL: disposable holder container %s survived cleanup\n' "$holder_name" >&2
 			cleanup_failed=1
 		fi
 	fi
 	if [ -n "${container_name:-}" ]; then
-		"$docker_bin" rm -f "$container_name" >/dev/null 2>&1 || true
-		if "$docker_bin" container inspect "$container_name" >/dev/null 2>&1; then
+		if [ -n "${container_id:-}" ]; then docker_remove_resource_id "$docker_bin" container "$container_id" >/dev/null 2>&1 || true; fi
+		if [ -n "${container_id:-}" ] && "$docker_bin" inspect "$container_id" >/dev/null 2>&1; then
 			printf 'FAIL: disposable container %s survived cleanup\n' "$container_name" >&2
 			cleanup_failed=1
 		fi
 	fi
-	if [ -n "${volume_name:-}" ]; then
-		"$docker_bin" volume rm "$volume_name" >/dev/null 2>&1 || true
-		if "$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1; then
+	if [ -n "${volume_owner_id:-}" ]; then
+		docker_remove_resource_with_volumes "$docker_bin" container "$volume_owner_id" >/dev/null 2>&1 || true
+		if ! remove_captured_volume; then
 			printf 'FAIL: disposable volume %s survived cleanup\n' "$volume_name" >&2
 			cleanup_failed=1
 		fi
 	fi
 	if [ "$built_image" -eq 1 ] && [ "$image_owned" -eq 1 ] && [ "$keep_image" != 1 ]; then
-		"$docker_bin" image rm "$image" >/dev/null 2>&1 || true
+		docker_remove_image_if_id "$docker_bin" "$image" "$image_owned_id" >/dev/null 2>&1 || true
 	fi
 	rm -rf "$tmp_dir"
 	if [ "$cleanup_failed" -ne 0 ] && [ "$exit_code" -eq 0 ]; then
@@ -65,6 +71,25 @@ cleanup() {
 	exit "$exit_code"
 }
 trap cleanup EXIT
+
+remove_captured_volume() {
+	attempt=0
+	while [ "$attempt" -lt 10 ]; do
+		"$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1 || return 0
+		for attached_id in $("$docker_bin" ps -aq --filter "volume=$volume_name"); do
+			docker_remove_resource_with_volumes "$docker_bin" container "$attached_id" >/dev/null 2>&1 || true
+		done
+		"$docker_bin" volume rm "$volume_name" >/dev/null 2>&1 || true
+		attempt=$((attempt + 1))
+		sleep 1
+	done
+	! "$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1
+}
+
+# shellcheck disable=SC1091
+. "$root_dir/../../hack/docker-image-ownership.sh"
+# shellcheck disable=SC1091
+. "$root_dir/../../hack/docker-resource-ownership.sh"
 
 require_command() {
 	command -v "$1" >/dev/null 2>&1 || fail "required command '$1' is not installed"
@@ -94,6 +119,7 @@ if [ "$build_image" = 1 ]; then
 	printf 'Building integration image %s\n' "$image"
 	"$docker_bin" build --pull=false -t "$image" "$root_dir" || fail "image build failed; integration cannot be skipped"
 	built_image=1
+	image_owned_id=$("$docker_bin" image inspect --format '{{.Id}}' "$image") || fail "could not capture built image ID"
 else
 	"$docker_bin" image inspect "$image" >/dev/null 2>&1 || fail "requested image '$image' is unavailable"
 fi
@@ -178,9 +204,22 @@ new_fixture() {
 	label=$1
 	container_name="${prefix}-${label}"
 	volume_name="${prefix}-volume-${label}"
+	volume_owner_name="${prefix}-volume-owner-${label}"
+	container_id=
+	holder_id=
+	volume_owner_id=
 	fixture_dir="$tmp_dir/$label"
 	mkdir -p "$fixture_dir"
-	"$docker_bin" volume create "$volume_name" >/dev/null || fail "could not create disposable volume '$volume_name'"
+	"$docker_bin" run -d --name "$volume_owner_name" --user 0 --network none --read-only --cap-drop ALL \
+		--security-opt no-new-privileges --security-opt seccomp=builtin \
+		--mount type=volume,destination=/evidence --entrypoint /bin/sh "$image" \
+		-c 'while :; do sleep 60; done' >/dev/null || fail "could not create disposable volume owner '$volume_owner_name'"
+	volume_owner_id=$(docker_capture_resource_id "$docker_bin" container "$volume_owner_name") || {
+		"$docker_bin" rm -fv "$volume_owner_name" >/dev/null 2>&1 || true
+		fail "could not capture volume owner ID for '$volume_owner_name'"
+	}
+	volume_name=$("$docker_bin" inspect --format '{{range .Mounts}}{{if eq .Destination "/evidence"}}{{.Name}}{{end}}{{end}}' "$volume_owner_id") || fail "could not resolve anonymous volume for '$volume_owner_name'"
+	[ -n "$volume_name" ] || fail "volume owner '$volume_owner_name' did not expose an anonymous volume"
 	case "$label" in
 		stale-temporary-recovery)
 			# A constrained production container has no CHOWN capability. Seed the
@@ -207,20 +246,24 @@ new_fixture() {
 
 destroy_fixture() {
 	if [ -n "${holder_name:-}" ]; then
-		"$docker_bin" rm -f "$holder_name" >/dev/null 2>&1 || true
-		if "$docker_bin" container inspect "$holder_name" >/dev/null 2>&1; then
+		if [ -n "${holder_id:-}" ]; then docker_remove_resource_id "$docker_bin" container "$holder_id" >/dev/null 2>&1 || true; fi
+		if [ -n "${holder_id:-}" ] && "$docker_bin" inspect "$holder_id" >/dev/null 2>&1; then
 			fail "disposable holder container '$holder_name' survived cleanup"
 		fi
 	fi
-	"$docker_bin" rm -f "$container_name" >/dev/null 2>&1 || true
-	if "$docker_bin" container inspect "$container_name" >/dev/null 2>&1; then
+	if [ -n "${container_id:-}" ]; then docker_remove_resource_id "$docker_bin" container "$container_id" >/dev/null 2>&1 || true; fi
+	if [ -n "${container_id:-}" ] && "$docker_bin" inspect "$container_id" >/dev/null 2>&1; then
 		fail "disposable container '$container_name' survived cleanup"
 	fi
-	"$docker_bin" volume rm "$volume_name" >/dev/null 2>&1 || fail "cleanup failed for volume '$volume_name'"
-	"$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1 && fail "disposable volume '$volume_name' survived cleanup"
+	docker_remove_resource_with_volumes "$docker_bin" container "$volume_owner_id" >/dev/null || fail "cleanup failed for volume '$volume_name'"
+	remove_captured_volume || fail "cleanup failed for volume '$volume_name'"
 	container_name=
+	container_id=
 	volume_name=
+	volume_owner_name=
+	volume_owner_id=
 	holder_name=
+	holder_id=
 }
 
 approved_network_request() {
@@ -295,6 +338,9 @@ run_command() {
 assert_container_security() {
 	name=$1
 	expected_capability=$2
+	if [ -z "${container_id:-}" ] && [ "$name" = "${container_name:-}" ]; then
+		container_id=$(docker_capture_resource_id "$docker_bin" container "$name") || fail "could not capture immutable ID for '$name'"
+	fi
 	network_mode=$("$docker_bin" inspect --format '{{.HostConfig.NetworkMode}}' "$name") || fail "could not inspect container '$name'"
 	readonly_root=$("$docker_bin" inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$name") || fail "could not inspect read-only root for '$name'"
 	user=$("$docker_bin" inspect --format '{{.Config.User}}' "$name") || fail "could not inspect user for '$name'"
@@ -771,8 +817,9 @@ if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
 else
 	fail 'injected capture setup failure leaked a temporary candidate'
 fi
-"$docker_bin" rm "$container_name" >/dev/null || fail 'could not remove setup-failure fixture container'
+docker_remove_resource_id "$docker_bin" container "$container_id" >/dev/null || fail 'could not remove setup-failure fixture container'
 container_name=
+container_id=
 set +e
 # shellcheck disable=SC2016
 "$docker_bin" run \
@@ -811,8 +858,9 @@ if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
 else
 	fail 'injected capture trailer failure leaked a temporary candidate'
 fi
-"$docker_bin" rm "$container_name" >/dev/null || fail 'could not remove trailer-failure fixture container'
+docker_remove_resource_id "$docker_bin" container "$container_id" >/dev/null || fail 'could not remove trailer-failure fixture container'
 container_name=
+container_id=
 set +e
 # shellcheck disable=SC2016
 "$docker_bin" run \
@@ -1181,6 +1229,7 @@ holder_digest=$(printf '%s' "$holder_tuple" | sha256sum | awk '{print $1}')
 	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" \
 	-c '. /usr/local/libexec/node-maintenance/common.sh; mkdir -m 0700 /evidence/holder; EVIDENCE_DIR=/evidence/holder; operation_id=$BREAKGLASS_OPERATION_ID; recording_id=$BREAKGLASS_RECORDING_ID; approval_id=$BREAKGLASS_APPROVAL_ID; acquire_operation_lock /evidence/holder "$BREAKGLASS_TUPLE_DIGEST"; : >/evidence/holder-ready; while :; do sleep 60; done' \
 	>/dev/null || fail 'could not start flock holder'
+holder_id=$(docker_capture_resource_id "$docker_bin" container "$holder_name") || fail 'could not capture flock holder ID'
 holder_ready=false
 attempt=0
 while [ "$attempt" -lt 20 ]; do
@@ -1217,11 +1266,13 @@ set -e
 grep -q 'another node-maintenance operation is active' "$fixture_dir/output" \
 	|| fail 'aged active holder produced no concurrency denial'
 assert_container_security "$container_name" none
-"$docker_bin" rm "$container_name" >/dev/null || fail 'could not remove denied lock competitor'
-"$docker_bin" kill --signal KILL "$holder_name" >/dev/null || fail 'could not SIGKILL flock holder'
-"$docker_bin" wait "$holder_name" >/dev/null 2>&1 || true
-"$docker_bin" rm "$holder_name" >/dev/null || fail 'could not remove killed flock holder'
+	docker_remove_resource_id "$docker_bin" container "$container_id" >/dev/null || fail 'could not remove denied lock competitor'
+	container_id=
+	"$docker_bin" kill --signal KILL "$holder_id" >/dev/null || fail 'could not SIGKILL flock holder'
+	"$docker_bin" wait "$holder_id" >/dev/null 2>&1 || true
+	docker_remove_resource_id "$docker_bin" container "$holder_id" >/dev/null || fail 'could not remove killed flock holder'
 holder_name=
+holder_id=
 # A pre-volume-root image used one lock per child. A live legacy descriptor must
 # block the new helper after it acquires the volume-root lock, while its
 # legacy temporary names remain untouched for operator-led migration.
@@ -1232,6 +1283,7 @@ holder_name="$legacy_holder_name"
 	--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" \
 	-c 'mkdir -m 0700 /evidence/legacy; exec 8>>/evidence/legacy/.node-maintenance-operation.lock; flock -n 8 || exit 71; printf legacy >/evidence/legacy/.capture-status.legacy; printf legacy >/evidence/legacy-ready; while :; do sleep 60; done' \
 	>/dev/null || fail 'could not start legacy flock holder'
+holder_id=$(docker_capture_resource_id "$docker_bin" container "$holder_name") || fail 'could not capture legacy flock holder ID'
 legacy_ready=false
 attempt=0
 while [ "$attempt" -lt 20 ]; do
@@ -1266,11 +1318,12 @@ if ! "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
 	fail 'legacy writer artifact was altered while the mixed-version competitor was denied'
 fi
 assert_container_security "$container_name" none
-"$docker_bin" rm "$container_name" >/dev/null || fail 'could not remove legacy lock competitor'
-"$docker_bin" kill --signal KILL "$legacy_holder_name" >/dev/null || fail 'could not SIGKILL legacy flock holder'
-"$docker_bin" wait "$legacy_holder_name" >/dev/null 2>&1 || true
-"$docker_bin" rm "$legacy_holder_name" >/dev/null || fail 'could not remove legacy flock holder'
+	docker_remove_resource_id "$docker_bin" container "$container_id" >/dev/null || fail 'could not remove legacy lock competitor'
+	"$docker_bin" kill --signal KILL "$holder_id" >/dev/null || fail 'could not SIGKILL legacy flock holder'
+	"$docker_bin" wait "$holder_id" >/dev/null 2>&1 || true
+	docker_remove_resource_id "$docker_bin" container "$holder_id" >/dev/null || fail 'could not remove legacy flock holder'
 holder_name=
+holder_id=
 set +e
 "$docker_bin" run --name "$container_name" --user 0 \
 	--env BREAKGLASS_NODE_NAME=node-a \

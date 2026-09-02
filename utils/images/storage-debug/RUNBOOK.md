@@ -5,6 +5,12 @@ SPDX-License-Identifier: CC-BY-4.0
 
 # Storage-diagnostics runbook
 
+The digest-pinned Alpine base and exact `fio`/`ioping` versions are fixed
+inputs. This Dockerfile does not run `apk upgrade` or add a separate
+repository, so weekly rolling rebuilds do not silently refresh the inherited
+package layer. Update the reviewed base digest or package pins when security
+fixes are needed, then scan the exact built digest before publication.
+
 ## Choose the least-powerful operation
 
 | Symptom | Start with | Escalate when |

@@ -8,12 +8,15 @@ on:
   pull_request:
     paths:
       - "utils/images/diagnostic-artifact-collector/**"
+      - "hack/docker-image-ownership.sh"
+      - "hack/docker-resource-ownership.sh"
+      - "hack/kind-ownership.sh"
       - ".github/workflows/diagnostic-artifact-collector-image.yml"
   push:
-    branches: [main, deployment-testing]
-    paths:
-      - "utils/images/diagnostic-artifact-collector/**"
-      - ".github/workflows/diagnostic-artifact-collector-image.yml"
+    # Run on every main commit so release tags always have an exact, fresh
+    # behavior result for this utility in the release gate. Pull requests
+    # remain path-filtered below to avoid unrelated PR work.
+    branches: [main]
 
 permissions:
   contents: read
@@ -50,3 +53,9 @@ jobs:
           kind version
       - name: Prove non-root emptyDir fsGroup hand-off
         run: make -C utils/images/diagnostic-artifact-collector kind-test
+      - name: Prove pre-existing Kind resources are preserved
+        run: make -C utils/images/diagnostic-artifact-collector kind-collision-test
+      - name: Verify collision fixture image is digest pinned
+        run: make -C utils/images/diagnostic-artifact-collector kind-collision-contract-test
+      - name: Prove Kind fixture lifecycle and image-reference contract
+        run: make -C utils/images/diagnostic-artifact-collector kind-contract-test

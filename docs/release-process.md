@@ -59,6 +59,81 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 > release builds to ensure clean, reproducible images without layer reuse from prior
 > development iterations.
 
+## Utility image releases
+
+Standalone utility images are built by the separate `Utility image release`
+workflow. Its explicit `hack/utility-image-matrix.json` inventory selects
+publishable images, so nested test fixtures are excluded and images may use
+either colocated or shared Makefiles. Add each new utility's name, context, and
+Dockerfile to that inventory. The workflow builds each image independently for
+`linux/amd64` and `linux/arm64`, and publishes it at
+`ghcr.io/telekom/k8s-breakglass/utils/<intent>`.
+
+Every declared image and platform is built on pull requests and `main`, then
+run with its inventory-declared reference smoke command. The release gate also
+requires the explicit core checks in `hack/release-required-checks.json` and
+each image's uniquely named dedicated behavior checks. A new network, collector,
+or other utility becomes publishable only after its inventory entry, smoke
+contract, and dedicated checks have reached `main` successfully.
+Its dedicated workflow must retain an unfiltered `push` trigger for `main` so
+that the exact release commit always has those required check results.
+The separate `Utility image security` workflow rebuilds every declared image
+for both supported platforms and scans the exact local image produced by that
+build with Trivy. It fails on fixed or actionable `HIGH` and `CRITICAL` OS or
+library vulnerabilities (`ignore-unfixed=true`); it is intentionally separate
+from the controller-image scan in `security.yml` and is included in the release
+required-check inventory.
+
+On a controller release tag, every utility is published under a unique
+`dev-<commit>-<run>-<attempt>` tag; the release version itself is deliberately
+not assigned as a mutable registry tag. The weekly scheduled rebuild publishes
+only the mutable `nightly` tag. Release artifacts are addressed by their
+immutable digest, and their source must be on `main` with successful CI. The
+workflow first publishes an untagged, digest-addressed staging image, resolves
+its exact two platform subjects, generates and validates complete SPDX SBOMs,
+publishes GitHub-native provenance, and signs/attests the index and platform
+digests. `hack/publish-utility-tag.sh` then performs the full signature, SBOM,
+provenance, platform, and reference-pull verification against those digests;
+only a successful verification can reach the unique dev-tag assignment. The
+tag binding is checked again after the write. Consumers should pin the digest,
+and may retain the unique tag for discovery,
+for example:
+
+```yaml
+image: ghcr.io/telekom/k8s-breakglass/utils/workload-debug:dev-<commit>-<run>-<attempt>@sha256:<manifest-digest>
+```
+
+This unique-tag-plus-digest form lets tooling discover the build while the
+digest remains the immutable pull reference. A partial matrix rerun accepts
+an existing unique tag only when its index and platform signatures, SBOMs,
+provenance, source SHA/ref, and reference pulls all verify against this exact
+workflow; a missing or competing claim fails closed rather than overwriting it.
+
+Before a release is approved, maintainers may manually dispatch the workflow
+from the `main` branch with `publish_rolling=true`. This publishes every
+declared utility to the mutable `rolling` tag for integration testing. The
+rolling channel is intentionally overwriteable and is never a release input;
+consumers must use a signed digest and must not treat `rolling` as an immutable
+deployment reference. A dispatch from another branch, or without the explicit
+input, is rejected. The weekly `nightly` channel has the same mutable-tag
+semantics.
+
+The OCI Distribution API does not define an atomic create-only manifest PUT for
+tags, and GHCR does not provide one for this workflow. The release path
+therefore never assigns stable version tags: it uses a unique commit/run/attempt
+tag only as a discovery handle and consumes the attested digest. `nightly` and
+`rolling` remain intentionally mutable and use the overwrite-capable path with
+post-write verification.
+
+Release-matrix integration harnesses use the same ownership boundary. A Kind
+cluster is removable only through the exact Docker node IDs captured after a
+successful create; failed creates and same-name node replacement are leaked
+for inspection. Kubernetes Pod, PVC, PV, namespace, and fixture cleanup uses
+the API server's UID precondition on DELETE, so a replacement between
+observation and cleanup is preserved. Locally built images are intentionally
+left for the runner's managed cleanup; the harness does not race a mutable image
+tag during teardown.
+
 ## Release Checklist
 
 - Verify CI success on the release commit.

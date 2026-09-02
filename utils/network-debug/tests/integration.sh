@@ -41,6 +41,13 @@ WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/network-debug-proof.XXXXXX")
 KUBECONFIG_FILE=${WORK_DIR}/kubeconfig
 KIND_CLUSTER_CREATED=false
 NETWORK_NAMESPACE_CREATED=false
+NETWORK_NAMESPACE_UID=
+NETWORK_HOST_POD_UID=
+NETWORK_ID=
+CONTAINER_ID=
+PWRU_CONTAINER_ID=
+TRACE_TRAFFIC_CONTAINER_ID=
+TRACE_FIXTURE_CONTAINER_ID=
 NETWORK_CREATED=false
 CONTAINER_CREATED=false
 PWRU_CONTAINER_CREATED=false
@@ -53,11 +60,16 @@ PWRU_OWNER_LABEL=$DOCKER_OWNER_LABEL
 PWRU_OWNER_VALUE=$RUN_ID
 # shellcheck disable=SC2034 # consumed by the sourced pwru lifecycle helper
 PWRU_USE_DOCKER_TIMEOUT=true
+export DOCKER_RESOURCE_TIMEOUT_SECONDS=$DOCKER_TIMEOUT
 
 # shellcheck disable=SC1091
 . "$(dirname -- "$0")/kind-ownership.sh"
 # shellcheck disable=SC1091
 . "$(dirname -- "$0")/pwru-lifecycle.sh"
+# shellcheck disable=SC1091
+. "$(dirname -- "$0")/../../../hack/kubernetes-delete-uid.sh"
+# shellcheck disable=SC1091
+. "$(dirname -- "$0")/../../../hack/docker-resource-ownership.sh"
 # shellcheck disable=SC1091
 . "$(dirname -- "$0")/docker-preflight.sh"
 
@@ -82,11 +94,12 @@ cleanup() {
 	cleanup_failed=false
 	if [ "$KIND_CLUSTER_CREATED" = true ]; then
 		if [ "$NETWORK_NAMESPACE_CREATED" = true ] && command -v kubectl >/dev/null 2>&1; then
-			if ! kubectl --kubeconfig "$KUBECONFIG_FILE" delete namespace "$NETWORK_NAMESPACE" --ignore-not-found --wait=true --timeout=60s >/dev/null 2>&1; then
-				cleanup_failed=true
-			fi
-			if kubectl --kubeconfig "$KUBECONFIG_FILE" get namespace "$NETWORK_NAMESPACE" >/dev/null 2>&1; then
-				cleanup_failed=true
+			if [ -n "$NETWORK_NAMESPACE_UID" ]; then
+				kubernetes_delete_uid "$KUBECONFIG_FILE" \
+					"/api/v1/namespaces/$NETWORK_NAMESPACE" "$NETWORK_NAMESPACE_UID" >/dev/null 2>&1 || cleanup_failed=true
+				kubectl --kubeconfig "$KUBECONFIG_FILE" wait --for=delete \
+					namespace/"$NETWORK_NAMESPACE" --timeout=60s >/dev/null 2>&1 || cleanup_failed=true
+				if kubectl --kubeconfig "$KUBECONFIG_FILE" get namespace "$NETWORK_NAMESPACE" >/dev/null 2>&1; then cleanup_failed=true; fi
 			fi
 		fi
 	fi
@@ -94,48 +107,29 @@ cleanup() {
 			cleanup_failed=true
 	fi
 	for docker_container in "$PWRU_CONTAINER" "$TRACE_TRAFFIC_CONTAINER" "$TRACE_FIXTURE_CONTAINER" "$CONTAINER"; do
-		container_owned=false
-		if [ "$docker_container" = "$PWRU_CONTAINER" ] && [ "$PWRU_CONTAINER_CREATED" = true ]; then
-			container_owned=true
-		elif [ "$docker_container" = "$TRACE_TRAFFIC_CONTAINER" ] && [ "$TRACE_TRAFFIC_CONTAINER_CREATED" = true ]; then
-			container_owned=true
-		elif [ "$docker_container" = "$TRACE_FIXTURE_CONTAINER" ] && [ "$TRACE_FIXTURE_CONTAINER_CREATED" = true ]; then
-			container_owned=true
-		elif [ "$docker_container" = "$CONTAINER" ] && [ "$CONTAINER_CREATED" = true ]; then
-			container_owned=true
-		fi
-		if [ "$container_owned" = true ]; then
-			if [ "$docker_container" = "$PWRU_CONTAINER" ]; then
-				if ! pwru_force_remove "$docker_container"; then
-					cleanup_failed=true
-				fi
-			elif docker_resource_present container "$docker_container"; then
-				if ! docker_call rm -f "$docker_container" >/dev/null 2>&1; then
-					cleanup_failed=true
-				fi
-				if docker_resource_present container "$docker_container"; then
-					cleanup_failed=true
-				else
-					resource_status=$?
-					[ "$resource_status" -eq 1 ] || cleanup_failed=true
-				fi
-			else
-				resource_status=$?
-				[ "$resource_status" -eq 1 ] || cleanup_failed=true
-			fi
+		container_id=
+		case "$docker_container" in
+		"$PWRU_CONTAINER") [ "$PWRU_CONTAINER_CREATED" = true ] && container_id=$PWRU_CONTAINER_ID ;;
+		"$TRACE_TRAFFIC_CONTAINER") [ "$TRACE_TRAFFIC_CONTAINER_CREATED" = true ] && container_id=$TRACE_TRAFFIC_CONTAINER_ID ;;
+		"$TRACE_FIXTURE_CONTAINER") [ "$TRACE_FIXTURE_CONTAINER_CREATED" = true ] && container_id=$TRACE_FIXTURE_CONTAINER_ID ;;
+		"$CONTAINER") [ "$CONTAINER_CREATED" = true ] && container_id=$CONTAINER_ID ;;
+		esac
+		[ -n "$container_id" ] || continue
+		if [ "$docker_container" = "$PWRU_CONTAINER" ]; then
+			PWRU_CONTAINER_ID=$container_id
+			pwru_force_remove "$docker_container" || cleanup_failed=true
+		elif docker_resource_id_exists "$DOCKER_BIN" container "$container_id"; then
+			docker_remove_resource_id "$DOCKER_BIN" container "$container_id" >/dev/null 2>&1 || cleanup_failed=true
+			docker_resource_id_exists "$DOCKER_BIN" container "$container_id" && cleanup_failed=true
+		else
+			resource_status=$?
+			[ "$resource_status" -eq 1 ] || cleanup_failed=true
 		fi
 	done
 	if [ "$NETWORK_CREATED" = true ]; then
-		if docker_resource_present network "$NETWORK"; then
-			if ! docker_call network rm "$NETWORK" >/dev/null 2>&1; then
-				cleanup_failed=true
-			fi
-			if docker_resource_present network "$NETWORK"; then
-				cleanup_failed=true
-			else
-				resource_status=$?
-				[ "$resource_status" -eq 1 ] || cleanup_failed=true
-			fi
+		if docker_resource_id_exists "$DOCKER_BIN" network "$NETWORK_ID"; then
+			docker_remove_resource_id "$DOCKER_BIN" network "$NETWORK_ID" >/dev/null 2>&1 || cleanup_failed=true
+			docker_resource_id_exists "$DOCKER_BIN" network "$NETWORK_ID" && cleanup_failed=true
 		else
 			resource_status=$?
 			[ "$resource_status" -eq 1 ] || cleanup_failed=true
@@ -213,7 +207,7 @@ if [ "$create_status" -ne 0 ]; then
 	case "$create_status" in
 		2) requirement "refusing to reuse an existing kind cluster named $KIND_CLUSTER_NAME" ;;
 		3) requirement "could not inspect existing kind clusters before creating the disposable cluster" ;;
-		4) requirement "could not clean up a partial disposable kind cluster" ;;
+		4) requirement "could not prove ownership of the disposable kind cluster" ;;
 		*) requirement "could not create the disposable kind cluster" ;;
 	esac
 fi
@@ -226,6 +220,8 @@ kubectl wait --for=condition=Ready nodes --all --timeout=180s >/dev/null || requ
 # the catalogue deploys, rather than a Docker analogue of a pod namespace.
 kubectl create namespace "$NETWORK_NAMESPACE" >/dev/null || requirement "could not create disposable network diagnostics namespace"
 NETWORK_NAMESPACE_CREATED=true
+NETWORK_NAMESPACE_UID=$(kubectl get namespace "$NETWORK_NAMESPACE" -o jsonpath='{.metadata.uid}') || requirement "could not capture disposable namespace UID"
+[ -n "$NETWORK_NAMESPACE_UID" ] || requirement "disposable namespace UID was empty"
 
 # Refuse collisions before claiming ownership. A daemon-reachable absent
 # result is the only safe state in which to proceed. Status 3 means a resource
@@ -234,12 +230,12 @@ NETWORK_NAMESPACE_CREATED=true
 docker_require_resource_absent network "$NETWORK" \
 	"refusing to reuse an existing network named $NETWORK" \
 	"could not inspect the Docker network before creating it"
-NETWORK_CREATED=true
 docker_call network create --label "$DOCKER_OWNER_LABEL=$RUN_ID" "$NETWORK" >/dev/null || requirement "Docker could not create an ephemeral network"
+NETWORK_ID=$(docker_capture_resource_id "$DOCKER_BIN" network "$NETWORK") || requirement "could not capture owned Docker network ID"
+NETWORK_CREATED=true
 docker_require_resource_absent container "$CONTAINER" \
 	"refusing to reuse an existing fixture container named $CONTAINER" \
 	"could not inspect the fixture container before creating it"
-CONTAINER_CREATED=true
 docker_call run --detach --name "$CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" --network "$NETWORK" \
 	--cap-drop ALL --security-opt no-new-privileges=true \
 	--cap-add NET_RAW \
@@ -257,6 +253,8 @@ docker_call run --detach --name "$CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_I
 			printf "HTTP/1.1 200 OK\\r\\nContent-Length: 22\\r\\nConnection: close\\r\\n\\r\\nnetwork-debug-fixture\\n" | nc -l -p 18080 -s 0.0.0.0
 		done
 	' >/dev/null || requirement "could not start the disposable network fixture"
+CONTAINER_ID=$(docker_capture_resource_id "$DOCKER_BIN" container "$CONTAINER") || requirement "could not capture owned Docker fixture ID"
+CONTAINER_CREATED=true
 
 exec_in() {
 	timeout --foreground "${EXEC_TIMEOUT}s" docker exec "$CONTAINER" "$@"
@@ -407,6 +405,8 @@ fi
 host_network=$(kubectl get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" \
 	-o jsonpath='{.spec.hostNetwork}')
 [ "$host_network" = true ] || requirement "host-network capture pod was not assigned the host network"
+NETWORK_HOST_POD_UID=$(kubectl get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" -o jsonpath='{.metadata.uid}') || requirement "could not capture host-network Pod UID"
+[ -n "$NETWORK_HOST_POD_UID" ] || requirement "host-network Pod UID was empty"
 kubectl get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" -o json | jq -e '
 		.spec.automountServiceAccountToken == false and
 		(.spec.containers | length == 1) and
@@ -486,9 +486,16 @@ capture_pod_traffic() {
 
 capture_pod_traffic "$NETWORK_HOST_POD_NAME" host-network "$WORK_DIR/host-network-tcpdump.log"
 
-kubectl delete pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" --wait=true --timeout=60s >/dev/null || \
+if [ -z "$NETWORK_HOST_POD_UID" ]; then
+	requirement "network diagnostics Pod UID was not captured for cleanup"
+fi
+kubernetes_delete_uid "$KUBECONFIG_FILE" \
+	"/api/v1/namespaces/$NETWORK_NAMESPACE/pods/$NETWORK_HOST_POD_NAME" "$NETWORK_HOST_POD_UID" >/dev/null || \
 	requirement "network diagnostics pod cleanup failed"
-if kubectl get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" >/dev/null 2>&1; then
+kubectl --kubeconfig "$KUBECONFIG_FILE" wait --for=delete \
+	pod/"$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" --timeout=60s >/dev/null || \
+	requirement "network diagnostics pod deletion did not complete"
+if kubectl --kubeconfig "$KUBECONFIG_FILE" get pod "$NETWORK_HOST_POD_NAME" --namespace "$NETWORK_NAMESPACE" >/dev/null 2>&1; then
 	requirement "network diagnostics pod survived cleanup"
 fi
 
@@ -535,13 +542,14 @@ if [ "$PWRU_READY" = true ]; then
 		"$IMAGE" nc -z -w 1 127.0.0.1 18080 >/dev/null 2>&1; then
 		requirement "refusing to reuse an occupied host trace fixture port"
 	fi
-	TRACE_FIXTURE_CONTAINER_CREATED=true
 	docker_call run --detach --name "$TRACE_FIXTURE_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" \
 		--network host --cap-drop ALL --security-opt no-new-privileges=true "$IMAGE" sh -ec '
 			while :; do
 				printf "HTTP/1.1 200 OK\\r\\nContent-Length: 19\\r\\nConnection: close\\r\\n\\r\\nhost-trace-fixture\\n" | nc -l -p 18080 -s 127.0.0.1
 			done
 		' >/dev/null 2>&1 || requirement "could not start owned host trace fixture"
+	TRACE_FIXTURE_CONTAINER_ID=$(docker_capture_resource_id "$DOCKER_BIN" container "$TRACE_FIXTURE_CONTAINER") || requirement "could not capture owned host trace fixture ID"
+	TRACE_FIXTURE_CONTAINER_CREATED=true
 	for _ in $(seq 1 40); do
 		if docker_call run --rm --network host --cap-drop ALL --security-opt no-new-privileges=true \
 			"$IMAGE" nc -z -w 1 127.0.0.1 18080 >/dev/null 2>&1; then
@@ -557,10 +565,6 @@ if [ "$PWRU_READY" = true ]; then
 		requirement "refusing to reuse an existing pwru proof container named $PWRU_CONTAINER"
 	fi
 	docker_call info >/dev/null 2>&1 || requirement "could not inspect pwru container because the Docker daemon is unavailable"
-	# Mark ownership before creation. docker can create a container and then
-	# return an error (or be interrupted), and EXIT cleanup must still force
-	# remove that exact run-scoped name and verify it is gone.
-	PWRU_CONTAINER_CREATED=true
 	# Exercise the public bounded operation. This is deliberately not a raw
 	# pwru command: net-debug performs the host-netns check, event/file bounds,
 	# Native event/file bounds, graceful stop, pcap-free summary, and hash publication.
@@ -573,6 +577,8 @@ if [ "$PWRU_READY" = true ]; then
 			--duration "$TRACE_DURATION" --events "$TRACE_EVENTS" --filter 'tcp port 18080' --output trace.log \
 		>"$WORK_DIR/trace-start.log" 2>&1 || trace_start_status=$?
 	[ "$trace_start_status" -eq 0 ] || requirement "could not start public net-debug trace operation"
+	PWRU_CONTAINER_ID=$(docker_capture_resource_id "$DOCKER_BIN" container "$PWRU_CONTAINER") || requirement "could not capture owned pwru container ID"
+	PWRU_CONTAINER_CREATED=true
 	# The public wrapper defers its duration watchdog until pwru has attached
 	# kprobes and created its native readiness marker. Start a small, fixed
 	# number of successful requests only after that handshake, so every observed
@@ -597,12 +603,13 @@ if [ "$PWRU_READY" = true ]; then
 	if docker_call inspect "$TRACE_TRAFFIC_CONTAINER" >/dev/null 2>&1; then
 		requirement "refusing to reuse an existing trace traffic container named $TRACE_TRAFFIC_CONTAINER"
 	fi
-	TRACE_TRAFFIC_CONTAINER_CREATED=true
 	docker_call run --detach --name "$TRACE_TRAFFIC_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" \
 		--network host --cap-drop ALL --security-opt no-new-privileges=true "$IMAGE" sh -ec '
 			curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18080/ >/dev/null
 			curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18080/ >/dev/null
 		' >/dev/null 2>&1 || requirement "could not start owned trace traffic generator"
+	TRACE_TRAFFIC_CONTAINER_ID=$(docker_capture_resource_id "$DOCKER_BIN" container "$TRACE_TRAFFIC_CONTAINER") || requirement "could not capture owned trace traffic ID"
+	TRACE_TRAFFIC_CONTAINER_CREATED=true
 	trace_traffic_state=running
 	for _ in $(seq 1 40); do
 		trace_traffic_state=$(docker_call inspect --format '{{.State.Status}}' "$TRACE_TRAFFIC_CONTAINER" 2>/dev/null || true)
@@ -624,7 +631,7 @@ if [ "$PWRU_READY" = true ]; then
 		docker_call logs "$PWRU_CONTAINER" >&2 || true
 		docker_call top "$PWRU_CONTAINER" >&2 || true
 		if pwru_validate_owner "$PWRU_CONTAINER"; then
-			docker_call kill --signal KILL "$PWRU_CONTAINER" >/dev/null 2>&1 || true
+			docker_call kill --signal KILL "${PWRU_CONTAINER_ID:-$PWRU_CONTAINER}" >/dev/null 2>&1 || true
 		fi
 		requirement "public net-debug trace exceeded its bounded wait"
 	fi
@@ -669,7 +676,7 @@ if [ "$PWRU_READY" = true ]; then
 	fi
 	pwru_force_remove "$PWRU_CONTAINER" 15 || requirement "public trace container cleanup failed"
 	PWRU_CONTAINER_CREATED=false
-	if docker_resource_present container "$PWRU_CONTAINER"; then
+	if docker_resource_id_exists "$DOCKER_BIN" container "$PWRU_CONTAINER_ID"; then
 		requirement "public trace container survived cleanup"
 	else
 		resource_status=$?

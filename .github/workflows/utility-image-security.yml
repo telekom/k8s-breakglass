@@ -1,0 +1,120 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+name: Utility image security
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - "utils/**"
+      - "hack/utility-image-matrix.json"
+      - "hack/utility-release-contract.sh"
+      - "hack/test-utility-matrix-expansion.sh"
+      - "hack/docker-image-ownership.sh"
+      - "hack/docker-resource-ownership.sh"
+      - "hack/kind-ownership.sh"
+      - "hack/kubernetes-delete-uid.sh"
+      - "hack/kubernetes-storage-cleanup.sh"
+      - "hack/test-utility-workflow-paths.sh"
+      - "hack/test-utility-image-security-contract.sh"
+      - "hack/release-required-checks.json"
+      - ".github/workflows/utility-image-security.yml"
+  push:
+    # This intentionally has no path filter. Release tags require this exact
+    # check on the exact main commit, including when only controller code
+    # changed. The dedicated utility behavior workflows use the same policy.
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    name: Discover utility security matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify utility workflow path and scan contracts
+        run: |
+          hack/test-utility-workflow-paths.sh
+          hack/test-utility-image-security-contract.sh
+      - name: Export declared utility matrix
+        id: matrix
+        run: echo "matrix=$(hack/utility-release-contract.sh matrix | jq -c .)" >>"${GITHUB_OUTPUT}"
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+
+  scan:
+    name: Utility image vulnerability (${{ matrix.image.name }} / ${{ matrix.platform }})
+    needs: discover
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.discover.outputs.matrix) }}
+        platform: [linux/amd64, linux/arm64]
+    permissions:
+      contents: read
+    env:
+      IMAGE_REF: utility-security-${{ matrix.image.name }}:${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Build exact platform image for scanning
+        id: build
+        env:
+          CONTEXT: ${{ matrix.image.context }}
+          DOCKERFILE: ${{ matrix.image.file }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -Eeuo pipefail
+          timeout 45m docker buildx build \
+            --platform "${PLATFORM}" \
+            --file "${DOCKERFILE}" \
+            --tag "${IMAGE_REF}" \
+            --load \
+            "${CONTEXT}"
+          image_id="$(docker image inspect --format '{{.Id}}' "${IMAGE_REF}")"
+          [[ "${image_id}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "the built image did not expose an immutable local image ID" >&2
+            exit 1
+          }
+          printf 'image_id=%s\n' "${image_id}" >>"${GITHUB_OUTPUT}"
+          {
+            echo "### Utility image vulnerability scan"
+            echo "- image: \`${IMAGE_REF}\`"
+            echo "- platform: \`${PLATFORM}\`"
+            echo "- exact local image ID: \`${image_id}\`"
+          } >>"${GITHUB_STEP_SUMMARY}"
+      - name: Scan the exact built image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.build.outputs.image_id }}
+          format: table
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Ensure the scanned image was not replaced
+        env:
+          EXPECTED_IMAGE_ID: ${{ steps.build.outputs.image_id }}
+        run: test "$(docker image inspect --format '{{.Id}}' "${IMAGE_REF}")" = "${EXPECTED_IMAGE_ID}"
+
+  result:
+    name: Utility image vulnerability scan
+    if: always()
+    needs: [discover, scan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every declared image and platform scan
+        env:
+          DISCOVER_RESULT: ${{ needs.discover.result }}
+          SCAN_RESULT: ${{ needs.scan.result }}
+        run: |
+          test "${DISCOVER_RESULT}" = success
+          test "${SCAN_RESULT}" = success

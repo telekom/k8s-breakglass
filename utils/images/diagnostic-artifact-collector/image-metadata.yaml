@@ -12,7 +12,7 @@ base:
   digest: sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
 build:
   image: golang:1.27
-  digest: sha256:c5b07c17f54c5f22230c4b4da6e90249165cf55368e01a52808cb92064e18836
+  digest: sha256:4013ae0f9e7994f8535c58c811f8f863fbed38b72e0d51e6592156f758d66146
   purpose: static-stdlib-uploader-and-pinned-ca-bundle
 runtime:
   user: "65532:65532 by default; 0:65532 only for host-mounted crashdump collector"

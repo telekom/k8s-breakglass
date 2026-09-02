@@ -20,7 +20,21 @@ ROLE=${RUN_ID}-role
 CLUSTER_ROLE=${RUN_ID}-cluster-role
 JOB=${RUN_ID}-performance
 KUBECONFIG_FILE=$(mktemp "${TMPDIR:-/tmp}/storage-kubestr-kubeconfig.XXXXXX")
-CLUSTER_CREATED=false
+KIND_BIN=${KIND_BIN:-kind}
+DOCKER_BIN=${DOCKER_BIN:-docker}
+KUBECTL_BIN=${KUBECTL_BIN:-kubectl}
+export KIND_CLUSTER_NAME="$CLUSTER" KIND_NODE_IMAGE="$KIND_NODE_IMAGE" KUBECONFIG_FILE="$KUBECONFIG_FILE"
+export KIND_CLUSTER_CREATED=false KIND_CLUSTER_OWNER_IDS=''
+script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck disable=SC1091
+. "${script_dir}/../../../../hack/kind-ownership.sh"
+# shellcheck disable=SC1091
+. "${script_dir}/../../../../hack/kubernetes-delete-uid.sh"
+# shellcheck disable=SC1091
+. "${script_dir}/../../../../hack/kubernetes-storage-cleanup.sh"
+ATTACHED_PV_UID=
+ATTACHED_PVC_UID=
+ATTACHED_POD_UID=
 
 fail() {
     printf 'storage kubestr Kind proof: %s\n' "$1" >&2
@@ -30,14 +44,14 @@ fail() {
 cleanup() {
     status=$?
     set +e
-    if [ "$CLUSTER_CREATED" = true ]; then
-        docker exec "${CLUSTER}-control-plane" sh -c \
+    if [ "$KIND_CLUSTER_CREATED" = true ]; then
+        "$DOCKER_BIN" exec "${CLUSTER}-control-plane" sh -c \
             "rm -rf -- /var/local/${RUN_ID} /var/local/${RUN_ID}-attached" >/dev/null 2>&1 || status=1
-        kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || status=1
-        if kind get clusters 2>/dev/null | grep -Fx -- "$CLUSTER" >/dev/null; then
-            printf 'storage kubestr Kind proof: owned cluster survived cleanup: %s\n' "$CLUSTER" >&2
-            status=1
-        fi
+        kubernetes_cleanup_uid_chain "$KUBECONFIG_FILE" "$KUBECTL_BIN" \
+            "$NAMESPACE" "$ATTACHED_POD_NAME" "$ATTACHED_POD_UID" \
+            "$ATTACHED_PVC_NAME" "$ATTACHED_PVC_UID" "$ATTACHED_PV_NAME" \
+            "$ATTACHED_PV_UID" || status=1
+        kind_cleanup_owned_cluster || status=1
     fi
     rm -f "$KUBECONFIG_FILE"
     exit "$status"
@@ -45,17 +59,12 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
-for command_name in docker kind kubectl jq timeout; do
+for command_name in "$DOCKER_BIN" "$KIND_BIN" "$KUBECTL_BIN" jq timeout; do
     command -v "$command_name" >/dev/null 2>&1 || fail "$command_name is required"
 done
-docker image inspect "$IMAGE" >/dev/null 2>&1 || fail "local image is unavailable: $IMAGE"
-if kind get clusters 2>/dev/null | grep -Fx -- "$CLUSTER" >/dev/null; then
-    fail "refusing to reuse existing cluster $CLUSTER"
-fi
-
-kind create cluster --name "$CLUSTER" --image "$KIND_NODE_IMAGE" --kubeconfig "$KUBECONFIG_FILE" --wait 180s >/dev/null
-CLUSTER_CREATED=true
-kind load docker-image "$IMAGE" --name "$CLUSTER" >/dev/null
+"$DOCKER_BIN" image inspect "$IMAGE" >/dev/null 2>&1 || fail "local image is unavailable: $IMAGE"
+kind_create_owned_cluster || fail "could not create disposable Kind cluster with provable Docker-node ownership"
+"$KIND_BIN" load docker-image "$IMAGE" --name "$CLUSTER" >/dev/null
 export KUBECONFIG=$KUBECONFIG_FILE
 
 image_with_default_tag="${IMAGE}:latest"
@@ -87,22 +96,22 @@ docker exec "${CLUSTER}-control-plane" ctr --namespace k8s.io images tag "$sourc
 docker exec "${CLUSTER}-control-plane" ctr --namespace k8s.io images inspect "$loaded_ref" >/dev/null || \
     fail "immutable local containerd reference was not created"
 
-kubectl create namespace "$NAMESPACE" >/dev/null
-kubectl label namespace "$NAMESPACE" \
+"$KUBECTL_BIN" create namespace "$NAMESPACE" >/dev/null
+"$KUBECTL_BIN" label namespace "$NAMESPACE" \
     pod-security.kubernetes.io/enforce=baseline \
     pod-security.kubernetes.io/audit=restricted \
     pod-security.kubernetes.io/warn=restricted >/dev/null
-kubectl create namespace "$SENTINEL_NAMESPACE" >/dev/null
-kubectl create configmap outside-sentinel --namespace "$SENTINEL_NAMESPACE" --from-literal=value=preserve >/dev/null
+"$KUBECTL_BIN" create namespace "$SENTINEL_NAMESPACE" >/dev/null
+"$KUBECTL_BIN" create configmap outside-sentinel --namespace "$SENTINEL_NAMESPACE" --from-literal=value=preserve >/dev/null
 
 for _ in $(seq 1 30); do
-    kubectl get serviceaccount default --namespace "$NAMESPACE" >/dev/null 2>&1 && break
+    "$KUBECTL_BIN" get serviceaccount default --namespace "$NAMESPACE" >/dev/null 2>&1 && break
     sleep 1
 done
-kubectl patch serviceaccount default --namespace "$NAMESPACE" --type merge \
+"$KUBECTL_BIN" patch serviceaccount default --namespace "$NAMESPACE" --type merge \
     --patch '{"automountServiceAccountToken":false}' >/dev/null
 
-kubectl apply -f - >/dev/null <<YAML
+"$KUBECTL_BIN" apply -f - >/dev/null <<YAML
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -176,23 +185,23 @@ roleRef:
 YAML
 
 runner_identity="system:serviceaccount:${NAMESPACE}:${RUNNER_SA}"
-kubectl auth can-i --as "$runner_identity" list nodes | grep -Fx yes >/dev/null || fail "runner cannot perform required node discovery"
-kubectl auth can-i --as "$runner_identity" create pods --namespace "$NAMESPACE" | grep -Fx yes >/dev/null || fail "runner cannot create the kubestr child Pod"
+"$KUBECTL_BIN" auth can-i --as "$runner_identity" list nodes | grep -Fx yes >/dev/null || fail "runner cannot perform required node discovery"
+"$KUBECTL_BIN" auth can-i --as "$runner_identity" create pods --namespace "$NAMESPACE" | grep -Fx yes >/dev/null || fail "runner cannot create the kubestr child Pod"
 for denied in \
     "get secrets --namespace $NAMESPACE" \
     "create roles --namespace $NAMESPACE" \
     "create rolebindings --namespace $NAMESPACE" \
     "create clusterroles" \
     "delete namespaces"; do
-    # shellcheck disable=SC2086 # each entry is an intentional kubectl argument vector
-    if kubectl auth can-i --as "$runner_identity" $denied | grep -Fx yes >/dev/null; then
+    # shellcheck disable=SC2086 # each entry is an intentional "$KUBECTL_BIN" argument vector
+    if "$KUBECTL_BIN" auth can-i --as "$runner_identity" $denied | grep -Fx yes >/dev/null; then
         fail "runner received forbidden authorization: $denied"
     fi
 done
 
 docker exec "${CLUSTER}-control-plane" sh -c \
     "mkdir -p /var/local/${RUN_ID} /var/local/${RUN_ID}-attached && chown 65532:65532 /var/local/${RUN_ID} /var/local/${RUN_ID}-attached && chmod 0755 /var/local/${RUN_ID} /var/local/${RUN_ID}-attached"
-kubectl apply -f - >/dev/null <<YAML
+"$KUBECTL_BIN" apply -f - >/dev/null <<YAML
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
@@ -260,12 +269,13 @@ spec:
         capabilities:
           drop: ["ALL"]
 YAML
-if ! kubectl wait --namespace "$NAMESPACE" --for=condition=Ready pod/session-sentinel --timeout=120s >/dev/null; then
-    kubectl describe pod session-sentinel --namespace "$NAMESPACE" >&2 || true
+ATTACHED_PV_UID=$("$KUBECTL_BIN" get pv "$ATTACHED_PV_NAME" -o jsonpath='{.metadata.uid}') || fail "attached PV UID was unavailable"
+if ! "$KUBECTL_BIN" wait --namespace "$NAMESPACE" --for=condition=Ready pod/session-sentinel --timeout=120s >/dev/null; then
+    "$KUBECTL_BIN" describe pod session-sentinel --namespace "$NAMESPACE" >&2 || true
     fail "session sentinel Pod did not become ready"
 fi
 
-kubectl apply -f - >/dev/null <<YAML
+"$KUBECTL_BIN" apply -f - >/dev/null <<YAML
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -315,32 +325,36 @@ spec:
       emptyDir:
         sizeLimit: 64Mi
 YAML
-
-kubectl wait --namespace "$NAMESPACE" --for=jsonpath='{.status.phase}'=Bound pvc/"$ATTACHED_PVC_NAME" --timeout=120s >/dev/null
+ATTACHED_PVC_UID=$("$KUBECTL_BIN" get pvc "$ATTACHED_PVC_NAME" --namespace "$NAMESPACE" -o jsonpath='{.metadata.uid}') || fail "attached PVC UID was unavailable"
+ATTACHED_POD_UID=$("$KUBECTL_BIN" get pod "$ATTACHED_POD_NAME" --namespace "$NAMESPACE" -o jsonpath='{.metadata.uid}') || fail "attached Pod UID was unavailable"
+"$KUBECTL_BIN" wait --namespace "$NAMESPACE" --for=jsonpath='{.status.phase}'=Bound pvc/"$ATTACHED_PVC_NAME" --timeout=120s >/dev/null
 attached_phase=
 for _ in $(seq 1 120); do
-    attached_phase=$(kubectl get pod "$ATTACHED_POD_NAME" --namespace "$NAMESPACE" -o jsonpath='{.status.phase}')
+    attached_phase=$("$KUBECTL_BIN" get pod "$ATTACHED_POD_NAME" --namespace "$NAMESPACE" -o jsonpath='{.status.phase}')
     case "$attached_phase" in
         Succeeded) break ;;
         Failed)
-            kubectl logs "$ATTACHED_POD_NAME" --namespace "$NAMESPACE" >&2 || true
+            "$KUBECTL_BIN" logs "$ATTACHED_POD_NAME" --namespace "$NAMESPACE" >&2 || true
             fail "mounted-volume operation against an existing Pod PVC failed"
             ;;
     esac
     sleep 1
 done
 [ "$attached_phase" = Succeeded ] || fail "mounted-volume Pod PVC proof exceeded its 120-second bound"
-attached_report=$(kubectl logs "$ATTACHED_POD_NAME" --namespace "$NAMESPACE")
+attached_report=$("$KUBECTL_BIN" logs "$ATTACHED_POD_NAME" --namespace "$NAMESPACE")
 printf '%s\n' "$attached_report" | grep -Fx 'fio_status=pass' >/dev/null || fail "attached PVC fio did not pass"
 printf '%s\n' "$attached_report" | grep -Fx 'ioping_status=pass' >/dev/null || fail "attached PVC ioping did not pass"
 printf '%s\n' "$attached_report" | grep -Fx 'overall_status=pass' >/dev/null || fail "attached PVC report did not pass"
 
-kubectl delete pod "$ATTACHED_POD_NAME" --namespace "$NAMESPACE" --wait --timeout=120s >/dev/null
-kubectl delete pvc "$ATTACHED_PVC_NAME" --namespace "$NAMESPACE" --wait --timeout=120s >/dev/null
-kubectl get pod "$ATTACHED_POD_NAME" --namespace "$NAMESPACE" >/dev/null 2>&1 && fail "attached PVC proof Pod survived cleanup"
-kubectl get pvc "$ATTACHED_PVC_NAME" --namespace "$NAMESPACE" >/dev/null 2>&1 && fail "attached PVC survived cleanup"
-kubectl delete pv "$ATTACHED_PV_NAME" --wait --timeout=120s >/dev/null
-kubectl get pv "$ATTACHED_PV_NAME" >/dev/null 2>&1 && fail "attached PVC proof PV survived cleanup"
+if ! kubernetes_cleanup_uid_chain "$KUBECONFIG_FILE" "$KUBECTL_BIN" \
+	"$NAMESPACE" "$ATTACHED_POD_NAME" "$ATTACHED_POD_UID" \
+	"$ATTACHED_PVC_NAME" "$ATTACHED_PVC_UID" "$ATTACHED_PV_NAME" \
+	"$ATTACHED_PV_UID"; then
+	fail "attached PVC proof cleanup did not complete in Pod, PVC, PV order"
+fi
+ATTACHED_POD_UID=
+ATTACHED_PVC_UID=
+ATTACHED_PV_UID=
 docker exec "${CLUSTER}-control-plane" sh -c \
     "rm -rf -- /var/local/${RUN_ID}-attached"
 if ! docker exec "${CLUSTER}-control-plane" sh -c \
@@ -348,7 +362,7 @@ if ! docker exec "${CLUSTER}-control-plane" sh -c \
     fail "attached PVC proof hostPath data survived cleanup"
 fi
 
-kubectl apply -f - >/dev/null <<YAML
+"$KUBECTL_BIN" apply -f - >/dev/null <<YAML
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -396,19 +410,19 @@ YAML
 
 child_pod=
 for _ in $(seq 1 180); do
-    child_pod=$(kubectl get pods --namespace "$NAMESPACE" -o json | jq -r '
+    child_pod=$("$KUBECTL_BIN" get pods --namespace "$NAMESPACE" -o json | jq -r '
       [.items[] | select(.metadata.generateName == "kubestr-fio-pod-") | .metadata.name] | first // empty
     ')
     [ -z "$child_pod" ] || break
-    if kubectl get job "$JOB" --namespace "$NAMESPACE" -o json | jq -e '.status.failed > 0' >/dev/null 2>&1; then
-        kubectl logs "job/${JOB}" --namespace "$NAMESPACE" >&2 || true
+    if "$KUBECTL_BIN" get job "$JOB" --namespace "$NAMESPACE" -o json | jq -e '.status.failed > 0' >/dev/null 2>&1; then
+        "$KUBECTL_BIN" logs "job/${JOB}" --namespace "$NAMESPACE" >&2 || true
         fail "kubestr runner failed before creating a child Pod"
     fi
     sleep 1
 done
 [ -n "$child_pod" ] || fail "did not observe the real kubestr fio child Pod"
 
-kubectl get pod "$child_pod" --namespace "$NAMESPACE" -o json | jq -e --arg image "$loaded_ref" '
+"$KUBECTL_BIN" get pod "$child_pod" --namespace "$NAMESPACE" -o json | jq -e --arg image "$loaded_ref" '
   (.spec.hostNetwork // false) == false and
   (.spec.hostPID // false) == false and
   (.spec.hostIPC // false) == false and
@@ -427,24 +441,24 @@ kubectl get pod "$child_pod" --namespace "$NAMESPACE" -o json | jq -e --arg imag
 
 job_complete=false
 for _ in $(seq 1 650); do
-    job_status=$(kubectl get job "$JOB" --namespace "$NAMESPACE" -o json)
+    job_status=$("$KUBECTL_BIN" get job "$JOB" --namespace "$NAMESPACE" -o json)
     if printf '%s\n' "$job_status" | jq -e '(.status.succeeded // 0) > 0' >/dev/null; then
         job_complete=true
         break
     fi
     if printf '%s\n' "$job_status" | jq -e '(.status.failed // 0) > 0' >/dev/null; then
-        kubectl describe job "$JOB" --namespace "$NAMESPACE" >&2 || true
-        kubectl logs "job/${JOB}" --namespace "$NAMESPACE" >&2 || true
+        "$KUBECTL_BIN" describe job "$JOB" --namespace "$NAMESPACE" >&2 || true
+        "$KUBECTL_BIN" logs "job/${JOB}" --namespace "$NAMESPACE" >&2 || true
         fail "real kubestr fio workflow failed"
     fi
     sleep 1
 done
 [ "$job_complete" = true ] || {
-    kubectl describe job "$JOB" --namespace "$NAMESPACE" >&2 || true
-    kubectl logs "job/${JOB}" --namespace "$NAMESPACE" >&2 || true
+    "$KUBECTL_BIN" describe job "$JOB" --namespace "$NAMESPACE" >&2 || true
+    "$KUBECTL_BIN" logs "job/${JOB}" --namespace "$NAMESPACE" >&2 || true
     fail "real kubestr fio workflow exceeded the 650-second proof bound"
 }
-kubectl logs "job/${JOB}" --namespace "$NAMESPACE" | jq -e '
+"$KUBECTL_BIN" logs "job/${JOB}" --namespace "$NAMESPACE" | jq -e '
   type == "array" and length == 1 and
   .[0].TestName == "FIO test results" and
   any(.[0].Status[]; .StatusCode == "OK") and
@@ -452,12 +466,12 @@ kubectl logs "job/${JOB}" --namespace "$NAMESPACE" | jq -e '
   all(.[0].Raw.result.jobs[]; (.jobname | type == "string" and length > 0))
 ' >/dev/null || fail "kubestr did not emit a successful structured four-job fio result"
 
-kubectl get configmap session-sentinel --namespace "$NAMESPACE" -o jsonpath='{.data.value}' | grep -Fx preserve >/dev/null || fail "session sentinel ConfigMap was changed or deleted"
-kubectl get pod session-sentinel --namespace "$NAMESPACE" >/dev/null || fail "session sentinel Pod was deleted"
-kubectl get configmap outside-sentinel --namespace "$SENTINEL_NAMESPACE" -o jsonpath='{.data.value}' | grep -Fx preserve >/dev/null || fail "cross-namespace sentinel was changed or deleted"
+"$KUBECTL_BIN" get configmap session-sentinel --namespace "$NAMESPACE" -o jsonpath='{.data.value}' | grep -Fx preserve >/dev/null || fail "session sentinel ConfigMap was changed or deleted"
+"$KUBECTL_BIN" get pod session-sentinel --namespace "$NAMESPACE" >/dev/null || fail "session sentinel Pod was deleted"
+"$KUBECTL_BIN" get configmap outside-sentinel --namespace "$SENTINEL_NAMESPACE" -o jsonpath='{.data.value}' | grep -Fx preserve >/dev/null || fail "cross-namespace sentinel was changed or deleted"
 
 generated_resources_present() {
-    kubectl get pods,configmaps,persistentvolumeclaims --namespace "$NAMESPACE" -o json | jq -e '
+    "$KUBECTL_BIN" get pods,configmaps,persistentvolumeclaims --namespace "$NAMESPACE" -o json | jq -e '
       any(.items[];
         (.metadata.name | startswith("kubestr-fio-")) or
         ((.metadata.generateName // "") | startswith("kubestr-fio-"))
@@ -469,7 +483,7 @@ for _ in $(seq 1 120); do
     sleep 1
 done
 if generated_resources_present; then
-    kubectl get pods,configmaps,persistentvolumeclaims --namespace "$NAMESPACE" >&2
+    "$KUBECTL_BIN" get pods,configmaps,persistentvolumeclaims --namespace "$NAMESPACE" >&2
     fail "kubestr left a generated fio resource behind"
 fi
 

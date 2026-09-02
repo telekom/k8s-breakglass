@@ -53,12 +53,32 @@ delete)
 esac
 EOF
 chmod +x "$fixture/kind"
+cat >"$fixture/docker" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+case "${1:-} ${2:-}" in
+ps\ -a)
+    if [ -n "${KIND_DOCKER_IDS:-}" ]; then
+        printf '%s\n' "$KIND_DOCKER_IDS"
+    elif [ -s "${KIND_STATE:?}" ]; then
+        printf 'node-id-%s\n' "$(cat "$KIND_STATE")"
+    fi
+    exit 0
+    ;;
+rm\ -f)
+    : >"${KIND_STATE:?}"
+    ;;
+*) exit 0 ;;
+esac
+EOF
+chmod +x "$fixture/docker"
 
 # shellcheck disable=SC1091
 source "$root/tests/kind-lifecycle.sh"
 export PATH="$fixture:$PATH"
 export KIND_STATE="$fixture/clusters"
 export KIND_DELETE_LOG="$fixture/deletes"
+export DOCKER_BIN=docker KIND_BIN=kind
 : >"$KIND_DELETE_LOG"
 
 # A caller-owned name is rejected during preflight and is never deleted.
@@ -79,7 +99,8 @@ kind_lifecycle_create caller-owned kind-node:dev "$fixture/caller.kubeconfig" ||
     exit 1
 }
 
-# A failed create that leaves a cluster is owned and removed by cleanup.
+# A failed create is not proof of ownership, even when Kind leaves a partial
+# same-name cluster. The safe outcome is a leak for an operator to inspect.
 : >"$KIND_STATE"
 export KIND_CREATE_MODE=partial
 KIND_LIFECYCLE_OWNED=0
@@ -89,19 +110,11 @@ kind_lifecycle_create partial-owned kind-node:dev "$fixture/partial.kubeconfig" 
     printf 'partial create returned status %s, expected 42\n' "$partial_status" >&2
     exit 1
 }
-[ "$KIND_LIFECYCLE_OWNED" -eq 1 ] || {
-    printf '%s\n' 'partial cluster was not marked as owned' >&2
+[ "$KIND_LIFECYCLE_OWNED" -eq 0 ] || {
+    printf '%s\n' 'partial cluster was incorrectly marked as owned' >&2
     exit 1
 }
-kind_lifecycle_cleanup partial-owned "$fixture/partial.kubeconfig"
-[ ! -s "$KIND_STATE" ] || {
-    printf '%s\n' 'partial cluster remained after owned cleanup' >&2
-    exit 1
-}
-grep -Fx 'partial-owned' "$KIND_DELETE_LOG" >/dev/null || {
-    printf '%s\n' 'owned partial cluster was not deleted' >&2
-    exit 1
-}
+[ -s "$KIND_STATE" ] || { printf '%s\n' 'partial cluster was not leaked safely' >&2; exit 1; }
 
 # A failed create can register the cluster before writing its kubeconfig. It
 # is still owned by this invocation and must be deleted without that file.
@@ -114,18 +127,24 @@ kind_lifecycle_create partial-no-config kind-node:dev "$fixture/no-config.kubeco
     printf 'partial no-config create returned status %s, expected 42\n' "$partial_without_config_status" >&2
     exit 1
 }
-[ "$KIND_LIFECYCLE_OWNED" -eq 1 ] || {
-    printf '%s\n' 'partial cluster without kubeconfig was not marked as owned' >&2
+[ "$KIND_LIFECYCLE_OWNED" -eq 0 ] || {
+    printf '%s\n' 'partial cluster without kubeconfig was incorrectly marked as owned' >&2
     exit 1
 }
-kind_lifecycle_cleanup partial-no-config "$fixture/no-config.kubeconfig"
-[ ! -s "$KIND_STATE" ] || {
-    printf '%s\n' 'partial cluster without kubeconfig remained after cleanup' >&2
-    exit 1
-}
-grep -Fx 'partial-no-config' "$KIND_DELETE_LOG" >/dev/null || {
-    printf '%s\n' 'owned partial cluster without kubeconfig was not deleted' >&2
-    exit 1
-}
+[ -s "$KIND_STATE" ] || { printf '%s\n' 'partial cluster without kubeconfig was not leaked safely' >&2; exit 1; }
+
+# A successful create captures exact node IDs. If a same-name actor replaces
+# the Docker node set before cleanup, the ownership set no longer matches and
+# the replacement must survive untouched.
+: >"$KIND_STATE"
+unset KIND_CREATE_MODE
+KIND_LIFECYCLE_OWNED=0
+kind_lifecycle_create takeover kind-node:dev "$fixture/takeover.kubeconfig"
+[ "$KIND_LIFECYCLE_OWNED" -eq 1 ] || { printf '%s\n' 'successful cluster was not marked owned' >&2; exit 1; }
+export KIND_DOCKER_IDS=$'node-id-takeover\nnode-id-replacement'
+takeover_status=0
+kind_lifecycle_cleanup takeover "$fixture/takeover.kubeconfig" || takeover_status=$?
+[ "$takeover_status" -ne 0 ] || { printf '%s\n' 'replacement unexpectedly passed ownership cleanup' >&2; exit 1; }
+[ -s "$KIND_STATE" ] || { printf '%s\n' 'replacement was deleted after ownership changed' >&2; exit 1; }
 
 printf '%s\n' 'kind lifecycle ownership tests passed'
