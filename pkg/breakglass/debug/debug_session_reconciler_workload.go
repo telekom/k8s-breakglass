@@ -117,8 +117,9 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			return fmt.Errorf("debug session is no longer active before deployment mutation")
 		}
 		if activationInProgress &&
-			(liveSession.Status.Approval == nil ||
-				(liveSession.Status.Approval.Required && liveSession.Status.Approval.ApprovedAt == nil)) {
+			liveSession.Status.Approval != nil &&
+			liveSession.Status.Approval.Required &&
+			liveSession.Status.Approval.ApprovedAt == nil {
 			return fmt.Errorf("debug session is not approved for deployment")
 		}
 		return nil
