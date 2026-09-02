@@ -429,13 +429,13 @@ func (c *SessionManager) RefreshClusterUserBreakglassSessions(ctx context.Contex
 	}
 	fallbackKey := cluster + "\x00" + user
 	live, refreshed := c.fetchLiveClusterUserBreakglassSessions(ctx, cluster, user, fallbackKey, c.getLogger())
-	if !refreshed || len(live) == 0 {
+	if !refreshed {
 		return cached, refreshed, nil
 	}
 	if sessionResultsEqual(cached, live) {
 		c.recordLiveReaderFallback(fallbackKey, time.Now())
 	}
-	return mergeSessionResults(cached, live), true, nil
+	return live, true, nil
 }
 
 func (c *SessionManager) fetchLiveClusterUserBreakglassSessions(ctx context.Context,
