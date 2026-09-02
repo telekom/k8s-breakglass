@@ -240,10 +240,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			"count", len(podTemplateResources),
 			"debugSession", ds.Name)
 		for _, res := range podTemplateResources {
-			if err := fence(); err != nil {
-				return err
-			}
-			if err := c.deployPodTemplateResource(ctx, targetClient, ds, res, targetNs); err != nil {
+			if err := c.deployPodTemplateResource(ctx, targetClient, ds, res, targetNs, fence); err != nil {
 				return fmt.Errorf("failed to deploy pod template resource %s/%s: %w", res.GetKind(), res.GetName(), err)
 			}
 		}
@@ -609,6 +606,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 	ds *breakglassv1alpha1.DebugSession,
 	obj *unstructured.Unstructured,
 	targetNs string,
+	fences ...func() error,
 ) error {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 
@@ -651,6 +649,11 @@ func (c *DebugSessionController) deployPodTemplateResource(
 	if c.client != nil {
 		if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 			return fmt.Errorf("failed to persist pod template resource intent: %w", err)
+		}
+	}
+	if len(fences) > 0 && fences[0] != nil {
+		if err := fences[0](); err != nil {
+			return err
 		}
 	}
 
