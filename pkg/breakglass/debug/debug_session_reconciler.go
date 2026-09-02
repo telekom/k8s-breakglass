@@ -586,6 +586,12 @@ func releaseSessionMetricSeries(sessionName string) {
 func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 
+	if template.Spec.PodTemplateRef != nil && ds.Status.ResolvedPodTemplate == nil {
+		return c.failSession(ctx, ds, "approved pod-template snapshot is missing")
+	}
+	if binding != nil && ds.Status.ResolvedBindingSpec == nil {
+		return c.failSession(ctx, ds, "approved binding snapshot is missing")
+	}
 	if ds.Status.ResolvedTemplate != nil {
 		approvedTemplate := template.DeepCopy()
 		approvedTemplate.Spec = *ds.Status.ResolvedTemplate.DeepCopy()
