@@ -257,6 +257,10 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	resolvedTemplate.Constraints = effectiveDebugSessionConstraints(template, binding)
 	ds.Status.ResolvedTemplate = resolvedTemplate
 	if binding != nil {
+		ds.Status.ResolvedBinding = &breakglassv1alpha1.ResolvedBindingRef{
+			Name:      binding.Name,
+			Namespace: binding.Namespace,
+		}
 		if raw, marshalErr := json.Marshal(binding.Spec); marshalErr == nil {
 			ds.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: raw}
 		}
@@ -594,6 +598,10 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		} else {
 			approvedBinding = approvedBinding.DeepCopy()
 		}
+		if ds.Status.ResolvedBinding != nil {
+			approvedBinding.Name = ds.Status.ResolvedBinding.Name
+			approvedBinding.Namespace = ds.Status.ResolvedBinding.Namespace
+		}
 		if err := json.Unmarshal(ds.Status.ResolvedBindingSpec.Raw, &approvedBinding.Spec); err != nil {
 			return ctrl.Result{}, fmt.Errorf("decode approved binding snapshot: %w", err)
 		}
@@ -889,7 +897,7 @@ func (c *DebugSessionController) sendWebhookEvent(ctx context.Context, dest brea
 // getTemplate retrieves a DebugSessionTemplate by name
 func (c *DebugSessionController) getTemplate(ctx context.Context, name string) (*breakglassv1alpha1.DebugSessionTemplate, error) {
 	template := &breakglassv1alpha1.DebugSessionTemplate{}
-	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
+	if err := c.approvalReader().Get(ctx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
 		return nil, err
 	}
 	return template, nil
@@ -898,7 +906,7 @@ func (c *DebugSessionController) getTemplate(ctx context.Context, name string) (
 // getPodTemplate retrieves a DebugPodTemplate by name
 func (c *DebugSessionController) getPodTemplate(ctx context.Context, name string) (*breakglassv1alpha1.DebugPodTemplate, error) {
 	template := &breakglassv1alpha1.DebugPodTemplate{}
-	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
+	if err := c.approvalReader().Get(ctx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
 		return nil, err
 	}
 	return template, nil
@@ -907,7 +915,7 @@ func (c *DebugSessionController) getPodTemplate(ctx context.Context, name string
 // getBinding retrieves a DebugSessionClusterBinding by name and namespace
 func (c *DebugSessionController) getBinding(ctx context.Context, name, namespace string) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
 	binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
-	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: namespace}, binding); err != nil {
+	if err := c.approvalReader().Get(ctx, ctrlclient.ObjectKey{Name: name, Namespace: namespace}, binding); err != nil {
 		return nil, err
 	}
 	return binding, nil
@@ -979,14 +987,14 @@ func (c *DebugSessionController) deferOnUnresolvedBinding(
 // Returns nil if no matching binding is found.
 func (c *DebugSessionController) findBindingForSession(ctx context.Context, template *breakglassv1alpha1.DebugSessionTemplate, clusterName string) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
 	bindingList := &breakglassv1alpha1.DebugSessionClusterBindingList{}
-	if err := c.client.List(ctx, bindingList); err != nil {
+	if err := c.approvalReader().List(ctx, bindingList); err != nil {
 		return nil, fmt.Errorf("failed to list cluster bindings: %w", err)
 	}
 
 	// Get cluster config for label-based matching
 	var clusterConfig *breakglassv1alpha1.ClusterConfig
 	clusterConfigList := &breakglassv1alpha1.ClusterConfigList{}
-	if err := c.client.List(ctx, clusterConfigList); err == nil {
+	if err := c.approvalReader().List(ctx, clusterConfigList); err == nil {
 		for i := range clusterConfigList.Items {
 			if clusterConfigList.Items[i].Name == clusterName {
 				clusterConfig = &clusterConfigList.Items[i]
@@ -1016,6 +1024,13 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 	}
 
 	return nil, nil // No matching binding found (not an error)
+}
+
+func (c *DebugSessionController) approvalReader() ctrlclient.Reader {
+	if c.reader != nil {
+		return c.reader
+	}
+	return c.client
 }
 
 // bindingMatchesTemplate checks if a binding references the given template
