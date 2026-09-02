@@ -20,19 +20,21 @@ ARG PWRU_VERSION=v1.0.12
 ARG PWRU_MODULE_SUM=h1:a8oQXdTJHznh4vCI3GLf31IDqGYIUmDJzjSaXHYpQPg=
 ARG PWRU_COMMIT=f1d6cf8898953ac1560401e181f3ac5f0e33b486
 
+WORKDIR /src/pwru
+
 RUN set -eux; \
 	export DEBIAN_FRONTEND=noninteractive; \
 	apt-get update; \
-	apt-get install --no-install-recommends --yes clang llvm flex bison; \
+	apt-get install --no-install-recommends --yes \
+		clang=1:19.0-63 llvm=1:19.0-63 flex=2.6.4-8.2+b4 bison=2:3.8.2+dfsg-1+b2; \
 	rm -rf /var/lib/apt/lists/*; \
 	module_json="$(go mod download -json "github.com/cilium/pwru@${PWRU_VERSION}")"; \
-	printf '%s\n' "${module_json}" | grep -F '"Sum": "'"${PWRU_MODULE_SUM}"'"'; \
-	printf '%s\n' "${module_json}" | grep -F '"Hash": "'"${PWRU_COMMIT}"'"'; \
+	case "${module_json}" in *'"Sum": "'"${PWRU_MODULE_SUM}"'"'*) ;; *) exit 1 ;; esac; \
+	case "${module_json}" in *'"Hash": "'"${PWRU_COMMIT}"'"'*) ;; *) exit 1 ;; esac; \
 	mkdir -p /src/pwru /out; \
 	cp -a "$(go env GOPATH)/pkg/mod/github.com/cilium/pwru@${PWRU_VERSION}/." /src/pwru/; \
 	test "$(grep '^go ' /src/pwru/go.mod | awk '{print $2}')" = "1.25.0"; \
 	chmod +x /src/pwru/libpcap/configure; \
-	cd /src/pwru; \
 	make VERSION="${PWRU_VERSION}" TARGET_GOARCH="${TARGETARCH:-amd64}" GOARCH="${TARGETARCH:-amd64}" pwru; \
 	install -m 0755 pwru /out/pwru
 
