@@ -46,9 +46,16 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	// Cache resolved binding info in session status for observability
 	if binding != nil {
 		displayName := breakglassv1alpha1.GetEffectiveDisplayName(binding, template.Spec.DisplayName, template.Name)
+		name, namespace := binding.Name, binding.Namespace
+		if ds.Status.ResolvedBinding != nil {
+			// The approved binding snapshot contains only the spec. Preserve the
+			// immutable identity captured while resolving the live binding.
+			name = ds.Status.ResolvedBinding.Name
+			namespace = ds.Status.ResolvedBinding.Namespace
+		}
 		ds.Status.ResolvedBinding = &breakglassv1alpha1.ResolvedBindingRef{
-			Name:        binding.Name,
-			Namespace:   binding.Namespace,
+			Name:        name,
+			Namespace:   namespace,
 			DisplayName: displayName,
 		}
 	}
