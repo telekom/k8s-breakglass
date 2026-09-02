@@ -717,13 +717,18 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedBindingSpec"), newObj.Status.ResolvedBindingSpec,
 			"resolvedBindingSpec is immutable once persisted"))
 	}
+	if oldObj.Status.ResolvedTemplate != nil && !reflect.DeepEqual(oldObj.Status.ResolvedPodTemplate, newObj.Status.ResolvedPodTemplate) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedPodTemplate"), newObj.Status.ResolvedPodTemplate,
+			"resolvedPodTemplate is immutable once the resolved template is persisted"))
+	}
 	if oldObj.Status.ResolvedBindingSnapshotCaptured && !newObj.Status.ResolvedBindingSnapshotCaptured {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedBindingSnapshotCaptured"),
 			newObj.Status.ResolvedBindingSnapshotCaptured, "resolved binding snapshot capture marker cannot be cleared"))
 	}
-	if oldObj.Status.ResolvedPodTemplate != nil && !reflect.DeepEqual(oldObj.Status.ResolvedPodTemplate, newObj.Status.ResolvedPodTemplate) {
-		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedPodTemplate"), newObj.Status.ResolvedPodTemplate,
-			"resolvedPodTemplate is immutable once persisted"))
+	if oldObj.Status.ResolvedBindingSnapshotCaptured &&
+		!reflect.DeepEqual(oldObj.Status.ResolvedBinding, newObj.Status.ResolvedBinding) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedBinding"), newObj.Status.ResolvedBinding,
+			"resolvedBinding is immutable once its snapshot is captured"))
 	}
 
 	if len(allErrs) == 0 {
