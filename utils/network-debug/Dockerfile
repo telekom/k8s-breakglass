@@ -55,7 +55,8 @@ RUN set -eux; \
 		>> /etc/apk/repositories; \
 	apk update; \
 	apk upgrade; \
-	test "$(cat /etc/alpine-release)" = "${NETSHOOT_ALPINE_VERSION}"; \
+		rm -rf /var/cache/apk/*; \
+		test "$(cat /etc/alpine-release)" = "${NETSHOOT_ALPINE_VERSION}"; \
 	test -x /usr/bin/tcpdump; \
 	rm -f /usr/local/bin/calicoctl /usr/local/bin/ctop /usr/local/bin/fortio \
 	/usr/local/bin/grpcurl /usr/local/bin/termshark
