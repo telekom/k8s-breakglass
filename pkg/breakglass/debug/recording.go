@@ -35,7 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-var recordingSecretPattern = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*)(bearer\s+)?[^\s,;]+|(bearer\s+)[^\s,;]+|(access_token\s*[=:]\s*)[^\s,;]+|(token|password|passwd|secret)([=:]\s*|\s+)[^\s,;]+`)
+var recordingSecretPattern = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*)((?:basic|bearer)\s+)?[^\s,;]+(?:\s+[^\s,;]+)?|(bearer\s+)[^\s,;]+|(access_token\s*[=:]\s*)[^\s,;]+|(token|password|passwd|secret)([=:]\s*|\s+)[^\s,;]+`)
 
 const (
 	terminalRecordingVolumeName = "breakglass-terminal-recording"
