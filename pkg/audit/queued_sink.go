@@ -437,11 +437,14 @@ func NewIsolatedMultiSink(sinks []Sink, cfg QueuedSinkConfig, logger *zap.Logger
 // Write broadcasts the event to all queued sinks (non-blocking).
 // Each sink receives the event independently in its own queue.
 func (ims *IsolatedMultiSink) Write(ctx context.Context, event *Event) error {
+	var errs []error
 	for _, qs := range ims.sinks {
 		// Each QueuedSink.Write is non-blocking
-		_ = qs.Write(ctx, event)
+		if err := qs.Write(ctx, event); err != nil && IsSensitiveEvent(event.Type) {
+			errs = append(errs, err)
+		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // Close shuts down all queued sinks.
@@ -572,8 +575,13 @@ func (qs *QueuedSink) WriteBatch(ctx context.Context, events []*Event) error {
 
 // WriteBatch broadcasts the batch to all queued sinks (non-blocking).
 func (ims *IsolatedMultiSink) WriteBatch(ctx context.Context, events []*Event) error {
+	var errs []error
 	for _, qs := range ims.sinks {
-		_ = qs.WriteBatch(ctx, events)
+		for _, event := range events {
+			if err := qs.Write(ctx, event); err != nil && IsSensitiveEvent(event.Type) {
+				errs = append(errs, err)
+			}
+		}
 	}
-	return nil
+	return errors.Join(errs...)
 }

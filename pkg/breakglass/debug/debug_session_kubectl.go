@@ -189,11 +189,14 @@ func addAllowedPodIfMissing(status *breakglassv1alpha1.DebugSessionStatus, ref b
 }
 
 func addDeployedResourceIfMissing(status *breakglassv1alpha1.DebugSessionStatus, ref breakglassv1alpha1.DeployedResourceRef) {
-	for _, existing := range status.DeployedResources {
+	for i, existing := range status.DeployedResources {
 		if existing.APIVersion == ref.APIVersion &&
 			existing.Kind == ref.Kind &&
 			existing.Namespace == ref.Namespace &&
 			existing.Name == ref.Name {
+			if status.DeployedResources[i].UID == "" && ref.UID != "" {
+				status.DeployedResources[i].UID = ref.UID
+			}
 			return
 		}
 	}

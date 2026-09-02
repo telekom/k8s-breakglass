@@ -906,6 +906,57 @@ func AddAuxiliaryResourceToDeployedResources(
 	}
 }
 
+// AddAuxiliaryResourceToDeployedResourcesFromClient records applied auxiliary
+// resources with the UIDs currently returned by the spoke API.
+func AddAuxiliaryResourceToDeployedResourcesFromClient(
+	ctx context.Context,
+	targetClient client.Client,
+	session *breakglassv1alpha1.DebugSession,
+	status breakglassv1alpha1.AuxiliaryResourceStatus,
+) {
+	if !status.Created {
+		return
+	}
+	source := fmt.Sprintf("auxiliary:%s", status.Name)
+	addRef := func(apiVersion, kind, name, namespace string) {
+		uid := ""
+		if targetClient != nil {
+			obj := &unstructured.Unstructured{}
+			obj.SetAPIVersion(apiVersion)
+			obj.SetKind(kind)
+			if err := targetClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, obj); err == nil {
+				uid = string(obj.GetUID())
+			}
+		}
+		addDeployedResourceRef(session, breakglassv1alpha1.DeployedResourceRef{
+			APIVersion: apiVersion,
+			Kind:       kind,
+			Name:       name,
+			Namespace:  namespace,
+			UID:        uid,
+			Source:     source,
+		})
+	}
+	addRef(status.APIVersion, status.Kind, status.ResourceName, status.Namespace)
+	for _, additional := range status.AdditionalResources {
+		addRef(additional.APIVersion, additional.Kind, additional.ResourceName, additional.Namespace)
+	}
+}
+
+func addDeployedResourceRef(session *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) {
+	for i := range session.Status.DeployedResources {
+		existing := &session.Status.DeployedResources[i]
+		if existing.APIVersion == ref.APIVersion && existing.Kind == ref.Kind &&
+			existing.Name == ref.Name && existing.Namespace == ref.Namespace {
+			if existing.UID == "" {
+				existing.UID = ref.UID
+			}
+			return
+		}
+	}
+	session.Status.DeployedResources = append(session.Status.DeployedResources, ref)
+}
+
 // CheckAuxiliaryResourcesReadiness checks the readiness status of all auxiliary resources
 // using kstatus and updates the session status accordingly.
 func (m *AuxiliaryResourceManager) CheckAuxiliaryResourcesReadiness(

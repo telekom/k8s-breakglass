@@ -2580,6 +2580,8 @@ func TestParseDuration_DayDurations(t *testing.T) {
 	}{
 		{"1d", 24 * time.Hour},
 		{"7d", 7 * 24 * time.Hour},
+		{"1w", 7 * 24 * time.Hour},
+		{"1y", 365 * 24 * time.Hour},
 		{"30d", 30 * 24 * time.Hour},
 		{"90d", 90 * 24 * time.Hour},
 		{"365d", 365 * 24 * time.Hour},
@@ -2602,6 +2604,7 @@ func TestParseDuration_MixedDayHours(t *testing.T) {
 	}{
 		{"1d12h", 36 * time.Hour},
 		{"2d6h", 54 * time.Hour},
+		{"1w2d3h", 219 * time.Hour},
 		{"1d1h", 25 * time.Hour},
 		{"1d1.5h", 25*time.Hour + 30*time.Minute},
 		{"7d12h30m", 7*24*time.Hour + 12*time.Hour + 30*time.Minute},
@@ -2625,6 +2628,11 @@ func TestParseDuration_InvalidFormats(t *testing.T) {
 		{"abc", "non-numeric"},
 		{"1x", "unknown unit"},
 		{"1d1x", "invalid unit after days"},
+		{"1y1d", "exceeds max days via mixed extended units"},
+		{"53w", "exceeds max days via week units"},
+		{"-1w", "negative week duration"},
+		{"-1y", "negative year duration"},
+		{"-1h", "negative standard duration"},
 		{fmt.Sprintf("%dd", maxDurationDays+1), "exceeds max days"},
 		{"999999999d", "exceeds max days (large value)"},
 	}
@@ -2852,11 +2860,16 @@ func TestParseDuration_EdgeCases(t *testing.T) {
 		{"large days value", "365d", false, 31536000},
 		{"days exceed maximum", overMaxStr, true, 0},
 		{"zero days", "0d", false, 0},
-		{"negative hours are valid in Go", "-1h", false, -3600}, // Go stdlib accepts negative
+		{"negative hours are rejected", "-1h", true, 0},
 		{"invalid unit", "1x", true, 0},
 		{"text only", "invalid", true, 0},
 		{"spaces not allowed", "1 h", true, 0},
-		{"mixed days and negative", "1d-1h", false, 82800}, // 24h - 1h = 23h
+		{"negative days", "-1d", true, 0},
+		{"negative weeks", "-1w", true, 0},
+		{"negative years", "-1y", true, 0},
+		{"mixed days and negative hours", "1d-1h", true, 0},
+		{"mixed weeks and negative hours", "1w-1h", true, 0},
+		{"mixed years and negative minutes", "1y-1m", true, 0},
 	}
 
 	for _, tt := range tests {

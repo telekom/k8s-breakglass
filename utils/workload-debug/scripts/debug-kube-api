@@ -5,7 +5,7 @@ set -eu
 
 usage() {
     cat <<'EOF'
-Usage: debug-kube-api [--server URL] [--ca FILE] [--token FILE] [PATH]
+Usage: debug-kube-api [--server URL] [--ca FILE] [--token FILE] [--timeout SECONDS] [PATH]
 
 PATH defaults to /version. The Kubernetes service environment is used only
 when --server is omitted; no pod, namespace, session, or controller metadata
@@ -23,22 +23,15 @@ token_file=${KUBE_TOKEN_FILE:-/var/run/secrets/kubernetes.io/serviceaccount/toke
 token_explicit=0
 timeout_seconds=${WORKLOAD_DEBUG_TIMEOUT:-10}
 path=/version
-
-case "$timeout_seconds" in
-    ''|*[!0-9]*) printf '%s\n' 'debug-kube-api: timeout must be a positive integer' >&2; exit 2 ;;
-esac
-if [ "$timeout_seconds" -lt 1 ] || [ "$timeout_seconds" -gt 300 ]; then
-    printf '%s\n' 'debug-kube-api: timeout must be between 1 and 300' >&2
-    exit 2
-fi
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --server|--ca|--token)
+        --server|--ca|--token|--timeout)
             [ "$#" -ge 2 ] || { usage >&2; exit 2; }
             case "$1" in
                 --server) server=$2; server_override=1 ;;
                 --ca) ca_file=$2 ;;
                 --token) token_file=$2; token_explicit=1 ;;
+                --timeout) timeout_seconds=$2 ;;
             esac
             shift 2 ;;
         --help|-h) usage; exit 0 ;;
@@ -48,6 +41,14 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+
+case "$timeout_seconds" in
+    ''|*[!0-9]*) printf '%s\n' 'debug-kube-api: timeout must be a positive integer' >&2; exit 2 ;;
+esac
+if [ "$timeout_seconds" -lt 1 ] || [ "$timeout_seconds" -gt 300 ]; then
+    printf '%s\n' 'debug-kube-api: timeout must be between 1 and 300' >&2
+    exit 2
+fi
 
 if [ -z "$server" ]; then
     printf '%s\n' 'debug-kube-api: --server is required outside a Kubernetes Pod' >&2

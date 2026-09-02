@@ -1153,6 +1153,7 @@ type DebugSessionAuditConfig struct {
 	// recordingRetention specifies how long recordings are kept.
 	// +optional
 	// +kubebuilder:default="90d"
+	// +kubebuilder:validation:Pattern="^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+$"
 	RecordingRetention string `json:"recordingRetention,omitempty"`
 
 	// enableShellHistory enables shell command history capture.

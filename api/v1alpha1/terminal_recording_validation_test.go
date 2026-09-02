@@ -22,4 +22,12 @@ func TestValidateDebugSessionTemplateRecordingRetention(t *testing.T) {
 	template.Spec.Audit.RecordingRetention = "1d12h"
 	result = ValidateDebugSessionTemplate(template)
 	require.True(t, result.IsValid(), result.ErrorMessage())
+
+	template.Spec.Audit.RecordingRetention = "1w"
+	result = ValidateDebugSessionTemplate(template)
+	require.True(t, result.IsValid(), result.ErrorMessage())
+
+	template.Spec.Audit.RecordingRetention = "1y"
+	result = ValidateDebugSessionTemplate(template)
+	require.True(t, result.IsValid(), result.ErrorMessage())
 }
