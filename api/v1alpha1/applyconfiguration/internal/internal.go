@@ -2176,6 +2176,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: description
       type:
         scalar: string
+    - name: disabled
+      type:
+        scalar: boolean
     - name: displayName
       type:
         scalar: string

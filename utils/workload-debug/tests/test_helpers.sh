@@ -285,6 +285,14 @@ if WORKLOAD_DEBUG_TIMEOUT=0 debug-kube-api --server https://invalid.example >/de
     printf '%s\n' 'debug-kube-api accepted an unbounded timeout' >&2
     exit 1
 fi
+if debug-kube-api --timeout 0 --server https://invalid.example >/dev/null 2>&1; then
+    printf '%s\n' 'debug-kube-api accepted an unbounded explicit timeout' >&2
+    exit 1
+fi
+if debug-kube-api --timeout 301 --server https://invalid.example >/dev/null 2>&1; then
+    printf '%s\n' 'debug-kube-api accepted an excessive explicit timeout' >&2
+    exit 1
+fi
 if WORKLOAD_DEBUG_MAX_BYTES=0 debug-kube-api --server https://invalid.example >/dev/null 2>&1; then
     printf '%s\n' 'debug-kube-api accepted an unbounded response size' >&2
     exit 1
