@@ -23,7 +23,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	// Get pod template if referenced
 	var podTemplate *breakglassv1alpha1.DebugPodTemplate
 	if ds.Status.ResolvedPodTemplate != nil {
-		podTemplate = &breakglassv1alpha1.DebugPodTemplate{Spec: *ds.Status.ResolvedPodTemplate.DeepCopy()}
+		podTemplate = &breakglassv1alpha1.DebugPodTemplate{}
+		if err := json.Unmarshal(ds.Status.ResolvedPodTemplate.Raw, &podTemplate.Spec); err != nil {
+			return fmt.Errorf("decode approved pod-template snapshot: %w", err)
+		}
 	} else if template.Spec.PodTemplateRef != nil {
 		var err error
 		podTemplate, err = c.getPodTemplate(ctx, template.Spec.PodTemplateRef.Name)
@@ -34,8 +37,9 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 
 	var binding *breakglassv1alpha1.DebugSessionClusterBinding
 	if ds.Status.ResolvedBindingSpec != nil {
-		binding = &breakglassv1alpha1.DebugSessionClusterBinding{
-			Spec: *ds.Status.ResolvedBindingSpec.DeepCopy(),
+		binding = &breakglassv1alpha1.DebugSessionClusterBinding{}
+		if err := json.Unmarshal(ds.Status.ResolvedBindingSpec.Raw, &binding.Spec); err != nil {
+			return fmt.Errorf("decode approved binding snapshot: %w", err)
 		}
 	}
 
