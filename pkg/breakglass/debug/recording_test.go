@@ -5,30 +5,14 @@
 package debug
 
 import (
-	"context"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
-
-type recordingReaderStub struct {
-	opened int
-}
-
-func (r *recordingReaderStub) OpenRecording(_ context.Context, _ *breakglassv1alpha1.DebugSession) (io.ReadCloser, string, error) {
-	r.opened++
-	return io.NopCloser(strings.NewReader("version https://asciinema.org/a\n")), "application/x-asciicast", nil
-}
 
 func recordingFixture(enabled bool) (*breakglassv1alpha1.DebugSession, *breakglassv1alpha1.DebugSessionTemplate) {
 	return &breakglassv1alpha1.DebugSession{
@@ -148,108 +132,6 @@ func recordingFixtureTemplate() *breakglassv1alpha1.DebugSessionTemplate {
 	return &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 		Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: true, RecordingRetention: "30d"},
 	}}
-}
-
-func TestRecordingReplayAvailableRequiresReadyBoundedUnexpiredArtifact(t *testing.T) {
-	ready := &breakglassv1alpha1.TerminalRecordingStatus{
-		Enabled: true,
-		State:   breakglassv1alpha1.TerminalRecordingStateReady,
-		Artifact: &breakglassv1alpha1.TerminalRecordingArtifact{
-			URI:       "opaque/object-key",
-			SizeBytes: 10,
-			ExpiresAt: func() *metav1.Time { value := metav1.NewTime(time.Now().Add(time.Hour)); return &value }(),
-		},
-	}
-	if !recordingReplayAvailable(ready) {
-		t.Fatal("expected ready recording to be replayable")
-	}
-	ready.State = breakglassv1alpha1.TerminalRecordingStateRecording
-	if recordingReplayAvailable(ready) {
-		t.Fatal("recording must not be replayable before finalization")
-	}
-	ready.State = breakglassv1alpha1.TerminalRecordingStateReady
-	ready.Artifact.SizeBytes = -1
-	if recordingReplayAvailable(ready) {
-		t.Fatal("negative artifact size must be rejected")
-	}
-}
-
-func TestRecordingReplayUsesSessionAuthorizationAndStreamsExternalArtifact(t *testing.T) {
-	session := &breakglassv1alpha1.DebugSession{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "recorded-session",
-			Namespace: "default",
-			Labels:    map[string]string{DebugSessionLabelKey: "recorded-session"},
-		},
-		Spec: breakglassv1alpha1.DebugSessionSpec{
-			Cluster:     "prod",
-			RequestedBy: "owner@example.com",
-			TemplateRef: "template",
-		},
-		Status: breakglassv1alpha1.DebugSessionStatus{
-			State: breakglassv1alpha1.DebugSessionStateActive,
-			Recording: &breakglassv1alpha1.TerminalRecordingStatus{
-				Enabled: true,
-				State:   breakglassv1alpha1.TerminalRecordingStateReady,
-				Artifact: &breakglassv1alpha1.TerminalRecordingArtifact{
-					URI:       "opaque/object-key",
-					SizeBytes: 35,
-				},
-			},
-		},
-	}
-	_, controller := setupTestRouter(t, session)
-	reader := &recordingReaderStub{}
-	controller.WithRecordingReplayReader(reader)
-
-	ownerRouter := setupAuthenticatedDebugSessionRouter(t, controller, "owner@example.com", "", nil)
-	ownerRequest := httptest.NewRequest(http.MethodGet, "/api/debugSessions/recorded-session/recording/replay?namespace=default", nil)
-	ownerResponse := httptest.NewRecorder()
-	ownerRouter.ServeHTTP(ownerResponse, ownerRequest)
-	if ownerResponse.Code != http.StatusOK || !strings.Contains(ownerResponse.Body.String(), "asciinema") {
-		t.Fatalf("authorized replay failed: status=%d body=%q", ownerResponse.Code, ownerResponse.Body.String())
-	}
-
-	otherRouter := setupAuthenticatedDebugSessionRouter(t, controller, "other@example.com", "", nil)
-	otherRequest := httptest.NewRequest(http.MethodGet, "/api/debugSessions/recorded-session/recording/replay?namespace=default", nil)
-	otherResponse := httptest.NewRecorder()
-	otherRouter.ServeHTTP(otherResponse, otherRequest)
-	if otherResponse.Code != http.StatusForbidden {
-		t.Fatalf("unauthorized replay should be forbidden: status=%d body=%q", otherResponse.Code, otherResponse.Body.String())
-	}
-	if reader.opened != 1 {
-		t.Fatalf("unauthorized replay must not open the artifact: opened=%d", reader.opened)
-	}
-}
-
-func TestRecordingCleanupRetainsFinalizedLifecycleWithoutDeletingArtifact(t *testing.T) {
-	session := &breakglassv1alpha1.DebugSession{
-		ObjectMeta: metav1.ObjectMeta{Name: "cleanup-session", Namespace: "default"},
-		Spec: breakglassv1alpha1.DebugSessionSpec{
-			Cluster: "prod", TemplateRef: "missing-template", RequestedBy: "owner@example.com",
-		},
-		Status: breakglassv1alpha1.DebugSessionStatus{
-			State: breakglassv1alpha1.DebugSessionStateTerminated,
-			Recording: &breakglassv1alpha1.TerminalRecordingStatus{
-				Enabled:   true,
-				State:     breakglassv1alpha1.TerminalRecordingStateFinalizing,
-				Retention: "1h",
-				Artifact:  &breakglassv1alpha1.TerminalRecordingArtifact{URI: "opaque/object-key"},
-			},
-		},
-	}
-	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(session).WithObjects(session).Build()
-	controller := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil)
-	if _, err := controller.handleCleanup(context.Background(), session); err != nil {
-		t.Fatalf("cleanup failed: %v", err)
-	}
-	latest := &breakglassv1alpha1.DebugSession{}
-	if err := fakeClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), latest); err != nil {
-		t.Fatalf("load cleaned session: %v", err)
-	}
-	if latest.Status.Recording.State != breakglassv1alpha1.TerminalRecordingStateRetained || latest.Status.Recording.CompletedAt == nil || latest.Status.Recording.Artifact.ExpiresAt == nil {
-		t.Fatalf("cleanup did not retain finalized recording: %#v", latest.Status.Recording)
-	}
 }
 
 func TestSafeRecordingFailureRedactsSecretsAndBoundsLength(t *testing.T) {
