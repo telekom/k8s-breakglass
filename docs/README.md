@@ -105,6 +105,7 @@ Every utility is published as an immutable,
 - **[Technical Debt](./TECHNICAL_DEBT.md)** - Known TODOs, future enhancements, and maintenance tracking
 - **[Package Structure](./package-structure.md)** - Sub-package layout of `pkg/breakglass/`
 - **[Release Process](./release-process.md)** - Release signing, provenance, and checklist
+- **[T-CaaS deployment-model E2E coverage audit](./e2e-tcaas-coverage-audit.md)** - Deployment-shape coverage, evidence, and remaining gaps
 
 ## Contributing
 

@@ -49,6 +49,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -456,6 +457,207 @@ func TestBootstrapW001_ControllerDeploymentReady(t *testing.T) {
 	}
 	assert.True(t, imageFound,
 		"at least one container in deployment %s should use image containing %q", deployName, expectedImage)
+}
+
+// TestBootstrapW003_DeploymentModel verifies that the deployed controller
+// exposes the ports and startup arguments used by the management cluster
+// deployment model, including the ConfigMap-backed configuration path.
+func TestBootstrapW003_DeploymentModel(t *testing.T) {
+	skipUnlessE2E(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	cli := setupClient(t)
+	deployName, err := findDeploymentByLabel(ctx, cli, bootstrapSystem, "app=breakglass")
+	require.NoError(t, err, "breakglass controller deployment should exist")
+
+	var deploy appsv1.Deployment
+	require.NoError(t,
+		cli.Get(ctx, client.ObjectKey{Namespace: bootstrapSystem, Name: deployName}, &deploy),
+		"failed to get controller deployment",
+	)
+
+	var container *corev1.Container
+	for i := range deploy.Spec.Template.Spec.Containers {
+		if deploy.Spec.Template.Spec.Containers[i].Name == "breakglass" {
+			container = &deploy.Spec.Template.Spec.Containers[i]
+			break
+		}
+	}
+	require.NotNil(t, container, "deployment must contain the breakglass container")
+
+	args := make(map[string]struct{}, len(container.Args))
+	for _, arg := range container.Args {
+		args[arg] = struct{}{}
+	}
+	for _, arg := range []string{
+		"--config-path=/config/config.yaml",
+		"--pod-namespace=$(POD_NAMESPACE)",
+		"--metrics-bind-address=:8081",
+		"--health-probe-bind-address=:8082",
+		"--leader-elect-namespace=$(POD_NAMESPACE)",
+		"--leader-elect-id=breakglass.telekom.io",
+		"--escalation-status-update-interval=10m",
+		"--enable-frontend=true",
+		"--enable-api=true",
+		"--enable-cleanup=true",
+		"--enable-webhooks=true",
+		"--enable-validating-webhooks=true",
+		"--webhook-cert-path=/tmp/k8s-webhook-server/serving-certs",
+		"--webhook-bind-address=0.0.0.0:9443",
+		"--webhooks-metrics-bind-address=:8083",
+		"--webhooks-metrics-secure=false",
+	} {
+		assert.Contains(t, args, arg, "deployment argument must preserve the T-CaaS startup contract")
+	}
+	assert.True(t,
+		hasAnyArg(args, "--cluster-config-check-interval=10m", "--cluster-config-check-interval=10s"),
+		"deployment must configure the cluster check interval (T-CaaS uses 10m; the Kind overlay shortens it to 10s)",
+	)
+
+	// T-CaaS omits --enable-controllers and therefore relies on the running
+	// controller effect below to verify the default. Explicit overrides must
+	// still leave controllers enabled.
+	var controllerOverride *bool
+	for arg := range args {
+		if strings.HasPrefix(arg, "--enable-controllers=") {
+			enabled := isTruthy(arg[len("--enable-controllers="):])
+			controllerOverride = &enabled
+			break
+		}
+	}
+	if controllerOverride == nil {
+		for _, env := range container.Env {
+			if env.Name != "ENABLE_CONTROLLERS" {
+				continue
+			}
+			require.Nil(t, env.ValueFrom, "ENABLE_CONTROLLERS must not use an unresolved value source")
+			if env.Value != "" {
+				enabled := isTruthy(env.Value)
+				controllerOverride = &enabled
+			}
+		}
+	}
+	if controllerOverride != nil {
+		require.True(t, *controllerOverride,
+			"the T-CaaS deployment model must not disable controllers")
+	}
+
+	var configMount, tmpMount, certMount *corev1.VolumeMount
+	for i := range container.VolumeMounts {
+		switch container.VolumeMounts[i].MountPath {
+		case "/config/":
+			configMount = &container.VolumeMounts[i]
+		case "/tmp":
+			tmpMount = &container.VolumeMounts[i]
+		case "/tmp/k8s-webhook-server/serving-certs":
+			certMount = &container.VolumeMounts[i]
+		}
+	}
+	require.NotNil(t, configMount, "deployment must mount /config/")
+	require.True(t, configMount.ReadOnly, "the ConfigMap-backed /config/ mount must be read-only")
+	require.NotNil(t, tmpMount, "deployment must mount writable /tmp for webhook certificates")
+	require.False(t, tmpMount.ReadOnly, "the webhook certificate mount must be writable")
+	require.NotNil(t, certMount, "deployment must mount the configured webhook certificate path")
+	require.True(t, certMount.ReadOnly, "webhook certificates must be mounted read-only")
+
+	var configVolume *corev1.Volume
+	for i := range deploy.Spec.Template.Spec.Volumes {
+		if deploy.Spec.Template.Spec.Volumes[i].Name == configMount.Name {
+			configVolume = &deploy.Spec.Template.Spec.Volumes[i]
+			break
+		}
+	}
+	require.NotNil(t, configVolume, "the /config/ volume must be declared")
+	require.NotNil(t, configVolume.ConfigMap, "the /config/ volume must come from a ConfigMap")
+	require.NotEmpty(t, configVolume.ConfigMap.Name, "the /config/ ConfigMap name must be set")
+
+	var certVolume *corev1.Volume
+	for i := range deploy.Spec.Template.Spec.Volumes {
+		if deploy.Spec.Template.Spec.Volumes[i].Name == certMount.Name {
+			certVolume = &deploy.Spec.Template.Spec.Volumes[i]
+			break
+		}
+	}
+	require.NotNil(t, certVolume, "the webhook certificate volume must be declared")
+	require.NotNil(t, certVolume.Secret, "the webhook certificate volume must come from a Secret")
+	require.NotEmpty(t, certVolume.Secret.SecretName, "the webhook certificate Secret name must be set")
+
+	var configMap corev1.ConfigMap
+	require.NoError(t,
+		cli.Get(ctx, client.ObjectKey{
+			Namespace: bootstrapSystem,
+			Name:      configVolume.ConfigMap.Name,
+		}, &configMap),
+		"the mounted configuration ConfigMap must exist",
+	)
+	require.Contains(t, configMap.Data, "config.yaml",
+		"the mounted ConfigMap must provide config.yaml")
+
+	var podNamespaceEnv *corev1.EnvVar
+	for i := range container.Env {
+		if container.Env[i].Name == "POD_NAMESPACE" {
+			podNamespaceEnv = &container.Env[i]
+			break
+		}
+	}
+	require.NotNil(t, podNamespaceEnv, "POD_NAMESPACE must be injected into the container")
+	require.NotNil(t, podNamespaceEnv.ValueFrom, "POD_NAMESPACE must use a downward API fieldRef")
+	require.NotNil(t, podNamespaceEnv.ValueFrom.FieldRef, "POD_NAMESPACE must use a fieldRef")
+	assert.Equal(t, "metadata.namespace", podNamespaceEnv.ValueFrom.FieldRef.FieldPath)
+
+	expectedPorts := map[int32]bool{8080: false, 8081: false, 8082: false, 8083: false, 9443: false}
+	for _, port := range container.Ports {
+		if _, ok := expectedPorts[port.ContainerPort]; ok {
+			expectedPorts[port.ContainerPort] = true
+		}
+	}
+	for port, found := range expectedPorts {
+		assert.True(t, found, "breakglass container must expose port %d", port)
+	}
+
+	var lease coordinationv1.Lease
+	require.NoError(t,
+		cli.Get(ctx, client.ObjectKey{
+			Namespace: bootstrapSystem,
+			Name:      "breakglass.telekom.io",
+		}, &lease),
+		"leader election must create the configured Lease",
+	)
+
+	var idp breakglassv1alpha1.IdentityProvider
+	require.NoError(t,
+		cli.Get(ctx, client.ObjectKey{Name: "breakglass-e2e-idp"}, &idp),
+		"the bootstrap IdentityProvider must exist",
+	)
+	ready := false
+	for _, condition := range idp.Status.Conditions {
+		if breakglassv1alpha1.IdentityProviderConditionType(condition.Type) == breakglassv1alpha1.IdentityProviderConditionReady {
+			ready = condition.Status == metav1.ConditionTrue
+			break
+		}
+	}
+	require.True(t, ready,
+		"the bootstrap IdentityProvider must be reconciled Ready, proving the effective controller default is enabled")
+}
+
+func hasAnyArg(args map[string]struct{}, expected ...string) bool {
+	for _, arg := range expected {
+		if _, ok := args[arg]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func isTruthy(value string) bool {
+	switch strings.ToLower(value) {
+	case "true", "1", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 // --- W-002: Webhook kubeconfig ---
