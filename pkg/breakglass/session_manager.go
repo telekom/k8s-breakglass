@@ -579,12 +579,6 @@ func (c *SessionManager) recordLiveReaderFallback(key string, now time.Time) {
 	c.liveFallbackAt[key] = now
 }
 
-func (c *SessionManager) clearLiveReaderFallback(key string) {
-	c.liveFallbackMu.Lock()
-	defer c.liveFallbackMu.Unlock()
-	delete(c.liveFallbackAt, key)
-}
-
 // GetBreakglassSessions with custom field selector string.
 func (c *SessionManager) GetBreakglassSessionsWithSelectorString(ctx context.Context,
 	selectorString string,
