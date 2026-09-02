@@ -5219,10 +5219,10 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 	t.Run("cleans up supported Job resource", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-job-kind", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-			{APIVersion: "batch/v1", Kind: "Job", Name: "job-resource", Namespace: "default", Source: "workload"},
+			{APIVersion: "batch/v1", Kind: "Job", Name: "job-resource", Namespace: "default", UID: "job-uid", Source: "workload"},
 		}
 
-		job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job-resource", Namespace: "default"}}
+		job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job-resource", Namespace: "default", UID: "job-uid"}}
 		targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(job).Build()
 		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
@@ -5355,12 +5355,14 @@ func TestDebugSessionController_CleanupPodTemplateResourcesMigratesLegacyOwnersh
 	scheme := testScheme()
 	session := newTestDebugSession("legacy-cleanup", "test-template", "test-cluster", "user@example.com")
 	session.UID = "current-session-uid"
+	session.Annotations = map[string]string{LegacyCleanupUIDsAnnotation: `{"v1/ConfigMap/default/legacy-config":"legacy-uid"}`}
 	session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
 		{Kind: "ConfigMap", APIVersion: "v1", ResourceName: "legacy-config", Namespace: "default", Created: true},
 	}
 	legacy := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
 		Name:      "legacy-config",
 		Namespace: "default",
+		UID:       "legacy-uid",
 		Labels: map[string]string{
 			"breakglass.t-caas.telekom.com/session": session.Name,
 		},

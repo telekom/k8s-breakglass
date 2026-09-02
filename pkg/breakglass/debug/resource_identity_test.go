@@ -97,7 +97,7 @@ func TestLifecycleCleanupPathsPreserveReplacement(t *testing.T) {
 				require.Empty(t, ds.Status.DeployedResources)
 			case "pod-template":
 				ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{{APIVersion: "v1", Kind: "Pod", Namespace: "ns", ResourceName: "pod", UID: "original", Created: true}}
-				require.NoError(t, ctrl.cleanupPodTemplateResources(ctx, ds, target))
+				require.Error(t, ctrl.cleanupPodTemplateResources(ctx, ds, target))
 			case "auxiliary":
 				m := NewAuxiliaryResourceManager(zap.NewNop().Sugar(), target)
 				require.NoError(t, m.deleteResource(ctx, target, breakglassv1alpha1.AuxiliaryResourceStatus{APIVersion: "v1", Kind: "Pod", Namespace: "ns", ResourceName: "pod", UID: "original"}, ds))
@@ -148,12 +148,17 @@ func TestTrackedWorkloadPodMembership(t *testing.T) {
 }
 
 func TestPodTemplateIdentityComesFromApplyResponse(t *testing.T) {
+	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session-uid"}}
+	gets := 0
 	target := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
 		Apply: func(_ context.Context, _ client.WithWatch, cfg runtime.ApplyConfiguration, _ ...client.ApplyOption) error {
 			return json.Unmarshal([]byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"config","namespace":"ns","uid":"applied-uid"}}`), cfg)
 		},
-		Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
-			t.Fatal("a second lookup could bind replacement UID")
+		Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
+			gets++
+			obj.SetUID("existing-uid")
+			obj.SetLabels(map[string]string{"breakglass.t-caas.telekom.com/session": ds.Name, DebugSessionUIDLabelKey: string(ds.UID)})
+			obj.SetAnnotations(map[string]string{"breakglass.t-caas.telekom.com/source-session": ds.Namespace + "/" + ds.Name, DebugSessionUIDAnnotationKey: string(ds.UID)})
 			return nil
 		},
 	}).Build()
@@ -161,8 +166,8 @@ func TestPodTemplateIdentityComesFromApplyResponse(t *testing.T) {
 	obj.SetAPIVersion("v1")
 	obj.SetKind("ConfigMap")
 	obj.SetName("config")
-	ds := &breakglassv1alpha1.DebugSession{}
 	require.NoError(t, (&DebugSessionController{log: zap.NewNop().Sugar()}).deployPodTemplateResource(context.Background(), target, ds, obj, "ns"))
+	require.Equal(t, 1, gets, "apply response must supply identity without a second lookup")
 	require.Equal(t, "applied-uid", ds.Status.PodTemplateResourceStatuses[0].UID)
 	require.Equal(t, "applied-uid", ds.Status.DeployedResources[0].UID)
 }
