@@ -509,7 +509,7 @@ func hasTrackedSpokeResources(ds *breakglassv1alpha1.DebugSession) bool {
 		return true
 	}
 	if status := ds.Status.KubectlDebugStatus; status != nil {
-		if len(status.EphemeralContainersInjected) > 0 || len(status.CopiedPods) > 0 {
+		if len(status.CopiedPods) > 0 {
 			return true
 		}
 		for _, operation := range status.Operations {
