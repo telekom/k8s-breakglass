@@ -8,38 +8,31 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 dockerfile="${root}/Dockerfile"
 versions="${root}/versions.env"
 
-grep -F 'COPY tools/fetch.go /src/fetch.go' "${dockerfile}" >/dev/null
-grep -F 'verified-fetch' "${dockerfile}" >/dev/null
-grep -F 'mkdir -p /out' "${dockerfile}" >/dev/null || {
-	printf '%s\n' 'network-debug Dockerfile must create its verified-fetch output directory' >&2
+grep -F 'go mod download -json "github.com/cilium/pwru@${PWRU_VERSION}"' "${dockerfile}" >/dev/null
+grep -F 'make VERSION="${PWRU_VERSION}"' "${dockerfile}" >/dev/null
+grep -F 'mkdir -p /src/pwru /out' "${dockerfile}" >/dev/null || {
+	printf '%s\n' 'network-debug Dockerfile must create its source and output directories' >&2
 	exit 1
 }
-if grep -F 'git clone' "${dockerfile}" >/dev/null; then
-	printf '%s\n' 'network-debug Dockerfile must not clone mutable source' >&2
+module_sum="$(sed -n 's/^PWRU_MODULE_SUM=//p' "${versions}")"
+[[ "${module_sum}" =~ ^h1:[A-Za-z0-9+/]+=+$ ]] || {
+	printf '%s\n' 'invalid PWRU_MODULE_SUM in versions.env' >&2
 	exit 1
-fi
-if grep -E 'PWRU_VERSION\}/|PWRU_VERSION=v' "${dockerfile}" >/dev/null && \
-	! grep -F 'PWRU_SHA256_AMD64=' "${dockerfile}" >/dev/null; then
-	printf '%s\n' 'network-debug release asset is missing an immutable digest' >&2
+}
+grep -F "ARG PWRU_MODULE_SUM=${module_sum}" "${dockerfile}" >/dev/null || {
+	printf '%s\n' 'PWRU_MODULE_SUM is not synchronized with Dockerfile' >&2
 	exit 1
-fi
-for digest in PWRU_ASSET_SHA256_AMD64 PWRU_ASSET_SHA256_ARM64; do
-	value="$(awk -F= -v key="${digest}" '$1 == key { print $2 }' "${versions}")"
-	[[ "${value}" =~ ^[0-9a-f]{64}$ ]] || {
-		printf 'invalid %s in versions.env\n' "${digest}" >&2
-		exit 1
-	}
-	docker_arg="PWRU_${digest#PWRU_ASSET_}"
-	grep -F "ARG ${docker_arg}=${value}" "${dockerfile}" >/dev/null || {
-		printf '%s is not synchronized with Dockerfile\n' "${digest}" >&2
-		exit 1
-	}
-done
-if grep -F 'PWRU_COMMIT=' "${versions}" >/dev/null; then
-	printf '%s\n' 'network-debug versions.env must not claim an unused pwru source commit' >&2
+}
+commit="$(awk -F= '$1 == "PWRU_COMMIT" { print $2 }' "${versions}")"
+[[ "${commit}" =~ ^[0-9a-f]{40}$ ]] || {
+	printf '%s\n' 'invalid PWRU_COMMIT in versions.env' >&2
 	exit 1
-fi
-grep -F 'PWRU_BUILD_POLICY=https-only-github-release-asset-at-pinned-sha256' "${versions}" >/dev/null
+}
+grep -F "ARG PWRU_COMMIT=${commit}" "${dockerfile}" >/dev/null || {
+	printf '%s\n' 'PWRU_COMMIT is not synchronized with Dockerfile' >&2
+	exit 1
+}
+grep -F 'PWRU_BUILD_POLICY=go-module-at-pinned-sum-built-with-pinned-toolchain' "${versions}" >/dev/null
 base_alpine_version="$(awk -F= '$1 == "BASE_ALPINE_VERSION" { print $2 }' "${versions}")"
 grep -F "ARG NETSHOOT_ALPINE_VERSION=${base_alpine_version}" "${dockerfile}" >/dev/null
 [[ "${base_alpine_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -47,4 +40,4 @@ grep -F "ARG NETSHOOT_ALPINE_VERSION=${base_alpine_version}" "${dockerfile}" >/d
 	exit 1
 }
 
-printf '%s\n' 'network-debug immutable fetch contract passed'
+printf '%s\n' 'network-debug immutable source contract passed'

@@ -3,39 +3,38 @@
 
 # netshoot v0.16 supplies the overlapping network troubleshooting tools. Keep
 # the release tag and immutable multi-architecture manifest digest together.
-# The upstream package set is inherited as a unit; only pwru and the
-# contract/docs below are added here.
+# The upstream package set is inherited as a unit and refreshed from the
+# pinned Alpine 3.24 repositories before adding pwru and the contract/docs.
 FROM ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70 AS runtime
 
 ARG VERSION=0.1.0
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 
-# pwru is fetched from an immutable release asset with the tested downloader
-# in this repository. The digest-pinned builder and its compiler never enter
-# the runtime image. Storage tooling is intentionally excluded; kubestr belongs
-# to storage-debug.
-FROM golang:1.27@sha256:c5b07c17f54c5f22230c4b4da6e90249165cf55368e01a52808cb92064e18836 AS tools
+# pwru is built from its immutable Go module version with the pinned builder.
+# The compiler and build dependencies never enter the runtime image. Storage
+# tooling is intentionally excluded; kubestr belongs to storage-debug.
+FROM golang:1.27@sha256:4013ae0f9e7994f8535c58c811f8f863fbed38b72e0d51e6592156f758d66146 AS tools
 ARG TARGETARCH
 ARG PWRU_VERSION=v1.0.12
-ARG PWRU_SHA256_AMD64=1ccaea22d97c283b09d2e2f0329789727c4f1b19aa99723e32b2e12d3a5e6dba
-ARG PWRU_SHA256_ARM64=997516721a58b4f8ffe3504994cada472c9bcd78f1e819862bf61f1081684378
+ARG PWRU_MODULE_SUM=h1:a8oQXdTJHznh4vCI3GLf31IDqGYIUmDJzjSaXHYpQPg=
+ARG PWRU_COMMIT=f1d6cf8898953ac1560401e181f3ac5f0e33b486
 
-COPY tools/fetch.go /src/fetch.go
 RUN set -eux; \
-	go build -trimpath -o /usr/local/bin/verified-fetch /src/fetch.go; \
-	mkdir -p /out; \
-	case "${TARGETARCH:-amd64}" in \
-		amd64) asset_arch=amd64; asset_sha256="${PWRU_SHA256_AMD64}" ;; \
-		arm64) asset_arch=arm64; asset_sha256="${PWRU_SHA256_ARM64}" ;; \
-		*) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
-	esac; \
-	/usr/local/bin/verified-fetch \
-		"https://github.com/cilium/pwru/releases/download/${PWRU_VERSION}/pwru-linux-${asset_arch}.tar.gz" \
-		/out/pwru.tar.gz "${asset_sha256}"; \
-	tar -xzf /out/pwru.tar.gz -C /out; \
-	test -x /out/pwru; \
-	rm /out/pwru.tar.gz
+	export DEBIAN_FRONTEND=noninteractive; \
+	apt-get update; \
+	apt-get install --no-install-recommends --yes clang llvm flex bison; \
+	rm -rf /var/lib/apt/lists/*; \
+	module_json="$(go mod download -json "github.com/cilium/pwru@${PWRU_VERSION}")"; \
+	printf '%s\n' "${module_json}" | grep -F '"Sum": "'"${PWRU_MODULE_SUM}"'"'; \
+	printf '%s\n' "${module_json}" | grep -F '"Hash": "'"${PWRU_COMMIT}"'"'; \
+	mkdir -p /src/pwru /out; \
+	cp -a "$(go env GOPATH)/pkg/mod/github.com/cilium/pwru@${PWRU_VERSION}/." /src/pwru/; \
+	test "$(grep '^go ' /src/pwru/go.mod | awk '{print $2}')" = "1.25.0"; \
+	chmod +x /src/pwru/libpcap/configure; \
+	cd /src/pwru; \
+	make VERSION="${PWRU_VERSION}" TARGET_GOARCH="${TARGETARCH:-amd64}" GOARCH="${TARGETARCH:-amd64}" pwru; \
+	install -m 0755 pwru /out/pwru
 
 FROM runtime
 
@@ -45,10 +44,17 @@ ARG BUILD_DATE=unknown
 ARG PWRU_VERSION=v1.0.12
 ARG NETSHOOT_ALPINE_VERSION=3.24.1
 
-# The pinned netshoot image owns the runtime package set. Prove the expected
-# Alpine runtime before removing optional inherited binaries; do not mix a
-# separately selected Alpine repository into the unknown base release.
+# The pinned netshoot image owns the runtime package set. Refresh it from the
+# matching Alpine 3.24 repositories to consume security fixes, then prove the
+# expected Alpine runtime before removing optional inherited binaries.
 RUN set -eux; \
+	sed -i '/\/alpine\/edge\//d' /etc/apk/repositories; \
+	printf '%s\n' \
+		'https://dl-cdn.alpinelinux.org/alpine/v3.24/main' \
+		'https://dl-cdn.alpinelinux.org/alpine/v3.24/community' \
+		>> /etc/apk/repositories; \
+	apk update; \
+	apk upgrade; \
 	test "$(cat /etc/alpine-release)" = "${NETSHOOT_ALPINE_VERSION}"; \
 	test -x /usr/bin/tcpdump; \
 	rm -f /usr/local/bin/calicoctl /usr/local/bin/ctop /usr/local/bin/fortio \
