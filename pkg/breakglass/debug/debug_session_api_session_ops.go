@@ -258,7 +258,6 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	}
 	session = live
 	newExpiry = metav1.NewTime(session.Status.ExpiresAt.Add(extendBy))
-	newRenewalCount = session.Status.RenewalCount + 1
 
 	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.ExpiresAt = &newExpiry
