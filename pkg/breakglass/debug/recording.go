@@ -163,6 +163,11 @@ func injectTerminalRecording(spec *corev1.PodSpec, ds *breakglassv1alpha1.DebugS
 			return fmt.Errorf("container name %q is reserved for the terminal recording sidecar", "terminal-recorder")
 		}
 	}
+	for i := range spec.InitContainers {
+		if spec.InitContainers[i].Name == "terminal-recorder" {
+			return fmt.Errorf("container name %q is reserved for the terminal recording sidecar", "terminal-recorder")
+		}
+	}
 
 	correlationID := recordingCorrelationID(ds.Namespace, ds.Name)
 	envs := []corev1.EnvVar{
