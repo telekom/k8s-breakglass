@@ -662,16 +662,12 @@ func (c *DebugSessionController) deployPodTemplateResource(
 	if err := createOrRecoverTargetObject(ctx, targetClient, obj, ds); err != nil {
 		return fmt.Errorf("create pod template resource failed: %w", err)
 	}
-	created := &unstructured.Unstructured{}
-	created.SetAPIVersion(obj.GetAPIVersion())
-	created.SetKind(obj.GetKind())
-	if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(obj), created); err != nil {
-		return fmt.Errorf("failed to read created pod template resource: %w", err)
-	}
-
 	// Record the target UID as the durable outcome.
 	statusRef := &ds.Status.PodTemplateResourceStatuses[len(ds.Status.PodTemplateResourceStatuses)-1]
-	statusRef.UID = string(created.GetUID())
+	statusRef.UID = string(obj.GetUID())
+	if statusRef.UID == "" {
+		return fmt.Errorf("created pod template resource %s/%s has no UID", obj.GetNamespace(), obj.GetName())
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	statusRef.CreatedAt = &now
 	if c.client != nil {
@@ -687,7 +683,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		Name:       obj.GetName(),
 		Namespace:  obj.GetNamespace(),
 		Source:     "pod-template",
-		UID:        string(created.GetUID()),
+		UID:        statusRef.UID,
 	})
 
 	log.Infow("Deployed pod template resource",
