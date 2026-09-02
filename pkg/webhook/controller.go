@@ -783,31 +783,35 @@ func (wc *WebhookController) getSessionsWithIDPMismatchInfo(ctx context.Context,
 	if err != nil {
 		return nil, nil, err
 	}
-	out := make([]breakglassv1alpha1.BreakglassSession, 0, len(all))
-	idpMismatches := make([]breakglassv1alpha1.BreakglassSession, 0)
-	now := time.Now()
-	for _, s := range all {
-		if breakglass.IsSessionRetained(s) {
-			continue
-		}
-		// Only include sessions that are in Approved state with a valid time window.
-		// Terminal states (IdleExpired, Expired, Rejected, Withdrawn, etc.) must be excluded
-		// even if their ExpiresAt is still in the future.
-		if s.Status.State != breakglassv1alpha1.SessionStateApproved {
-			continue
-		}
-		if s.Status.RejectedAt.IsZero() && !s.Status.ExpiresAt.IsZero() && s.Status.ExpiresAt.After(now) {
-			// If issuer is provided and session does NOT allow IDP mismatch,
-			// only include sessions that match the issuer (multi-IDP mode)
-			if issuer != "" && !s.Spec.AllowIDPMismatch && s.Spec.IdentityProviderIssuer != issuer {
-				// Track sessions filtered out due to IDP mismatch
-				idpMismatches = append(idpMismatches, s)
-				continue
-			}
-			out = append(out, s)
-		}
-	}
+	out, idpMismatches := filterSessionsForAuthorization(all, issuer, time.Now())
 	return out, idpMismatches, nil
+}
+
+func grantedGroupsFromSessions(sessions []breakglassv1alpha1.BreakglassSession) []string {
+	groups := make([]string, 0, len(sessions))
+	for _, session := range sessions {
+		groups = append(groups, session.Spec.GrantedGroup)
+	}
+	return groups
+}
+
+func filterSessionsForAuthorization(sessions []breakglassv1alpha1.BreakglassSession,
+	issuer string,
+	now time.Time,
+) ([]breakglassv1alpha1.BreakglassSession, []breakglassv1alpha1.BreakglassSession) {
+	out := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessions))
+	idpMismatches := make([]breakglassv1alpha1.BreakglassSession, 0)
+	for _, session := range sessions {
+		if !breakglass.IsSessionAuthorizationEligible(session, now) {
+			continue
+		}
+		if issuer != "" && !session.Spec.AllowIDPMismatch && session.Spec.IdentityProviderIssuer != issuer {
+			idpMismatches = append(idpMismatches, session)
+			continue
+		}
+		out = append(out, session)
+	}
+	return out, idpMismatches
 }
 
 // dedupeStrings removes duplicates from a slice of strings while preserving order.

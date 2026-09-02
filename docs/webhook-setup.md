@@ -192,6 +192,12 @@ select `BreakglassSession` resources. The session field indexes remain enabled
 when controller reconcilers are disabled, so split deployments continue to
 discover approved sessions by cluster and user.
 
+### Cache consistency after approval
+
+Authorization selection normally uses the indexed shared cache. If that cache
+has not observed a newly approved session yet, the selection path refreshes
+from the live API reader before deciding that no session exists.
+
 ### Authentication Methods
 
 #### Bearer Token (Recommended)

@@ -3,7 +3,9 @@ package breakglass
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,18 +20,72 @@ import (
 )
 
 type stubReader struct {
-	listFn func(list client.ObjectList) error
+	listFn         func(list client.ObjectList) error
+	listFnWithOpts func(list client.ObjectList, opts []client.ListOption) error
 }
 
 func (s stubReader) Get(_ context.Context, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
 	return nil
 }
 
-func (s stubReader) List(_ context.Context, list client.ObjectList, _ ...client.ListOption) error {
+func (s stubReader) List(_ context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if s.listFnWithOpts != nil {
+		return s.listFnWithOpts(list, opts)
+	}
 	if s.listFn != nil {
 		return s.listFn(list)
 	}
 	return nil
+}
+
+func TestSessionManager_LiveFallbackSelectorsAndErrors(t *testing.T) {
+	t.Run("passes cluster and user selectors", func(t *testing.T) {
+		var got client.ListOptions
+		reader := stubReader{listFnWithOpts: func(list client.ObjectList, opts []client.ListOption) error {
+			for _, opt := range opts {
+				opt.ApplyToList(&got)
+			}
+			return nil
+		}}
+		manager := &SessionManager{liveReader: reader}
+		_, refreshed := manager.fetchLiveClusterUserBreakglassSessions(
+			context.Background(), "cluster", "user", "cluster\x00user", zap.NewNop().Sugar(),
+		)
+		require.True(t, refreshed)
+		assert.Contains(t, got.FieldSelector.String(), "spec.cluster=cluster")
+		assert.Contains(t, got.FieldSelector.String(), "spec.user=user")
+	})
+
+	t.Run("falls back only for unsupported selectors", func(t *testing.T) {
+		calls := 0
+		reader := stubReader{listFn: func(list client.ObjectList) error {
+			calls++
+			if calls == 1 {
+				return fmt.Errorf("no index with name spec.cluster")
+			}
+			return nil
+		}}
+		manager := &SessionManager{liveReader: reader}
+		_, refreshed := manager.fetchLiveClusterUserBreakglassSessions(
+			context.Background(), "cluster", "user", "cluster\x00user", zap.NewNop().Sugar(),
+		)
+		require.True(t, refreshed)
+		assert.Equal(t, 2, calls)
+	})
+
+	t.Run("does not retry non-selector errors", func(t *testing.T) {
+		calls := 0
+		reader := stubReader{listFn: func(list client.ObjectList) error {
+			calls++
+			return fmt.Errorf("forbidden")
+		}}
+		manager := &SessionManager{liveReader: reader}
+		_, refreshed := manager.fetchLiveClusterUserBreakglassSessions(
+			context.Background(), "cluster", "user", "cluster\x00user", zap.NewNop().Sugar(),
+		)
+		assert.False(t, refreshed)
+		assert.Equal(t, 1, calls)
+	})
 }
 
 func TestSessionManager_Simple(t *testing.T) {
@@ -304,6 +360,342 @@ func TestSessionManager_FieldSelectorMethods(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, sessions, 1)
 	})
+}
+
+func TestSessionManager_AuthorizationSelectionUsesLiveReaderWhenCacheIsStale(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	session := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "approved-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User:    "platform-requester@example.com",
+			Cluster: "tind-workload-01.tst.local-dev",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		},
+	}
+	cachedClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+		}).
+		Build()
+	liveReader := stubReader{
+		listFn: func(list client.ObjectList) error {
+			sessionList, ok := list.(*breakglassv1alpha1.BreakglassSessionList)
+			if !ok {
+				return fmt.Errorf("unexpected list type %T", list)
+			}
+			sessionList.Items = []breakglassv1alpha1.BreakglassSession{session}
+			return nil
+		},
+	}
+	manager := NewSessionManagerWithClientAndReader(cachedClient, liveReader)
+
+	sessions, err := manager.GetClusterUserBreakglassSessions(
+		context.Background(),
+		"tind-workload-01.tst.local-dev",
+		"platform-requester@example.com",
+	)
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, "approved-session", sessions[0].Name)
+}
+
+func TestSessionManager_AuthorizationSelectionRefreshesStalePendingCache(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	cachedSession := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "approved-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User:    "platform-requester@example.com",
+			Cluster: "tind-workload-01.tst.local-dev",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStatePending,
+			ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		},
+	}
+	liveSession := cachedSession.DeepCopy()
+	liveSession.Status.State = breakglassv1alpha1.SessionStateApproved
+	cachedClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cachedSession).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+		}).
+		Build()
+	liveReader := stubReader{
+		listFn: func(list client.ObjectList) error {
+			sessionList, ok := list.(*breakglassv1alpha1.BreakglassSessionList)
+			if !ok {
+				return fmt.Errorf("unexpected list type %T", list)
+			}
+			sessionList.Items = []breakglassv1alpha1.BreakglassSession{*liveSession}
+			return nil
+		},
+	}
+	manager := NewSessionManagerWithClientAndReader(cachedClient, liveReader)
+
+	sessions, err := manager.GetClusterUserBreakglassSessions(
+		context.Background(),
+		"tind-workload-01.tst.local-dev",
+		"platform-requester@example.com",
+	)
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, breakglassv1alpha1.SessionStateApproved, sessions[0].Status.State)
+}
+
+func TestSessionManager_AuthorizationSelectionNegativeCachesLiveResponseWithoutEligibleSession(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	cachedClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+		}).
+		Build()
+	retainedSession := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "retained-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster: "tind-workload-01.tst.local-dev",
+			User:    "platform-requester@example.com",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:         breakglassv1alpha1.SessionStateExpired,
+			RetainedUntil: metav1.NewTime(time.Now().Add(time.Hour)),
+		},
+	}
+	liveReads := 0
+	liveReader := stubReader{
+		listFn: func(list client.ObjectList) error {
+			liveReads++
+			if _, ok := list.(*breakglassv1alpha1.BreakglassSessionList); !ok {
+				return fmt.Errorf("unexpected list type %T", list)
+			}
+			list.(*breakglassv1alpha1.BreakglassSessionList).Items = []breakglassv1alpha1.BreakglassSession{retainedSession}
+			return nil
+		},
+	}
+	manager := NewSessionManagerWithClientAndReader(cachedClient, liveReader)
+
+	for i := range 2 {
+		sessions, err := manager.GetClusterUserBreakglassSessions(
+			context.Background(),
+			"tind-workload-01.tst.local-dev",
+			"platform-requester@example.com",
+		)
+		require.NoError(t, err)
+		if i == 0 {
+			require.Len(t, sessions, 1)
+			assert.Equal(t, breakglassv1alpha1.SessionStateExpired, sessions[0].Status.State)
+		} else {
+			require.Empty(t, sessions)
+		}
+	}
+	assert.Equal(t, 1, liveReads)
+}
+
+func TestSessionManager_RefreshReturnsNewGrantWhenCachedGrantCannotAuthorize(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	now := time.Now()
+	cached := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "cached-viewer"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:      "cluster",
+			User:         "user@example.com",
+			GrantedGroup: "viewers",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(now.Add(time.Hour)),
+		},
+	}
+	newGrant := cached
+	newGrant.Name = "new-admin"
+	newGrant.Spec.GrantedGroup = "admins"
+	cachedClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(&cached).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+		}).
+		Build()
+	liveReader := stubReader{
+		listFn: func(list client.ObjectList) error {
+			list.(*breakglassv1alpha1.BreakglassSessionList).Items = []breakglassv1alpha1.BreakglassSession{cached, newGrant}
+			return nil
+		},
+	}
+	manager := NewSessionManagerWithClientAndReader(cachedClient, liveReader)
+
+	initial, err := manager.GetClusterUserBreakglassSessions(context.Background(), "cluster", "user@example.com")
+	require.NoError(t, err)
+	require.Len(t, initial, 1)
+	assert.Equal(t, "viewers", initial[0].Spec.GrantedGroup)
+
+	refreshed, didRefresh, err := manager.RefreshClusterUserBreakglassSessions(
+		context.Background(), "cluster", "user@example.com",
+	)
+	require.NoError(t, err)
+	assert.True(t, didRefresh)
+	require.Len(t, refreshed, 2)
+	assert.Equal(t, "admins", refreshed[1].Spec.GrantedGroup)
+}
+
+func TestSessionManager_AuthorizationSelectionDeduplicatesLiveFallback(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	cachedClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+		}).
+		Build()
+	liveSession := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "approved-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User:    "platform-requester@example.com",
+			Cluster: "tind-workload-01.tst.local-dev",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		},
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startedOnce sync.Once
+	liveReads := 0
+	var readsMu sync.Mutex
+	liveReader := stubReader{
+		listFn: func(list client.ObjectList) error {
+			readsMu.Lock()
+			liveReads++
+			readsMu.Unlock()
+			startedOnce.Do(func() { close(started) })
+			<-release
+			list.(*breakglassv1alpha1.BreakglassSessionList).Items = []breakglassv1alpha1.BreakglassSession{liveSession}
+			return nil
+		},
+	}
+	manager := NewSessionManagerWithClientAndReader(cachedClient, liveReader)
+
+	var wg sync.WaitGroup
+	results := make(chan []breakglassv1alpha1.BreakglassSession, 2)
+	secondStarted := make(chan struct{})
+	call := func(started chan struct{}) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if started != nil {
+				close(started)
+			}
+			sessions, err := manager.GetClusterUserBreakglassSessions(
+				context.Background(),
+				"tind-workload-01.tst.local-dev",
+				"platform-requester@example.com",
+			)
+			require.NoError(t, err)
+			results <- sessions
+		}()
+	}
+	call(nil)
+	<-started
+	call(secondStarted)
+	<-secondStarted
+	close(release)
+	wg.Wait()
+	close(results)
+
+	assert.Equal(t, 1, liveReads)
+	for sessions := range results {
+		require.Len(t, sessions, 1)
+		assert.Equal(t, "approved-session", sessions[0].Name)
+	}
+}
+
+func TestSessionManager_AuthorizationSelectionRefreshesExpiredApprovedCache(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	now := time.Now()
+	cachedSession := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "approved-session"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User:    "platform-requester@example.com",
+			Cluster: "tind-workload-01.tst.local-dev",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(now.Add(-time.Minute)),
+		},
+	}
+	liveSession := cachedSession.DeepCopy()
+	liveSession.Status.ExpiresAt = metav1.NewTime(now.Add(time.Hour))
+	cachedClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cachedSession).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+		}).
+		Build()
+	liveReader := stubReader{
+		listFn: func(list client.ObjectList) error {
+			list.(*breakglassv1alpha1.BreakglassSessionList).Items = []breakglassv1alpha1.BreakglassSession{*liveSession}
+			return nil
+		},
+	}
+	manager := NewSessionManagerWithClientAndReader(cachedClient, liveReader)
+
+	sessions, err := manager.GetClusterUserBreakglassSessions(
+		context.Background(),
+		"tind-workload-01.tst.local-dev",
+		"platform-requester@example.com",
+	)
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.True(t, sessions[0].Status.ExpiresAt.After(now))
+}
+
+func TestSessionManager_LiveFallbackEvictsExpiredEntries(t *testing.T) {
+	manager := &SessionManager{}
+	now := time.Now()
+
+	manager.recordLiveReaderFallback("expired", now.Add(-2*liveReaderNegativeCacheTTL))
+	manager.recordLiveReaderFallback("fresh", now)
+	manager.liveReaderFallbackSuppressed("other", now)
+
+	manager.liveFallbackMu.Lock()
+	defer manager.liveFallbackMu.Unlock()
+	_, expiredPresent := manager.liveFallbackAt["expired"]
+	assert.False(t, expiredPresent)
 }
 
 func TestSessionManager_LoggerInjection(t *testing.T) {

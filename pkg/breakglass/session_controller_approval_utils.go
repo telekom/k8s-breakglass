@@ -481,6 +481,18 @@ func IsSessionRetained(session breakglassv1alpha1.BreakglassSession) bool {
 	return time.Now().After(session.Status.RetainedUntil.Time)
 }
 
+// IsSessionAuthorizationEligible reports whether a session can currently grant access.
+func IsSessionAuthorizationEligible(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
+	if IsSessionRetained(session) ||
+		session.Status.State != breakglassv1alpha1.SessionStateApproved ||
+		!session.Status.RejectedAt.IsZero() ||
+		session.Status.ExpiresAt.IsZero() ||
+		!session.Status.ExpiresAt.After(now) {
+		return false
+	}
+	return true
+}
+
 func collectAuthIdentifiers(email, username, userID string) []string {
 	identifiers := make([]string, 0, 3)
 	if email != "" {

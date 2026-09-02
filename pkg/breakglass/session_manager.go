@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -22,10 +24,18 @@ import (
 // SessionManager is kubernetes client based object for managing CRUD operation on BreakglassSession custom resource.
 type SessionManager struct {
 	client.Client
-	reader          client.Reader
-	log             *zap.SugaredLogger
-	logFallbackOnce sync.Once
+	reader              client.Reader
+	liveReader          client.Reader
+	liveFallbackMu      sync.Mutex
+	liveFallbackAt      map[string]time.Time
+	liveFallbackSweepAt time.Time
+	liveFallbackFlight  singleflight.Group
+	log                 *zap.SugaredLogger
+	logFallbackOnce     sync.Once
 }
+
+const liveReaderNegativeCacheTTL = time.Second
+const liveReaderRefreshTimeout = 10 * time.Second
 
 // getLogger returns the injected logger or falls back to the global logger.
 // Callers should prefer passing a logger via WithSessionLogger to avoid
@@ -82,17 +92,19 @@ func NewSessionManager(contextName string) (*SessionManager, error) {
 // configured with the Breakglass scheme.
 // Configuration is applied via functional options (WithSessionLogger).
 func NewSessionManagerWithClient(c client.Client, opts ...SessionManagerOption) *SessionManager {
-	return NewSessionManagerWithClientAndReader(c, c, opts...)
+	return NewSessionManagerWithClientAndReader(c, nil, opts...)
 }
 
 // NewSessionManagerWithClientAndReader allows using a cached client for writes and an optional reader
 // (e.g., APIReader) for consistent reads when required.
 // Configuration is applied via functional options (WithSessionLogger).
 func NewSessionManagerWithClientAndReader(c client.Client, reader client.Reader, opts ...SessionManagerOption) *SessionManager {
-	if reader == nil {
-		reader = c
-	}
 	sm := &SessionManager{Client: c, reader: reader}
+	if reader == nil {
+		sm.reader = c
+	} else {
+		sm.liveReader = reader
+	}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(sm)
@@ -390,8 +402,168 @@ func (c *SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 		}
 		return filtered, nil
 	}
+	if c.liveReader != nil && !hasAuthorizationEligibleSession(bsl.Items, time.Now()) {
+		fallbackKey := cluster + "\x00" + user
+		fallback, refreshed := c.fetchLiveClusterUserBreakglassSessions(ctx, cluster, user, fallbackKey, log)
+		if !refreshed || len(fallback) == 0 {
+			return bsl.Items, nil
+		}
+		result := mergeSessionResults(bsl.Items, fallback)
+		log.Infow("Fetched BreakglassSessions from live reader after cache lookup found no eligible session",
+			"count", len(result), "cluster", cluster, "user", user)
+		return result, nil
+	}
 	log.Infow("Fetched BreakglassSessions (indexed)", "count", len(bsl.Items), "cluster", cluster, "user", user)
 	return bsl.Items, nil
+}
+
+// RefreshClusterUserBreakglassSessions refreshes a cached cluster/user lookup
+// after the cached sessions failed to authorize a specific request.
+func (c *SessionManager) RefreshClusterUserBreakglassSessions(ctx context.Context,
+	cluster string,
+	user string,
+) ([]breakglassv1alpha1.BreakglassSession, bool, error) {
+	cached, err := c.GetClusterUserBreakglassSessions(ctx, cluster, user)
+	if err != nil || c.liveReader == nil {
+		return cached, false, err
+	}
+	return c.refreshClusterUserBreakglassSessions(ctx, cluster, user, cached)
+}
+
+// RefreshClusterUserBreakglassSessionsWithCached refreshes a previously loaded
+// cluster/user result without issuing a second cached lookup.
+func (c *SessionManager) RefreshClusterUserBreakglassSessionsWithCached(ctx context.Context,
+	cluster string,
+	user string,
+	cached []breakglassv1alpha1.BreakglassSession,
+) ([]breakglassv1alpha1.BreakglassSession, bool, error) {
+	if c.liveReader == nil {
+		return cached, false, nil
+	}
+	return c.refreshClusterUserBreakglassSessions(ctx, cluster, user, cached)
+}
+
+func (c *SessionManager) refreshClusterUserBreakglassSessions(ctx context.Context,
+	cluster string,
+	user string,
+	cached []breakglassv1alpha1.BreakglassSession,
+) ([]breakglassv1alpha1.BreakglassSession, bool, error) {
+	fallbackKey := cluster + "\x00" + user
+	live, refreshed := c.fetchLiveClusterUserBreakglassSessions(ctx, cluster, user, fallbackKey, c.getLogger())
+	if !refreshed {
+		return cached, refreshed, nil
+	}
+	return live, true, nil
+}
+
+func (c *SessionManager) fetchLiveClusterUserBreakglassSessions(ctx context.Context,
+	cluster string,
+	user string,
+	fallbackKey string,
+	log *zap.SugaredLogger,
+) ([]breakglassv1alpha1.BreakglassSession, bool) {
+	if c.liveReaderFallbackSuppressed(fallbackKey, time.Now()) {
+		return nil, false
+	}
+	resultCh := c.liveFallbackFlight.DoChan(fallbackKey, func() (interface{}, error) {
+		opCtx, cancel := context.WithTimeout(context.Background(), liveReaderRefreshTimeout)
+		defer cancel()
+		var liveList breakglassv1alpha1.BreakglassSessionList
+		err := c.liveReader.List(opCtx, &liveList, client.MatchingFields{
+			"spec.cluster": cluster,
+			"spec.user":    user,
+		})
+		if err != nil && IsFieldIndexError(err) {
+			err = c.liveReader.List(opCtx, &liveList)
+		}
+		if err != nil {
+			log.Warnw("Failed to refresh BreakglassSessions from live reader after cache lookup found no eligible session",
+				"cluster", cluster, "user", user, "error", err)
+			return liveFallbackResult{}, nil
+		}
+		filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(liveList.Items))
+		for _, s := range liveList.Items {
+			if s.Spec.Cluster == cluster && s.Spec.User == user {
+				filtered = append(filtered, s)
+			}
+		}
+		if hasAuthorizationEligibleSession(filtered, time.Now()) {
+			return liveFallbackResult{sessions: filtered, success: true}, nil
+		}
+		c.recordLiveReaderFallback(fallbackKey, time.Now())
+		return liveFallbackResult{sessions: filtered, success: true}, nil
+	})
+	var value interface{}
+	select {
+	case result := <-resultCh:
+		value = result.Val
+	case <-ctx.Done():
+		return nil, false
+	}
+	fallback, ok := value.(liveFallbackResult)
+	if !ok || !fallback.success {
+		return nil, false
+	}
+	return fallback.sessions, true
+}
+
+type liveFallbackResult struct {
+	sessions []breakglassv1alpha1.BreakglassSession
+	success  bool
+}
+
+func hasAuthorizationEligibleSession(sessions []breakglassv1alpha1.BreakglassSession, now time.Time) bool {
+	for _, session := range sessions {
+		if IsSessionAuthorizationEligible(session, now) {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeSessionResults(cached, live []breakglassv1alpha1.BreakglassSession) []breakglassv1alpha1.BreakglassSession {
+	result := append([]breakglassv1alpha1.BreakglassSession(nil), cached...)
+	positions := make(map[string]int, len(result))
+	for _, session := range result {
+		positions[session.Namespace+"/"+session.Name] = len(positions)
+	}
+	for _, session := range live {
+		key := session.Namespace + "/" + session.Name
+		if position, exists := positions[key]; exists {
+			result[position] = session
+			continue
+		}
+		positions[key] = len(result)
+		result = append(result, session)
+	}
+	return result
+}
+
+func (c *SessionManager) liveReaderFallbackSuppressed(key string, now time.Time) bool {
+	c.liveFallbackMu.Lock()
+	defer c.liveFallbackMu.Unlock()
+
+	if c.liveFallbackSweepAt.IsZero() || now.Sub(c.liveFallbackSweepAt) >= liveReaderNegativeCacheTTL {
+		for cachedKey, last := range c.liveFallbackAt {
+			if now.Sub(last) >= liveReaderNegativeCacheTTL {
+				delete(c.liveFallbackAt, cachedKey)
+			}
+		}
+		c.liveFallbackSweepAt = now
+	}
+	if last, ok := c.liveFallbackAt[key]; ok && now.Sub(last) < liveReaderNegativeCacheTTL {
+		return true
+	}
+	return false
+}
+
+func (c *SessionManager) recordLiveReaderFallback(key string, now time.Time) {
+	c.liveFallbackMu.Lock()
+	defer c.liveFallbackMu.Unlock()
+	if c.liveFallbackAt == nil {
+		c.liveFallbackAt = make(map[string]time.Time)
+	}
+	c.liveFallbackAt[key] = now
 }
 
 // GetBreakglassSessions with custom field selector string.

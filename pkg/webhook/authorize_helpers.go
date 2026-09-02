@@ -283,6 +283,15 @@ func (wc *WebhookController) loadSessionsAndGroups(c *gin.Context, s *authorizeS
 		c.Status(http.StatusInternalServerError)
 		return false
 	}
+	if len(s.sessions) > 0 || len(s.idpMismatches) > 0 {
+		candidates := append(append([]breakglassv1alpha1.BreakglassSession{}, s.sessions...), s.idpMismatches...)
+		if refreshed, ok, refreshErr := wc.sesManager.RefreshClusterUserBreakglassSessionsWithCached(
+			s.ctx, s.clusterName, s.sar.Spec.User, candidates,
+		); refreshErr == nil && ok {
+			s.sessions, s.idpMismatches = filterSessionsForAuthorization(refreshed, s.issuer, time.Now())
+			s.groups = grantedGroupsFromSessions(s.sessions)
+		}
+	}
 	s.phases.EndPhase(PhaseSessions) // End sessions phase
 	s.reqLog.With("groupCount", len(s.groups), "sessions", len(s.sessions),
 		"tenant", s.tenant, "idpMismatches", len(s.idpMismatches)).
@@ -333,7 +342,6 @@ func (wc *WebhookController) evaluateDenyPolicies(c *gin.Context, s *authorizeSt
 		s.phases.EndPhase(PhaseDenyPolicy)
 		return false
 	}
-
 	ra := s.sar.Spec.ResourceAttributes
 
 	// Get PodSecurityOverrides from user's active session escalation (if any)
