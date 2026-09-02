@@ -10,7 +10,23 @@ trap 'rm -rf -- "$fixture"' EXIT HUP INT TERM
 cat >"$fixture/kubectl" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-body=$(cat)
+if [ "${3:-}" = proxy ]; then
+	while :; do sleep 1; done
+fi
+exit 2
+EOF
+chmod +x "$fixture/kubectl"
+
+cat >"$fixture/curl" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+body=
+for arg in "$@"; do
+	case "$arg" in
+		--data) data_next=true ;;
+		*) if [ "${data_next:-false}" = true ]; then body=$arg; data_next=false; fi ;;
+	esac
+done
 printf '%s\n' "$body" >"${DELETE_BODY:?}"
 case "${DELETE_MODE:-same}" in
 same) exit 0 ;;
@@ -18,13 +34,13 @@ replacement) printf '%s\n' replacement >"${RESOURCE_STATE:?}"; exit 1 ;;
 *) exit 2 ;;
 esac
 EOF
-chmod +x "$fixture/kubectl"
+chmod +x "$fixture/curl"
 
 cat >"$fixture/run.sh" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 source "$1"
-PATH="$2:$PATH" KUBECTL_BIN=kubectl DELETE_BODY="$3" \
+PATH="$2:$PATH" KUBECTL_BIN=kubectl KUBECTL_PROXY_PORT=18081 DELETE_BODY="$3" \
   RESOURCE_STATE="${RESOURCE_STATE:?}" \
   kubernetes_delete_uid kubeconfig /api/v1/namespaces/proof/pods/fixture uid-original
 EOF
