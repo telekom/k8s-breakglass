@@ -8,8 +8,8 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 dockerfile="${root}/Dockerfile"
 versions="${root}/versions.env"
 
-grep -F 'go mod download -json "github.com/cilium/pwru@${PWRU_VERSION}"' "${dockerfile}" >/dev/null
-grep -F 'make VERSION="${PWRU_VERSION}"' "${dockerfile}" >/dev/null
+grep -F "go mod download -json \"github.com/cilium/pwru@\${PWRU_VERSION}\"" "${dockerfile}" >/dev/null
+grep -F "make VERSION=\"\${PWRU_VERSION}\"" "${dockerfile}" >/dev/null
 grep -F 'mkdir -p /src/pwru /out' "${dockerfile}" >/dev/null || {
 	printf '%s\n' 'network-debug Dockerfile must create its source and output directories' >&2
 	exit 1
