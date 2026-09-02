@@ -555,6 +555,9 @@ func DeployedResourceRefFrom(r *breakglassv1alpha1.DeployedResourceRef) *ac.Depl
 	if r.Namespace != "" {
 		result.WithNamespace(r.Namespace)
 	}
+	if r.UID != "" {
+		result.WithUID(r.UID)
+	}
 
 	return result
 }
