@@ -733,7 +733,7 @@ func (c *DebugSessionController) validateActivationBeforePublish(ctx context.Con
 		live.Status.ExpiresAt == nil || !time.Now().UTC().Before(live.Status.ExpiresAt.Time) {
 		return fmt.Errorf("debug session is no longer authorized for activation")
 	}
-	if live.Status.Approval == nil || (live.Status.Approval.Required && live.Status.Approval.ApprovedAt == nil) {
+	if live.Status.Approval != nil && live.Status.Approval.Required && live.Status.Approval.ApprovedAt == nil {
 		return fmt.Errorf("debug session approval is no longer valid")
 	}
 	return nil
