@@ -52,7 +52,7 @@ SBOM, provenance, signature, and immutable-base metadata.
 The per-image `image-metadata.yaml` files include the machine-readable command
 and intent contract used by release review. Run `make -C utils/images test`
 for fast script tests and `make -C utils/images integration` for mandatory
-Docker-backed proofs. The integration target builds both images for the local
+Docker-backed proofs. The integration target builds all mandatory images for the local
 Docker architecture, runs them as UID/GID 65532 with a read-only rootfs,
 `--cap-drop=ALL`, and no network, then exercises the real packaged tools and all
 safe-copy/report failure boundaries. It fails when Docker is unavailable; it
