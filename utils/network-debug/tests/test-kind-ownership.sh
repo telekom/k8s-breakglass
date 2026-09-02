@@ -145,6 +145,9 @@ KUBECONFIG_FILE="$fixture/kubeconfig" KIND_CLUSTER_CREATED=false \
 	kind_cleanup_owned_cluster || cleanup_status=$?
 	test "$cleanup_status" -eq 0
 	test ! -e "$KIND_FAKE_STATE"
+	test "$KIND_CLUSTER_CREATED" = false
+	test -z "$KIND_CLUSTER_OWNER_IDS"
+	kind_cleanup_owned_cluster
 	test "$(cat "$KIND_FAKE_LOG")" = "create
 rm"
 ' bash "$root" || exit 1

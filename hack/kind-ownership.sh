@@ -105,4 +105,6 @@ kind_cleanup_owned_cluster() {
 		state=$?
 	fi
 	[ "$state" -eq 1 ] || return 1
+	KIND_CLUSTER_CREATED=false
+	KIND_CLUSTER_OWNER_IDS=
 }
