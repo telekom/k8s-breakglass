@@ -363,11 +363,7 @@ spec:
                   After this time, the binding becomes inactive automatically.
                 format: date-time
                 type: string
-              hidden:
-                default: false
-                description: hidden hides this binding from the UI but allows API
-                  usage.
-                type: boolean
+
               impersonation:
                 description: |-
                   impersonation configures ServiceAccount impersonation for deployment.
