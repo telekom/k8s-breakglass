@@ -747,7 +747,9 @@ func resourceMayBeDeletedByDebugSession(obj *unstructured.Unstructured, ds *brea
 	case hasDebugSessionLegacyMarker(obj):
 		return resourceOwnedByLegacyDebugSession(obj, ds)
 	default:
-		return false
+		// Resources created before ownership markers were introduced are
+		// protected by their durable pod-template status inventory.
+		return ds != nil && ds.UID == ""
 	}
 }
 
@@ -906,7 +908,6 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 			return nil, err
 		}
 	}
-
 	// Verify if terminal sharing is enabled and inject multiplexer command
 	if template.Spec.TerminalSharing != nil && template.Spec.TerminalSharing.Enabled && len(spec.Containers) > 0 {
 		container := &spec.Containers[0]
@@ -950,7 +951,6 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 			return nil, err
 		}
 	}
-
 	return renderResult, nil
 }
 
@@ -1002,48 +1002,117 @@ func validateRestrictedCatalogueOverrides(overrides *breakglassv1alpha1.DebugPod
 	return nil
 }
 
-func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) error {
-	if spec.HostNetwork || spec.HostPID || spec.HostIPC {
+func mergeDeployedResourceRefs(current, desired []breakglassv1alpha1.DeployedResourceRef) []breakglassv1alpha1.DeployedResourceRef {
+	merged := append([]breakglassv1alpha1.DeployedResourceRef(nil), current...)
+	for _, ref := range desired {
+		found := false
+		for i := range merged {
+			if merged[i].APIVersion == ref.APIVersion && merged[i].Kind == ref.Kind &&
+				merged[i].Name == ref.Name && merged[i].Namespace == ref.Namespace {
+				if merged[i].UID == "" {
+					merged[i].UID = ref.UID
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			merged = append(merged, ref)
+		}
+	}
+	return merged
+}
+
+func mergeAuxiliaryResourceStatuses(current, desired []breakglassv1alpha1.AuxiliaryResourceStatus) []breakglassv1alpha1.AuxiliaryResourceStatus {
+	merged := append([]breakglassv1alpha1.AuxiliaryResourceStatus(nil), current...)
+	for _, status := range desired {
+		found := false
+		for i := range merged {
+			if merged[i].Name == status.Name && merged[i].APIVersion == status.APIVersion &&
+				merged[i].Kind == status.Kind && merged[i].ResourceName == status.ResourceName &&
+				merged[i].Namespace == status.Namespace {
+				merged[i] = status
+				found = true
+				break
+			}
+		}
+		if !found {
+			merged = append(merged, status)
+		}
+	}
+	return merged
+}
+
+func mergePodTemplateResourceStatuses(current, desired []breakglassv1alpha1.PodTemplateResourceStatus) []breakglassv1alpha1.PodTemplateResourceStatus {
+	merged := append([]breakglassv1alpha1.PodTemplateResourceStatus(nil), current...)
+	for _, status := range desired {
+		found := false
+		for i := range merged {
+			if merged[i].APIVersion == status.APIVersion && merged[i].Kind == status.Kind &&
+				merged[i].ResourceName == status.ResourceName && merged[i].Namespace == status.Namespace {
+				merged[i] = status
+				found = true
+				break
+			}
+		}
+		if !found {
+			merged = append(merged, status)
+		}
+	}
+	return merged
+}
+
+func validateRestrictedCataloguePodSpec(spec any, intent string) error {
+	var podSpec *corev1.PodSpec
+	switch value := spec.(type) {
+	case *corev1.PodSpec:
+		podSpec = value
+	case corev1.PodSpec:
+		podSpec = &value
+	default:
+		return fmt.Errorf("restricted catalogue validator received %T instead of PodSpec", spec)
+	}
+	if podSpec.HostNetwork || podSpec.HostPID || podSpec.HostIPC {
 		return fmt.Errorf("restricted catalogue profiles cannot use host namespaces")
 	}
-	if spec.SecurityContext == nil || spec.SecurityContext.RunAsNonRoot == nil || !*spec.SecurityContext.RunAsNonRoot {
+	if podSpec.SecurityContext == nil || podSpec.SecurityContext.RunAsNonRoot == nil || !*podSpec.SecurityContext.RunAsNonRoot {
 		return fmt.Errorf("restricted catalogue profiles must run as non-root")
 	}
-	if spec.SecurityContext.RunAsUser != nil && *spec.SecurityContext.RunAsUser == 0 {
+	if podSpec.SecurityContext.RunAsUser != nil && *podSpec.SecurityContext.RunAsUser == 0 {
 		return fmt.Errorf("restricted catalogue profiles cannot override the pod user to root")
 	}
-	if spec.SecurityContext.RunAsGroup != nil && *spec.SecurityContext.RunAsGroup == 0 {
+	if podSpec.SecurityContext.RunAsGroup != nil && *podSpec.SecurityContext.RunAsGroup == 0 {
 		return fmt.Errorf("restricted catalogue profiles cannot override the pod group to root")
 	}
-	if err := validateRestrictedAppArmor(spec.SecurityContext.AppArmorProfile); err != nil {
+	if err := validateRestrictedAppArmor(podSpec.SecurityContext.AppArmorProfile); err != nil {
 		return err
 	}
-	if err := validateRestrictedSELinux(spec.SecurityContext.SELinuxOptions); err != nil {
+	if err := validateRestrictedSELinux(podSpec.SecurityContext.SELinuxOptions); err != nil {
 		return err
 	}
-	if err := validateRestrictedSysctls(spec.SecurityContext.Sysctls); err != nil {
+	if err := validateRestrictedSysctls(podSpec.SecurityContext.Sysctls); err != nil {
 		return err
 	}
-	if spec.SecurityContext.WindowsOptions != nil && spec.SecurityContext.WindowsOptions.HostProcess != nil && *spec.SecurityContext.WindowsOptions.HostProcess {
+	if podSpec.SecurityContext.WindowsOptions != nil && podSpec.SecurityContext.WindowsOptions.HostProcess != nil && *podSpec.SecurityContext.WindowsOptions.HostProcess {
 		return fmt.Errorf("restricted catalogue profiles cannot use a Windows host process")
 	}
 	podSeccompValid := false
-	if spec.SecurityContext.SeccompProfile != nil {
-		if err := validateRestrictedSeccomp(spec.SecurityContext.SeccompProfile); err != nil {
+	if podSpec.SecurityContext.SeccompProfile != nil {
+		if err := validateRestrictedSeccomp(podSpec.SecurityContext.SeccompProfile); err != nil {
 			return err
 		}
 		podSeccompValid = true
 	}
 	if intent == "cluster-validation" {
-		if spec.ServiceAccountName == "" || spec.ServiceAccountName == "default" || spec.AutomountServiceAccountToken == nil || !*spec.AutomountServiceAccountToken {
+		if podSpec.ServiceAccountName == "" || podSpec.ServiceAccountName == "default" || podSpec.AutomountServiceAccountToken == nil || !*podSpec.AutomountServiceAccountToken {
 			return fmt.Errorf("cluster-validation requires its explicit dedicated service account identity")
 		}
-	} else if spec.ServiceAccountName != "" || spec.AutomountServiceAccountToken == nil || *spec.AutomountServiceAccountToken {
+	} else if podSpec.ServiceAccountName != "" || podSpec.AutomountServiceAccountToken == nil || *podSpec.AutomountServiceAccountToken {
 		return fmt.Errorf("restricted catalogue profiles cannot receive a Kubernetes service account identity")
 	}
 	dumpInputReadOnly := false
 	if intent == "dump-access" {
-		containers := append(append([]corev1.Container{}, spec.InitContainers...), spec.Containers...)
+		containers := append(append([]corev1.Container{}, podSpec.InitContainers...), podSpec.Containers...)
 		for _, container := range containers {
 			for _, mount := range container.VolumeMounts {
 				if mount.Name == "input" && mount.MountPath == "/input" && mount.ReadOnly {
@@ -1052,7 +1121,7 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 			}
 		}
 	}
-	for _, volume := range spec.Volumes {
+	for _, volume := range podSpec.Volumes {
 		source := volume.VolumeSource
 		approvedDumpInput := intent == "dump-access" && volume.Name == "input" && dumpInputReadOnly &&
 			(source.HostPath != nil || source.PersistentVolumeClaim != nil)
@@ -1060,9 +1129,9 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 			return fmt.Errorf("restricted catalogue profile volume %q uses a disallowed source", volume.Name)
 		}
 	}
-	containers := make([]corev1.Container, 0, len(spec.InitContainers)+len(spec.Containers))
-	containers = append(containers, spec.InitContainers...)
-	containers = append(containers, spec.Containers...)
+	containers := make([]corev1.Container, 0, len(podSpec.InitContainers)+len(podSpec.Containers))
+	containers = append(containers, podSpec.InitContainers...)
+	containers = append(containers, podSpec.Containers...)
 	for _, container := range containers {
 		if err := validateRestrictedContainerSurface(container.Name, container.SecurityContext, container.Ports, container.LivenessProbe, container.ReadinessProbe, container.StartupProbe, container.Lifecycle); err != nil {
 			return err
@@ -1105,7 +1174,7 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 			return fmt.Errorf("restricted catalogue profile container %q cannot use envFrom", container.Name)
 		}
 	}
-	for _, container := range spec.EphemeralContainers {
+	for _, container := range podSpec.EphemeralContainers {
 		if err := validateRestrictedContainerSurface(container.Name, container.SecurityContext, container.Ports, nil, nil, nil, nil); err != nil {
 			return fmt.Errorf("restricted catalogue profile ephemeral container %q: %w", container.Name, err)
 		}

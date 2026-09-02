@@ -74,6 +74,23 @@ func TestBuildPodSpecInjectsTerminalRecording(t *testing.T) {
 	}
 }
 
+func TestBuildPodSpecFailsClosedWhenRecordingImageIsMissing(t *testing.T) {
+	ds, template := recordingFixture(true)
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
+					Containers: []corev1.Container{{Name: "debug", Image: "example/debug"}},
+				},
+			},
+		},
+	}
+	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+	if _, err := controller.buildPodSpec(ds, template, podTemplate); err == nil {
+		t.Fatal("expected enabled terminal recording without a configured image to fail closed")
+	}
+}
+
 func recordingEnvValue(env []corev1.EnvVar, name, want string) bool {
 	for _, item := range env {
 		if item.Name == name && item.Value == want {
@@ -122,6 +139,13 @@ func TestRecordingRetentionDuration(t *testing.T) {
 	if err := injectTerminalRecording(reserved, &breakglassv1alpha1.DebugSession{}, recordingFixtureTemplate(), "registry.example/recorder@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"); err == nil {
 		t.Fatal("expected user-owned recorder container name to fail closed")
 	}
+	reserved = &corev1.PodSpec{
+		Containers:     []corev1.Container{{Name: "debug"}},
+		InitContainers: []corev1.Container{{Name: "terminal-recorder"}},
+	}
+	if err := injectTerminalRecording(reserved, &breakglassv1alpha1.DebugSession{}, recordingFixtureTemplate(), "registry.example/recorder@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"); err == nil {
+		t.Fatal("expected user-owned recorder init container name to fail closed")
+	}
 	reserved = &corev1.PodSpec{Containers: []corev1.Container{{Name: "debug"}}, Volumes: []corev1.Volume{{Name: terminalRecordingVolumeName}}}
 	if err := injectTerminalRecording(reserved, &breakglassv1alpha1.DebugSession{}, recordingFixtureTemplate(), "registry.example/recorder@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"); err == nil {
 		t.Fatal("expected user-owned recorder volume name to fail closed")
@@ -139,7 +163,13 @@ func TestSafeRecordingFailureRedactsSecretsAndBoundsLength(t *testing.T) {
 	if got == "" || got == "sidecar rejected Authorization: Bearer super-secret-token" {
 		t.Fatalf("secret was not redacted: %q", got)
 	}
-	for _, input := range []string{"Authorization: Basic dXNlcjpwYXNz", "access_token=oauth-secret"} {
+	for _, input := range []string{
+		"Authorization: Basic dXNlcjpwYXNz",
+		"Authorization: ******",
+		"Bearer oauth-secret",
+		"access_token=oauth-secret",
+		"access-token: oauth-secret",
+	} {
 		if got := safeRecordingFailure(input); strings.Contains(got, "dXNlcjpwYXNz") || strings.Contains(got, "oauth-secret") {
 			t.Fatalf("credential was not redacted: %q", got)
 		}

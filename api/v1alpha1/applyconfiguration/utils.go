@@ -158,6 +158,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.EphemeralContainersConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ExtraDeployVariable"):
 		return &apiv1alpha1.ExtraDeployVariableApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ExtraDeployVariableConstraint"):
+		return &apiv1alpha1.ExtraDeployVariableConstraintApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("HostNamespacesConfig"):
 		return &apiv1alpha1.HostNamespacesConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("IdentityProvider"):

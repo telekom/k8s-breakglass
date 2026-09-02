@@ -32,6 +32,7 @@ multiarch:
 		archives="$$archives $$archive"; \
 		docker buildx build --platform linux/amd64,linux/arm64 \
 			--provenance=true --sbom=true \
-			--output "type=oci,dest=$$archive" "$$image"; \
+			--output "type=oci,oci-artifact=true,dest=$$archive" "$$image"; \
+		ruby tests/normalize-oci-attestations.rb "$$archive"; \
 		ruby tests/verify-oci-attestations.rb "$$archive"; \
 	done

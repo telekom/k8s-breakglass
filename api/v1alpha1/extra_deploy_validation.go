@@ -62,6 +62,35 @@ func CoerceExtraDeployValues(
 	return result
 }
 
+// ValidateExtraDeployValueNames rejects values outside a binding's effective
+// request surface when binding constraints are active.
+func ValidateExtraDeployValueNames(
+	values map[string]apiextensionsv1.JSON,
+	variables []ExtraDeployVariable,
+	rejectUnknown bool,
+	fldPath *field.Path,
+) field.ErrorList {
+	if !rejectUnknown {
+		return nil
+	}
+	defined := make(map[string]ExtraDeployVariable, len(variables))
+	for _, variable := range variables {
+		defined[variable.Name] = variable
+	}
+	var errs field.ErrorList
+	for name := range values {
+		variable, ok := defined[name]
+		if !ok {
+			errs = append(errs, field.Forbidden(fldPath.Key(name),
+				fmt.Sprintf("variable %q is not allowed by the binding", name)))
+		} else if variable.Disabled {
+			errs = append(errs, field.Forbidden(fldPath.Key(name),
+				fmt.Sprintf("variable %q is disabled", name)))
+		}
+	}
+	return errs
+}
+
 // coerceJSONValue converts a JSON value to the correct type for the given inputType.
 func coerceJSONValue(value apiextensionsv1.JSON, inputType ExtraDeployInputType) apiextensionsv1.JSON {
 	if len(value.Raw) == 0 {
@@ -158,6 +187,9 @@ func validateExtraDeployValues(
 
 	// Check for required variables
 	for _, varDef := range variables {
+		if varDef.Disabled {
+			continue
+		}
 		if _, provided := values[varDef.Name]; !provided {
 			// Variable not provided - check if required
 			if varDef.Required && varDef.Default == nil {
@@ -176,6 +208,11 @@ func validateExtraDeployValues(
 		if !defined {
 			// Unknown variable - not necessarily an error, but warn
 			// (some templates may accept arbitrary variables)
+			continue
+		}
+		if varDef.Disabled {
+			allErrs = append(allErrs, field.Forbidden(valuePath,
+				fmt.Sprintf("variable %q is disabled", name)))
 			continue
 		}
 
@@ -289,13 +326,17 @@ func validateTextValue(value apiextensionsv1.JSON, validation *VariableValidatio
 	}
 
 	// Validate pattern
+	patterns := append([]string(nil), validation.AdditionalPatterns...)
 	if validation.Pattern != "" {
-		matched, err := regexp.MatchString(validation.Pattern, strVal)
+		patterns = append(patterns, validation.Pattern)
+	}
+	for _, pattern := range patterns {
+		matched, err := regexp.MatchString(pattern, strVal)
 		if err != nil {
 			allErrs = append(allErrs, field.Invalid(fldPath, strVal,
-				fmt.Sprintf("invalid pattern %q: %v", validation.Pattern, err)))
+				fmt.Sprintf("invalid pattern %q: %v", pattern, err)))
 		} else if !matched {
-			errMsg := fmt.Sprintf("must match pattern %q", validation.Pattern)
+			errMsg := fmt.Sprintf("must match pattern %q", pattern)
 			if validation.PatternError != "" {
 				errMsg = validation.PatternError
 			}

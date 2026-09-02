@@ -35,7 +35,11 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-var recordingSecretPattern = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*)((?:basic|bearer)\s+)?[^\s,;]+(?:\s+[^\s,;]+)?|(bearer\s+)[^\s,;]+|(access_token\s*[=:]\s*)[^\s,;]+|(token|password|passwd|secret)([=:]\s*|\s+)[^\s,;]+`)
+var (
+	recordingAuthorizationPattern = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*)(?:[^\s,;]+\s+)?[^\s,;]+`)
+	recordingBearerPattern        = regexp.MustCompile(`(?i)(\bbearer\s+)[^\s,;]+`)
+	recordingSecretPattern        = regexp.MustCompile(`(?i)((?:access[_-]?token|token|password|passwd|secret)(?:[=:]\s*|\s+))[^\s,;]+`)
+)
 
 const (
 	terminalRecordingVolumeName = "breakglass-terminal-recording"
@@ -109,28 +113,13 @@ func safeRecordingFailure(reason string) string {
 	if reason == "" {
 		return "terminal recording failed"
 	}
-	reason = recordingSecretPattern.ReplaceAllStringFunc(reason, func(match string) string {
-		parts := recordingSecretPattern.FindStringSubmatch(match)
-		for _, prefix := range parts[1:] {
-			if prefix != "" {
-				return prefix + "[REDACTED]"
-			}
-		}
-		return "[REDACTED]"
-	})
+	reason = recordingAuthorizationPattern.ReplaceAllString(reason, "$1[REDACTED]")
+	reason = recordingBearerPattern.ReplaceAllString(reason, "$1[REDACTED]")
+	reason = recordingSecretPattern.ReplaceAllString(reason, "$1[REDACTED]")
 	if len(reason) > 512 {
 		reason = reason[:512] + "..."
 	}
 	return reason
-}
-
-func sanitizedRecordingStatus(status *breakglassv1alpha1.TerminalRecordingStatus) *breakglassv1alpha1.TerminalRecordingStatus {
-	if status == nil {
-		return nil
-	}
-	sanitized := status.DeepCopy()
-	sanitized.Error = safeRecordingFailure(sanitized.Error)
-	return sanitized
 }
 
 // injectTerminalRecording adds the sidecar contract and a private shared
@@ -160,6 +149,11 @@ func injectTerminalRecording(spec *corev1.PodSpec, ds *breakglassv1alpha1.DebugS
 		// A controller-owned name makes retries idempotent without trusting a
 		// user-provided environment marker on the workload container.
 		if spec.Containers[i].Name == "terminal-recorder" {
+			return fmt.Errorf("container name %q is reserved for the terminal recording sidecar", "terminal-recorder")
+		}
+	}
+	for i := range spec.InitContainers {
+		if spec.InitContainers[i].Name == "terminal-recorder" {
 			return fmt.Errorf("container name %q is reserved for the terminal recording sidecar", "terminal-recorder")
 		}
 	}

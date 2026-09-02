@@ -110,7 +110,9 @@ attestations.each do |descriptor|
     elsif predicate_type.include?("slsa")
       build_definition = predicate.is_a?(Hash) ? predicate["buildDefinition"] : nil
       run_details = predicate.is_a?(Hash) ? predicate["runDetails"] : nil
-      fail_archive("SLSA predicate is empty or malformed") unless build_definition.is_a?(Hash) && build_definition["buildType"].is_a?(String) && !build_definition["buildType"].empty? && run_details.is_a?(Hash) && run_details.dig("builder", "id").is_a?(String) && !run_details.dig("builder", "id").empty?
+      builder_id = run_details.is_a?(Hash) ? run_details.dig("builder", "id").to_s : ""
+      invocation_id = run_details.is_a?(Hash) ? run_details.dig("metadata", "invocationId").to_s : ""
+      fail_archive("SLSA predicate is empty or malformed") unless build_definition.is_a?(Hash) && build_definition["buildType"].is_a?(String) && !build_definition["buildType"].empty? && run_details.is_a?(Hash) && (!builder_id.empty? || !invocation_id.empty?)
       image_attestations.fetch(reference_digest)["provenance"] = true
     end
   end

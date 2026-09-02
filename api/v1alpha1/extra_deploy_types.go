@@ -106,6 +106,54 @@ type ExtraDeployVariable struct {
 	// group organizes variables into collapsible sections in the UI.
 	// +optional
 	Group string `json:"group,omitempty"`
+
+	// disabled prevents this variable from being requested through a binding.
+	// Template variables are enabled by default; bindings may only set this to
+	// true, never use it to re-enable a disabled variable.
+	// +optional
+	Disabled bool `json:"disabled,omitempty"`
+}
+
+// ExtraDeployVariableConstraint narrows one variable exposed by a template
+// through a DebugSessionClusterBinding. The variable must already exist on the
+// referenced template. Fields are intentionally monotonic: a binding can
+// remove options, tighten validation, require a value, disable a variable, or
+// replace its default with another value accepted by the resulting policy,
+// but cannot add options or relax template validation.
+type ExtraDeployVariableConstraint struct {
+	// name identifies the template variable to narrow.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// options is the optional subset of template select/multiSelect options.
+	// If omitted, all template options remain available. An option may also be
+	// marked disabled; disabled options are never selectable.
+	// +optional
+	Options []SelectOption `json:"options,omitempty"`
+
+	// allowedValues is a shorthand for selecting an option subset by value.
+	// It is equivalent to options with template-owned display metadata.
+	// +optional
+	AllowedValues []string `json:"allowedValues,omitempty"`
+
+	// validation adds stricter validation to the template variable.
+	// +optional
+	Validation *VariableValidation `json:"validation,omitempty"`
+
+	// required makes the variable mandatory. A binding cannot make a required
+	// template variable optional.
+	// +optional
+	Required *bool `json:"required,omitempty"`
+
+	// disabled removes the variable from the binding's user-facing form.
+	// +optional
+	Disabled *bool `json:"disabled,omitempty"`
+
+	// default replaces the template default when the value satisfies both
+	// template and binding constraints.
+	// +optional
+	Default *apiextensionsv1.JSON `json:"default,omitempty"`
 }
 
 // SelectOption defines a choice for select/multiSelect inputs.
@@ -138,6 +186,11 @@ type VariableValidation struct {
 	// pattern is a regex pattern for text inputs.
 	// +optional
 	Pattern string `json:"pattern,omitempty"`
+
+	// AdditionalPatterns are internal, runtime-only patterns accumulated when a
+	// binding narrows a template regex. They are intentionally not serialized;
+	// the effective Pattern remains the binding-visible pattern.
+	AdditionalPatterns []string `json:"-"`
 
 	// patternError is a custom error message when pattern fails.
 	// +optional

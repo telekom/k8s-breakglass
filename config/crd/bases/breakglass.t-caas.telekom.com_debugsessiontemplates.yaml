@@ -1234,6 +1234,7 @@ spec:
                     default: 90d
                     description: recordingRetention specifies how long recordings
                       are kept.
+                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+$
                     type: string
                 type: object
               auxiliaryResourceDefaults:
@@ -1408,6 +1409,12 @@ spec:
                     description:
                       description: description provides help text for the user.
                       type: string
+                    disabled:
+                      description: |-
+                        disabled prevents this variable from being requested through a binding.
+                        Template variables are enabled by default; bindings may only set this to
+                        true, never use it to re-enable a disabled variable.
+                      type: boolean
                     displayName:
                       description: displayName is the human-readable label shown in
                         the UI.
