@@ -159,6 +159,9 @@ func validateExtraDeployValues(
 
 	// Check for required variables
 	for _, varDef := range variables {
+		if varDef.Disabled {
+			continue
+		}
 		if _, provided := values[varDef.Name]; !provided {
 			// Variable not provided - check if required
 			if varDef.Required && varDef.Default == nil {
@@ -177,6 +180,11 @@ func validateExtraDeployValues(
 		if !defined {
 			// Unknown variable - not necessarily an error, but warn
 			// (some templates may accept arbitrary variables)
+			continue
+		}
+		if varDef.Disabled {
+			allErrs = append(allErrs, field.Forbidden(valuePath,
+				fmt.Sprintf("variable %q is disabled", name)))
 			continue
 		}
 
