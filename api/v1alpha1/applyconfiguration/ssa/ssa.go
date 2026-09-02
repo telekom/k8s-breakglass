@@ -21,11 +21,9 @@ package ssa
 
 import (
 	"context"
-	"encoding/json"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
@@ -289,20 +287,10 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 		result.WithResolvedBinding(ResolvedBindingRefFrom(status.ResolvedBinding))
 	}
 	if status.ResolvedBindingSpec != nil {
-		var bindingSpec ac.DebugSessionClusterBindingSpecApplyConfiguration
-		if json.Unmarshal(status.ResolvedBindingSpec.Raw, &bindingSpec) == nil {
-			if raw, err := json.Marshal(bindingSpec); err == nil {
-				result.WithResolvedBindingSpec(apiextensionsv1.JSON{Raw: raw})
-			}
-		}
+		result.WithResolvedBindingSpec(*status.ResolvedBindingSpec.DeepCopy())
 	}
 	if status.ResolvedPodTemplate != nil {
-		var podTemplate ac.DebugPodTemplateSpecApplyConfiguration
-		if json.Unmarshal(status.ResolvedPodTemplate.Raw, &podTemplate) == nil {
-			if raw, err := json.Marshal(podTemplate); err == nil {
-				result.WithResolvedPodTemplate(apiextensionsv1.JSON{Raw: raw})
-			}
-		}
+		result.WithResolvedPodTemplate(*status.ResolvedPodTemplate.DeepCopy())
 	}
 
 	return result

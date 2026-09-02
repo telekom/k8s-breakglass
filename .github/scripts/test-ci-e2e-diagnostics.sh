@@ -16,6 +16,8 @@ printf '%s\n' \
   'Authorization: Bearer visible-token' \
 	'Set-Cookie: session=visible-cookie; Secure; HttpOnly' \
 	'Cookie: session=visible-request-cookie' \
+	'> Cookie: visible-prefixed-request-cookie' \
+	'< Set-Cookie: visible-prefixed-response-cookie' \
 	'X-Api-Key: visible-header-key' \
 	'X-Auth-Token: visible-header-token' \
   'password=visible-password' \

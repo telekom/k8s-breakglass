@@ -260,6 +260,11 @@ type DebugSessionStatus struct {
 	// +optional
 	ResolvedBindingSpec *apiextensionsv1.JSON `json:"resolvedBindingSpec,omitempty"`
 
+	// resolvedBindingSnapshotCaptured distinguishes an approved no-binding
+	// decision from a session created before snapshot persistence was available.
+	// +optional
+	ResolvedBindingSnapshotCaptured bool `json:"resolvedBindingSnapshotCaptured,omitempty"`
+
 	// resolvedPodTemplate is the immutable pod-template snapshot approved for activation.
 	// +optional
 	ResolvedPodTemplate *apiextensionsv1.JSON `json:"resolvedPodTemplate,omitempty"`
@@ -701,6 +706,18 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 	}
 
 	allErrs = append(allErrs, validateDebugSessionMonotonicStatusFields(oldObj, newObj)...)
+	if oldObj.Status.ResolvedTemplate != nil && !reflect.DeepEqual(oldObj.Status.ResolvedTemplate, newObj.Status.ResolvedTemplate) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplate"), newObj.Status.ResolvedTemplate,
+			"resolvedTemplate is immutable once persisted"))
+	}
+	if oldObj.Status.ResolvedBindingSpec != nil && !reflect.DeepEqual(oldObj.Status.ResolvedBindingSpec, newObj.Status.ResolvedBindingSpec) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedBindingSpec"), newObj.Status.ResolvedBindingSpec,
+			"resolvedBindingSpec is immutable once persisted"))
+	}
+	if oldObj.Status.ResolvedPodTemplate != nil && !reflect.DeepEqual(oldObj.Status.ResolvedPodTemplate, newObj.Status.ResolvedPodTemplate) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedPodTemplate"), newObj.Status.ResolvedPodTemplate,
+			"resolvedPodTemplate is immutable once persisted"))
+	}
 
 	if len(allErrs) == 0 {
 		return nil, nil
