@@ -906,11 +906,6 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 			return nil, err
 		}
 	}
-	if restrictedCatalogue {
-		if err := validateRestrictedCataloguePodSpec(spec, catalogueIntent); err != nil {
-			return nil, err
-		}
-	}
 
 	// Verify if terminal sharing is enabled and inject multiplexer command
 	if template.Spec.TerminalSharing != nil && template.Spec.TerminalSharing.Enabled && len(spec.Containers) > 0 {

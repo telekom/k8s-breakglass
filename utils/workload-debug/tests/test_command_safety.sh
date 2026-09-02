@@ -19,7 +19,7 @@ EOF
 chmod +x "$fixture/curl" "$fixture/openssl"
 PATH="$fixture:$root/scripts:$PATH" WORKLOAD_DEBUG_CURL_LOG="$fixture/curl.log" \
     WORKLOAD_DEBUG_MAX_BYTES=1048576 debug-http https://example.test >/dev/null
-grep -F -- '--include' "$fixture/curl.log" >/dev/null
+grep -F -- '--dump-header' "$fixture/curl.log" >/dev/null
 PATH="$fixture:$root/scripts:$PATH" WORKLOAD_DEBUG_OPENSSL_LOG="$fixture/openssl.log" \
     debug-tls '[2001:db8::1]:443' >/dev/null
 grep -F -- '-connect [2001:db8::1]:443' "$fixture/openssl.log" >/dev/null
