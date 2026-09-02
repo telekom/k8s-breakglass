@@ -328,6 +328,10 @@ func (wc *WebhookController) checkEarlyDebugSession(c *gin.Context, s *authorize
 // evaluateDenyPolicies runs global and per-session deny-policy evaluation.
 // Returns handled=true if a deny response was written.
 func (wc *WebhookController) evaluateDenyPolicies(c *gin.Context, s *authorizeState) bool {
+	return wc.evaluateDenyPoliciesInternal(c, s, true)
+}
+
+func (wc *WebhookController) evaluateDenyPoliciesInternal(c *gin.Context, s *authorizeState, refreshOnSessionDeny bool) bool {
 	s.phases.StartPhase() // Start deny_policy phase
 	if s.sar.Spec.ResourceAttributes == nil {
 		s.phases.EndPhase(PhaseDenyPolicy)
@@ -451,6 +455,19 @@ func (wc *WebhookController) evaluateDenyPolicies(c *gin.Context, s *authorizeSt
 				wc.emitPodSecurityAudit(s.ctx, s.sar.Spec.User, s.groups, s.clusterName, &s.sar, pol, podSecResult)
 			}
 			if denied {
+				if refreshOnSessionDeny {
+					if refreshed, ok, refreshErr := wc.sesManager.RefreshClusterUserBreakglassSessions(
+						s.ctx, s.clusterName, s.sar.Spec.User,
+					); refreshErr == nil && ok {
+						refreshedSessions, refreshedMismatches := filterSessionsForAuthorization(refreshed, s.issuer, time.Now())
+						if sessionCandidatesChanged(s.sessions, refreshedSessions) {
+							s.sessions = refreshedSessions
+							s.idpMismatches = refreshedMismatches
+							s.groups = grantedGroupsFromSessions(s.sessions)
+							return wc.evaluateDenyPoliciesInternal(c, s, false)
+						}
+					}
+				}
 				// Log detailed rejection info at INFO level for observability
 				s.reqLog.Infow("Request denied by session-scoped DenyPolicy",
 					"policy", pol,
@@ -651,7 +668,11 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 				s.reqLog.With("error", refreshErr.Error()).Warn("Unable to refresh session candidates after authorization denial")
 			} else if ok {
 				s.sessions, s.idpMismatches = filterSessionsForAuthorization(refreshed, s.issuer, time.Now())
-				if wc.evaluateDenyPolicies(c, s) {
+				s.groups = grantedGroupsFromSessions(s.sessions)
+				sessionPhaseStart := s.phases.phaseStart
+				deniedByPolicy := wc.evaluateDenyPolicies(c, s)
+				s.phases.phaseStart = sessionPhaseStart
+				if deniedByPolicy {
 					return false
 				}
 				if allowedSession, grp, sesName, impersonated := wc.authorizeViaSessions(

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"reflect"
 	"strings"
 	"time"
 
@@ -785,6 +786,31 @@ func (wc *WebhookController) getSessionsWithIDPMismatchInfo(ctx context.Context,
 	}
 	out, idpMismatches := filterSessionsForAuthorization(all, issuer, time.Now())
 	return out, idpMismatches, nil
+}
+
+func grantedGroupsFromSessions(sessions []breakglassv1alpha1.BreakglassSession) []string {
+	groups := make([]string, 0, len(sessions))
+	for _, session := range sessions {
+		groups = append(groups, session.Spec.GrantedGroup)
+	}
+	return groups
+}
+
+func sessionCandidatesChanged(left, right []breakglassv1alpha1.BreakglassSession) bool {
+	if len(left) != len(right) {
+		return true
+	}
+	rightByKey := make(map[string]breakglassv1alpha1.BreakglassSessionSpec, len(right))
+	for _, session := range right {
+		rightByKey[session.Namespace+"/"+session.Name] = session.Spec
+	}
+	for _, session := range left {
+		spec, ok := rightByKey[session.Namespace+"/"+session.Name]
+		if !ok || !reflect.DeepEqual(session.Spec, spec) {
+			return true
+		}
+	}
+	return false
 }
 
 func filterSessionsForAuthorization(sessions []breakglassv1alpha1.BreakglassSession,
