@@ -9,6 +9,8 @@
 require "digest"
 require "json"
 require "open3"
+require "stringio"
+require "zlib"
 
 def fail_archive(message)
   warn "OCI attestation inspection: #{message}"
@@ -34,7 +36,7 @@ def read_blob(archive, descriptor, label)
   digest = descriptor_digest(descriptor, label)
   payload = read_entry(archive, "blobs/sha256/#{digest.delete_prefix('sha256:')}")
   fail_archive("#{label} digest does not match its blob") unless Digest::SHA256.hexdigest(payload) == digest.delete_prefix("sha256:")
-  payload
+  payload.getbyte(0) == 0x1f && payload.getbyte(1) == 0x8b ? Zlib::GzipReader.new(StringIO.new(payload)).read : payload
 end
 
 index = JSON.parse(read_entry(archive, "index.json"))
@@ -85,7 +87,7 @@ attestations.each do |descriptor|
   fail_archive("attestation has no image subject reference") unless image_digests.include?(reference_digest)
   manifest = JSON.parse(read_blob(archive, descriptor, "attestation manifest"))
   subject_digest = manifest.dig("subject", "digest")
-  fail_archive("attestation subject is missing or does not match its reference") unless subject_digest == reference_digest
+  fail_archive("attestation subject does not match its reference") if subject_digest && subject_digest != reference_digest
   layers = manifest["layers"]
   fail_archive("attestation manifest has no layers") unless layers.is_a?(Array) && !layers.empty?
 
@@ -94,23 +96,42 @@ attestations.each do |descriptor|
     next unless media_type == "application/vnd.in-toto+json"
 
     statement = JSON.parse(read_blob(archive, layer, "in-toto attestation"))
-    fail_archive("in-toto statement type is missing or unsupported") unless statement["_type"] == "https://in-toto.io/Statement/v1"
+    fail_archive("in-toto statement type is missing or unsupported") unless %w[https://in-toto.io/Statement/v0.1 https://in-toto.io/Statement/v1].include?(statement["_type"])
     subjects = statement["subject"]
-    fail_archive("in-toto statement has no subjects") unless subjects.is_a?(Array) && !subjects.empty?
-    subject_matches = subjects.any? do |subject|
-      digest = subject.is_a?(Hash) ? subject["digest"] : nil
-      digest.is_a?(Hash) && digest["sha256"] == reference_digest.delete_prefix("sha256:")
+    fail_archive("in-toto statement subject is not an array") unless subjects.is_a?(Array)
+    # BuildKit's local OCI exporter leaves the in-toto subject array empty;
+    # the enclosing attestation-manifest reference is the image binding.
+    unless subjects.empty?
+      subject_matches = subjects.any? do |subject|
+        digest = subject.is_a?(Hash) ? subject["digest"] : nil
+        digest.is_a?(Hash) && digest["sha256"] == reference_digest.delete_prefix("sha256:")
+      end
+      fail_archive("in-toto statement subject does not match its image") unless subject_matches
     end
-    fail_archive("in-toto statement subject does not match its image") unless subject_matches
     predicate_type = statement["predicateType"].to_s
     predicate = statement["predicate"]
     if predicate_type.include?("spdx")
       fail_archive("SPDX predicate is empty or malformed") unless predicate.is_a?(Hash) && predicate["spdxVersion"].to_s.match?(/\ASPDX-\S+/) && predicate["packages"].is_a?(Array) && !predicate["packages"].empty?
       image_attestations.fetch(reference_digest)["sbom"] = true
     elsif predicate_type.include?("slsa")
-      build_definition = predicate.is_a?(Hash) ? predicate["buildDefinition"] : nil
-      run_details = predicate.is_a?(Hash) ? predicate["runDetails"] : nil
-      fail_archive("SLSA predicate is empty or malformed") unless build_definition.is_a?(Hash) && build_definition["buildType"].is_a?(String) && !build_definition["buildType"].empty? && run_details.is_a?(Hash) && run_details.dig("builder", "id").is_a?(String) && !run_details.dig("builder", "id").empty?
+      valid_slsa = if predicate_type.end_with?("/v0.2")
+                     predicate.is_a?(Hash) &&
+                       (
+                         predicate["builder"].is_a?(Hash) &&
+                         predicate["buildType"].is_a?(String) &&
+                         !predicate["buildType"].empty?
+                       )
+                   else
+                     build_definition = predicate.is_a?(Hash) ? predicate["buildDefinition"] : nil
+                     run_details = predicate.is_a?(Hash) ? predicate["runDetails"] : nil
+                     build_definition.is_a?(Hash) &&
+                       build_definition["buildType"].is_a?(String) &&
+                       !build_definition["buildType"].empty? &&
+                       run_details.is_a?(Hash) &&
+                       run_details.dig("builder", "id").is_a?(String) &&
+                       !run_details.dig("builder", "id").empty?
+                   end
+      fail_archive("SLSA predicate is empty or malformed") unless valid_slsa
       image_attestations.fetch(reference_digest)["provenance"] = true
     end
   end

@@ -75,6 +75,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- OCI attestation validation now accepts BuildKit local-archive in-toto
+  statements (including Statement v0.1/SLSA v0.2, empty subjects, optional
+  manifest subjects, and compressed SBOM layers) while retaining the
+  enclosing image-digest binding and predicate validation.
 - Debug-session pod-template cleanup now preserves live unmarked resources
   whose names were reused, requiring exact UID ownership markers or both
   valid legacy session markers before deletion.
