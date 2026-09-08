@@ -189,9 +189,10 @@ prepare_image() {
 install_stack() {
   log "Creating clean kind cluster ${CLUSTER_NAME}"
   if [[ -n "${REFERENCE_SETUP_SCRIPT}" ]]; then
-    if ! kind get clusters 2>/dev/null | grep -Fxq "${CLUSTER_NAME}"; then
-      CLUSTER_OWNED=true
+    if kind get clusters 2>/dev/null | grep -Fxq "${CLUSTER_NAME}"; then
+      die "refusing destructive bootstrap: Kind cluster ${CLUSTER_NAME} already exists; choose a unique REFERENCE_CLUSTER_NAME"
     fi
+    CLUSTER_OWNED=true
     IMAGE="${IMAGE}" SKIP_BUILD=true CLUSTER_NAME="${CLUSTER_NAME}" \
       KIND_RETAIN_ON_FAILURE=false bash "${REFERENCE_SETUP_SCRIPT}"
   fi
@@ -264,7 +265,7 @@ profiles:
         inputType: select
         required: true
         options:
-          - value: flush-neighbors
+          - value: link-cycle
       - name: confirmation
         displayName: Confirmation
         description: Explicit confirmation for the selected operation.
@@ -466,6 +467,11 @@ reference_flow() {
   wait_for_state "${REQUESTER_TOKEN}" "${SESSION_NAME}" Approved
   webhook_check true configmaps
 
+  log "Terminating the approved session before creating a second request"
+  api_request "${REQUESTER_TOKEN}" POST "/api/breakglassSessions/${SESSION_NAME}/drop?namespace=${NAMESPACE}"
+  expect_status 200
+  wait_for_state "${REQUESTER_TOKEN}" "${SESSION_NAME}" Expired
+
   log "Checking a second request can be explicitly rejected"
   api_request "${REQUESTER_TOKEN}" POST /api/breakglassSessions "${payload}"
   expect_status 201
@@ -473,11 +479,6 @@ reference_flow() {
   api_request "${APPROVER_TOKEN}" POST "/api/breakglassSessions/${REJECTED_SESSION_NAME}/reject?namespace=${NAMESPACE}" '{"reason":"reference denial"}'
   expect_status 200
   wait_for_state "${REQUESTER_TOKEN}" "${REJECTED_SESSION_NAME}" Rejected
-
-  log "Terminating the approved session"
-  api_request "${REQUESTER_TOKEN}" POST "/api/breakglassSessions/${SESSION_NAME}/drop?namespace=${NAMESPACE}"
-  expect_status 200
-  wait_for_state "${REQUESTER_TOKEN}" "${SESSION_NAME}" Expired
 
   log "Checking audit recording contains the reference session"
   local audit_url="${AUDIT_WEBHOOK_RECEIVER_EXTERNAL_URL:-http://localhost:${AUDIT_WEBHOOK_RECEIVER_PORT:-18080}}/events"
@@ -554,7 +555,7 @@ run_debug_session() {
     interface="${REFERENCE_NODE_INTERFACE:-lo}"
     payload="$(jq -n --arg template "${template}" --arg cluster "${TENANT}" --arg ns "${DEBUG_NAMESPACE}" \
       --arg node "${node}" --arg interface "${interface}" \
-      '{templateRef:$template,cluster:$cluster,targetNamespace:$ns,requestedDuration:"10m",reason:"reference debug diagnostics command",extraDeployValues:{targetNode:$node,interface:$interface,action:"flush-neighbors",confirmation:"NETWORK-REPAIR"}}')"
+      '{templateRef:$template,cluster:$cluster,targetNamespace:$ns,requestedDuration:"10m",reason:"reference debug diagnostics command",extraDeployValues:{targetNode:$node,interface:$interface,action:"link-cycle",confirmation:"NETWORK-REPAIR"}}')"
   fi
   api_request "${REQUESTER_TOKEN}" POST /api/debugSessions "${payload}"
   expect_status 201
