@@ -108,6 +108,7 @@ end
 fail_archive("BuildKit emitted no attestation manifests") if attestations.empty?
 
 attestations.each do |descriptor|
+  fail_archive("attestation descriptor has an unexpected media type") unless descriptor["mediaType"] == "application/vnd.oci.image.manifest.v1+json"
   reference_digest = descriptor.dig("annotations", "vnd.docker.reference.digest").to_s
   fail_archive("attestation has no image subject reference") if reference_digest.empty?
   fail_archive("attestation image subject reference is malformed") unless reference_digest.match?(/\Asha256:[0-9a-f]{64}\z/)

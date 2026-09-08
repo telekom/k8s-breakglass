@@ -50,6 +50,9 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	opts, err := parseOptions(args)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
 		return 2
 	}

@@ -40,6 +40,11 @@ func TestParseOptionsRejectsInvalidValues(t *testing.T) {
 	require.ErrorContains(t, err, "invalid VALIDATOR_INCLUDE_TIMESTAMP")
 }
 
+func TestRunHelpExitsSuccessfully(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, 0, run([]string{"--help"}, &stdout, &stderr))
+}
+
 func TestWriteResultProducesContractAndExitCode(t *testing.T) {
 	var output bytes.Buffer
 	report := failureReport(clustervalidator.ModeOneTime, "configuration", "test failure", false)

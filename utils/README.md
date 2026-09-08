@@ -16,6 +16,7 @@ boundary; read the in-image runbook before starting a debug session.
 | [`network-debug`](./network-debug/) | Connectivity, routes, captures, and approved tool probes | Root only for reviewed network/BPF capabilities |
 | [`images/storage-debug`](./images/storage-debug/) | Bounded fio/ioping checks on an approved test mount | Non-root, no capabilities |
 | [`images/dump-reader`](./images/dump-reader/) | Inspect, checksum, and copy existing dump files | Non-root, no capabilities |
+| [`images/diagnostic-artifact-collector`](./images/diagnostic-artifact-collector/) | Collect bounded diagnostic artifacts and optionally upload them through the separate uploader path | Collection is read-only; uploader access is explicit and bounded |
 | [`node-maintenance`](./node-maintenance/) | Allowlisted node recovery and network repair | Host network; `NET_ADMIN` only for repair |
 | [`cluster-validator`](./cluster-validator/) | Read-only one-time and post-upgrade readiness reports | Non-root, read-only Kubernetes RBAC |
 
