@@ -25,17 +25,19 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-var recordingSecretPattern = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*)((?:basic|bearer)\s+)?[^\s,;]+(?:\s+[^\s,;]+)?|(bearer\s+)[^\s,;]+|(access_token\s*[=:]\s*)[^\s,;]+|(token|password|passwd|secret)([=:]\s*|\s+)[^\s,;]+`)
+var (
+	recordingAuthorizationPattern = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*)(?:[^\s,;]+\s+)?[^\s,;]+`)
+	recordingBearerPattern        = regexp.MustCompile(`(?i)(\bbearer\s+)[^\s,;]+`)
+	recordingSecretPattern        = regexp.MustCompile(`(?i)((?:access[_-]?token|token|password|passwd|secret)(?:[=:]\s*|\s+))[^\s,;]+`)
+)
 
 const (
 	terminalRecordingVolumeName = "breakglass-terminal-recording"
@@ -46,19 +48,18 @@ const (
 	// controller and a recording sidecar. The sidecar image is intentionally
 	// deployment supplied; the controller does not assume an internal image or
 	// a command line implementation.
-	TerminalRecordingEnabledEnv           = "BREAKGLASS_TERMINAL_RECORDING"
-	TerminalRecordingSessionEnv           = "BREAKGLASS_RECORDING_SESSION"
-	TerminalRecordingNamespaceEnv         = "BREAKGLASS_RECORDING_NAMESPACE"
-	TerminalRecordingClusterEnv           = "BREAKGLASS_RECORDING_CLUSTER"
-	TerminalRecordingTemplateEnv          = "BREAKGLASS_RECORDING_TEMPLATE"
-	TerminalRecordingCorrelationEnv       = "BREAKGLASS_RECORDING_CORRELATION_ID"
-	TerminalRecordingFormatEnv            = "BREAKGLASS_RECORDING_FORMAT"
-	TerminalRecordingOutputEnv            = "BREAKGLASS_RECORDING_OUTPUT"
-	TerminalRecordingRetentionEnv         = "BREAKGLASS_RECORDING_RETENTION"
-	TerminalRecordingRedactionEnv         = "BREAKGLASS_RECORDING_REDACT_SECRETS"
-	TerminalRecordingMaxBytesEnv          = "BREAKGLASS_RECORDING_MAX_BYTES"
-	TerminalRecordingFormat               = "asciicast-v2"
-	terminalRecordingMaxBytes       int64 = 512 * 1024 * 1024
+	TerminalRecordingEnabledEnv     = "BREAKGLASS_TERMINAL_RECORDING"
+	TerminalRecordingSessionEnv     = "BREAKGLASS_RECORDING_SESSION"
+	TerminalRecordingNamespaceEnv   = "BREAKGLASS_RECORDING_NAMESPACE"
+	TerminalRecordingClusterEnv     = "BREAKGLASS_RECORDING_CLUSTER"
+	TerminalRecordingTemplateEnv    = "BREAKGLASS_RECORDING_TEMPLATE"
+	TerminalRecordingCorrelationEnv = "BREAKGLASS_RECORDING_CORRELATION_ID"
+	TerminalRecordingFormatEnv      = "BREAKGLASS_RECORDING_FORMAT"
+	TerminalRecordingOutputEnv      = "BREAKGLASS_RECORDING_OUTPUT"
+	TerminalRecordingRetentionEnv   = "BREAKGLASS_RECORDING_RETENTION"
+	TerminalRecordingRedactionEnv   = "BREAKGLASS_RECORDING_REDACT_SECRETS"
+	TerminalRecordingMaxBytesEnv    = "BREAKGLASS_RECORDING_MAX_BYTES"
+	TerminalRecordingFormat         = "asciicast-v2"
 )
 
 // recordingCorrelationID is stable across controller retries and contains no
@@ -109,15 +110,9 @@ func safeRecordingFailure(reason string) string {
 	if reason == "" {
 		return "terminal recording failed"
 	}
-	reason = recordingSecretPattern.ReplaceAllStringFunc(reason, func(match string) string {
-		parts := recordingSecretPattern.FindStringSubmatch(match)
-		for _, prefix := range parts[1:] {
-			if prefix != "" {
-				return prefix + "[REDACTED]"
-			}
-		}
-		return "[REDACTED]"
-	})
+	reason = recordingAuthorizationPattern.ReplaceAllString(reason, "$1[REDACTED]")
+	reason = recordingBearerPattern.ReplaceAllString(reason, "$1[REDACTED]")
+	reason = recordingSecretPattern.ReplaceAllString(reason, "$1[REDACTED]")
 	if len(reason) > 512 {
 		reason = reason[:512] + "..."
 	}
@@ -128,94 +123,13 @@ func safeRecordingFailure(reason string) string {
 // volume. It does not copy template headers, Secret values, or bearer tokens
 // into the pod. A sidecar image must implement the contract documented in
 // docs/terminal-recording.md.
-func injectTerminalRecording(spec *corev1.PodSpec, ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, image string) error {
-	if template.Spec.Audit == nil || !template.Spec.Audit.EnableTerminalRecording {
-		return nil
+func rejectUnsupportedTerminalRecording(template *breakglassv1alpha1.DebugSessionTemplate) error {
+	if template != nil && template.Spec.Audit != nil && template.Spec.Audit.EnableTerminalRecording {
+		return fmt.Errorf("terminal recording is unavailable: terminal-byte transport is not configured")
 	}
-	return fmt.Errorf("terminal recording is unavailable: terminal-byte transport is not configured")
-
-	// Keep the contract implementation below until the terminal-byte transport
-	// is wired into workload I/O. It must not be reached while the feature is
-	// advertised as enabled because metadata alone is not a recording.
-	if err := validateTerminalRecordingImage(image); err != nil {
-		return err
-	}
-	if _, err := recordingRetentionDuration(template.Spec.Audit.RecordingRetention); err != nil {
-		return err
-	}
-	if len(spec.Containers) == 0 {
-		return fmt.Errorf("terminal recording requires at least one workload container")
-	}
-	for i := range spec.Volumes {
-		if spec.Volumes[i].Name == terminalRecordingVolumeName {
-			return fmt.Errorf("volume name %q is reserved for the terminal recording sidecar", terminalRecordingVolumeName)
-		}
-	}
-
-	for i := range spec.Containers {
-		// A controller-owned name makes retries idempotent without trusting a
-		// user-provided environment marker on the workload container.
-		if spec.Containers[i].Name == "terminal-recorder" {
-			return fmt.Errorf("container name %q is reserved for the terminal recording sidecar", "terminal-recorder")
-		}
-	}
-	for i := range spec.InitContainers {
-		if spec.InitContainers[i].Name == "terminal-recorder" {
-			return fmt.Errorf("container name %q is reserved for the terminal recording sidecar", "terminal-recorder")
-		}
-	}
-
-	correlationID := recordingCorrelationID(ds.Namespace, ds.Name)
-	envs := []corev1.EnvVar{
-		{Name: TerminalRecordingEnabledEnv, Value: "true"},
-		{Name: TerminalRecordingSessionEnv, Value: ds.Name},
-		{Name: TerminalRecordingNamespaceEnv, Value: ds.Namespace},
-		{Name: TerminalRecordingClusterEnv, Value: ds.Spec.Cluster},
-		{Name: TerminalRecordingTemplateEnv, Value: ds.Spec.TemplateRef},
-		{Name: TerminalRecordingCorrelationEnv, Value: correlationID},
-		{Name: TerminalRecordingFormatEnv, Value: TerminalRecordingFormat},
-		{Name: TerminalRecordingOutputEnv, Value: terminalRecordingOutput},
-		{Name: TerminalRecordingRetentionEnv, Value: defaultRecordingRetention(template.Spec.Audit.RecordingRetention)},
-		{Name: TerminalRecordingRedactionEnv, Value: "true"},
-		{Name: TerminalRecordingMaxBytesEnv, Value: strconv.FormatInt(terminalRecordingMaxBytes, 10)},
-	}
-	mount := corev1.VolumeMount{Name: terminalRecordingVolumeName, MountPath: terminalRecordingMountPath}
-
-	spec.Volumes = upsertRecordingVolume(spec.Volumes)
-	spec.Containers = append(spec.Containers, corev1.Container{
-		Name:         "terminal-recorder",
-		Image:        strings.TrimSpace(image),
-		Env:          envs,
-		Command:      nil, // Image entrypoint is the deployment-supplied contract.
-		VolumeMounts: []corev1.VolumeMount{mount},
-		SecurityContext: &corev1.SecurityContext{
-			AllowPrivilegeEscalation: recordingBoolPtr(false),
-			ReadOnlyRootFilesystem:   recordingBoolPtr(true),
-			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-		},
-	})
 	return nil
 }
 
-func recordingBoolPtr(v bool) *bool { return &v }
-
-func defaultRecordingRetention(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return "90d"
-	}
-	return strings.TrimSpace(value)
-}
-
-func upsertRecordingVolume(volumes []corev1.Volume) []corev1.Volume {
-	for _, volume := range volumes {
-		if volume.Name == terminalRecordingVolumeName {
-			return volumes
-		}
-	}
-	return append(volumes, corev1.Volume{
-		Name: terminalRecordingVolumeName,
-		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
-			SizeLimit: resource.NewQuantity(terminalRecordingMaxBytes, resource.DecimalSI),
-		}},
-	})
+func injectTerminalRecording(spec *corev1.PodSpec, ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, image string) error {
+	return rejectUnsupportedTerminalRecording(template)
 }
