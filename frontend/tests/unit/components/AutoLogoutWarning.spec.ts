@@ -25,8 +25,8 @@ import { AuthKey } from "@/keys";
 type MockAuth = {
   login: (state?: { path: string; idpName?: string }) => Promise<void>;
   logout: () => void;
-  getIdentityProviderName: () => string | undefined;
-  getActiveOIDCUserStorageKeys: () => string[];
+  getIdentityProviderName?: () => string | undefined;
+  getActiveOIDCUserStorageKeys?: () => string[];
   userManager: {
     settings: {
       authority: string;
@@ -100,6 +100,18 @@ describe("AutoLogoutWarning", () => {
 
   it("mounts successfully when auth provider is present", () => {
     wrapper = mountWithAuth(createMockAuth());
+
+    expect(wrapper.exists()).toBe(true);
+  });
+
+  it("mounts with a minimal auth provider when optional storage helpers are absent", () => {
+    const auth = {
+      login: vi.fn().mockResolvedValue(undefined),
+      logout: vi.fn(),
+      userManager: { settings: { authority: "https://issuer.example.com", client_id: "breakglass-ui" } },
+    } as MockAuth;
+
+    wrapper = mountWithAuth(auth);
 
     expect(wrapper.exists()).toBe(true);
   });

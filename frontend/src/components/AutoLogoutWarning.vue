@@ -77,7 +77,7 @@ export default {
       const localStorageValue = shouldReadLocalOIDCStorage()
         ? getStorageItem(getBrowserStorage("localStorage"), "breakglass_current_idp_name", "localStorage")
         : undefined;
-      return auth.getIdentityProviderName() ?? sessionStorageValue ?? localStorageValue ?? undefined;
+      return auth.getIdentityProviderName?.() ?? sessionStorageValue ?? localStorageValue ?? undefined;
     }
 
     async function reauthenticate() {
@@ -161,7 +161,7 @@ export default {
     function getStoredOIDCUserValues(): string[] {
       const values: string[] = [];
       const seenValues = new Set<string>();
-      const activeKeys = auth.getActiveOIDCUserStorageKeys();
+      const activeKeys = auth.getActiveOIDCUserStorageKeys?.() ?? [];
 
       for (const { name, storage } of getAvailableOIDCStorages()) {
         for (const key of activeKeys) {
