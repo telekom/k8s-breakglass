@@ -132,9 +132,12 @@ grep -q '^pull ' "${test_dir}/helm-calls.log" || {
 
 : >"${test_dir}/helm.log"
 : >"${test_dir}/helm-calls.log"
-FAKE_REMOTE_MODE=timestamp-different run_publish >/dev/null
+if FAKE_REMOTE_MODE=timestamp-different run_publish >/dev/null 2>&1; then
+  echo "timestamp-different remote package was accepted for an existing subject" >&2
+  exit 1
+fi
 [ ! -s "${test_dir}/helm.log" ] || {
-  echo "same chart repackaged with different timestamps was pushed again" >&2
+  echo "timestamp-different remote package attempted a push" >&2
   exit 1
 }
 

@@ -12,7 +12,11 @@ chart_repo="${2:?OCI chart repository is required}"
 release_tag="${3:?release tag is required}"
 
 package_digest() {
-  ruby "${script_dir}/canonical-helm-chart-digest.rb" "$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
 }
 
 shopt -s nullglob
@@ -54,6 +58,10 @@ for chart_package in "${chart_packages[@]}"; do
 
     # Metadata alone is not an identity check. Pull the remote package and
     # require byte identity before allowing a rerun to continue to signing.
+    # A canonical-content match is insufficient here: the next job binds an
+    # SPDX document to the local package bytes before attesting the remote
+    # digest. Failing closed avoids attaching unrelated local bytes to that
+    # existing remote subject.
     remote_dir="$(mktemp -d)"
     if ! helm pull "${remote}" --version "${chart_version}" --destination "${remote_dir}" >/dev/null 2>&1; then
       rm -rf "${remote_dir}"
