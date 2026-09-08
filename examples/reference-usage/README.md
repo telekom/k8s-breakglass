@@ -18,14 +18,14 @@ restricted lifecycle and real catalogue DebugSessions:
 - a second request is denied by an approver;
 - a catalogue DebugSession is requested and approved by the distinct approver;
 - a restricted catalogue Job runs the packaged workload-debug command;
-- an opt-in node repair Job runs the fixed node-maintenance dispatcher without
-  allowing pod exec;
 - audit recording contains request, start, deployment, termination, and cleanup events;
 - the session is terminated and its workload/policy resources are removed.
 
-The elevated group is never enabled by default. Run
-`REFERENCE_RUN_ELEVATED=true ./examples/reference-usage/reference-usage.sh` only
-when an environment explicitly opts into that additional case.
+The elevated node-repair profile is intentionally unavailable in this example.
+The catalogue contract does not carry the controller-issued immutable approval
+tuple required by `node-maintenance`, so the profile remains disabled even when
+`REFERENCE_RUN_ELEVATED=true` is supplied. The script logs that limitation and
+continues to support the restricted reference path.
 
 ## Running it
 
@@ -60,9 +60,6 @@ be merged: source mode builds the checked-out Breakglass image and consumes
 the public OCI chart. Published mode verifies the chart's signed immutable
 reference. Both modes consume the OCI chart, keeping the reference check
 independent of chart source files and chart-runtime work in progress.
-The executable's opt-in repair case requires the published catalogue contract
-that supports `Job` workloads, deployment variables, and per-profile
-`allowExec`; run it only after that chart runtime is released.
 Published mode installs the public OCI chart at:
 
 `oci://ghcr.io/telekom/k8s-breakglass/charts/debug-session-catalogue`
@@ -76,9 +73,10 @@ publication; no private registry login or secret is part of the contract.
 The chart is configured by the executable with the selected requester group,
 approver email, tenant cluster, and a pre-created debug namespace. The
 consumer-defined `workload-diagnostics` profile is the restricted case.
-Setting `REFERENCE_RUN_ELEVATED=true` additionally enables and exercises the
-chart's explicit `network-repair` profile with its fixed command, target
-variables, evidence volume, and no-exec boundary.
+The `network-repair` profile is reserved for a future release that wires the
+controller-issued immutable approval tuple into the catalogue. Setting
+`REFERENCE_RUN_ELEVATED=true` records that the unsupported profile was
+requested; it does not enable or execute node repair.
 
 This README intentionally points to the executable flow rather than copying
 its Kubernetes YAML, so examples cannot drift from the tested path.
