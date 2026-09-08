@@ -39,6 +39,11 @@ if grep -F -- '--certificate-identity-regexp' "${TEST_DIR}/cosign-args" >/dev/nu
   exit 1
 fi
 
+SUPPLY_CHAIN_RELEASE_TAG=v1.2.3-rc-1 PATH="${TEST_DIR}/bin:${PATH}" "${SCRIPT_DIR}/verify-catalogue-supply-chain.sh" \
+  --images-file "${TEST_DIR}/images" \
+  --chart 'ghcr.io/example/catalogue@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
+  >/dev/null
+
 printf '%s\n' 'ghcr.io/example/utility:mutable' >"${TEST_DIR}/invalid-images"
 if SUPPLY_CHAIN_RELEASE_TAG=v1.2.3 PATH="${TEST_DIR}/bin:${PATH}" "${SCRIPT_DIR}/verify-catalogue-supply-chain.sh" \
   --images-file "${TEST_DIR}/invalid-images" \

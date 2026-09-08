@@ -317,6 +317,11 @@ func validateDebugSessionSample(t *testing.T, filename string, sample *DebugSess
 			}
 		}
 		if node := kubectl.NodeDebug; node != nil {
+			for _, image := range node.AllowedImages {
+				if strings.Contains(image, "nicolaka/netshoot") && !strings.Contains(image, "@sha256:") {
+					t.Errorf("%s/%s allows a mutable node-debug netshoot image %q", filename, sample.Name, image)
+				}
+			}
 			if namespaces := node.HostNamespaces; namespaces != nil && (namespaces.HostNetwork || namespaces.HostPID || namespaces.HostIPC) {
 				elevated = true
 			}
