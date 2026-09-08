@@ -55,8 +55,11 @@ elif [ "${1:-}" = ps ] && [ -f "$KIND_FAKE_STATE" ] && [ "$(cat "$KIND_FAKE_STAT
 	printf '%s\n' "sha256:owned-node"
 elif [ "${1:-}" = ps ] && [ -f "$KIND_FAKE_STATE" ] && [ "$(cat "$KIND_FAKE_STATE")" = foreign ]; then
 	printf '%s\n' "sha256:foreign-node"
+elif [ "${1:-}" = ps ] && [ "${KIND_FAKE_MODE:-success}" = post-rm-failure ] && [ -f "$KIND_FAKE_RM_MARKER" ]; then
+	exit 42
 elif [ "${1:-}" = rm ]; then
 	printf '%s\n' rm >>"$KIND_FAKE_LOG"
+	[ "${KIND_FAKE_MODE:-success}" = post-rm-failure ] && : >"$KIND_FAKE_RM_MARKER"
 	rm -f "$KIND_FAKE_STATE"
 fi
 EOF
@@ -148,6 +151,28 @@ KUBECONFIG_FILE="$fixture/kubeconfig" KIND_CLUSTER_CREATED=false \
 	test "$KIND_CLUSTER_CREATED" = false
 	test -z "$KIND_CLUSTER_OWNER_IDS"
 	kind_cleanup_owned_cluster
+test "$(cat "$KIND_FAKE_LOG")" = "create
+rm"
+' bash "$root" || exit 1
+
+# A Docker listing failure after deleting the captured node must fail closed and
+# retain ownership state for diagnosis or a later cleanup attempt.
+state="$fixture/post-rm-failure.state"
+log="$fixture/post-rm-failure.log"
+marker="$fixture/post-rm-failure.marker"
+KIND_BIN="$fixture/kind" DOCKER_BIN="$fixture/docker" KIND_FAKE_STATE="$state" KIND_FAKE_LOG="$log" \
+KIND_FAKE_RM_MARKER="$marker" KIND_FAKE_MODE=post-rm-failure KIND_CLUSTER_NAME=ownership-post-rm-failure KIND_NODE_IMAGE=fixture \
+KUBECONFIG_FILE="$fixture/kubeconfig" KIND_CLUSTER_CREATED=false KIND_CLUSTER_OWNER_IDS='' bash -c '
+	set -eu
+	helper="$(cd -- "$1/../../../hack" && pwd)/kind-ownership.sh"
+	. "$helper"
+	kind_create_owned_cluster
+	cleanup_status=0
+	kind_cleanup_owned_cluster || cleanup_status=$?
+	test "$cleanup_status" -eq 1
+	test ! -e "$KIND_FAKE_STATE"
+	test "$KIND_CLUSTER_CREATED" = true
+	test "$KIND_CLUSTER_OWNER_IDS" = sha256:owned-node
 	test "$(cat "$KIND_FAKE_LOG")" = "create
 rm"
 ' bash "$root" || exit 1

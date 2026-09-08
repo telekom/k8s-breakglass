@@ -35,7 +35,10 @@ kind_cluster_resources_state() {
 kind_capture_owned_cluster_identity() {
 	local ids
 	[ -n "${DOCKER_BIN:-}" ] || return 1
-	ids=$("$DOCKER_BIN" ps -a --no-trunc --filter "label=io.x-k8s.kind.cluster=$KIND_CLUSTER_NAME" --format '{{.ID}}' 2>/dev/null | LC_ALL=C sort) || return 2
+	if ! ids=$("$DOCKER_BIN" ps -a --no-trunc --filter "label=io.x-k8s.kind.cluster=$KIND_CLUSTER_NAME" --format '{{.ID}}' 2>/dev/null); then
+		return 2
+	fi
+	ids=$(printf '%s\n' "$ids" | LC_ALL=C sort)
 	[ -n "$ids" ] || return 1
 	KIND_CLUSTER_OWNER_IDS=$ids
 }
@@ -44,7 +47,10 @@ kind_owned_cluster_identity_state() {
 	local ids
 	[ -n "${DOCKER_BIN:-}" ] || return 2
 	[ -n "${KIND_CLUSTER_OWNER_IDS:-}" ] || return 1
-	ids=$("$DOCKER_BIN" ps -a --no-trunc --filter "label=io.x-k8s.kind.cluster=$KIND_CLUSTER_NAME" --format '{{.ID}}' 2>/dev/null | LC_ALL=C sort) || return 2
+	if ! ids=$("$DOCKER_BIN" ps -a --no-trunc --filter "label=io.x-k8s.kind.cluster=$KIND_CLUSTER_NAME" --format '{{.ID}}' 2>/dev/null); then
+		return 2
+	fi
+	ids=$(printf '%s\n' "$ids" | LC_ALL=C sort)
 	[ -n "$ids" ] && [ "$ids" = "$KIND_CLUSTER_OWNER_IDS" ] && return 0
 	return 1
 }
