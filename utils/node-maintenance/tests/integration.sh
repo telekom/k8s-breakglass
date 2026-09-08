@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 #
 # SPDX-License-Identifier: Apache-2.0
@@ -7,7 +7,7 @@
 # disposable Docker network namespace (--network none) and an anonymous volume
 # owned by a dedicated container. The
 # runner's network namespaces are never joined or changed.
-set -eu
+set -Eeuo pipefail
 
 test_dir=$(cd -- "$(dirname -- "$0")" && pwd)
 root_dir=$(cd -- "$test_dir/.." && pwd)
