@@ -35,28 +35,8 @@ requested recording.
 
 The sidecar writes to the private, size-limited `emptyDir` recording volume and
 is the only container granted access to that volume. It is responsible for
-uploading/finalizing the artifact in an external store. The
-DebugSession status exposes metadata only (`sha256`, size, expiry, and an
-opaque URI). Deployments may provide a `RecordingReplayReader` to stream
-  authorized artifacts through `GET /api/debugSessions/:name/recording/replay`;
-without one the endpoint returns `503`.
-
-Recording metadata is available at
-`GET /api/debugSessions/:name/recording` and uses the same requester,
-participant, invitee, and approver authorization as the session detail route.
-The artifact must be retained until the configured retention deadline; normal
+uploading and finalizing the artifact in an external store. The controller
+does not expose recording replay or artifact-download routes; deployments must
+provide those services outside this repository if required. Normal
 DebugSession cleanup removes workloads but does not delete an external
 recording.
-
-## Signed-image build hook
-
-Use the repository Makefile hooks with a deployment-owned image and registry:
-
-```sh
-make terminal-recording-image-build TERMINAL_RECORDING_IMAGE=registry.example/terminal-recorder:VERSION
-make terminal-recording-image-sign TERMINAL_RECORDING_IMAGE=registry.example/terminal-recorder@sha256:DIGEST
-```
-
-The hooks intentionally require an explicit image and delegate signing to
-`cosign`; registry credentials, signing identity, and admission policy remain
-outside this repository.
