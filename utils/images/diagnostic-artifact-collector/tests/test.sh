@@ -23,6 +23,7 @@ https_pid=
 proxy_pid=
 bounded_container=
 bounded_container_id=
+bounded_container_cidfile=
 cleanup() {
 	if [ -n "$https_pid" ]; then
 		kill "$https_pid" >/dev/null 2>&1 || true
@@ -690,10 +691,11 @@ expect_bounded_collector_failure() {
 	done
 	shift
 	bounded_container="diagnostic-artifact-bounded-${test_dir##*/}-${deadline_seconds}"
+	bounded_container_cidfile="$test_dir/$bounded_container.cid"
 	# The test paths contain no spaces; options are deliberately limited to the
 	# fixed Docker flags and temporary fixture mounts below.
 	# shellcheck disable=SC2086
-	docker run -d --name "$bounded_container" --read-only --cap-drop=ALL --network none \
+	docker run -d --name "$bounded_container" --cidfile "$bounded_container_cidfile" --read-only --cap-drop=ALL --network none \
 		--user 65532:65532 \
 		--env BREAKGLASS_ARTIFACT_ID=dsa-0123456789abcdef01234567 \
 		--env BREAKGLASS_ARTIFACT_SESSION_NAMESPACE=breakglass-test \
@@ -702,11 +704,11 @@ expect_bounded_collector_failure() {
 		--env BREAKGLASS_ARTIFACT_REDACTION_PROFILE=credential-text.v1 \
 		--env BREAKGLASS_ARTIFACT_REDACTION_VERSION=1 \
 		--volume "$output:/output" $docker_opts "$image" "$@" >/dev/null
-	bounded_container_id=$(docker_capture_resource_id docker container "$bounded_container") || {
-		cleanup_bounded_container_name docker "$bounded_container"
+	bounded_container_id=$(docker_capture_resource_id_from_cidfile "$bounded_container_cidfile") || {
 		bounded_container=
 		exit 1
 	}
+	rm -f "$bounded_container_cidfile"
 	deadline=$(( $(date +%s) + deadline_seconds ))
 	while [ "$(docker inspect -f '{{.State.Running}}' "$bounded_container_id")" = true ]; do
 		if [ "$(date +%s)" -ge "$deadline" ]; then
