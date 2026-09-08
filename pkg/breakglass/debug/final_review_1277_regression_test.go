@@ -3,36 +3,37 @@ package debug
 import (
 	"context"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	bg "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	ssa "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
-	core "github.com/telekom/k8s-breakglass/pkg/breakglass"
-	v1 "k8s.io/api/core/v1"
-	ext "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"net/http/httptest"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	ssa "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
+	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
+	corev1 "k8s.io/api/core/v1"
+	extensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestFinalReviewIdentitySerialization(t *testing.T) {
-	if ssa.AllowedPodRefFrom(&bg.AllowedPodRef{UID: "pod-uid"}).UID == nil {
+	if ssa.AllowedPodRefFrom(&breakglassv1alpha1.AllowedPodRef{UID: "pod-uid"}).UID == nil {
 		t.Error("allowed pod UID omitted")
 	}
-	if ssa.CopiedPodRefFrom(&bg.CopiedPodRef{CopyUID: "copy-uid"}).CopyUID == nil {
+	if ssa.CopiedPodRefFrom(&breakglassv1alpha1.CopiedPodRef{CopyUID: "copy-uid"}).CopyUID == nil {
 		t.Error("CopyUID omitted")
 	}
-	if ssa.DebugSessionParticipantFrom(&bg.DebugSessionParticipant{IdentityProviderName: "idp", IdentityProviderIssuer: "issuer"}).IdentityProviderIssuer == nil {
+	if ssa.DebugSessionParticipantFrom(&breakglassv1alpha1.DebugSessionParticipant{IdentityProviderName: "idp", IdentityProviderIssuer: "issuer"}).IdentityProviderIssuer == nil {
 		t.Error("participant issuer omitted")
 	}
 }
 func TestFinalReviewCaptureExactUID(t *testing.T) {
 	s := runtime.NewScheme()
-	_ = v1.AddToScheme(s)
-	original := &v1.Pod{ObjectMeta: meta.ObjectMeta{Name: "pod", Namespace: "ns", UID: "original"}}
+	_ = corev1.AddToScheme(s)
+	original := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns", UID: "original"}}
 	replacement := original.DeepCopy()
 	replacement.UID = "replacement"
 	cl := fake.NewClientBuilder().WithScheme(s).WithObjects(replacement).Build()
@@ -43,9 +44,9 @@ func TestFinalReviewCaptureExactUID(t *testing.T) {
 }
 func TestFinalReviewMutationIssuerFence(t *testing.T) {
 	s := runtime.NewScheme()
-	_ = bg.AddToScheme(s)
-	expiry := meta.NewTime(time.Now().Add(time.Hour))
-	ds := &bg.DebugSession{ObjectMeta: meta.ObjectMeta{Name: "session", Namespace: "ns", UID: "uid"}, Spec: bg.DebugSessionSpec{Cluster: "spoke", RequestedBy: "alice", IdentityProviderName: "trusted", IdentityProviderIssuer: "https://trusted"}, Status: bg.DebugSessionStatus{State: bg.DebugSessionStateActive, ExpiresAt: &expiry}}
+	_ = breakglassv1alpha1.AddToScheme(s)
+	expiry := metav1.NewTime(time.Now().Add(time.Hour))
+	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "uid"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke", RequestedBy: "alice", IdentityProviderName: "trusted", IdentityProviderIssuer: "https://trusted"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expiry}}
 	cl := fake.NewClientBuilder().WithScheme(s).WithObjects(ds).Build()
 	h := NewKubectlDebugHandler(cl, nil).withIdentity(debugSessionReadIdentity{username: "alice", provider: "other", issuer: "https://other"})
 	if _, err := h.liveSessionForMutation(context.Background(), ds, "alice"); err == nil {
@@ -54,13 +55,13 @@ func TestFinalReviewMutationIssuerFence(t *testing.T) {
 }
 func TestFinalReviewApplyUIDFence(t *testing.T) {
 	s := runtime.NewScheme()
-	_ = bg.AddToScheme(s)
-	live := &bg.DebugSession{ObjectMeta: meta.ObjectMeta{Name: "session", Namespace: "ns", UID: "replacement", ResourceVersion: "1"}, Status: bg.DebugSessionStatus{State: bg.DebugSessionStatePending}}
-	cl := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&bg.DebugSession{}).WithObjects(live).Build()
+	_ = breakglassv1alpha1.AddToScheme(s)
+	live := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "replacement", ResourceVersion: "1"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending}}
+	cl := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).WithObjects(live).Build()
 	stale := live.DeepCopy()
 	stale.UID = "original"
 	stale.Status.Message = "stale owner write"
-	if err := core.ApplyDebugSessionStatus(context.Background(), cl, stale); err == nil {
+	if err := breakglass.ApplyDebugSessionStatus(context.Background(), cl, stale); err == nil {
 		t.Fatal("status apply accepted mismatched session UID")
 	}
 }
@@ -75,12 +76,12 @@ func TestFinalReviewPolicyRedaction(t *testing.T) {
 }
 func TestFinalReviewApprovedNilBindingFrozen(t *testing.T) {
 	s := runtime.NewScheme()
-	_ = bg.AddToScheme(s)
-	live := &bg.DebugSession{ObjectMeta: meta.ObjectMeta{Name: "session", Namespace: "ns", UID: "uid", ResourceVersion: "1"}, Status: bg.DebugSessionStatus{State: bg.DebugSessionStatePending, ResolvedBindingSnapshotCaptured: true}}
-	cl := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&bg.DebugSession{}).WithObjects(live).Build()
+	_ = breakglassv1alpha1.AddToScheme(s)
+	live := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "uid", ResourceVersion: "1"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending, ResolvedBindingSnapshotCaptured: true}}
+	cl := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).WithObjects(live).Build()
 	desired := live.DeepCopy()
-	desired.Status.ResolvedBindingSpec = &ext.JSON{Raw: []byte(`{"displayName":"changed"}`)}
-	if err := core.ApplyDebugSessionStatus(context.Background(), cl, desired); err == nil {
+	desired.Status.ResolvedBindingSpec = &extensionsv1.JSON{Raw: []byte(`{"displayName":"changed"}`)}
+	if err := breakglass.ApplyDebugSessionStatus(context.Background(), cl, desired); err == nil {
 		t.Fatal("status apply changed approved no-binding decision")
 	}
 }

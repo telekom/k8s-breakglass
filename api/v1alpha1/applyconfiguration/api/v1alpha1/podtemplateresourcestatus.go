@@ -51,6 +51,14 @@ func PodTemplateResourceStatus() *PodTemplateResourceStatusApplyConfiguration {
 	return &PodTemplateResourceStatusApplyConfiguration{}
 }
 
+// WithUID sets the UID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UID field is set to the value of the last call.
+func (b *PodTemplateResourceStatusApplyConfiguration) WithUID(value string) *PodTemplateResourceStatusApplyConfiguration {
+	b.UID = &value
+	return b
+}
+
 // WithKind sets the Kind field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Kind field is set to the value of the last call.
@@ -80,14 +88,6 @@ func (b *PodTemplateResourceStatusApplyConfiguration) WithResourceName(value str
 // If called multiple times, the Namespace field is set to the value of the last call.
 func (b *PodTemplateResourceStatusApplyConfiguration) WithNamespace(value string) *PodTemplateResourceStatusApplyConfiguration {
 	b.Namespace = &value
-	return b
-}
-
-// WithUID sets the UID field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the UID field is set to the value of the last call.
-func (b *PodTemplateResourceStatusApplyConfiguration) WithUID(value string) *PodTemplateResourceStatusApplyConfiguration {
-	b.UID = &value
 	return b
 }
 
