@@ -318,7 +318,7 @@ func (c *DebugSessionAPIController) extendTrackedJobDeadlines(ctx context.Contex
 			desiredSeconds++
 		}
 		if desiredSeconds < 1 {
-			return fmt.Errorf("tracked Job %s/%s active deadline overflows", ref.Namespace, ref.Name)
+			return fmt.Errorf("tracked Job %s/%s renewed expiry precedes its start time", ref.Namespace, ref.Name)
 		}
 		if *job.Spec.ActiveDeadlineSeconds >= desiredSeconds {
 			continue
@@ -326,7 +326,7 @@ func (c *DebugSessionAPIController) extendTrackedJobDeadlines(ctx context.Contex
 		updated := job.DeepCopy()
 		deadline := desiredSeconds
 		updated.Spec.ActiveDeadlineSeconds = &deadline
-		if err := targetClient.Patch(ctx, updated, ctrlclient.MergeFrom(job)); err != nil {
+		if err := targetClient.Patch(ctx, updated, ctrlclient.MergeFromWithOptions(job, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
 			return fmt.Errorf("extend tracked Job %s/%s deadline: %w", ref.Namespace, ref.Name, err)
 		}
 	}
