@@ -36,6 +36,7 @@ end
 
 %w[amd64 arm64].each do |architecture|
   config = write_blob.call(JSON.generate("architecture" => architecture), "application/vnd.oci.image.config.v1+json")
+  File.write(File.join(root, "#{architecture}-config-digest"), config["digest"].delete_prefix("sha256:"))
   image = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.manifest.v1+json", "config" => config, "layers" => [] }
   image_payload = JSON.generate(image)
   image_digest = Digest::SHA256.hexdigest(image_payload)
@@ -102,6 +103,25 @@ File.write(File.join(blob_dir, malformed_manifest_digest), malformed_manifest_pa
 malformed_descriptor = arm64_provenance_descriptor.merge("digest" => "sha256:#{malformed_manifest_digest}")
 malformed_descriptors = descriptors.map { |descriptor| descriptor["digest"] == arm64_provenance_descriptor["digest"] ? malformed_descriptor : descriptor }
 
+unsupported_predicate_descriptors = descriptors.map do |descriptor|
+  if descriptor["digest"] == attestation_descriptors.fetch(["amd64", "sbom"])["digest"]
+    manifest = JSON.parse(File.read(File.join(blob_dir, descriptor["digest"].delete_prefix("sha256:"))))
+    layer = manifest.fetch("layers").first
+    layer_payload = File.binread(File.join(blob_dir, layer["digest"].delete_prefix("sha256:")))
+    layer_payload = Zlib::GzipReader.new(StringIO.new(layer_payload)).read if layer_payload.start_with?("\x1f\x8b".b) || layer["mediaType"].to_s.include?("+gzip")
+    statement = JSON.parse(layer_payload)
+    statement["predicateType"] = "https://example.invalid/not-spdx"
+    replacement_layer = write_blob.call(JSON.generate(statement), "application/vnd.in-toto+json")
+    manifest["layers"] = [replacement_layer]
+    replacement_manifest = JSON.generate(manifest)
+    replacement_digest = Digest::SHA256.hexdigest(replacement_manifest)
+    File.write(File.join(blob_dir, replacement_digest), replacement_manifest)
+    descriptor.merge("digest" => "sha256:#{replacement_digest}")
+  else
+    descriptor
+  end
+end
+
 amd64_image = descriptors.find { |descriptor| descriptor.dig("platform", "architecture") == "amd64" }
 arm64_image = descriptors.find { |descriptor| descriptor.dig("platform", "architecture") == "arm64" }
 mismatched_reference_descriptors = descriptors.map do |descriptor|
@@ -151,6 +171,7 @@ malformed_image_descriptors = descriptors.map do |descriptor|
 end
 write_index.call("malformed-image-index.json", malformed_image_descriptors)
 write_index.call("malformed-v02-index.json", malformed_descriptors)
+write_index.call("unsupported-predicate-index.json", unsupported_predicate_descriptors)
 write_index.call("mismatched-reference-index.json", mismatched_reference_descriptors)
 write_index.call("missing-reference-index.json", missing_reference_descriptors)
 write_index.call("malformed-reference-index.json", malformed_reference_descriptors)
@@ -158,10 +179,10 @@ File.write(File.join(root, "oci-layout"), JSON.generate("imageLayoutVersion" => 
 RUBY
 
 (cd "$test_root" && tar -cf "$test_root/good.tar" index.json oci-layout blobs)
-for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image malformed-v02 mismatched-reference missing-reference malformed-reference; do
+for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image missing-config corrupt-config malformed-v02 unsupported-predicate mismatched-reference missing-reference malformed-reference; do
     mkdir "$test_root/$variant"
     index_variant="$variant"
-    if [ "$variant" = missing-image ] || [ "$variant" = corrupt-image ]; then
+    if [ "$variant" = missing-image ] || [ "$variant" = corrupt-image ] || [ "$variant" = missing-config ] || [ "$variant" = corrupt-config ]; then
         cp "$test_root/index.json" "$test_root/$variant/index.json"
     else
         cp "$test_root/$index_variant-index.json" "$test_root/$variant/index.json"
@@ -172,6 +193,10 @@ for variant in bad missing-sbom missing-provenance empty-provenance bad-image-me
         rm "$test_root/$variant/blobs/sha256/$(cat "$test_root/amd64-image-digest")"
     elif [ "$variant" = corrupt-image ]; then
         printf '%s\n' 'not-json' >"$test_root/$variant/blobs/sha256/$(cat "$test_root/amd64-image-digest")"
+    elif [ "$variant" = missing-config ]; then
+        rm "$test_root/$variant/blobs/sha256/$(cat "$test_root/amd64-config-digest")"
+    elif [ "$variant" = corrupt-config ]; then
+        printf '%s\n' 'not-a-config' >"$test_root/$variant/blobs/sha256/$(cat "$test_root/amd64-config-digest")"
     fi
     (cd "$test_root/$variant" && tar -cf "$test_root/$variant.tar" index.json oci-layout blobs)
 done
@@ -183,7 +208,7 @@ after_digest="$(sha256sum "$test_root/good.tar" | awk '{print $1}')"
     echo "descriptor-linked archive was rewritten" >&2
     exit 1
 }
-for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image malformed-v02 mismatched-reference missing-reference malformed-reference; do
+for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image missing-config corrupt-config malformed-v02 unsupported-predicate mismatched-reference missing-reference malformed-reference; do
     if ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/$variant.tar" >/dev/null 2>&1; then
         echo "invalid $variant archive was accepted" >&2
         exit 1

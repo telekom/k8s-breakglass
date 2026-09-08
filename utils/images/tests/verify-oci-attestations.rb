@@ -89,10 +89,10 @@ images.each do |descriptor|
   fail_archive("image manifest has an unexpected media type") unless manifest["mediaType"] == "application/vnd.oci.image.manifest.v1+json"
   config = manifest["config"]
   fail_archive("image manifest has no valid config descriptor") unless config.is_a?(Hash) && config["mediaType"] == "application/vnd.oci.image.config.v1+json"
-  descriptor_digest(config, "image config")
+  read_blob(archive, config, "image config")
   layers = manifest["layers"]
   fail_archive("image manifest has no valid layers list") unless layers.is_a?(Array)
-  layers.each { |layer| descriptor_digest(layer, "image layer") }
+  layers.each { |layer| read_blob(archive, layer, "image layer") }
   digest = descriptor_digest(descriptor, "image manifest")
   image_attestations[digest] = { "platform" => "#{descriptor.dig('platform', 'os')}/#{descriptor.dig('platform', 'architecture')}", "sbom" => false, "provenance" => false }
 end
@@ -123,10 +123,10 @@ attestations.each do |descriptor|
     fail_archive("in-toto statement subject does not match its image") unless subject_matches
     predicate_type = statement["predicateType"].to_s
     predicate = statement["predicate"]
-    if predicate_type.include?("spdx")
+    if predicate_type == "https://spdx.dev/Document"
       fail_archive("SPDX predicate is empty or malformed") unless predicate.is_a?(Hash) && predicate["spdxVersion"].to_s.match?(/\ASPDX-\S+/) && predicate["packages"].is_a?(Array) && !predicate["packages"].empty?
       image_attestations.fetch(reference_digest)["sbom"] = true
-    elsif predicate_type.include?("slsa")
+    elsif %w[https://slsa.dev/provenance/v0.2 https://slsa.dev/provenance/v1].include?(predicate_type)
       valid_slsa = if predicate_type.end_with?("/v0.2")
                      predicate.is_a?(Hash) && predicate.dig("builder", "id").is_a?(String) && !predicate.dig("builder", "id").empty? && predicate["buildType"].is_a?(String) && !predicate["buildType"].empty?
                    else
@@ -136,6 +136,8 @@ attestations.each do |descriptor|
                    end
       fail_archive("SLSA predicate is empty or malformed") unless valid_slsa
       image_attestations.fetch(reference_digest)["provenance"] = true
+    else
+      fail_archive("unsupported attestation predicate type: #{predicate_type.inspect}")
     end
   end
 end
