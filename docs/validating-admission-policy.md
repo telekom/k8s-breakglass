@@ -40,32 +40,32 @@ Requests are **never blocked** by VAP in Phase 1 — the existing webhook remain
 
 | Validation | CEL Expression |
 |------------|---------------|
-| `spec.cluster` required on create | `oldObject != null || (has(object.spec.cluster) && object.spec.cluster.size() > 0)` |
-| `spec.user` required on create | `oldObject != null || (has(object.spec.user) && object.spec.user.size() > 0)` |
-| `spec.grantedGroup` required on create | `oldObject != null || (has(object.spec.grantedGroup) && object.spec.grantedGroup.size() > 0)` |
-| Spec immutability on update | `oldObject == null || object.spec == oldObject.spec` |
-| Valid state transitions | `oldObject == null || !has(oldObject.status) || !has(oldObject.status.state) || oldObject.status.state == "" || oldObject.status.state == object.status.state || (oldObject.status.state == "Pending" && object.status.state in ["Approved", "WaitingForScheduledTime", "Rejected", "Withdrawn", "ApprovalTimeout"]) || (oldObject.status.state == "WaitingForScheduledTime" && object.status.state in ["Approved", "Withdrawn", "Expired"]) || (oldObject.status.state == "Approved" && object.status.state in ["Expired", "IdleExpired"])` |
+| `spec.cluster` required on create | `oldObject != null &#124;&#124; (has(object.spec.cluster) && object.spec.cluster.size() > 0)` |
+| `spec.user` required on create | `oldObject != null &#124;&#124; (has(object.spec.user) && object.spec.user.size() > 0)` |
+| `spec.grantedGroup` required on create | `oldObject != null &#124;&#124; (has(object.spec.grantedGroup) && object.spec.grantedGroup.size() > 0)` |
+| Spec immutability on update | `oldObject == null &#124;&#124; object.spec == oldObject.spec` |
+| Valid state transitions | `oldObject == null &#124;&#124; !has(oldObject.status) &#124;&#124; !has(oldObject.status.state) &#124;&#124; oldObject.status.state == "" &#124;&#124; oldObject.status.state == object.status.state &#124;&#124; (oldObject.status.state == "Pending" && object.status.state in ["Approved", "WaitingForScheduledTime", "Rejected", "Withdrawn", "ApprovalTimeout"]) &#124;&#124; (oldObject.status.state == "WaitingForScheduledTime" && object.status.state in ["Approved", "Withdrawn", "Expired"]) &#124;&#124; (oldObject.status.state == "Approved" && object.status.state in ["Expired", "IdleExpired"])` |
 
 #### BreakglassEscalation
 
 | Validation | CEL Expression |
 |------------|---------------|
-| Approvers non-empty | `has(object.spec.approvers) && ((has(object.spec.approvers.groups) && object.spec.approvers.groups.size() > 0) || (has(object.spec.approvers.users) && object.spec.approvers.users.size() > 0))` |
+| Approvers non-empty | `has(object.spec.approvers) && ((has(object.spec.approvers.groups) && object.spec.approvers.groups.size() > 0) &#124;&#124; (has(object.spec.approvers.users) && object.spec.approvers.users.size() > 0))` |
 | `escalatedGroup` identifier format | `has(object.spec.escalatedGroup) && object.spec.escalatedGroup.size() > 0 && object.spec.escalatedGroup.matches('^[a-zA-Z0-9._:-]+$')` |
-| No empty `allowed.groups` entries | `!has(object.spec.allowed) || !has(object.spec.allowed.groups) || object.spec.allowed.groups.all(g, g.size() > 0)` |
-| No empty `allowed.clusters` entries | `!has(object.spec.allowed) || !has(object.spec.allowed.clusters) || object.spec.allowed.clusters.all(c, c.size() > 0)` |
-| No duplicate `allowed.groups` | `!has(object.spec.allowed) || !has(object.spec.allowed.groups) || object.spec.allowed.groups.all(g, object.spec.allowed.groups.exists_one(x, x == g))` |
-| No duplicate `allowed.clusters` | `!has(object.spec.allowed) || !has(object.spec.allowed.clusters) || object.spec.allowed.clusters.all(c, object.spec.allowed.clusters.exists_one(x, x == c))` |
-| IDP legacy mutual exclusion | `!has(object.spec.allowedIdentityProviders) || object.spec.allowedIdentityProviders.size() == 0 || ((!has(object.spec.allowedIdentityProvidersForRequests) || object.spec.allowedIdentityProvidersForRequests.size() == 0) && (!has(object.spec.allowedIdentityProvidersForApprovers) || object.spec.allowedIdentityProvidersForApprovers.size() == 0))` |
-| IDP split-field symmetry | `(!has(object.spec.allowedIdentityProvidersForRequests) || object.spec.allowedIdentityProvidersForRequests.size() == 0) == (!has(object.spec.allowedIdentityProvidersForApprovers) || object.spec.allowedIdentityProvidersForApprovers.size() == 0)` |
+| No empty `allowed.groups` entries | `!has(object.spec.allowed) &#124;&#124; !has(object.spec.allowed.groups) &#124;&#124; object.spec.allowed.groups.all(g, g.size() > 0)` |
+| No empty `allowed.clusters` entries | `!has(object.spec.allowed) &#124;&#124; !has(object.spec.allowed.clusters) &#124;&#124; object.spec.allowed.clusters.all(c, c.size() > 0)` |
+| No duplicate `allowed.groups` | `!has(object.spec.allowed) &#124;&#124; !has(object.spec.allowed.groups) &#124;&#124; object.spec.allowed.groups.all(g, object.spec.allowed.groups.exists_one(x, x == g))` |
+| No duplicate `allowed.clusters` | `!has(object.spec.allowed) &#124;&#124; !has(object.spec.allowed.clusters) &#124;&#124; object.spec.allowed.clusters.all(c, object.spec.allowed.clusters.exists_one(x, x == c))` |
+| IDP legacy mutual exclusion | `!has(object.spec.allowedIdentityProviders) &#124;&#124; object.spec.allowedIdentityProviders.size() == 0 &#124;&#124; (!has(object.spec.allowedIdentityProvidersForRequests) &#124;&#124; object.spec.allowedIdentityProvidersForRequests.size() == 0) && (!has(object.spec.allowedIdentityProvidersForApprovers) &#124;&#124; object.spec.allowedIdentityProvidersForApprovers.size() == 0)` |
+| IDP split-field symmetry | `(!has(object.spec.allowedIdentityProvidersForRequests) &#124;&#124; object.spec.allowedIdentityProvidersForRequests.size() == 0) == (!has(object.spec.allowedIdentityProvidersForApprovers) &#124;&#124; object.spec.allowedIdentityProvidersForApprovers.size() == 0)` |
 
 #### ClusterConfig
 
 | Validation | CEL Expression |
 |------------|---------------|
-| Auth config mutual exclusivity | `(has(object.spec.kubeconfigSecretRef) && object.spec.kubeconfigSecretRef.name.size() > 0) != ((has(object.spec.oidcAuth) && has(object.spec.oidcAuth.issuerURL) && object.spec.oidcAuth.issuerURL.size() > 0) || (has(object.spec.oidcFromIdentityProvider) && has(object.spec.oidcFromIdentityProvider.name) && object.spec.oidcFromIdentityProvider.name.size() > 0))` |
-| `kubeconfigSecretRef.name` required | `!has(object.spec.kubeconfigSecretRef) || object.spec.kubeconfigSecretRef.name.size() > 0` |
-| No duplicate `identityProviderRefs` | `!has(object.spec.identityProviderRefs) || object.spec.identityProviderRefs.all(ref, object.spec.identityProviderRefs.exists_one(x, x == ref))` |
+| Auth config mutual exclusivity | `(has(object.spec.kubeconfigSecretRef) && object.spec.kubeconfigSecretRef.name.size() > 0) != ((has(object.spec.oidcAuth) && has(object.spec.oidcAuth.issuerURL) && object.spec.oidcAuth.issuerURL.size() > 0) &#124;&#124; (has(object.spec.oidcFromIdentityProvider) && has(object.spec.oidcFromIdentityProvider.name) && object.spec.oidcFromIdentityProvider.name.size() > 0))` |
+| `kubeconfigSecretRef.name` required | `!has(object.spec.kubeconfigSecretRef) &#124;&#124; object.spec.kubeconfigSecretRef.name.size() > 0` |
+| No duplicate `identityProviderRefs` | `!has(object.spec.identityProviderRefs) &#124;&#124; object.spec.identityProviderRefs.all(ref, object.spec.identityProviderRefs.exists_one(x, x == ref))` |
 
 #### IdentityProvider
 
@@ -73,12 +73,12 @@ Requests are **never blocked** by VAP in Phase 1 — the existing webhook remain
 |------------|---------------|
 | OIDC authority required + HTTPS | `has(object.spec.oidc) && has(object.spec.oidc.authority) && object.spec.oidc.authority.startsWith('https://')` |
 | OIDC clientID required | `has(object.spec.oidc) && has(object.spec.oidc.clientID) && object.spec.oidc.clientID.size() > 0` |
-| JWKS endpoint HTTPS | `!has(object.spec.oidc) || !has(object.spec.oidc.jwksEndpoint) || object.spec.oidc.jwksEndpoint.size() == 0 || object.spec.oidc.jwksEndpoint.startsWith('https://')` |
-| OIDC insecure TLS forbidden | `!has(object.spec.oidc) || !has(object.spec.oidc.insecureSkipVerify) || object.spec.oidc.insecureSkipVerify == false` |
-| Issuer HTTPS | `!has(object.spec.issuer) || object.spec.issuer.size() == 0 || object.spec.issuer.startsWith('https://')` |
-| Keycloak config conditional | `!has(object.spec.groupSyncProvider) || object.spec.groupSyncProvider != 'Keycloak' || (has(object.spec.keycloak) && has(object.spec.keycloak.baseURL) && object.spec.keycloak.baseURL.size() > 0 && has(object.spec.keycloak.realm) && object.spec.keycloak.realm.size() > 0 && has(object.spec.keycloak.clientID) && object.spec.keycloak.clientID.size() > 0)` |
-| Keycloak insecure TLS forbidden | `!has(object.spec.keycloak) || !has(object.spec.keycloak.insecureSkipVerify) || object.spec.keycloak.insecureSkipVerify == false` |
-| Keycloak config forbidden | `!has(object.spec.keycloak) || !has(object.spec.groupSyncProvider) || object.spec.groupSyncProvider == 'Keycloak'` |
+| JWKS endpoint HTTPS | `!has(object.spec.oidc) &#124;&#124; !has(object.spec.oidc.jwksEndpoint) &#124;&#124; object.spec.oidc.jwksEndpoint.size() == 0 &#124;&#124; object.spec.oidc.jwksEndpoint.startsWith('https://')` |
+| OIDC insecure TLS forbidden | `!has(object.spec.oidc) &#124;&#124; !has(object.spec.oidc.insecureSkipVerify) &#124;&#124; object.spec.oidc.insecureSkipVerify == false` |
+| Issuer HTTPS | `!has(object.spec.issuer) &#124;&#124; object.spec.issuer.size() == 0 &#124;&#124; object.spec.issuer.startsWith('https://')` |
+| Keycloak config conditional | `!has(object.spec.groupSyncProvider) &#124;&#124; object.spec.groupSyncProvider != 'Keycloak' &#124;&#124; (has(object.spec.keycloak) && has(object.spec.keycloak.baseURL) && object.spec.keycloak.baseURL.size() > 0 && has(object.spec.keycloak.realm) && object.spec.keycloak.realm.size() > 0 && has(object.spec.keycloak.clientID) && object.spec.keycloak.clientID.size() > 0)` |
+| Keycloak insecure TLS forbidden | `!has(object.spec.keycloak) &#124;&#124; !has(object.spec.keycloak.insecureSkipVerify) &#124;&#124; object.spec.keycloak.insecureSkipVerify == false` |
+| Keycloak config forbidden | `!has(object.spec.keycloak) &#124;&#124; !has(object.spec.groupSyncProvider) &#124;&#124; object.spec.groupSyncProvider == 'Keycloak'` |
 
 ### Validations Remaining in Webhook
 
@@ -137,7 +137,7 @@ is intentional. `Deny` and `Warn` cannot be combined.
 Check policies are deployed:
 
 ```bash
-kubectl get validatingadmissionpolicies -l app.kubernetes.io/name=breakglass
+kubectl get validatingadmissionpolicies -l breakglass.t-caas.telekom.com/phase=1
 ```
 
 Expected output:
@@ -153,7 +153,7 @@ breakglass-session-validation              5             <unset>     0
 Check bindings:
 
 ```bash
-kubectl get validatingadmissionpolicybindings -l app.kubernetes.io/name=breakglass
+kubectl get validatingadmissionpolicybindings -l breakglass.t-caas.telekom.com/phase=1
 ```
 
 ### Monitor Warnings
