@@ -72,31 +72,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-remove_captured_volume() {
-	attempt=0
-	while [ "$attempt" -lt 10 ]; do
-		"$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1 || return 0
-		if ! attached_ids=$("$docker_bin" ps -aq --filter "volume=$volume_name"); then
-			return 1
-		fi
-		if [ -n "$attached_ids" ]; then
-			for attached_id in $attached_ids; do
-				[ -n "${volume_owner_id:-}" ] || return 1
-				[ "$attached_id" = "$volume_owner_id" ] || return 1
-			done
-			docker_remove_resource_with_volumes "$docker_bin" container "$volume_owner_id" >/dev/null 2>&1 || true
-		fi
-		"$docker_bin" volume rm "$volume_name" >/dev/null 2>&1 || true
-		attempt=$((attempt + 1))
-		sleep 1
-	done
-	! "$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1
-}
-
 # shellcheck disable=SC1091
 . "$root_dir/../../hack/docker-image-ownership.sh"
 # shellcheck disable=SC1091
 . "$root_dir/../../hack/docker-resource-ownership.sh"
+# shellcheck disable=SC1091
+. "$test_dir/volume-attachment-cleanup.sh"
 
 require_command() {
 	command -v "$1" >/dev/null 2>&1 || fail "required command '$1' is not installed"
