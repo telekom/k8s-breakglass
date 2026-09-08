@@ -124,15 +124,6 @@ func safeRecordingFailure(reason string) string {
 	return reason
 }
 
-func sanitizedRecordingStatus(status *breakglassv1alpha1.TerminalRecordingStatus) *breakglassv1alpha1.TerminalRecordingStatus {
-	if status == nil {
-		return nil
-	}
-	sanitized := status.DeepCopy()
-	sanitized.Error = safeRecordingFailure(sanitized.Error)
-	return sanitized
-}
-
 // injectTerminalRecording adds the sidecar contract and a private shared
 // volume. It does not copy template headers, Secret values, or bearer tokens
 // into the pod. A sidecar image must implement the contract documented in
