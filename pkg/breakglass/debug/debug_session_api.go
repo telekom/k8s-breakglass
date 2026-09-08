@@ -51,6 +51,11 @@ import (
 
 const debugSessionNamePrefix = "debug"
 
+const (
+	debugSessionAdmissionAttempts   = 8
+	debugSessionAdmissionRetryDelay = 20 * time.Millisecond
+)
+
 // DebugSessionAPIController provides REST API endpoints for debug sessions
 type DebugSessionAPIController struct {
 	quotaNamespace string
@@ -1386,7 +1391,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 func (c *DebugSessionAPIController) admitCreatedDebugSession(ctx context.Context, session *breakglassv1alpha1.DebugSession) error {
 	original := session.DeepCopy()
 	current := session.DeepCopy()
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < debugSessionAdmissionAttempts; attempt++ {
 		quotaController := NewDebugSessionController(c.log, c.client, c.ccProvider).WithAPIReader(c.reader())
 		if c.quotaEnabled {
 			quotaController.WithQuotaNamespace(c.quotaNamespace)
@@ -1394,8 +1399,21 @@ func (c *DebugSessionAPIController) admitCreatedDebugSession(ctx context.Context
 		if err := quotaController.admitDebugSession(ctx, current); err == nil {
 			*session = *current
 			return nil
-		} else if !errors.Is(err, errDebugSessionCandidateChanged) || attempt == 2 {
+		} else if !errors.Is(err, errDebugSessionCandidateChanged) || attempt == debugSessionAdmissionAttempts-1 {
 			return err
+		}
+		delay := debugSessionAdmissionRetryDelay << attempt
+		if delay > 250*time.Millisecond {
+			delay = 250 * time.Millisecond
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
 		}
 
 		fresh := &breakglassv1alpha1.DebugSession{}

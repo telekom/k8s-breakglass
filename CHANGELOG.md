@@ -152,6 +152,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with short segments, and the hard-expiry port-forward lane records only a
   candidate proven to be available. SSA coverage also verifies immutable debug
   authorization snapshots.
+- **DebugSession quota admission ordering**: The lifecycle reconciler now
+  completes durable quota admission before resolving or activating a
+  DebugSession, and API completion retries resource-version conflicts against
+  fresh same-UID objects without duplicating ledger reservations.
 - **DebugSession API mutation identity matching**: Mutating kubectl-debug
   operations now authorize requester and participant identities using the same
   provider-aware username/email matching used by read authorization, preventing

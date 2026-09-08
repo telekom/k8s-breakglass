@@ -42,6 +42,7 @@ import (
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 )
 
 // Helper to create a fake client with status subresource support
@@ -1131,6 +1132,7 @@ func TestDebugSessionReconcilerFailsActiveSessionWithoutExpiry(t *testing.T) {
 	scheme := testScheme()
 	session := newTestDebugSession("missing-expiry", "test-template", "test-cluster", "user@example.com")
 	session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	session.Annotations = map[string]string{quotas.AdmissionAnnotation: quotas.Pending}
 	template := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
 		Status:     breakglassv1alpha1.DebugSessionTemplateStatus{ActiveSessionCount: 1},
@@ -1140,7 +1142,13 @@ func TestDebugSessionReconcilerFailsActiveSessionWithoutExpiry(t *testing.T) {
 		WithObjects(session, template).
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).
 		Build()
-	controller := &DebugSessionController{log: zap.NewNop().Sugar(), client: fakeClient}
+	controller := &DebugSessionController{
+		log:            zap.NewNop().Sugar(),
+		client:         fakeClient,
+		apiReader:      fakeClient,
+		quotaNamespace: "controller",
+		quotaEnabled:   true,
+	}
 	metrics.DebugSessionsActive.WithLabelValues(session.Spec.Cluster, session.Spec.TemplateRef).Set(1)
 	t.Cleanup(func() {
 		metrics.DebugSessionsActive.DeleteLabelValues(session.Spec.Cluster, session.Spec.TemplateRef)

@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -33,6 +34,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -199,11 +201,32 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	log = log.With("state", ds.Status.State, "cluster", ds.Spec.Cluster)
-	if ds.Status.State == breakglassv1alpha1.DebugSessionStateActive &&
-		(ds.Status.ExpiresAt == nil || ds.Status.ExpiresAt.IsZero()) {
-		return c.terminalizeActiveSessionWithoutExpiry(ctx, ds)
+	if ds.Status.State == breakglassv1alpha1.DebugSessionStateActive {
+		if ds.Status.ExpiresAt == nil || ds.Status.ExpiresAt.IsZero() {
+			return c.terminalizeActiveSessionWithoutExpiry(ctx, ds)
+		}
+		if !time.Now().Before(ds.Status.ExpiresAt.Time) {
+			return c.handleActive(ctx, ds)
+		}
 	}
-
+	if c.quotaEnabled && !debugSessionTerminal(ds) && ds.Annotations[quotas.AdmissionAnnotation] != quotas.Ready {
+		if err := c.admitDebugSession(ctx, ds); err != nil {
+			if errors.Is(err, quotas.ErrFull) {
+				if ds.Status.State == breakglassv1alpha1.DebugSessionStateActive && ds.Status.ExpiresAt != nil && !ds.Status.ExpiresAt.IsZero() {
+					delay := time.Until(ds.Status.ExpiresAt.Time)
+					if delay > 0 {
+						return ctrl.Result{RequeueAfter: delay}, nil
+					}
+					return c.handleActive(ctx, ds)
+				}
+				return ctrl.Result{}, nil
+			}
+			return ctrl.Result{}, err
+		}
+		// Admission updates metadata and may race the cache snapshot used for this
+		// reconcile. Re-read before resolving templates or activating workloads.
+		return ctrl.Result{RequeueAfter: time.Millisecond}, nil
+	}
 	switch ds.Status.State {
 	case "", breakglassv1alpha1.DebugSessionStatePending:
 		return c.handlePending(ctx, ds)

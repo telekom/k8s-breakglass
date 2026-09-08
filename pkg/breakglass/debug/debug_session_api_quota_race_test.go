@@ -163,7 +163,41 @@ func TestAdmitCreatedDebugSessionStopsAfterBoundedConflicts(t *testing.T) {
 	err := controller.admitCreatedDebugSession(t.Context(), session)
 	assert.Error(t, err)
 	assert.True(t, apierrors.IsConflict(err))
-	assert.Equal(t, 3, patches)
+	assert.Equal(t, debugSessionAdmissionAttempts, patches)
+}
+
+func TestAdmitCreatedDebugSessionEventuallyCompletesAfterStatusConflicts(t *testing.T) {
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template", UID: "template-uid"}}
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{
+		Name: "session", Namespace: "breakglass", UID: "uid",
+		Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending},
+	}, Spec: breakglassv1alpha1.DebugSessionSpec{TemplateRef: template.Name}}
+	conflicts := 3
+	patches := 0
+	cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		WithObjects(template, session).WithInterceptorFuncs(interceptor.Funcs{
+		Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			patches++
+			if patches <= conflicts {
+				return apierrors.NewConflict(schema.GroupResource{Resource: "debugsessions"}, session.Name, nil)
+			}
+			return cl.Patch(ctx, obj, patch, opts...)
+		},
+	}).Build()
+	controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil).
+		WithAPIReader(cli).WithQuotaNamespace("controller")
+	require.NoError(t, controller.admitCreatedDebugSession(t.Context(), session))
+	assert.Equal(t, conflicts+1, patches)
+	stored := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(session), stored))
+	assert.Equal(t, quotas.Ready, stored.Annotations[quotas.AdmissionAnnotation])
+	ledger := &corev1.ConfigMap{}
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKey{Namespace: "controller", Name: "breakglass-session-quota-v1"}, ledger))
+	var state struct {
+		Entries map[string]quotas.Entry `json:"entries"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(ledger.Data["ledger"]), &state))
+	assert.Len(t, state.Entries, 1, "admission retries must retain one durable reservation")
 }
 
 func TestAdmitCreatedDebugSessionFailsClosedWhenObjectChanges(t *testing.T) {

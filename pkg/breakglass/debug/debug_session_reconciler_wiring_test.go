@@ -19,15 +19,19 @@ package debug
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 func TestDebugSessionController_WithLiveReaderWiresUncachedReader(t *testing.T) {
@@ -37,6 +41,83 @@ func TestDebugSessionController_WithLiveReaderWiresUncachedReader(t *testing.T) 
 	var reader ctrlclient.Reader = live
 	assert.Same(t, reader, controller.reader)
 	assert.Same(t, reader, controller.apiReader)
+}
+
+func TestReconcileAdmitsProvisionalDebugSessionBeforeLifecycle(t *testing.T) {
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template", UID: types.UID("template-uid")}}
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{
+		Name: "session", Namespace: "breakglass", UID: types.UID("session-uid"),
+		Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending},
+	}, Spec: breakglassv1alpha1.DebugSessionSpec{TemplateRef: template.Name, Cluster: "prod", RequestedBy: "alice"}}
+	cli := fake.NewClientBuilder().WithScheme(Scheme).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		WithObjects(template, session).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).
+		WithLiveReader(cli).WithQuotaNamespace("controller")
+
+	result, err := controller.Reconcile(t.Context(), reconcile.Request{NamespacedName: ctrlclient.ObjectKeyFromObject(session)})
+	require.NoError(t, err)
+	assert.Equal(t, time.Millisecond, result.RequeueAfter, "reconcile must re-read after completing admission")
+	stored := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, cli.Get(t.Context(), ctrlclient.ObjectKeyFromObject(session), stored))
+	assert.Equal(t, quotas.Ready, stored.Annotations[quotas.AdmissionAnnotation])
+	assert.Empty(t, stored.Status.State, "provisional sessions must not activate during admission")
+}
+
+func TestReconcileExpiresActiveSessionBeforeQuotaAdmission(t *testing.T) {
+	past := metav1.NewTime(time.Now().UTC().Add(-time.Minute))
+	session := newTestDebugSession("expired", "deleted-template", "prod", "alice")
+	session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	session.Status.ExpiresAt = &past
+	session.Annotations = map[string]string{quotas.AdmissionAnnotation: quotas.Pending}
+	cli := fake.NewClientBuilder().WithScheme(Scheme).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		WithObjects(session).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).
+		WithLiveReader(cli).WithQuotaNamespace("controller").
+		WithMailService(NewMockMailEnqueuer(true), "Breakglass", "", true)
+
+	result, err := controller.Reconcile(t.Context(), reconcile.Request{NamespacedName: ctrlclient.ObjectKeyFromObject(session)})
+	require.NoError(t, err)
+	assert.Equal(t, ExpiredSessionRequeue, result.RequeueAfter)
+	stored := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, cli.Get(t.Context(), ctrlclient.ObjectKeyFromObject(session), stored))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, stored.Status.State)
+}
+
+func TestReviewLegacyActiveQuotaFullStillSchedulesExpiry(t *testing.T) {
+	maxConcurrent := int32(2)
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "template", UID: types.UID("template-uid")},
+		Spec:       breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{MaxConcurrentSessions: maxConcurrent}},
+	}
+	ready := newTestDebugSession("ready", template.Name, "prod", "alice")
+	ready.UID = types.UID("ready-uid")
+	ready.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	ready.Annotations = map[string]string{quotas.AdmissionAnnotation: quotas.Pending}
+	future := metav1.NewTime(time.Now().UTC().Add(10 * time.Minute))
+	candidate := newTestDebugSession("legacy-active", template.Name, "prod", "bob")
+	candidate.UID = types.UID("legacy-active-uid")
+	candidate.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	candidate.Status.ExpiresAt = &future
+	cli := fake.NewClientBuilder().WithScheme(Scheme).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		WithObjects(template, ready).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).
+		WithLiveReader(cli).WithQuotaNamespace("controller")
+	require.NoError(t, controller.admitDebugSession(t.Context(), ready))
+	template.Spec.Constraints.MaxConcurrentSessions = 1
+	require.NoError(t, cli.Update(t.Context(), template))
+	require.NoError(t, cli.Create(t.Context(), candidate))
+
+	result, err := controller.Reconcile(t.Context(), reconcile.Request{NamespacedName: ctrlclient.ObjectKeyFromObject(candidate)})
+	require.NoError(t, err)
+	assert.Greater(t, result.RequeueAfter, time.Duration(0))
+	assert.InDelta(t, float64(10*time.Minute), float64(result.RequeueAfter), float64(2*time.Second))
+	stored := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, cli.Get(t.Context(), ctrlclient.ObjectKeyFromObject(candidate), stored))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, stored.Status.State)
+	assert.Empty(t, stored.Annotations[quotas.AdmissionAnnotation], "quota denial must not mutate legacy active metadata")
 }
 
 func TestDebugSessionController_WithAuditServiceUsesReloadedManager(t *testing.T) {

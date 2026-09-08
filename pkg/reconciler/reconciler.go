@@ -144,6 +144,7 @@ func Setup(
 	auditService *audit.Service,
 	mailService *mail.Service,
 	frontendConfig config.Frontend,
+	quotaNamespace string,
 	disableEmail bool,
 	escalationManager *escalation.EscalationManager,
 	enableControllers bool,
@@ -322,6 +323,7 @@ func Setup(
 		log.Debugw("Setting up DebugSession reconciler")
 		debugSessionReconciler := debug.NewDebugSessionController(log, mgr.GetClient(), ccProvider).
 			WithLiveReader(mgr.GetAPIReader()).
+			WithQuotaNamespace(quotaNamespace).
 			WithAuditService(auditService).
 			WithMailService(mailService, frontendConfig.BrandingName, frontendConfig.BaseURL, disableEmail)
 		if err := debugSessionReconciler.SetupWithManager(mgr); err != nil {

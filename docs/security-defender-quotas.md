@@ -47,7 +47,11 @@ responsibility of the debug lifecycle controller.
 
 The regular cleanup loop completes empty-status provisional admissions after a
 crash. Debug reconciliation retries admission before approval-waiting or
-activation, including sessions created directly as Kubernetes resources.
+activation, including sessions created directly as Kubernetes resources, and
+never resolves templates or deploys workloads while the admission annotation is
+still provisional. API completion retries resource-version conflicts against a
+fresh same-UID object; repeated conflicts remain fail-closed without repeating
+the Kubernetes Create or duplicating the durable ledger reservation.
 Failed API calls can therefore leave recoverable provisional objects; inspect
 the session list before submitting a replacement request. Explicit quota denials
 are terminal and do not later activate. Nonterminal legacy sessions are counted
