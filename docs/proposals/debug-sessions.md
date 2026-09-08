@@ -775,7 +775,7 @@ spec:
     # Retention for session recordings
     recordingRetention: "90d"
     
-    # Enable terminal session recording (asciinema format)
+    # Reserved until terminal-byte transport is implemented; enabling fails closed.
     enableTerminalRecording: true
 ```
 
@@ -1310,4 +1310,3 @@ spec:
 ### Remaining Work
 
 1. **Audit Sidecar**: In-pod command logging via audit sidecar is not implemented. Consider integrating with Tetragon/Falco as documented.
-
