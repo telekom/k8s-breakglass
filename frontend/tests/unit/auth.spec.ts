@@ -49,6 +49,7 @@ describe("AuthService mock mode guard", () => {
   });
 
   it("uses sessionStorage for OIDC user data in production even when persistent mode is requested", async () => {
+    process.env.NODE_ENV = "production";
     vi.stubEnv("PROD", true);
     vi.resetModules();
     localStorage.setItem("breakglass_oidc_token_persistence", "persistent");
@@ -73,6 +74,7 @@ describe("AuthService mock mode guard", () => {
   });
 
   it("ignores legacy localStorage IDP hints in production", async () => {
+    process.env.NODE_ENV = "production";
     vi.stubEnv("PROD", true);
     vi.resetModules();
     localStorage.setItem("breakglass_current_idp_name", "corp");
@@ -84,6 +86,7 @@ describe("AuthService mock mode guard", () => {
   });
 
   it("falls back to in-memory OIDC storage when browser storage is blocked", async () => {
+    process.env.NODE_ENV = "test";
     vi.stubEnv("PROD", false);
     vi.resetModules();
     const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
