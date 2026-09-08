@@ -146,9 +146,10 @@ write_index.call("malformed-image-index.json", malformed_image_descriptors)
 write_index.call("malformed-v02-index.json", malformed_descriptors)
 write_index.call("mismatched-reference-index.json", mismatched_reference_descriptors)
 write_index.call("missing-reference-index.json", missing_reference_descriptors)
+File.write(File.join(root, "oci-layout"), JSON.generate("imageLayoutVersion" => "1.0.0"))
 RUBY
 
-(cd "$test_root" && tar -cf "$test_root/good.tar" index.json blobs)
+(cd "$test_root" && tar -cf "$test_root/good.tar" index.json oci-layout blobs)
 for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image malformed-v02 mismatched-reference missing-reference; do
     mkdir "$test_root/$variant"
     index_variant="$variant"
@@ -158,20 +159,49 @@ for variant in bad missing-sbom missing-provenance empty-provenance bad-image-me
         cp "$test_root/$index_variant-index.json" "$test_root/$variant/index.json"
     fi
     cp -R "$test_root/blobs" "$test_root/$variant/"
+    cp "$test_root/oci-layout" "$test_root/$variant/"
     if [ "$variant" = missing-image ]; then
         rm "$test_root/$variant/blobs/sha256/$(cat "$test_root/amd64-image-digest")"
     elif [ "$variant" = corrupt-image ]; then
         printf '%s\n' 'not-json' >"$test_root/$variant/blobs/sha256/$(cat "$test_root/amd64-image-digest")"
     fi
-    (cd "$test_root/$variant" && tar -cf "$test_root/$variant.tar" index.json blobs)
+    (cd "$test_root/$variant" && tar -cf "$test_root/$variant.tar" index.json oci-layout blobs)
 done
 
+before_digest="$(sha256sum "$test_root/good.tar" | awk '{print $1}')"
+if ! ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/good.tar" >/dev/null; then
+    ruby "$(dirname "$0")/normalize-oci-attestations.rb" "$test_root/good.tar" >/dev/null
+fi
 ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/good.tar" >/dev/null
-for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image malformed-v02; do
+after_digest="$(sha256sum "$test_root/good.tar" | awk '{print $1}')"
+[ "$before_digest" = "$after_digest" ] || {
+    echo "descriptor-linked archive was rewritten" >&2
+    exit 1
+}
+for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image malformed-v02 mismatched-reference missing-reference; do
     if ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/$variant.tar" >/dev/null 2>&1; then
         echo "invalid $variant archive was accepted" >&2
         exit 1
     fi
 done
+
+for layout in missing-layout bad-layout; do
+    mkdir "$test_root/$layout"
+    cp "$test_root/index.json" "$test_root/$layout/index.json"
+    cp -R "$test_root/blobs" "$test_root/$layout/"
+    if [ "$layout" = bad-layout ]; then
+        printf '%s\n' '{"imageLayoutVersion":"0.9.0"}' >"$test_root/$layout/oci-layout"
+    fi
+    if [ "$layout" = bad-layout ]; then
+        (cd "$test_root/$layout" && tar -cf "$test_root/$layout.tar" index.json oci-layout blobs)
+    else
+        (cd "$test_root/$layout" && tar -cf "$test_root/$layout.tar" index.json blobs)
+    fi
+done
+if ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/missing-layout.tar" >/dev/null 2>&1 ||
+   ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/bad-layout.tar" >/dev/null 2>&1; then
+    echo "invalid OCI layout was accepted" >&2
+    exit 1
+fi
 
 echo "OCI attestation inspection behavior passed"

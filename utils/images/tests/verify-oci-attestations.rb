@@ -48,6 +48,8 @@ end
 
 index = JSON.parse(read_entry(archive, "index.json"))
 fail_archive("index is not an OCI image index") unless index["schemaVersion"] == 2 && index["mediaType"] == "application/vnd.oci.image.index.v1+json"
+layout = JSON.parse(read_entry(archive, "oci-layout"))
+fail_archive("unsupported OCI layout") unless layout["imageLayoutVersion"] == "1.0.0"
 
 def flatten_index(archive, descriptor, flattened, visited)
   media_type = descriptor["mediaType"].to_s
