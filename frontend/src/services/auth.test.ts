@@ -546,9 +546,9 @@ describe("AuthService", () => {
         },
       } as unknown as UserManager;
 
-      (authService as unknown as { registerUserManagerEvents: (manager: UserManager) => void }).registerUserManagerEvents(
-        manager,
-      );
+      (
+        authService as unknown as { registerUserManagerEvents: (manager: UserManager) => void }
+      ).registerUserManagerEvents(manager);
 
       const loadedUser = { refresh_token: "stale-refresh-token" } as User;
       userLoadedHandler?.(loadedUser);
