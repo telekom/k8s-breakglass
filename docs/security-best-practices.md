@@ -230,15 +230,16 @@ This requires a matching audience protocol mapper in your identity provider (e.g
 
 ### Token Storage in the Browser
 
-The browser frontend uses `sessionStorage` through `oidc-client-ts`. Access
-tokens remain readable by same-origin JavaScript and are explicitly attached as
-Bearer tokens to API requests. Session storage limits persistence and prevents
-other origins from reading it; it does not protect tokens from compromised
-same-origin scripts. Browser-local cached runtime configuration is bootstrap
-state, not the server's issuer authorization policy.
-Production builds also force session storage when a stale persistent preference is
-present and purge or ignore legacy localStorage OIDC artifacts, including IDP
-name hints used for re-authentication.
+The browser frontend uses `sessionStorage` through `oidc-client-ts` by default.
+Development builds may explicitly opt into persistent `localStorage` storage;
+that mode is warned about because browser scripts can read it. Production builds
+always use `sessionStorage`, reset a stale persistent preference, and purge or
+ignore legacy localStorage OIDC artifacts, including IDP name hints used for
+reauthentication. Access tokens remain readable by same-origin JavaScript and
+are explicitly attached as Bearer tokens to API requests. Session storage limits
+persistence and prevents other origins from reading it; it does not protect
+tokens from compromised same-origin scripts. Browser-local cached runtime
+configuration is bootstrap state, not the server's issuer authorization policy.
 
 CSP restricts script sources and reduces injection opportunities, but cannot
 guarantee that every XSS payload is blocked. Keep access tokens short-lived
@@ -530,7 +531,7 @@ Every lookup failure is observable, so the fallback is never silent:
 The breakglass frontend is **not vulnerable to CSRF** because it uses **OIDC Bearer token authentication** rather than cookie-based sessions:
 
 - All API requests include an `Authorization: Bearer <token>` header injected by the HTTP client interceptor (`frontend/src/services/httpClient.ts`).
-- OIDC access tokens are stored in the browser's `sessionStorage` via `oidc-client-ts`, **not** in cookies.
+- OIDC access tokens default to browser `sessionStorage` via `oidc-client-ts`, **not** cookies; development-only persistent `localStorage` is an explicit opt-in and production always uses session storage.
 - The browser never automatically attaches credentials to cross-origin requests, so a malicious site cannot forge authenticated API calls.
 
 This architecture inherently mitigates CSRF because:
