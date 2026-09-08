@@ -76,9 +76,16 @@ remove_captured_volume() {
 	attempt=0
 	while [ "$attempt" -lt 10 ]; do
 		"$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1 || return 0
-		for attached_id in $("$docker_bin" ps -aq --filter "volume=$volume_name"); do
-			docker_remove_resource_with_volumes "$docker_bin" container "$attached_id" >/dev/null 2>&1 || true
-		done
+		if ! attached_ids=$("$docker_bin" ps -aq --filter "volume=$volume_name"); then
+			return 1
+		fi
+		if [ -n "$attached_ids" ]; then
+			for attached_id in $attached_ids; do
+				[ -n "${volume_owner_id:-}" ] || return 1
+				[ "$attached_id" = "$volume_owner_id" ] || return 1
+			done
+			docker_remove_resource_with_volumes "$docker_bin" container "$volume_owner_id" >/dev/null 2>&1 || true
+		fi
 		"$docker_bin" volume rm "$volume_name" >/dev/null 2>&1 || true
 		attempt=$((attempt + 1))
 		sleep 1
