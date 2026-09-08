@@ -32,10 +32,11 @@ For each image directory:
 
 1. Run `make -C utils/images test`, `make -C utils/images shellcheck`, and
    `make -C utils/images integration`. The integration target is mandatory when
-   Docker is available: it builds and runs both images with the declared
-   non-root/read-only settings, executes real fio/ioping operations, and
-   verifies dump metadata/checksum/copy and cleanup/security denials. It fails
-   rather than silently skipping when Docker is unavailable.
+   Docker is available: it builds and runs all utility images with their
+   declared settings, executes real fio/ioping operations, verifies dump
+   metadata/checksum/copy and cleanup/security denials, and runs the
+   diagnostic-artifact-collector image contract. It fails rather than silently
+   skipping when Docker is unavailable.
 2. Run `make -C utils/images multiarch` to build both platforms from the
    digest-pinned Dockerfiles, then inspect the resulting OCI archives/manifest.
 3. Generate an SBOM and SLSA provenance attestation for the manifest.

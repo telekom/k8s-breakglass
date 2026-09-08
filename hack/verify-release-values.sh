@@ -64,4 +64,11 @@ if "${script_dir}/generate-release-values.sh" "${test_dir}/refs" "${output}" >/d
   exit 1
 fi
 
+zero_digest=sha256:0000000000000000000000000000000000000000000000000000000000000000
+printf '%s\n' "workload|ghcr.io/telekom/k8s-breakglass/utils/workload-debug|${zero_digest}|verified|verified|verified" >"${test_dir}/refs/workload.ref"
+if "${script_dir}/generate-release-values.sh" "${test_dir}/refs" "${output}" >/dev/null 2>&1; then
+  echo "placeholder utility digest was accepted" >&2
+  exit 1
+fi
+
 echo "Release value generation behavior passed"

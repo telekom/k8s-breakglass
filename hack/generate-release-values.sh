@@ -43,6 +43,10 @@ for ref in "${refs[@]}"; do
     echo "Invalid utility digest for ${name}: ${digest}" >&2
     exit 1
   }
+  [[ "${digest}" != sha256:0000000000000000000000000000000000000000000000000000000000000000 ]] || {
+    echo "Placeholder utility digest for ${name} is not allowed" >&2
+    exit 1
+  }
   [ "${signature:-}" = verified ] && [ "${sbom:-}" = verified ] && [ "${provenance:-}" = verified ] || {
     echo "Missing verified signature, SBOM, or provenance evidence for ${name}" >&2
     exit 1

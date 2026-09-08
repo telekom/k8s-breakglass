@@ -52,14 +52,14 @@ SBOM, provenance, signature, and immutable-base metadata.
 The per-image `image-metadata.yaml` files include the machine-readable command
 and intent contract used by release review. Run `make -C utils/images test`
 for fast script tests and `make -C utils/images integration` for mandatory
-Docker-backed proofs for `storage-debug` and `dump-reader`. That integration
-target builds those two images for the local Docker architecture, runs them as
-UID/GID 65532 with a read-only rootfs, `--cap-drop=ALL`, and no network, then
-exercises their packaged tools and safe-copy/report failure boundaries. The
-diagnostic-artifact-collector has its separate gate at
-`make -C utils/images/diagnostic-artifact-collector kind-test`; these targets do
-not claim to cover one another. They fail when Docker is unavailable; they do
-not silently skip. `make -C utils/images multiarch` performs a real
+Docker-backed proofs for all utility images. That integration target builds
+and exercises `storage-debug` and `dump-reader` for the local Docker
+architecture, then runs the diagnostic-artifact-collector image test; all
+images use their declared UID, rootfs, capability, and network boundaries.
+The diagnostic-artifact-collector retains its separate Kind gate at
+`make -C utils/images/diagnostic-artifact-collector kind-test` for the
+emptyDir/runtime hand-off proof. These targets fail when Docker is unavailable;
+they do not silently skip. `make -C utils/images multiarch` performs a real
 BuildKit OCI build for both declared platforms using an explicit local image
 name and `oci-artifact=false`, then strictly verifies each untouched archive
 before removing it. CI enables QEMU for this validation while runtime proofs

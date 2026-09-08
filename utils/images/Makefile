@@ -19,11 +19,12 @@ multiarch-output-test:
 
 shellcheck:
 	shellcheck storage-debug/bin/storage-report storage-debug/tests/test.sh \
-		dump-reader/bin/dump-reader dump-reader/tests/test.sh tests/integration.sh \
-		tests/verify-oci-attestations-test.sh
+		 dump-reader/bin/dump-reader dump-reader/tests/test.sh tests/integration.sh \
+		tests/multiarch-output-test.sh tests/verify-oci-attestations-test.sh
 
 integration:
 	./tests/integration.sh
+	$(MAKE) -C diagnostic-artifact-collector image-test
 
 multiarch:
 	@set -eu; \
