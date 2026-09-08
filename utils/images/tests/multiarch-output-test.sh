@@ -72,11 +72,16 @@ chmod +x "$test_root/bin/docker"
 cat >"$test_root/bin/ruby" <<'SH'
 #!/bin/sh
 set -eu
+if command -v sha256sum >/dev/null 2>&1; then
+  digest() { sha256sum "$1" | awk '{print $1}'; }
+else
+  digest() { shasum -a 256 "$1" | awk '{print $1}'; }
+fi
 if [ "${1:-}" = tests/verify-oci-attestations.rb ]; then
   archive=${2:?archive path missing}
-  before=$(/sbin/sha256sum "$archive" | awk '{print $1}')
+  before=$(digest "$archive")
   "${REAL_RUBY:?}" "$@"
-  after=$(/sbin/sha256sum "$archive" | awk '{print $1}')
+  after=$(digest "$archive")
   [ "$before" = "$after" ] || { echo "strict verifier changed the exported archive" >&2; exit 1; }
   printf '%s\n' "$archive" >>"${FAKE_VERIFIER_CALLS:?}"
 else
