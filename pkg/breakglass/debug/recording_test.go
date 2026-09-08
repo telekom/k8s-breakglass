@@ -95,7 +95,7 @@ func TestInjectTerminalRecordingFailsClosed(t *testing.T) {
 	}
 	template.Spec.Audit.RecordingRetention = "30d"
 	spec.Containers = nil
-	if err := injectTerminalRecording(spec, ds, template, "example/recorder:v1"); err == nil {
+	if err := injectTerminalRecording(spec, ds, template, "example/recorder@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"); err == nil {
 		t.Fatal("expected pod without workload container to fail")
 	}
 }
@@ -106,7 +106,7 @@ func TestRecordingRetentionDuration(t *testing.T) {
 		want  int64
 	}{
 		{"90d", int64(90 * 24 * 60 * 60)},
-		{"2w", int64(14 * 24 * 60 * 60)},
+		{"14d", int64(14 * 24 * 60 * 60)},
 		{"1d12h", int64(36 * 60 * 60)},
 		{"1h", int64(60 * 60)},
 	} {
