@@ -72,9 +72,12 @@ log() { printf 'reference-usage: %s\n' "$*"; }
 
 require_commands() {
   local command
-  for command in curl jq docker kind kubectl helm; do
+  for command in curl jq docker kubectl helm; do
     command -v "${command}" >/dev/null 2>&1 || die "required command not found: ${command}"
   done
+  if [[ -n "${REFERENCE_SETUP_SCRIPT}" ]]; then
+    command -v kind >/dev/null 2>&1 || die "required command not found: kind (needed with REFERENCE_SETUP_SCRIPT)"
+  fi
 }
 
 validate_inputs() {
@@ -187,8 +190,8 @@ prepare_image() {
 }
 
 install_stack() {
-  log "Creating clean kind cluster ${CLUSTER_NAME}"
   if [[ -n "${REFERENCE_SETUP_SCRIPT}" ]]; then
+    log "Creating clean kind cluster ${CLUSTER_NAME}"
     if kind get clusters 2>/dev/null | grep -Fxq "${CLUSTER_NAME}"; then
       die "refusing destructive bootstrap: Kind cluster ${CLUSTER_NAME} already exists; choose a unique REFERENCE_CLUSTER_NAME"
     fi
@@ -364,6 +367,8 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: AuditConfig
 metadata:
   name: ${REFERENCE_AUDIT_CONFIG_NAME}
+  labels:
+    ${LABEL}: "true"
 spec:
   enabled: true
   sinks:

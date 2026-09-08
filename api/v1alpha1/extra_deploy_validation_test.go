@@ -149,6 +149,18 @@ func TestValidateExtraDeployValues(t *testing.T) {
 			wantErrors: 0,
 		},
 		{
+			name:       "missing disabled required variable is allowed",
+			values:     map[string]apiextensionsv1.JSON{},
+			variables:  []ExtraDeployVariable{{Name: "disabled", InputType: InputTypeText, Required: true, Disabled: true}},
+			wantErrors: 0,
+		},
+		{
+			name:       "provided disabled variable is rejected",
+			values:     map[string]apiextensionsv1.JSON{"disabled": {Raw: []byte(`"value"`)}},
+			variables:  []ExtraDeployVariable{{Name: "disabled", InputType: InputTypeText, Disabled: true}},
+			wantErrors: 1,
+		},
+		{
 			name: "invalid boolean type",
 			values: map[string]apiextensionsv1.JSON{
 				"enabled": {Raw: []byte(`"not a boolean"`)},

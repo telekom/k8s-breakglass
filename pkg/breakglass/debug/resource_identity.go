@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -48,16 +49,10 @@ func deleteTrackedResource(ctx context.Context, target client.Client, session *b
 		return fmt.Errorf("read tracked resource before cleanup: %w", err)
 	}
 	if uid == "" {
-		key := gvk.GroupVersion().String() + "/" + gvk.Kind + "/" + obj.GetNamespace() + "/" + obj.GetName()
-		recovered := map[string]string{}
-		if session != nil && session.Annotations[LegacyCleanupUIDsAnnotation] != "" {
-			if err := json.Unmarshal([]byte(session.Annotations[LegacyCleanupUIDsAnnotation]), &recovered); err != nil {
-				return fmt.Errorf("invalid %s annotation: %w", LegacyCleanupUIDsAnnotation, err)
-			}
-		}
-		uid = types.UID(recovered[key])
-		if uid == "" {
-			return fmt.Errorf("legacy resource %s lacks original UID; an operator must verify ownership and record its UID in DebugSession annotation %s, or remove the resource manually", key, LegacyCleanupUIDsAnnotation)
+		var err error
+		uid, err = legacyCleanupUID(session, gvk, obj.GetNamespace(), obj.GetName())
+		if err != nil {
+			return err
 		}
 	}
 	// The original instance is gone. Retire its inventory without touching a
@@ -69,6 +64,21 @@ func deleteTrackedResource(ctx context.Context, target client.Client, session *b
 		return fmt.Errorf("delete tracked resource with UID %s: %w", uid, err)
 	}
 	return nil
+}
+
+func legacyCleanupUID(session *breakglassv1alpha1.DebugSession, gvk schema.GroupVersionKind, namespace, name string) (types.UID, error) {
+	key := gvk.GroupVersion().String() + "/" + gvk.Kind + "/" + namespace + "/" + name
+	recovered := map[string]string{}
+	if session != nil && session.Annotations[LegacyCleanupUIDsAnnotation] != "" {
+		if err := json.Unmarshal([]byte(session.Annotations[LegacyCleanupUIDsAnnotation]), &recovered); err != nil {
+			return "", fmt.Errorf("invalid %s annotation: %w", LegacyCleanupUIDsAnnotation, err)
+		}
+	}
+	uid := types.UID(recovered[key])
+	if uid == "" {
+		return "", fmt.Errorf("legacy resource %s lacks original UID; an operator must verify ownership and record its UID in DebugSession annotation %s, or remove the resource manually", key, LegacyCleanupUIDsAnnotation)
+	}
+	return uid, nil
 }
 
 // podMatchesWorkloadTemplate prevents mutable ownerReferences from enrolling an
