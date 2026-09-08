@@ -1,8 +1,8 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-set -eu
+set -Eeuo pipefail
 
 root=$(cd -- "$(dirname -- "$0")/.." && pwd)
 # shellcheck disable=SC1091
