@@ -962,7 +962,7 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 	if template.Spec.Audit != nil && template.Spec.Audit.EnableTerminalRecording &&
 		template.Spec.Audit.RecordingRetention != "" {
 		result.Errors = append(result.Errors,
-			validateDurationFormat(template.Spec.Audit.RecordingRetention,
+			validatePositiveDurationFormat(template.Spec.Audit.RecordingRetention,
 				specPath.Child("audit").Child("recordingRetention"))...)
 	}
 

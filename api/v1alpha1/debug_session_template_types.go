@@ -1145,7 +1145,8 @@ type DebugSessionAuditConfig struct {
 	// +optional
 	Destinations []AuditDestination `json:"destinations,omitempty"`
 
-	// enableTerminalRecording enables recording of terminal sessions.
+	// enableTerminalRecording requests terminal-byte recording. Rendering fails
+	// closed while the transport is unavailable.
 	// +optional
 	// +kubebuilder:default=false
 	EnableTerminalRecording bool `json:"enableTerminalRecording,omitempty"`
