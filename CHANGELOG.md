@@ -128,6 +128,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **DebugSession API mutation identity matching**: Mutating kubectl-debug
+  operations now authorize requester and participant identities using the same
+  provider-aware username/email matching used by read authorization, preventing
+  valid API-mediated ephemeral-container requests from being denied when the
+  username claim differs from the recorded user identifier.
 - **Hard expiry and authorization caching**: Authorization now fails closed
   at the exact `expiresAt` boundary, cannot be resurrected by stale writes or
   cached decisions, and shipped Kubernetes 1.34+ examples disable both

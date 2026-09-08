@@ -798,18 +798,25 @@ func (c *DebugSessionAPIController) isUserParticipant(session *breakglassv1alpha
 
 // canUserOperateDebugResources checks if the user can run mutating kubectl-debug operations.
 func (c *DebugSessionAPIController) canUserOperateDebugResources(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
-	if session.Spec.RequestedBy == identity.username && debugSessionIdentityMatchesProvider(identity, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.RequestedBy) {
+	if debugSessionIdentityMatchesProvider(
+		identity,
+		session.Spec.IdentityProviderName,
+		session.Spec.IdentityProviderIssuer,
+		session.Spec.RequestedBy,
+		session.Spec.RequestedByEmail,
+	) {
 		return true
 	}
 
 	for _, p := range session.Status.Participants {
-		if p.User != identity.username || p.LeftAt != nil {
+		if p.LeftAt != nil ||
+			!debugSessionIdentityMatchesProvider(identity, p.IdentityProviderName, p.IdentityProviderIssuer, p.User, p.Email) {
 			continue
 		}
 
 		switch p.Role {
 		case breakglassv1alpha1.ParticipantRoleOwner, breakglassv1alpha1.ParticipantRoleParticipant:
-			return debugSessionIdentityMatchesProvider(identity, p.IdentityProviderName, p.IdentityProviderIssuer, p.User)
+			return true
 		default:
 			continue
 		}
