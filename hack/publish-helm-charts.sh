@@ -9,6 +9,8 @@ chart_dir="${1:?chart package directory is required}"
 chart_repo="${2:?OCI chart repository is required}"
 release_tag="${3:?release tag is required}"
 
+script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
+
 package_digest() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | awk '{print $1}'
