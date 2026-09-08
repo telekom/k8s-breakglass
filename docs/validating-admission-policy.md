@@ -32,7 +32,9 @@ Phase 1 deploys VAP resources in **Warn** mode. Validation failures produce:
 - **Warnings** in API responses (visible to `kubectl` users)
 - **Audit log entries** for monitoring and alerting
 
-Requests are **never blocked** by VAP in Phase 1 — the existing webhook remains the enforcement point.
+By default, Phase 1 uses `Warn` + `Audit`, so VAP does not block requests and the
+existing webhook remains the enforcement point. If `validationActions` includes
+`Deny`, VAP becomes enforcing and can block failing requests.
 
 ### Covered Validations
 
