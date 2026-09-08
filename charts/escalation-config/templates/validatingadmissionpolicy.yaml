@@ -28,7 +28,7 @@ spec:
       - apiGroups: ["breakglass.t-caas.telekom.com"]
         apiVersions: ["v1alpha1"]
         operations: ["CREATE", "UPDATE"]
-        resources: ["breakglasssessions"]
+        resources: ["breakglasssessions", "breakglasssessions/status"]
   validations:
     - expression: >-
         oldObject != null || (has(object.spec.cluster) && object.spec.cluster.size() > 0)

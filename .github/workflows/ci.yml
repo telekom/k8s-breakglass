@@ -414,6 +414,10 @@ jobs:
             --set validatingAdmissionPolicy.enabled=true \
             --kube-version 1.30.0 \
             --debug >/tmp/escalation-config-vap.yaml
+      - name: Validate VAP resource coverage
+        run: |
+          make kustomize
+          bash charts/escalation-config/ci/test-vap.sh
       - name: Install kind
         run: |
           curl -fsSL -o /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"

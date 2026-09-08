@@ -48,6 +48,8 @@ existing webhook remains the enforcement point. If `validationActions` includes
 | Spec immutability on update | `oldObject == null \|\| object.spec == oldObject.spec` |
 | Valid state transitions | `oldObject == null \|\| !has(oldObject.status) \|\| !has(oldObject.status.state) \|\| oldObject.status.state == "" \|\| oldObject.status.state == object.status.state \|\| (oldObject.status.state == "Pending" && object.status.state in ["Approved", "WaitingForScheduledTime", "Rejected", "Withdrawn", "ApprovalTimeout"]) \|\| (oldObject.status.state == "WaitingForScheduledTime" && object.status.state in ["Approved", "Withdrawn", "Expired"]) \|\| (oldObject.status.state == "Approved" && object.status.state in ["Expired", "IdleExpired"])` |
 
+Session state validation matches both the main resource and its `/status` subresource, so controller status updates are covered while the guarded spec checks continue to require an unchanged spec.
+
 #### BreakglassEscalation
 
 | Validation | CEL Expression |
