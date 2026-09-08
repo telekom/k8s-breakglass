@@ -207,7 +207,9 @@ func NewQueuedSink(sink Sink, cfg QueuedSinkConfig, logger *zap.Logger) *QueuedS
 	return qs
 }
 
-// Write enqueues an event for async processing (non-blocking).
+// Write enqueues an event for async processing. A sensitive event may
+// synchronously fall back to the underlying sink when a queue is full or its
+// circuit is open.
 func (qs *QueuedSink) Write(_ context.Context, event *Event) error {
 	if qs.closed.Load() {
 		return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
@@ -440,7 +442,7 @@ func NewIsolatedMultiSink(sinks []Sink, cfg QueuedSinkConfig, logger *zap.Logger
 func (ims *IsolatedMultiSink) Write(ctx context.Context, event *Event) error {
 	var errs []error
 	for _, qs := range ims.sinks {
-		// Each QueuedSink.Write is non-blocking
+		// Each sink may synchronously write sensitive events on fallback paths.
 		if err := qs.Write(ctx, event); err != nil && IsSensitiveEvent(event.Type) {
 			errs = append(errs, err)
 		}
