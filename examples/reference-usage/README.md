@@ -78,5 +78,9 @@ controller-issued immutable approval tuple into the catalogue. Setting
 `REFERENCE_RUN_ELEVATED=true` records that the unsupported profile was
 requested; it does not enable or execute node repair.
 
+If `REFERENCE_DEBUG_NAMESPACE` already exists, the script reuses it and
+preserves it during cleanup. Only a namespace created by this invocation is
+deleted.
+
 This README intentionally points to the executable flow rather than copying
 its Kubernetes YAML, so examples cannot drift from the tested path.
