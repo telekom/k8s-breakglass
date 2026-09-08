@@ -118,6 +118,13 @@ missing_reference_descriptors = descriptors.map do |descriptor|
     descriptor
   end
 end
+malformed_reference_descriptors = descriptors.map do |descriptor|
+  if descriptor.dig("annotations", "vnd.docker.reference.type") == "attestation-manifest" && descriptor.dig("annotations", "vnd.docker.reference.digest") == amd64_image["digest"]
+    descriptor.merge("annotations" => descriptor["annotations"].merge("vnd.docker.reference.digest" => "not-a-digest"))
+  else
+    descriptor
+  end
+end
 
 write_index.call("index.json", descriptors)
 write_index.call("bad-index.json", descriptors.reject { |descriptor| descriptor.dig("annotations", "vnd.docker.reference.type") == "attestation-manifest" })
@@ -146,11 +153,12 @@ write_index.call("malformed-image-index.json", malformed_image_descriptors)
 write_index.call("malformed-v02-index.json", malformed_descriptors)
 write_index.call("mismatched-reference-index.json", mismatched_reference_descriptors)
 write_index.call("missing-reference-index.json", missing_reference_descriptors)
+write_index.call("malformed-reference-index.json", malformed_reference_descriptors)
 File.write(File.join(root, "oci-layout"), JSON.generate("imageLayoutVersion" => "1.0.0"))
 RUBY
 
 (cd "$test_root" && tar -cf "$test_root/good.tar" index.json oci-layout blobs)
-for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image malformed-v02 mismatched-reference missing-reference; do
+for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image malformed-v02 mismatched-reference missing-reference malformed-reference; do
     mkdir "$test_root/$variant"
     index_variant="$variant"
     if [ "$variant" = missing-image ] || [ "$variant" = corrupt-image ]; then
@@ -178,7 +186,7 @@ after_digest="$(sha256sum "$test_root/good.tar" | awk '{print $1}')"
     echo "descriptor-linked archive was rewritten" >&2
     exit 1
 }
-for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image malformed-v02 mismatched-reference missing-reference; do
+for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image malformed-v02 mismatched-reference missing-reference malformed-reference; do
     if ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/$variant.tar" >/dev/null 2>&1; then
         echo "invalid $variant archive was accepted" >&2
         exit 1
