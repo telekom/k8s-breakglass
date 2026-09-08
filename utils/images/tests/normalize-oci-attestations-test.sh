@@ -43,10 +43,30 @@ attestation_descriptor = { "mediaType" => attestation["mediaType"], "digest" => 
 index = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.index.v1+json", "manifests" => [image_descriptor, attestation_descriptor] }
 File.write(File.join(root, "index.json"), JSON.generate(index))
 File.write(File.join(root, "oci-layout"), JSON.generate("imageLayoutVersion" => "1.0.0"))
+{
+  "missing-reference" => ->(annotations) { annotations.delete("vnd.docker.reference.digest") },
+  "malformed-reference" => ->(annotations) { annotations["vnd.docker.reference.digest"] = "not-a-digest" },
+  "mismatched-reference" => ->(annotations) { annotations["vnd.docker.reference.digest"] = "sha256:#{"0" * 64}" }
+}.each do |name, mutate|
+  variant = JSON.parse(JSON.generate(index))
+  mutate.call(variant["manifests"][1]["annotations"])
+  variant_root = File.join(root, name)
+  FileUtils.mkdir_p(variant_root)
+  FileUtils.cp_r(File.join(root, "blobs"), variant_root)
+  File.write(File.join(variant_root, "index.json"), JSON.generate(variant))
+  File.write(File.join(variant_root, "oci-layout"), JSON.generate("imageLayoutVersion" => "1.0.0"))
+  system("tar", "-cf", File.join(root, "#{name}.tar"), "-C", variant_root, "index.json", "oci-layout", "blobs", exception: true)
+end
 RUBY
 
 (cd "$root" && tar -cf "$root/archive.tar" index.json oci-layout blobs)
 ruby "$(dirname "$0")/normalize-oci-attestations.rb" "$root/archive.tar" >/dev/null
 tar -tf "$root/archive.tar" | grep -Fxq oci-layout
 tar -xOf "$root/archive.tar" oci-layout | grep -Fq '"1.0.0"'
+for variant in missing-reference malformed-reference mismatched-reference; do
+  if ruby "$(dirname "$0")/normalize-oci-attestations.rb" "$root/$variant.tar" >/dev/null 2>&1; then
+    echo "invalid $variant archive was accepted" >&2
+    exit 1
+  fi
+done
 echo "OCI attestation normalizer behavior passed"
