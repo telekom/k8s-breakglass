@@ -70,7 +70,7 @@ func TestSafeRecordingFailureRedactsSecretsAndBoundsLength(t *testing.T) {
 		}
 	}
 	long := safeRecordingFailure(strings.Repeat("x", 1024))
-	if len(long) != 515 {
+	if len(long) != 515 || !strings.HasSuffix(long, "...") {
 		t.Fatalf("failure was not bounded: %d", len(long))
 	}
 }
