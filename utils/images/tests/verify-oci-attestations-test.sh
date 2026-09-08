@@ -13,20 +13,29 @@ ruby - "$test_root" <<'RUBY'
 require "digest"
 require "fileutils"
 require "json"
+require "stringio"
+require "zlib"
 
 root = ARGV.fetch(0)
 blob_dir = File.join(root, "blobs", "sha256")
 FileUtils.mkdir_p(blob_dir)
 descriptors = []
 attestation_descriptors = {}
-write_blob = lambda do |payload, media_type|
-  digest = Digest::SHA256.hexdigest(payload)
-  File.write(File.join(blob_dir, digest), payload)
-  { "mediaType" => media_type, "digest" => "sha256:#{digest}", "size" => payload.bytesize }
+write_blob = lambda do |payload, media_type, compressed = false|
+  stored_payload = if compressed
+                     output = StringIO.new
+                     Zlib::GzipWriter.wrap(output) { |gzip| gzip.write(payload) }
+                     output.string
+                   else
+                     payload
+                   end
+  digest = Digest::SHA256.hexdigest(stored_payload)
+  File.write(File.join(blob_dir, digest), stored_payload)
+  { "mediaType" => media_type, "digest" => "sha256:#{digest}", "size" => stored_payload.bytesize }
 end
 
 %w[amd64 arm64].each do |architecture|
-  config = write_blob.call("{}", "application/vnd.oci.image.config.v1+json")
+  config = write_blob.call(JSON.generate("architecture" => architecture), "application/vnd.oci.image.config.v1+json")
   image = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.manifest.v1+json", "config" => config, "layers" => [] }
   image_payload = JSON.generate(image)
   image_digest = Digest::SHA256.hexdigest(image_payload)
@@ -36,11 +45,18 @@ end
 
   %w[sbom provenance].each do |kind|
     statement = if kind == "sbom"
-                  { "_type" => "https://in-toto.io/Statement/v1", "subject" => [{ "name" => "ghcr.io/example/utility", "digest" => { "sha256" => image_digest } }], "predicateType" => "https://spdx.dev/Document", "predicate" => { "spdxVersion" => "SPDX-2.3", "packages" => [{ "name" => "example" }] } }
+                  { "_type" => (architecture == "arm64" ? "https://in-toto.io/Statement/v0.1" : "https://in-toto.io/Statement/v1"), "subject" => [{ "name" => "ghcr.io/example/utility", "digest" => { "sha256" => image_digest } }], "predicateType" => "https://spdx.dev/Document", "predicate" => { "spdxVersion" => "SPDX-2.3", "packages" => [{ "name" => "example" }] } }
                 else
-                  { "_type" => "https://in-toto.io/Statement/v1", "subject" => [{ "name" => "ghcr.io/example/utility", "digest" => { "sha256" => image_digest } }], "predicateType" => "https://slsa.dev/provenance/v1", "predicate" => { "buildDefinition" => { "buildType" => "https://example.invalid/build" }, "runDetails" => { "builder" => { "id" => "https://example.invalid/builder" } } } }
+                  subject = [{ "name" => "ghcr.io/example/utility", "digest" => { "sha256" => image_digest } }]
+                  predicate_type = architecture == "arm64" ? "https://slsa.dev/provenance/v0.2" : "https://slsa.dev/provenance/v1"
+                  predicate = if architecture == "arm64"
+                                { "builder" => { "id" => "https://example.invalid/builder" }, "buildType" => "https://example.invalid/build" }
+                              else
+                                { "buildDefinition" => { "buildType" => "https://example.invalid/build" }, "runDetails" => { "builder" => { "id" => "https://example.invalid/builder" } } }
+                              end
+                  { "_type" => (architecture == "arm64" ? "https://in-toto.io/Statement/v0.1" : "https://in-toto.io/Statement/v1"), "subject" => subject, "predicateType" => predicate_type, "predicate" => predicate }
                 end
-    layer = write_blob.call(JSON.generate(statement), "application/vnd.in-toto+json")
+    layer = write_blob.call(JSON.generate(statement), "application/vnd.in-toto+json", kind == "sbom")
     # BuildKit links index-style attestations through the descriptor annotation;
     # the attestation manifest itself need not carry an OCI subject field.
     attestation = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.manifest.v1+json", "layers" => [layer] }
@@ -75,6 +91,34 @@ File.write(File.join(blob_dir, empty_manifest_digest), empty_manifest_payload)
 empty_descriptor = provenance_descriptor.merge("digest" => "sha256:#{empty_manifest_digest}")
 empty_descriptors = descriptors.map { |descriptor| descriptor["digest"] == provenance_descriptor["digest"] ? empty_descriptor : descriptor }
 
+arm64_provenance_descriptor = attestation_descriptors.fetch(["arm64", "provenance"])
+arm64_provenance_manifest = JSON.parse(File.read(File.join(blob_dir, arm64_provenance_descriptor["digest"].delete_prefix("sha256:"))))
+malformed_statement = { "_type" => "https://in-toto.io/Statement/v0.1", "subject" => [], "predicateType" => "https://slsa.dev/provenance/v0.2", "predicate" => { "builder" => { "id" => "" } } }
+malformed_layer = write_blob.call(JSON.generate(malformed_statement), "application/vnd.in-toto+json")
+arm64_provenance_manifest["layers"] = [malformed_layer]
+malformed_manifest_payload = JSON.generate(arm64_provenance_manifest)
+malformed_manifest_digest = Digest::SHA256.hexdigest(malformed_manifest_payload)
+File.write(File.join(blob_dir, malformed_manifest_digest), malformed_manifest_payload)
+malformed_descriptor = arm64_provenance_descriptor.merge("digest" => "sha256:#{malformed_manifest_digest}")
+malformed_descriptors = descriptors.map { |descriptor| descriptor["digest"] == arm64_provenance_descriptor["digest"] ? malformed_descriptor : descriptor }
+
+amd64_image = descriptors.find { |descriptor| descriptor.dig("platform", "architecture") == "amd64" }
+arm64_image = descriptors.find { |descriptor| descriptor.dig("platform", "architecture") == "arm64" }
+mismatched_reference_descriptors = descriptors.map do |descriptor|
+  if descriptor.dig("annotations", "vnd.docker.reference.type") == "attestation-manifest" && descriptor.dig("annotations", "vnd.docker.reference.digest") == amd64_image["digest"]
+    descriptor.merge("annotations" => descriptor["annotations"].merge("vnd.docker.reference.digest" => arm64_image["digest"]))
+  else
+    descriptor
+  end
+end
+missing_reference_descriptors = descriptors.map do |descriptor|
+  if descriptor.dig("annotations", "vnd.docker.reference.type") == "attestation-manifest" && descriptor.dig("annotations", "vnd.docker.reference.digest") == amd64_image["digest"]
+    descriptor.merge("annotations" => descriptor["annotations"].reject { |key, _| key == "vnd.docker.reference.digest" })
+  else
+    descriptor
+  end
+end
+
 write_index.call("index.json", descriptors)
 write_index.call("bad-index.json", descriptors.reject { |descriptor| descriptor.dig("annotations", "vnd.docker.reference.type") == "attestation-manifest" })
 write_index.call("missing-sbom-index.json", descriptors.reject { |descriptor| descriptor["digest"] == attestation_descriptors.fetch(["amd64", "sbom"])["digest"] })
@@ -99,10 +143,13 @@ malformed_image_descriptors = descriptors.map do |descriptor|
   end
 end
 write_index.call("malformed-image-index.json", malformed_image_descriptors)
+write_index.call("malformed-v02-index.json", malformed_descriptors)
+write_index.call("mismatched-reference-index.json", mismatched_reference_descriptors)
+write_index.call("missing-reference-index.json", missing_reference_descriptors)
 RUBY
 
 (cd "$test_root" && tar -cf "$test_root/good.tar" index.json blobs)
-for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image; do
+for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image malformed-v02 mismatched-reference missing-reference; do
     mkdir "$test_root/$variant"
     index_variant="$variant"
     if [ "$variant" = missing-image ] || [ "$variant" = corrupt-image ]; then
@@ -120,7 +167,7 @@ for variant in bad missing-sbom missing-provenance empty-provenance bad-image-me
 done
 
 ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/good.tar" >/dev/null
-for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image; do
+for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image malformed-v02; do
     if ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/$variant.tar" >/dev/null 2>&1; then
         echo "invalid $variant archive was accepted" >&2
         exit 1
