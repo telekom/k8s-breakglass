@@ -434,8 +434,9 @@ func NewIsolatedMultiSink(sinks []Sink, cfg QueuedSinkConfig, logger *zap.Logger
 	}
 }
 
-// Write broadcasts the event to all queued sinks (non-blocking).
-// Each sink receives the event independently in its own queue.
+// Write broadcasts the event to all queued sinks. Ordinary events are
+// enqueued without waiting; sensitive events may synchronously fall back to
+// the underlying sink when a queue is full or its circuit is open.
 func (ims *IsolatedMultiSink) Write(ctx context.Context, event *Event) error {
 	var errs []error
 	for _, qs := range ims.sinks {
@@ -563,7 +564,9 @@ func (qs *QueuedSink) processBatchQueue(workerID int, batchSink BatchSink) {
 	}
 }
 
-// WriteBatch enqueues multiple events for async processing (non-blocking).
+// WriteBatch enqueues multiple events for async processing. A sensitive event
+// may synchronously fall back to the underlying sink when a queue is full or
+// its circuit is open.
 func (qs *QueuedSink) WriteBatch(ctx context.Context, events []*Event) error {
 	for _, event := range events {
 		if err := qs.Write(ctx, event); err != nil {
@@ -573,7 +576,9 @@ func (qs *QueuedSink) WriteBatch(ctx context.Context, events []*Event) error {
 	return nil
 }
 
-// WriteBatch broadcasts the batch to all queued sinks (non-blocking).
+// WriteBatch broadcasts the batch to all queued sinks. Ordinary events are
+// enqueued without waiting; sensitive events may synchronously fall back to
+// the underlying sinks when a queue is full or a circuit is open.
 func (ims *IsolatedMultiSink) WriteBatch(ctx context.Context, events []*Event) error {
 	var errs []error
 	for _, qs := range ims.sinks {
