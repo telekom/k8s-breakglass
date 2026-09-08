@@ -70,6 +70,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	// Get target cluster client (with or without impersonation)
 	var targetClient ctrlclient.Client
 	var err error
+	namespaceConstraints := template.Spec.NamespaceConstraints
+	if binding != nil && binding.Spec.NamespaceConstraints != nil {
+		namespaceConstraints = binding.Spec.NamespaceConstraints
+	}
 
 	// First, resolve the target namespace (needed for per-session SA creation)
 	targetNs := ds.Spec.TargetNamespace
@@ -78,8 +82,8 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	}
 	if targetNs == "" {
 		// Check namespaceConstraints for default
-		if template.Spec.NamespaceConstraints != nil && template.Spec.NamespaceConstraints.DefaultNamespace != "" {
-			targetNs = template.Spec.NamespaceConstraints.DefaultNamespace
+		if namespaceConstraints != nil && namespaceConstraints.DefaultNamespace != "" {
+			targetNs = namespaceConstraints.DefaultNamespace
 		}
 	}
 	if targetNs == "" {
@@ -122,13 +126,24 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	ns := &corev1.Namespace{}
 	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: targetNs}, ns); err != nil {
 		if apierrors.IsNotFound(err) {
-			if template.Spec.FailMode == "open" {
+			if namespaceConstraints != nil && namespaceConstraints.CreateIfNotExists {
+				ns = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+					Name:   targetNs,
+					Labels: namespaceConstraints.NamespaceLabels,
+				}}
+				if err := targetClient.Create(ctx, ns); err != nil && !apierrors.IsAlreadyExists(err) {
+					return fmt.Errorf("failed to create target namespace %s: %w", targetNs, err)
+				}
+			} else if template.Spec.FailMode == "open" {
 				log.Warnw("Target namespace does not exist, fail-open mode", "namespace", targetNs)
 				return nil
+			} else {
+				return fmt.Errorf("target namespace %s does not exist", targetNs)
 			}
-			return fmt.Errorf("target namespace %s does not exist", targetNs)
 		}
-		return fmt.Errorf("failed to check namespace: %w", err)
+		if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to check namespace: %w", err)
+		}
 	}
 
 	// Deploy ResourceQuota if configured
