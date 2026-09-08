@@ -5810,6 +5810,7 @@ func TestGetBreakglassSessionByNameExpiredApprovalMetadata(t *testing.T) {
 		c.Set("email", "alice@example.com")
 		c.Set("username", "alice")
 		c.Set("user_id", "alice@example.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}, "/config/config.yaml", nil, cli)
 	engine := gin.New()
