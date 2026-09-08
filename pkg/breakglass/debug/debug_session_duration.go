@@ -97,10 +97,11 @@ func validateRequestedDebugSessionDuration(requested string, constraints *breakg
 
 	requestedDuration, err := breakglassv1alpha1.ParseDuration(requested)
 	if err != nil {
-		if strings.HasPrefix(strings.TrimSpace(requested), "-") {
-			return fmt.Errorf("requestedDuration must be positive")
+		trimmed := strings.TrimSpace(requested)
+		if strings.ContainsAny(trimmed, "-+") {
+			return fmt.Errorf("requestedDuration %q must be positive", requested)
 		}
-		return fmt.Errorf("invalid requestedDuration: %w", err)
+		return fmt.Errorf("invalid requestedDuration %q: %w", requested, err)
 	}
 	if requestedDuration <= 0 {
 		return fmt.Errorf("requestedDuration must be positive")
