@@ -22,7 +22,7 @@ kind-contract-test:
 build:
 	docker build --pull=false --platform "$(PLATFORM)" --tag "$(IMAGE)" .
 
-integration:
+integration: test
 	./tests/integration.sh
 
 shellcheck:
