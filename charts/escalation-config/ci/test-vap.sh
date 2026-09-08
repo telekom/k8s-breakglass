@@ -16,11 +16,11 @@ check_session_policy() {
     /^[[:space:]]*name: breakglass-session-validation$/ { in_policy = 1 }
     in_policy && /^[[:space:]]*resources:/ {
       in_rules = 1
-      if ($0 ~ /breakglasssessions/) parent = 1
-      if ($0 ~ /breakglasssessions\/status/) status = 1
+      if ($0 ~ /"breakglasssessions"/ || $0 ~ /^[[:space:]]*-[[:space:]]+breakglasssessions[[:space:]]*$/) parent = 1
+      if ($0 ~ /"breakglasssessions\/status"/ || $0 ~ /^[[:space:]]*-[[:space:]]+breakglasssessions\/status[[:space:]]*$/) status = 1
     }
-    in_policy && in_rules && /breakglasssessions$/ { parent = 1 }
-    in_policy && in_rules && /breakglasssessions\/status$/ { status = 1 }
+    in_policy && in_rules && /^[[:space:]]*-[[:space:]]+breakglasssessions[[:space:]]*$/ { parent = 1 }
+    in_policy && in_rules && /^[[:space:]]*-[[:space:]]+breakglasssessions\/status[[:space:]]*$/ { status = 1 }
     in_policy && /^[[:space:]]*validations:/ { in_rules = 0 }
     in_policy && /oldObject == null \|\| object.spec == oldObject.spec/ { spec = 1 }
     in_policy && /oldObject.status.state == object.status.state/ { state = 1 }
@@ -29,6 +29,14 @@ check_session_policy() {
 }
 
 printf '%s\n' "$helm_output" | check_session_policy
+if printf '%s\n' "$helm_output" | sed 's/"breakglasssessions", //' | check_session_policy; then
+  echo "session policy check accepted missing parent resource" >&2
+  exit 1
+fi
+if printf '%s\n' "$helm_output" | sed 's/"breakglasssessions\/status"//' | check_session_policy; then
+  echo "session policy check accepted missing status resource" >&2
+  exit 1
+fi
 
 kustomize_bin=${KUSTOMIZE_BIN:-./bin/kustomize}
 if [[ ! -x "$kustomize_bin" ]]; then
@@ -36,5 +44,13 @@ if [[ ! -x "$kustomize_bin" ]]; then
 fi
 kustomize_output=$("$kustomize_bin" build config/test-overlays/vap)
 printf '%s\n' "$kustomize_output" | check_session_policy
+if printf '%s\n' "$kustomize_output" | sed '/^[[:space:]]*-[[:space:]]*breakglasssessions[[:space:]]*$/d' | check_session_policy; then
+  echo "kustomize session policy check accepted missing parent resource" >&2
+  exit 1
+fi
+if printf '%s\n' "$kustomize_output" | sed '/^[[:space:]]*-[[:space:]]*breakglasssessions\/status[[:space:]]*$/d' | check_session_policy; then
+  echo "kustomize session policy check accepted missing status resource" >&2
+  exit 1
+fi
 
 printf '%s\n' "VAP render coverage passed: Helm=8 resources, status subresource covered in Helm and Kustomize"
