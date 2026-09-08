@@ -5,16 +5,14 @@
 
 set -Eeuo pipefail
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 chart_dir="${1:?chart package directory is required}"
 chart_repo="${2:?OCI chart repository is required}"
 release_tag="${3:?release tag is required}"
 
 package_digest() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  else
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
+  ruby "${script_dir}/canonical-helm-chart-digest.rb" "$1"
 }
 
 shopt -s nullglob

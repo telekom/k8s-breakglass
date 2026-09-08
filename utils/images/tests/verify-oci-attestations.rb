@@ -9,6 +9,8 @@
 require "digest"
 require "json"
 require "open3"
+require "stringio"
+require "zlib"
 
 def fail_archive(message)
   warn "OCI attestation inspection: #{message}"
@@ -34,6 +36,13 @@ def read_blob(archive, descriptor, label)
   digest = descriptor_digest(descriptor, label)
   payload = read_entry(archive, "blobs/sha256/#{digest.delete_prefix('sha256:')}")
   fail_archive("#{label} digest does not match its blob") unless Digest::SHA256.hexdigest(payload) == digest.delete_prefix("sha256:")
+  if descriptor["mediaType"].to_s.include?("+gzip") || descriptor["mediaType"].to_s.include?("compression=gzip")
+    begin
+      payload = Zlib::GzipReader.new(StringIO.new(payload)).read
+    rescue Zlib::Error => e
+      fail_archive("#{label} is not valid gzip: #{e.message}")
+    end
+  end
   payload
 end
 

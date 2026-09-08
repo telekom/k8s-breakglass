@@ -352,6 +352,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Static pod overrides now serialize explicitly empty command and argument lists through server-side apply, so an administrator can clear a previous override. Job workloads retain exact owner-chain cleanup and spoke workload RBAC for batch resources.
+- Helm chart provenance reruns use the canonical package digest, preserving deterministic release identity across archive timestamps.
+
 - Hardened catalogue release verification and debug workload rendering: exact
   OCI attestation links, byte-identical chart reruns, strict release tags,
   complete workload selectors, and rejected unknown pod overrides. (#1256)
