@@ -47,8 +47,7 @@ helm install my-escalation \
 It is versioned independently from the container image tag. Each released chart
 package must use a chart version that has not already been published for a
 different release tag. Release reruns may reuse the same chart version only when
-the packaged `appVersion` matches the already-published OCI chart and canonical
-chart content is unchanged.
+the packaged `appVersion` matches the already-published OCI chart.
 
 ## Configuration
 
