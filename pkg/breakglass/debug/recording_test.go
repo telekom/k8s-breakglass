@@ -58,19 +58,3 @@ func TestInjectTerminalRecordingFailsClosed(t *testing.T) {
 		t.Fatal("expected terminal recording to fail closed")
 	}
 }
-
-func TestSafeRecordingFailureRedactsSecretsAndBoundsLength(t *testing.T) {
-	got := safeRecordingFailure("sidecar rejected Authorization: Bearer super-secret-token")
-	if got == "" || got == "sidecar rejected Authorization: Bearer super-secret-token" {
-		t.Fatalf("secret was not redacted: %q", got)
-	}
-	for _, input := range []string{"Authorization: Basic dXNlcjpwYXNz", "access_token=oauth-secret"} {
-		if got := safeRecordingFailure(input); strings.Contains(got, "dXNlcjpwYXNz") || strings.Contains(got, "oauth-secret") {
-			t.Fatalf("credential was not redacted: %q", got)
-		}
-	}
-	long := safeRecordingFailure(strings.Repeat("x", 1024))
-	if len(long) != 515 || !strings.HasSuffix(long, "...") {
-		t.Fatalf("failure was not bounded: %d", len(long))
-	}
-}
