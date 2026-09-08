@@ -46,6 +46,24 @@ var sessionIndexFnsWebhook = map[string]client.IndexerFunc{
 	},
 }
 
+func TestSessionUserAliasMatches(t *testing.T) {
+	tests := []struct {
+		name, username, sessionUser string
+		want                        bool
+	}{
+		{"same local part", "platform-requester", "platform-requester@example.test", true},
+		{"case insensitive", "Platform-Requester", "platform-requester@example.test", true},
+		{"different local part", "other", "platform-requester@example.test", false},
+		{"session is not email", "platform-requester", "platform-requester", false},
+		{"empty username", "", "platform-requester@example.test", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, sessionUserAliasMatches(tt.username, tt.sessionUser))
+		})
+	}
+}
+
 var debugSessionIndexFnsWebhook = map[string]client.IndexerFunc{
 	"spec.cluster": func(o client.Object) []string {
 		ds := o.(*breakglassv1alpha1.DebugSession)

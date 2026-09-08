@@ -415,12 +415,39 @@ func (c *SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 		if !refreshed || len(fallback) == 0 {
 			return bsl.Items, nil
 		}
+
 		result := mergeSessionResults(bsl.Items, fallback)
 		log.Infow("Fetched BreakglassSessions from live reader after cache lookup found no eligible session",
 			"count", len(result), "cluster", cluster, "user", user)
 		return result, nil
 	}
 	log.Infow("Fetched BreakglassSessions (indexed)", "count", len(bsl.Items), "cluster", cluster, "user", user)
+	return bsl.Items, nil
+}
+
+// GetClusterBreakglassSessions lists sessions for a cluster when the caller
+// needs to resolve an identity alias that cannot be represented by the
+// spec.user field index.
+func (c *SessionManager) GetClusterBreakglassSessions(ctx context.Context,
+	cluster string,
+) ([]breakglassv1alpha1.BreakglassSession, error) {
+	bsl := breakglassv1alpha1.BreakglassSessionList{}
+	if err := c.Client.List(ctx, &bsl, client.MatchingFields{"spec.cluster": cluster}); err != nil {
+		if !IsFieldIndexError(err) {
+			return nil, fmt.Errorf("failed to list BreakglassSessions for cluster: %w", err)
+		}
+		all, err := c.GetAllBreakglassSessions(ctx)
+		if err != nil {
+			return nil, err
+		}
+		filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(all))
+		for _, s := range all {
+			if s.Spec.Cluster == cluster {
+				filtered = append(filtered, s)
+			}
+		}
+		return filtered, nil
+	}
 	return bsl.Items, nil
 }
 

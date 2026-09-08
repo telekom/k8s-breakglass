@@ -943,8 +943,28 @@ func (wc *WebhookController) getSessionsWithIDPMismatchInfo(ctx context.Context,
 	if err != nil {
 		return nil, nil, err
 	}
+	if len(all) == 0 && username != "" && issuer != "" {
+		clusterSessions, listErr := wc.sesManager.GetClusterBreakglassSessions(ctx, clustername)
+		if listErr != nil {
+			return nil, nil, listErr
+		}
+		for _, session := range clusterSessions {
+			if session.Spec.IdentityProviderIssuer == issuer &&
+				sessionUserAliasMatches(username, session.Spec.User) {
+				all = append(all, session)
+			}
+		}
+	}
 	out, idpMismatches := filterSessionsForAuthorization(all, issuer, time.Now())
 	return out, idpMismatches, nil
+}
+
+func sessionUserAliasMatches(username, sessionUser string) bool {
+	if username == "" || sessionUser == "" {
+		return false
+	}
+	at := strings.LastIndexByte(sessionUser, '@')
+	return at > 0 && strings.EqualFold(username, sessionUser[:at])
 }
 
 func grantedGroupsFromSessions(sessions []breakglassv1alpha1.BreakglassSession) []string {
