@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -246,7 +245,7 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	}
 
 	newRenewalCount := session.Status.RenewalCount + 1
-	if err := c.extendTrackedJobDeadlines(apiCtx, session, extendBy); err != nil {
+	if err := c.extendTrackedJobDeadlines(apiCtx, session, newExpiry); err != nil {
 		reqLog.Errorw("Failed to extend debug workload deadline", "name", name, "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to renew debug workload")
 		return
@@ -275,11 +274,10 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 
 // extendTrackedJobDeadlines keeps Kubernetes Job termination aligned with a
 // renewed session. Job activeDeadlineSeconds is relative to the Job start, so
-// extending the existing value by the requested renewal preserves the original
-// deadline and makes the status expiry truthful. A tracked Job without a
-// deadline is rejected rather than reporting a renewal the workload cannot
-// honor.
-func (c *DebugSessionAPIController) extendTrackedJobDeadlines(ctx context.Context, session *breakglassv1alpha1.DebugSession, extendBy time.Duration) error {
+// this derives an absolute deadline from the resulting session expiry instead
+// of adding to the existing field. That makes a retry after a status conflict
+// idempotent. A UID fence prevents a same-name replacement from being changed.
+func (c *DebugSessionAPIController) extendTrackedJobDeadlines(ctx context.Context, session *breakglassv1alpha1.DebugSession, newExpiry metav1.Time) error {
 	var targetClient ctrlclient.Client
 	seen := make(map[ctrlclient.ObjectKey]struct{})
 	for _, ref := range session.Status.DeployedResources {
@@ -305,18 +303,28 @@ func (c *DebugSessionAPIController) extendTrackedJobDeadlines(ctx context.Contex
 		if err := targetClient.Get(ctx, key, job); err != nil {
 			return fmt.Errorf("get tracked Job %s/%s: %w", ref.Namespace, ref.Name, err)
 		}
+		if ref.UID == "" || string(job.UID) != ref.UID {
+			return fmt.Errorf("tracked Job %s/%s identity changed", ref.Namespace, ref.Name)
+		}
 		if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds < 1 {
 			return fmt.Errorf("tracked Job %s/%s has no positive active deadline", ref.Namespace, ref.Name)
 		}
-		extensionSeconds := int64(extendBy / time.Second)
-		if extendBy%time.Second != 0 {
-			extensionSeconds++
+		if job.Status.StartTime == nil {
+			return fmt.Errorf("tracked Job %s/%s has no start time", ref.Namespace, ref.Name)
 		}
-		if extensionSeconds < 1 || *job.Spec.ActiveDeadlineSeconds > math.MaxInt64-extensionSeconds {
+		remaining := newExpiry.Sub(job.Status.StartTime.Time)
+		desiredSeconds := int64(remaining / time.Second)
+		if remaining%time.Second != 0 {
+			desiredSeconds++
+		}
+		if desiredSeconds < 1 {
 			return fmt.Errorf("tracked Job %s/%s active deadline overflows", ref.Namespace, ref.Name)
 		}
+		if *job.Spec.ActiveDeadlineSeconds >= desiredSeconds {
+			continue
+		}
 		updated := job.DeepCopy()
-		deadline := *job.Spec.ActiveDeadlineSeconds + extensionSeconds
+		deadline := desiredSeconds
 		updated.Spec.ActiveDeadlineSeconds = &deadline
 		if err := targetClient.Patch(ctx, updated, ctrlclient.MergeFrom(job)); err != nil {
 			return fmt.Errorf("extend tracked Job %s/%s deadline: %w", ref.Namespace, ref.Name, err)
