@@ -89,7 +89,9 @@ images.each do |descriptor|
   fail_archive("image manifest has an unexpected media type") unless manifest["mediaType"] == "application/vnd.oci.image.manifest.v1+json"
   config = manifest["config"]
   fail_archive("image manifest has no valid config descriptor") unless config.is_a?(Hash) && config["mediaType"] == "application/vnd.oci.image.config.v1+json"
-  read_blob(archive, config, "image config")
+  config_payload = JSON.parse(read_blob(archive, config, "image config"))
+  platform = descriptor.fetch("platform", {})
+  fail_archive("image config platform does not match its manifest descriptor") unless config_payload["os"] == platform["os"] && config_payload["architecture"] == platform["architecture"]
   layers = manifest["layers"]
   fail_archive("image manifest has no valid layers list") unless layers.is_a?(Array)
   layers.each { |layer| read_blob(archive, layer, "image layer") }
@@ -103,8 +105,15 @@ fail_archive("BuildKit emitted no attestation manifests") if attestations.empty?
 
 attestations.each do |descriptor|
   reference_digest = descriptor.dig("annotations", "vnd.docker.reference.digest").to_s
-  fail_archive("attestation has no image subject reference") unless image_digests.include?(reference_digest)
+  fail_archive("attestation has no image subject reference") if reference_digest.empty?
+  fail_archive("attestation image subject reference is malformed") unless reference_digest.match?(/\Asha256:[0-9a-f]{64}\z/)
+  fail_archive("attestation image subject reference does not match any image manifest digest") unless image_digests.include?(reference_digest)
   manifest = JSON.parse(read_blob(archive, descriptor, "attestation manifest"))
+  fail_archive("attestation manifest has an invalid schema version") unless manifest["schemaVersion"] == 2
+  fail_archive("attestation manifest has an unexpected media type") unless manifest["mediaType"] == "application/vnd.oci.image.manifest.v1+json"
+  config = manifest["config"]
+  fail_archive("attestation manifest has no valid config descriptor") unless config.is_a?(Hash) && config["mediaType"] == "application/vnd.oci.image.config.v1+json"
+  JSON.parse(read_blob(archive, config, "attestation config"))
   layers = manifest["layers"]
   fail_archive("attestation manifest has no layers") unless layers.is_a?(Array) && !layers.empty?
 

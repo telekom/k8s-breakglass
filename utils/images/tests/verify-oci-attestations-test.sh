@@ -35,7 +35,7 @@ write_blob = lambda do |payload, media_type, compressed = false|
 end
 
 %w[amd64 arm64].each do |architecture|
-  config = write_blob.call(JSON.generate("architecture" => architecture), "application/vnd.oci.image.config.v1+json")
+  config = write_blob.call(JSON.generate("os" => "linux", "architecture" => architecture), "application/vnd.oci.image.config.v1+json")
   File.write(File.join(root, "#{architecture}-config-digest"), config["digest"].delete_prefix("sha256:"))
   image = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.manifest.v1+json", "config" => config, "layers" => [] }
   image_payload = JSON.generate(image)
@@ -60,7 +60,8 @@ end
     layer = write_blob.call(JSON.generate(statement), "application/vnd.in-toto+json", kind == "sbom")
     # BuildKit links index-style attestations through the descriptor annotation;
     # the attestation manifest itself need not carry an OCI subject field.
-    attestation = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.manifest.v1+json", "layers" => [layer] }
+    attestation_config = write_blob.call("{}", "application/vnd.oci.image.config.v1+json")
+    attestation = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.manifest.v1+json", "config" => attestation_config, "layers" => [layer] }
     attestation_payload = JSON.generate(attestation)
     attestation_digest = Digest::SHA256.hexdigest(attestation_payload)
     File.write(File.join(blob_dir, attestation_digest), attestation_payload)
@@ -146,6 +147,27 @@ malformed_reference_descriptors = descriptors.map do |descriptor|
   end
 end
 
+attestation_manifest_descriptor = attestation_descriptors.fetch(["amd64", "sbom"])
+attestation_manifest = JSON.parse(File.read(File.join(blob_dir, attestation_manifest_descriptor["digest"].delete_prefix("sha256:"))))
+missing_attestation_config_manifest = JSON.parse(JSON.generate(attestation_manifest))
+missing_attestation_config_manifest["config"] = { "mediaType" => "application/vnd.oci.image.config.v1+json", "digest" => "sha256:#{"f" * 64}", "size" => 2 }
+missing_attestation_config_payload = JSON.generate(missing_attestation_config_manifest)
+missing_attestation_config_digest = Digest::SHA256.hexdigest(missing_attestation_config_payload)
+File.write(File.join(blob_dir, missing_attestation_config_digest), missing_attestation_config_payload)
+missing_attestation_config_descriptors = descriptors.map do |descriptor|
+  descriptor["digest"] == attestation_manifest_descriptor["digest"] ? descriptor.merge("digest" => "sha256:#{missing_attestation_config_digest}", "size" => missing_attestation_config_payload.bytesize) : descriptor
+end
+
+corrupt_attestation_config = write_blob.call("not-json", "application/vnd.oci.image.config.v1+json")
+corrupt_attestation_config_manifest = JSON.parse(JSON.generate(attestation_manifest))
+corrupt_attestation_config_manifest["config"] = corrupt_attestation_config
+corrupt_attestation_config_payload = JSON.generate(corrupt_attestation_config_manifest)
+corrupt_attestation_config_digest = Digest::SHA256.hexdigest(corrupt_attestation_config_payload)
+File.write(File.join(blob_dir, corrupt_attestation_config_digest), corrupt_attestation_config_payload)
+corrupt_attestation_config_descriptors = descriptors.map do |descriptor|
+  descriptor["digest"] == attestation_manifest_descriptor["digest"] ? descriptor.merge("digest" => "sha256:#{corrupt_attestation_config_digest}", "size" => corrupt_attestation_config_payload.bytesize) : descriptor
+end
+
 write_index.call("index.json", descriptors)
 write_index.call("bad-index.json", descriptors.reject { |descriptor| descriptor.dig("annotations", "vnd.docker.reference.type") == "attestation-manifest" })
 write_index.call("missing-sbom-index.json", descriptors.reject { |descriptor| descriptor["digest"] == attestation_descriptors.fetch(["amd64", "sbom"])["digest"] })
@@ -159,6 +181,20 @@ bad_media_type_descriptors = descriptors.map do |descriptor|
   end
 end
 write_index.call("bad-image-media-type-index.json", bad_media_type_descriptors)
+mismatched_platform_descriptors = descriptors.map do |descriptor|
+  if descriptor.dig("platform", "architecture") == "amd64"
+    manifest = JSON.parse(File.read(File.join(blob_dir, descriptor["digest"].delete_prefix("sha256:"))))
+    mismatched_config = write_blob.call(JSON.generate("os" => "linux", "architecture" => "arm64"), "application/vnd.oci.image.config.v1+json")
+    manifest["config"] = mismatched_config
+    payload = JSON.generate(manifest)
+    digest = Digest::SHA256.hexdigest(payload)
+    File.write(File.join(blob_dir, digest), payload)
+    descriptor.merge("digest" => "sha256:#{digest}", "size" => payload.bytesize)
+  else
+    descriptor
+  end
+end
+write_index.call("mismatched-platform-index.json", mismatched_platform_descriptors)
 malformed_image_payload = JSON.generate("schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.manifest.v1+json")
 malformed_image_digest = Digest::SHA256.hexdigest(malformed_image_payload)
 File.write(File.join(blob_dir, malformed_image_digest), malformed_image_payload)
@@ -175,11 +211,13 @@ write_index.call("unsupported-predicate-index.json", unsupported_predicate_descr
 write_index.call("mismatched-reference-index.json", mismatched_reference_descriptors)
 write_index.call("missing-reference-index.json", missing_reference_descriptors)
 write_index.call("malformed-reference-index.json", malformed_reference_descriptors)
+write_index.call("missing-attestation-config-index.json", missing_attestation_config_descriptors)
+write_index.call("corrupt-attestation-config-index.json", corrupt_attestation_config_descriptors)
 File.write(File.join(root, "oci-layout"), JSON.generate("imageLayoutVersion" => "1.0.0"))
 RUBY
 
 (cd "$test_root" && tar -cf "$test_root/good.tar" index.json oci-layout blobs)
-for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image missing-config corrupt-config malformed-v02 unsupported-predicate mismatched-reference missing-reference malformed-reference; do
+for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type mismatched-platform malformed-image missing-image corrupt-image missing-config corrupt-config missing-attestation-config corrupt-attestation-config malformed-v02 unsupported-predicate mismatched-reference missing-reference malformed-reference; do
     mkdir "$test_root/$variant"
     index_variant="$variant"
     if [ "$variant" = missing-image ] || [ "$variant" = corrupt-image ] || [ "$variant" = missing-config ] || [ "$variant" = corrupt-config ]; then
@@ -208,7 +246,7 @@ after_digest="$(sha256sum "$test_root/good.tar" | awk '{print $1}')"
     echo "descriptor-linked archive was rewritten" >&2
     exit 1
 }
-for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type malformed-image missing-image corrupt-image missing-config corrupt-config malformed-v02 unsupported-predicate mismatched-reference missing-reference malformed-reference; do
+for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type mismatched-platform malformed-image missing-image corrupt-image missing-config corrupt-config missing-attestation-config corrupt-attestation-config malformed-v02 unsupported-predicate mismatched-reference missing-reference malformed-reference; do
     if ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/$variant.tar" >/dev/null 2>&1; then
         echo "invalid $variant archive was accepted" >&2
         exit 1
