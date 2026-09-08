@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -32,8 +33,10 @@ func TestDebugSessionAccessRequiresLiveTargetPodIdentity(t *testing.T) {
 		{"missing pod", "original", "", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			expiresAt := metav1.NewTime(time.Now().Add(time.Hour))
 			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke"}, Status: breakglassv1alpha1.DebugSessionStatus{
 				State:        breakglassv1alpha1.DebugSessionStateActive,
+				ExpiresAt:    &expiresAt,
 				AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Name: "pod", Namespace: "workloads", UID: tc.recorded}},
 				Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderIssuer: "https://a.example", Role: breakglassv1alpha1.ParticipantRoleOwner}},
 			}}

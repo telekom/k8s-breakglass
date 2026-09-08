@@ -126,6 +126,14 @@ spec:
                   Keys must match variable names defined in the template.
                   Values are validated against the variable's inputType and validation rules.
                 type: object
+              identityProviderIssuer:
+                description: identityProviderIssuer identifies the issuer that authenticated
+                  the requester.
+                type: string
+              identityProviderName:
+                description: identityProviderName identifies the provider that authenticated
+                  the requester.
+                type: string
               invitedParticipants:
                 description: invitedParticipants lists users invited to join the session.
                 items:
@@ -210,8 +218,8 @@ spec:
                     type: object
                   deniedNodes:
                     description: |-
-                      deniedNodes is a list of node name patterns that MUST NOT run debug pods.
-                      Evaluated as glob patterns.
+                      deniedNodes is a list of exact node names that MUST NOT run debug pods.
+                      Glob patterns are rejected; use deniedNodeLabels for node-pool exclusions.
                     items:
                       type: string
                     type: array
@@ -1069,6 +1077,10 @@ spec:
                     ready:
                       description: ready indicates if the pod is ready for exec.
                       type: boolean
+                    uid:
+                      description: uid is the immutable identity of the authorized
+                        pod.
+                      type: string
                   required:
                   - name
                   - namespace
@@ -1084,6 +1096,10 @@ spec:
                   approvedBy:
                     description: approvedBy is the email/identifier of the approver.
                     type: string
+                  approvedByIdentityProvider:
+                    description: approvedByIdentityProvider identifies the provider
+                      that authenticated the approver.
+                    type: string
                   reason:
                     description: reason is the reason for approval/rejection.
                     type: string
@@ -1093,6 +1109,10 @@ spec:
                     type: string
                   rejectedBy:
                     description: rejectedBy is the email/identifier of the rejector.
+                    type: string
+                  rejectedByIdentityProvider:
+                    description: rejectedByIdentityProvider identifies the provider
+                      that authenticated the rejector.
                     type: string
                   required:
                     description: required indicates if approval is needed.
@@ -1324,6 +1344,10 @@ spec:
                         copyNamespace:
                           description: copyNamespace is the copied pod's namespace.
                           type: string
+                        copyUID:
+                          description: copyUID is the immutable identity of the copied
+                            pod.
+                          type: string
                         createdAt:
                           description: createdAt is when the copy was created.
                           format: date-time
@@ -1378,6 +1402,10 @@ spec:
                         podName:
                           description: podName is the name of the pod.
                           type: string
+                        podUID:
+                          description: podUID is the immutable identity of the pod
+                            receiving the container.
+                          type: string
                       required:
                       - containerName
                       - image
@@ -1409,6 +1437,14 @@ spec:
                       description: |-
                         email is the email address of the participant (from OIDC "email" claim).
                         Used for sending email notifications.
+                      type: string
+                    identityProviderIssuer:
+                      description: identityProviderIssuer identifies the issuer that
+                        authenticated the participant.
+                      type: string
+                    identityProviderName:
+                      description: identityProviderName identifies the provider that
+                        authenticated the participant.
                       type: string
                     joinedAt:
                       description: joinedAt is when the user joined the session.
@@ -3870,7 +3906,9 @@ spec:
                                             description: Selects a key of a ConfigMap.
                                             properties:
                                               key:
-                                                description: The key to select.
+                                                description: |-
+                                                  The key to select from the ConfigMap's Data field.
+                                                  Keys in the BinaryData field are not currently propagated to container env vars.
                                                 type: string
                                               name:
                                                 default: ""
@@ -4403,8 +4441,8 @@ spec:
                         type: object
                       deniedNodes:
                         description: |-
-                          deniedNodes is a list of node name patterns that MUST NOT run debug pods.
-                          Evaluated as glob patterns.
+                          deniedNodes is a list of exact node names that MUST NOT run debug pods.
+                          Glob patterns are rejected; use deniedNodeLabels for node-pool exclusions.
                         items:
                           type: string
                         type: array
@@ -5207,8 +5245,8 @@ spec:
                                   type: object
                                 deniedNodes:
                                   description: |-
-                                    deniedNodes is a list of node name patterns that MUST NOT run debug pods.
-                                    Evaluated as glob patterns.
+                                    deniedNodes is a list of exact node names that MUST NOT run debug pods.
+                                    Glob patterns are rejected; use deniedNodeLabels for node-pool exclusions.
                                   items:
                                     type: string
                                   type: array

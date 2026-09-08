@@ -277,6 +277,9 @@ func (h *KubectlDebugHandler) patchDebugSessionStatusWithRetryGuarded(
 		if err := h.readerClient().Get(ctx, ctrlclient.ObjectKey{Name: ds.Name, Namespace: ds.Namespace}, current); err != nil {
 			return err
 		}
+		if ds.UID != "" && current.UID != ds.UID {
+			return fmt.Errorf("debug session UID changed while patching status: expected %q, got %q", ds.UID, current.UID)
+		}
 
 		base := current.DeepCopy()
 		mutate(&current.Status)

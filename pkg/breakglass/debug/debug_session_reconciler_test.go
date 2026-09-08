@@ -4916,7 +4916,7 @@ func TestDebugSessionController_FailSession(t *testing.T) {
 			controller := &DebugSessionController{
 				log:    zap.NewNop().Sugar(),
 				client: fakeClient,
-				// ccProvider is nil → cleanupResources is a no-op
+				// No spoke resources are tracked, so failure cleanup remains terminal.
 			}
 
 			result, err := controller.failSession(context.Background(), session, tt.reason)
@@ -4940,7 +4940,7 @@ func TestDebugSessionController_FailSession(t *testing.T) {
 func TestDebugSessionController_CleanupResources(t *testing.T) {
 	scheme := testScheme()
 
-	t.Run("cleanup_with_nil_ccProvider_returns_nil", func(t *testing.T) {
+	t.Run("cleanup_with_nil_ccProvider_retries_tracked_resources", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-session", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
 			{Kind: "DaemonSet", Name: "test-ds", Namespace: "breakglass-debug", Source: "debug-pod"},
@@ -4959,7 +4959,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		assert.NoError(t, err, "cleanupResources with nil ccProvider should return nil")
+		assert.Error(t, err, "cleanupResources must retry when tracked resources have no provider")
 		// Resources remain in status since we couldn't actually clean them up
 		assert.NotNil(t, session.Status.DeployedResources)
 	})
@@ -5004,7 +5004,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		assert.NoError(t, err, "Should return nil with nil ccProvider even with auxiliary resources")
+		assert.Error(t, err, "cleanupResources must retry tracked auxiliary resources without a provider")
 	})
 
 	t.Run("cleanup_with_nil_ccProvider_and_pod_template_resources", func(t *testing.T) {
@@ -5028,7 +5028,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		assert.NoError(t, err, "Should return nil with nil ccProvider even with pod template resources")
+		assert.Error(t, err, "cleanupResources must retry tracked pod-template resources without a provider")
 	})
 
 	t.Run("empty_kubectl_cleanup_skips_target_cluster_client", func(t *testing.T) {

@@ -128,6 +128,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **DebugSession cleanup identity fencing**: Kubectl-debug outcome and cleanup
+  status writes now require the original DebugSession UID, captured no-binding
+  decisions remain immutable through status admission, and cleanup retries
+  instead of reporting success when tracked spoke resources cannot be reached
+  because the cluster client provider is unavailable.
 - **DebugSession API mutation identity matching**: Mutating kubectl-debug
   operations now authorize requester and participant identities using the same
   provider-aware username/email matching used by read authorization, preventing

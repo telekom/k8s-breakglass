@@ -1330,6 +1330,10 @@ session; `viewer` entries and participants with `leftAt` set cannot renew.
 The active-session expiry, approval-timeout, expiring-soon message, cleanup
 timeout, and cleanup expiry writers use optimistic locking, so stale reconciler
 or cleanup passes cannot overwrite a newer renewal or participant update.
+Kubectl-debug outcome and cleanup status writes also require the session UID
+captured by the operation; a same-name replacement is rejected. Cleanup stays
+pending when tracked spoke resources exist but the cluster client provider is
+unavailable.
 Terminal DebugSession states cannot transition again on the status mutation
 path or status admission path. Renewal performs its final uncached state and
 strict `now < expiresAt` check immediately before the optimistic status patch,

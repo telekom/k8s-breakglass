@@ -1514,7 +1514,10 @@ func TestServiceRejectsSelectorExclusionsBeforeReplacingActiveManager(t *testing
 	require.ErrorContains(t, err, "unsupported namespace selector exclusions")
 	assert.Same(t, active, svc.manager)
 	assert.True(t, svc.enabled)
-	require.NoError(t, svc.EmitSync(context.Background(), &Event{ID: "still-delivered", Type: EventSessionRequested, Target: Target{Namespace: "unrelated"}}))
+	svc.Emit(context.Background(), &Event{ID: "still-delivered", Type: EventAccessChecked, Target: Target{Namespace: "unrelated"}})
+	require.Eventually(t, func() bool {
+		return len(logs.FilterMessage("audit_event").All()) == 1
+	}, time.Second, 10*time.Millisecond)
 	require.NoError(t, svc.Close())
 	entries := logs.FilterMessage("audit_event").All()
 	require.Len(t, entries, 1)

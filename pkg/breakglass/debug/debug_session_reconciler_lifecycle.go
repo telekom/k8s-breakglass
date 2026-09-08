@@ -397,6 +397,9 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	log := c.log.With("debugSession", ds.Name, "cluster", ds.Spec.Cluster)
 
 	if c.ccProvider == nil {
+		if hasTrackedSpokeResources(ds) {
+			return fmt.Errorf("cannot clean up tracked spoke resources: cluster client provider is unavailable")
+		}
 		return nil
 	}
 
@@ -488,6 +491,9 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 		current := &breakglassv1alpha1.DebugSession{}
 		if err := c.client.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), current); err != nil {
 			return err
+		}
+		if ds.UID != "" && current.UID != ds.UID {
+			return fmt.Errorf("debug session UID changed while patching cleanup status: expected %q, got %q", ds.UID, current.UID)
 		}
 
 		base := current.DeepCopy()

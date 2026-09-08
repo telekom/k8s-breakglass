@@ -119,7 +119,7 @@ type controllerSetupPlan struct {
 
 func newControllerSetupPlan(enableControllers bool) controllerSetupPlan {
 	return controllerSetupPlan{
-		registerControllerIndexes: enableControllers,
+		registerControllerIndexes: true,
 		registerReconcilers:       enableControllers,
 		attachCachedReconcilers:   enableControllers,
 	}

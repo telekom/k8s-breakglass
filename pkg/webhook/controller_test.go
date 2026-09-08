@@ -1659,8 +1659,8 @@ func TestCheckDebugSessionAccessRequiresStrictFutureLiveExpiry(t *testing.T) {
 				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
 				Status: breakglassv1alpha1.DebugSessionStatus{
 					State: state, ExpiresAt: tt.expiresAt,
-					AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod"}},
-					Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
+					AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
+					Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderIssuer: "https://test-idp.example", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
 				},
 			}
 			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds)
@@ -1668,8 +1668,10 @@ func TestCheckDebugSessionAccessRequiresStrictFutureLiveExpiry(t *testing.T) {
 				builder = builder.WithIndex(&breakglassv1alpha1.DebugSession{}, k, fn)
 			}
 			cli := builder.Build()
-			wc := &WebhookController{log: zap.NewNop().Sugar(), escalManager: &escalation.EscalationManager{Client: cli}}
-			allowed, _, _ := wc.checkDebugSessionAccess(context.Background(), "user", "cluster", &authorizationv1.ResourceAttributes{
+			wc := &WebhookController{log: zap.NewNop().Sugar(), escalManager: &escalation.EscalationManager{Client: cli}, podFetchFn: func(context.Context, string, string, string) (*corev1.Pod, error) {
+				return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "pod-uid"}}, nil
+			}}
+			allowed, _, _ := wc.checkDebugSessionAccessForIssuer(context.Background(), "user", "cluster", "https://test-idp.example", &authorizationv1.ResourceAttributes{
 				Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod",
 			}, zap.NewNop().Sugar())
 			assert.Equal(t, tt.allowed, allowed)
@@ -1683,7 +1685,7 @@ func TestDebugSessionFinalFenceRejectsStaleCachedAllow(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "stale-debug", Namespace: "default", UID: "debug-uid"},
 		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
 		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
-			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod"}},
+			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
 	}
 	live := cached.DeepCopy()
@@ -1719,7 +1721,7 @@ func TestLiveDebugSessionAccessRequiresExactCapturedUID(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "uid-fenced", Namespace: "default", UID: "actual-uid"},
 		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
 		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
-			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod"}},
+			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
 	}
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds).Build()
@@ -1743,7 +1745,7 @@ func TestLiveDebugSessionAccessRejectsDeletingSession(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "deleting-debug", Namespace: "default", UID: "debug-uid", DeletionTimestamp: &deletingAt, Finalizers: []string{"test"}},
 		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
 		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
-			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod"}},
+			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
 	}
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds).Build()
@@ -1760,7 +1762,7 @@ func TestSendAuthorizationResponseDebugSessionRequiresCapturedUID(t *testing.T) 
 		ObjectMeta: metav1.ObjectMeta{Name: "response-uid-fenced", Namespace: "default", UID: "actual-uid"},
 		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
 		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
-			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod"}},
+			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
 	}
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds).Build()
@@ -1788,16 +1790,18 @@ func TestEarlyDebugSessionUsesCommonFinalFence(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "early-debug", Namespace: "default", UID: "early-uid"},
 		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
 		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
-			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod"}},
-			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
+			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderIssuer: "https://test-idp.example", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
 	}
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds)
 	for k, fn := range debugSessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.DebugSession{}, k, fn)
 	}
 	cli := builder.WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
-	wc := &WebhookController{log: zap.NewNop().Sugar(), escalManager: &escalation.EscalationManager{Client: cli}, sesManager: breakglass.NewSessionManagerWithClient(cli)}
-	s := &authorizeState{ctx: context.Background(), clusterName: "cluster", reqLog: zap.NewNop().Sugar(), phases: NewSARPhaseTracker("cluster", zap.NewNop().Sugar()), sar: authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: "user", ResourceAttributes: &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}}}}
+	wc := &WebhookController{log: zap.NewNop().Sugar(), escalManager: &escalation.EscalationManager{Client: cli}, sesManager: breakglass.NewSessionManagerWithClient(cli), podFetchFn: func(context.Context, string, string, string) (*corev1.Pod, error) {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "pod-uid"}}, nil
+	}}
+	s := &authorizeState{ctx: context.Background(), clusterName: "cluster", issuer: "https://test-idp.example", reqLog: zap.NewNop().Sugar(), phases: NewSARPhaseTracker("cluster", zap.NewNop().Sugar()), sar: authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: "user", ResourceAttributes: &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}}}}
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	assert.True(t, wc.checkEarlyDebugSession(c, s))
 	assert.True(t, s.allowed)
