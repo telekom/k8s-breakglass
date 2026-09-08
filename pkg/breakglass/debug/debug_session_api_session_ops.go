@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/jsonutil"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	batchv1 "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -244,6 +246,11 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	}
 
 	newRenewalCount := session.Status.RenewalCount + 1
+	if err := c.extendTrackedJobDeadlines(apiCtx, session, extendBy); err != nil {
+		reqLog.Errorw("Failed to extend debug workload deadline", "name", name, "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to renew debug workload")
+		return
+	}
 
 	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.ExpiresAt = &newExpiry
@@ -264,6 +271,58 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		"newExpiresAt": newExpiry.Time,
 		"renewalCount": session.Status.RenewalCount,
 	})
+}
+
+// extendTrackedJobDeadlines keeps Kubernetes Job termination aligned with a
+// renewed session. Job activeDeadlineSeconds is relative to the Job start, so
+// extending the existing value by the requested renewal preserves the original
+// deadline and makes the status expiry truthful. A tracked Job without a
+// deadline is rejected rather than reporting a renewal the workload cannot
+// honor.
+func (c *DebugSessionAPIController) extendTrackedJobDeadlines(ctx context.Context, session *breakglassv1alpha1.DebugSession, extendBy time.Duration) error {
+	var targetClient ctrlclient.Client
+	seen := make(map[ctrlclient.ObjectKey]struct{})
+	for _, ref := range session.Status.DeployedResources {
+		if ref.Kind != "Job" || ref.Name == "" {
+			continue
+		}
+		key := ctrlclient.ObjectKey{Name: ref.Name, Namespace: ref.Namespace}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if targetClient == nil {
+			var err error
+			targetClient, err = c.targetClusterClient(ctx, session.Spec.Cluster)
+			if err != nil {
+				return fmt.Errorf("get target client for debug session %q: %w", session.Name, err)
+			}
+			if targetClient == nil {
+				return fmt.Errorf("target client for debug session %q is unavailable", session.Name)
+			}
+		}
+		job := &batchv1.Job{}
+		if err := targetClient.Get(ctx, key, job); err != nil {
+			return fmt.Errorf("get tracked Job %s/%s: %w", ref.Namespace, ref.Name, err)
+		}
+		if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds < 1 {
+			return fmt.Errorf("tracked Job %s/%s has no positive active deadline", ref.Namespace, ref.Name)
+		}
+		extensionSeconds := int64(extendBy / time.Second)
+		if extendBy%time.Second != 0 {
+			extensionSeconds++
+		}
+		if extensionSeconds < 1 || *job.Spec.ActiveDeadlineSeconds > math.MaxInt64-extensionSeconds {
+			return fmt.Errorf("tracked Job %s/%s active deadline overflows", ref.Namespace, ref.Name)
+		}
+		updated := job.DeepCopy()
+		deadline := *job.Spec.ActiveDeadlineSeconds + extensionSeconds
+		updated.Spec.ActiveDeadlineSeconds = &deadline
+		if err := targetClient.Patch(ctx, updated, ctrlclient.MergeFrom(job)); err != nil {
+			return fmt.Errorf("extend tracked Job %s/%s deadline: %w", ref.Namespace, ref.Name, err)
+		}
+	}
+	return nil
 }
 
 func canRenewDebugSession(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
