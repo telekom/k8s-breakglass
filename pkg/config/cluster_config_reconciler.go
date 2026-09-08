@@ -292,8 +292,13 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 
 		// Skip sessions that are already in cleanup or already cleaned up.
 		if session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
-			session.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
-			session.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
+			session.Status.State == breakglassv1alpha1.DebugSessionStateExpired {
+			continue
+		}
+		if session.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
+			if debugSessionHasTrackedSpokeResources(session) {
+				terminateErrs = append(terminateErrs, fmt.Errorf("failed DebugSession %s/%s still tracks spoke resources", session.Namespace, session.Name))
+			}
 			continue
 		}
 
@@ -307,8 +312,13 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 				return err
 			}
 			if live.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
-				live.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
-				live.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
+				live.Status.State == breakglassv1alpha1.DebugSessionStateExpired {
+				return nil
+			}
+			if live.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
+				if debugSessionHasTrackedSpokeResources(live) {
+					return fmt.Errorf("failed DebugSession %s/%s still tracks spoke resources", live.Namespace, live.Name)
+				}
 				return nil
 			}
 			base := live.DeepCopy()
@@ -333,6 +343,14 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 	}
 
 	return errors.Join(terminateErrs...)
+}
+
+func debugSessionHasTrackedSpokeResources(session *breakglassv1alpha1.DebugSession) bool {
+	return len(session.Status.DeployedResources) > 0 ||
+		len(session.Status.AuxiliaryResourceStatuses) > 0 ||
+		len(session.Status.PodTemplateResourceStatuses) > 0 ||
+		len(session.Status.AllowedPods) > 0 ||
+		session.Status.KubectlDebugStatus != nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

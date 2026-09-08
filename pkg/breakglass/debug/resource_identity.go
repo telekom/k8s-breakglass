@@ -229,13 +229,24 @@ func applyTrackedResource(ctx context.Context, target client.Client, obj client.
 }
 
 func applyOwnedTrackedResource(ctx context.Context, target client.Client, obj client.Object, session *breakglassv1alpha1.DebugSession) error {
+	if err := target.Create(ctx, obj); err == nil {
+		return nil
+	} else if !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("create tracked resource: %w", err)
+	}
+
 	existing := obj.DeepCopyObject().(client.Object)
-	if err := target.Get(ctx, client.ObjectKeyFromObject(obj), existing); err == nil {
-		if session == nil || existing.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
-			return fmt.Errorf("target resource %s/%s already exists and is owned by another session", obj.GetNamespace(), obj.GetName())
-		}
-	} else if !apierrors.IsNotFound(err) {
+	if err := target.Get(ctx, client.ObjectKeyFromObject(obj), existing); err != nil {
 		return fmt.Errorf("check tracked resource ownership: %w", err)
 	}
-	return applyTrackedResource(ctx, target, obj)
+	if session == nil || existing.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
+		return fmt.Errorf("target resource %s/%s already exists and is owned by another session", obj.GetNamespace(), obj.GetName())
+	}
+	createOpID := obj.GetAnnotations()[createOperationIDAnnotation]
+	if createOpID != "" && existing.GetAnnotations()[createOperationIDAnnotation] != createOpID {
+		return fmt.Errorf("target resource %s/%s already exists with a different operation identity", obj.GetNamespace(), obj.GetName())
+	}
+	obj.SetUID(existing.GetUID())
+	obj.SetResourceVersion(existing.GetResourceVersion())
+	return nil
 }

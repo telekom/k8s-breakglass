@@ -36,6 +36,7 @@ func TestDebugSessionController_WithLiveReaderWiresUncachedReader(t *testing.T) 
 	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithLiveReader(live)
 	var reader ctrlclient.Reader = live
 	assert.Same(t, reader, controller.reader)
+	assert.Same(t, reader, controller.apiReader)
 }
 
 func TestDebugSessionController_WithAuditServiceUsesReloadedManager(t *testing.T) {

@@ -99,11 +99,12 @@ func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client,
 	}
 }
 
-// WithLiveReader configures the uncached reader used for final authorization
-// fences during target-cluster deployment.
+// WithLiveReader configures the uncached reader used for approval resolution
+// and final authorization fences during target-cluster deployment.
 func (c *DebugSessionController) WithLiveReader(reader ctrlclient.Reader) *DebugSessionController {
 	if reader != nil {
 		c.reader = reader
+		c.apiReader = reader
 	}
 	return c
 }

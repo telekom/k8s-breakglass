@@ -364,6 +364,9 @@ func Setup(
 			},
 			10*time.Minute,
 		)
+		if auditService != nil {
+			auditConfigReconciler.SetControllerNamespace(auditService.ControllerNamespace())
+		}
 
 		// Set up sink health provider to report circuit breaker status
 		if auditService != nil {

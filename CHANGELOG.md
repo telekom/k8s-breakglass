@@ -133,6 +133,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decisions remain immutable through status admission, and cleanup retries
   instead of reporting success when tracked spoke resources cannot be reached
   because the cluster client provider is unavailable.
+- **DebugSession cluster-deletion and approval-read fencing**: DebugSession
+  deployment now establishes pod-template auxiliary resources with create-first
+  ownership checks that avoid adopting foreign same-name objects, failed
+  sessions with tracked spoke resources block ClusterConfig finalizer removal,
+  and reconciler setup restores uncached approval reads plus audit Secret
+  namespace wiring.
 - **DebugSession API mutation identity matching**: Mutating kubectl-debug
   operations now authorize requester and participant identities using the same
   provider-aware username/email matching used by read authorization, preventing

@@ -551,8 +551,7 @@ func TestClusterConfigReconciler_DeleteTerminatesDebugSessions(t *testing.T) {
 		},
 	}
 
-	// Failed sessions may still have tracked resources, but Failed is terminal
-	// and its cleanup path already retries tracked resources.
+	// Failed sessions without tracked spoke resources remain terminal and are not rewritten.
 	failedDebugSession := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "failed-debug",
@@ -609,6 +608,51 @@ func TestClusterConfigReconciler_DeleteTerminatesDebugSessions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, failed.Status.State)
 	assert.Empty(t, failed.Status.Message)
+}
+
+func TestClusterConfigReconciler_DeleteBlocksWhenFailedDebugSessionTracksResources(t *testing.T) {
+	scheme := newTestClusterConfigReconcilerScheme()
+	ctx := context.Background()
+	now := metav1.Now()
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "test-cluster",
+			Namespace:         "default",
+			Finalizers:        []string{ClusterConfigFinalizer},
+			DeletionTimestamp: &now,
+		},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{ClusterID: "test-cluster-id"},
+	}
+	failedDebugSession := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "failed-debug", Namespace: "default"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateFailed,
+			DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{
+				APIVersion: "v1",
+				Kind:       "Pod",
+				Name:       "debug-pod",
+				Namespace:  "default",
+				UID:        "original-uid",
+			}},
+		},
+	}
+	fakeClient := newTestClusterConfigFakeClient(scheme, clusterConfig, failedDebugSession)
+	r := &ClusterConfigReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+		Log:    zap.NewNop().Sugar(),
+	}
+
+	result, err := r.Reconcile(ctx, reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "test-cluster", Namespace: "default"},
+	})
+	require.ErrorContains(t, err, "still tracks spoke resources")
+	assert.Equal(t, reconcile.Result{}, result)
+
+	var updatedCluster breakglassv1alpha1.ClusterConfig
+	require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &updatedCluster))
+	assert.Contains(t, updatedCluster.Finalizers, ClusterConfigFinalizer)
 }
 
 func TestClusterConfigReconciler_DeleteTerminatesBothSessionTypes(t *testing.T) {

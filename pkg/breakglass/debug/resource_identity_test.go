@@ -21,7 +21,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -148,13 +147,15 @@ func TestTrackedWorkloadPodMembership(t *testing.T) {
 	}
 }
 
-func TestPodTemplateIdentityComesFromApplyResponse(t *testing.T) {
+func TestPodTemplateIdentityComesFromCreateResponse(t *testing.T) {
 	target := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
-		Apply: func(_ context.Context, _ client.WithWatch, cfg runtime.ApplyConfiguration, _ ...client.ApplyOption) error {
-			return json.Unmarshal([]byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"config","namespace":"ns","uid":"applied-uid"}}`), cfg)
+		Create: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.CreateOption) error {
+			obj.SetUID(types.UID("created-uid"))
+			return nil
 		},
 		Get: func(_ context.Context, _ client.WithWatch, key client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
-			return apierrors.NewNotFound(schema.GroupResource{Resource: "configmaps"}, key.Name)
+			t.Fatal("must use create response, not an ownership pre-read")
+			return nil
 		},
 	}).Build()
 	obj := &unstructured.Unstructured{}
@@ -163,8 +164,8 @@ func TestPodTemplateIdentityComesFromApplyResponse(t *testing.T) {
 	obj.SetName("config")
 	ds := &breakglassv1alpha1.DebugSession{}
 	require.NoError(t, (&DebugSessionController{log: zap.NewNop().Sugar()}).deployPodTemplateResource(context.Background(), target, ds, obj, "ns"))
-	require.Equal(t, "applied-uid", ds.Status.PodTemplateResourceStatuses[0].UID)
-	require.Equal(t, "applied-uid", ds.Status.DeployedResources[0].UID)
+	require.Equal(t, "created-uid", ds.Status.PodTemplateResourceStatuses[0].UID)
+	require.Equal(t, "created-uid", ds.Status.DeployedResources[0].UID)
 }
 
 func TestAuxiliaryReadinessUsesOneUIDCheckedSnapshot(t *testing.T) {
@@ -238,6 +239,62 @@ func TestTrackedApplyRetainsResponseIdentity(t *testing.T) {
 			require.Equal(t, types.UID("applied-original"), obj.GetUID())
 		})
 	}
+}
+
+func TestApplyOwnedTrackedResourceCreatesWithoutAdoptingExistingResource(t *testing.T) {
+	obj := &unstructured.Unstructured{}
+	obj.SetAPIVersion("v1")
+	obj.SetKind("ConfigMap")
+	obj.SetName("tracked")
+	obj.SetNamespace("ns")
+	obj.SetAnnotations(map[string]string{
+		sourceSessionUIDAnnotation:  "session-uid",
+		createOperationIDAnnotation: "op-1",
+	})
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tracked",
+			Namespace: "ns",
+			UID:       "foreign",
+			Annotations: map[string]string{
+				sourceSessionUIDAnnotation:  "session-uid",
+				createOperationIDAnnotation: "other-op",
+			},
+		},
+	}).Build()
+
+	err := applyOwnedTrackedResource(context.Background(), target, obj, session)
+	require.ErrorContains(t, err, "different operation identity")
+}
+
+func TestApplyOwnedTrackedResourceReusesOwnedExistingResource(t *testing.T) {
+	obj := &unstructured.Unstructured{}
+	obj.SetAPIVersion("v1")
+	obj.SetKind("ConfigMap")
+	obj.SetName("tracked")
+	obj.SetNamespace("ns")
+	obj.SetAnnotations(map[string]string{
+		sourceSessionUIDAnnotation:  "session-uid",
+		createOperationIDAnnotation: "op-1",
+	})
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tracked",
+			Namespace: "ns",
+			UID:       "owned",
+			Annotations: map[string]string{
+				sourceSessionUIDAnnotation:  "session-uid",
+				createOperationIDAnnotation: "op-1",
+			},
+			ResourceVersion: "17",
+		},
+	}).Build()
+
+	require.NoError(t, applyOwnedTrackedResource(context.Background(), target, obj, session))
+	require.Equal(t, types.UID("owned"), obj.GetUID())
+	require.Equal(t, "17", obj.GetResourceVersion())
 }
 
 func TestWorkloadTemplateAllowsConfiguredDefaultTolerations(t *testing.T) {
