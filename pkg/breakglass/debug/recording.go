@@ -132,6 +132,11 @@ func injectTerminalRecording(spec *corev1.PodSpec, ds *breakglassv1alpha1.DebugS
 	if template.Spec.Audit == nil || !template.Spec.Audit.EnableTerminalRecording {
 		return nil
 	}
+	return fmt.Errorf("terminal recording is unavailable: terminal-byte transport is not configured")
+
+	// Keep the contract implementation below until the terminal-byte transport
+	// is wired into workload I/O. It must not be reached while the feature is
+	// advertised as enabled because metadata alone is not a recording.
 	if err := validateTerminalRecordingImage(image); err != nil {
 		return err
 	}
