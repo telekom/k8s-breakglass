@@ -58,7 +58,7 @@ run_case() {
 	: >"$fixture/attached"
 	: >"$fixture/owned"
 	: >"$fixture/second-owned"
-	if FAKE_STATE=$fixture FAKE_MODE=$mode FAKE_LABEL=$label docker_bin="$fixture/docker" docker_run_label=run-label volume_name=volume volume_owner_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+	if FAKE_STATE=$fixture FAKE_MODE=$mode FAKE_LABEL=$label docker_bin="$fixture/docker" docker_run_label_key=io.telekom.node-maintenance.test-run docker_run_label_value=run-label volume_name=volume volume_owner_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
 		remove_captured_volume; then
 		result=0
 	else

@@ -17,7 +17,9 @@ keep_image=${NODE_MAINTENANCE_KEEP_IMAGE:-0}
 build_image=${NODE_MAINTENANCE_BUILD_IMAGE:-1}
 prefix="node-maintenance-it-$$"
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/node-maintenance-integration.XXXXXX")
-docker_run_label="io.telekom.node-maintenance.test-run=$prefix"
+docker_run_label_key=io.telekom.node-maintenance.test-run
+docker_run_label_value=$prefix
+docker_run_label="$docker_run_label_key=$docker_run_label_value"
 docker_wrapper="$tmp_dir/docker-wrapper"
 cat >"$docker_wrapper" <<EOF
 #!/bin/sh
