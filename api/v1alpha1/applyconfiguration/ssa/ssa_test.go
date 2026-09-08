@@ -1906,5 +1906,27 @@ func TestDebugContainerOverrideFrom(t *testing.T) {
 		assert.NotNil(t, emptyResult.Args)
 		assert.Empty(t, emptyResult.Command)
 		assert.Empty(t, emptyResult.Args)
+
+		nilJSON, err := json.Marshal(nilResult)
+		require.NoError(t, err)
+		emptyJSON, err := json.Marshal(emptyResult)
+		require.NoError(t, err)
+
+		var nilPayload map[string]any
+		require.NoError(t, json.Unmarshal(nilJSON, &nilPayload))
+		var emptyPayload map[string]any
+		require.NoError(t, json.Unmarshal(emptyJSON, &emptyPayload))
+
+		_, hasNilCommand := nilPayload["command"]
+		_, hasNilArgs := nilPayload["args"]
+		assert.False(t, hasNilCommand)
+		assert.False(t, hasNilArgs)
+
+		emptyCommand, hasEmptyCommand := emptyPayload["command"]
+		emptyArgs, hasEmptyArgs := emptyPayload["args"]
+		require.True(t, hasEmptyCommand)
+		require.True(t, hasEmptyArgs)
+		assert.Empty(t, emptyCommand)
+		assert.Empty(t, emptyArgs)
 	})
 }
