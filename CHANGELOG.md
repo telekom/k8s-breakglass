@@ -18,8 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bound to the referenced image digest. Multi-architecture validation uses a
   named non-artifact OCI export and verifies the untouched archive; subject
   normalization is not part of the production build path.
-- Helm chart provenance reruns use the canonical package digest, preserving
-  deterministic release identity across archive timestamps.
+- Helm chart provenance reruns fail closed unless the pulled remote package is
+  byte-identical to the package whose SBOM is being attested.
+
+- Terminal recording requests fail closed before approval or mode selection
+  while the terminal-byte transport remains unavailable.
 
 ### Security
 
