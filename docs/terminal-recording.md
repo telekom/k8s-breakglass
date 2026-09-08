@@ -20,6 +20,7 @@ use `BREAKGLASS_RECORDING_MAX_BYTES=536870912` (512 MiB). Until then, no
 recording image, artifact route, replay route, or external cleanup contract is
 provided by this repository.
 
-Retention values are validated as positive durations at admission. The
-controller does not copy template webhook headers, bearer tokens, Secret
-values, or recording bytes into status, audit details, or failure messages.
+When terminal recording is enabled, a supplied retention value is validated as
+a positive duration at admission. The controller does not copy template
+webhook headers, bearer tokens, Secret values, or recording bytes into status,
+audit details, or failure messages.
