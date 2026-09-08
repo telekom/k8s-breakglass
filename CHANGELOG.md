@@ -7,6 +7,164 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Retained final-main Unreleased entries
+
+### Security
+
+- Disable trusted raw field output for a complete debug template set when Sprig
+  mutation functions can modify requester-visible maps during rendering.
+
+- Validate both device-login verification URLs before displaying or opening them.
+
+- Use accurate generic wording for privacy-preserving plain-SMTP recipient command diagnostics.
+
+- Recognize Kubernetes scheduling defaults on debug workload Pods, validating
+  named-class additions against the spoke PriorityClass while retaining explicit
+  template fields, controller UID checks, and strict ReplicaSet template matching.
+
+- Reject unsupported audit namespace selector exclusions before replacing active
+  sinks; migrate these exclusions to namespace patterns before upgrading.
+
+- Enforce Kafka audit credential namespaces, redact webhook URL diagnostics and
+  debug backend denials, hide plain-SMTP Bcc recipients, and invalidate cached
+  signing keys when identity-provider trust settings change.
+
+- Require explicit controller namespace values for AuditConfig Kafka Secret references and avoid tracking unused OIDC fallback Secrets when fallback is disabled.
+
+- The packaged controller Deployment passes its pod namespace to the audit service namespace guard, preventing valid audit Secret references from being rejected as unconfigured.
+
+- Track inherited OIDC fallback Secrets only when refresh fallback is enabled, while preserving cache invalidation for active primary credentials.
+
+- Clear inherited OIDC fallback credentials when resolving new settings, including
+  transitions to direct OIDC configuration.
+
+- Keep refresh tokens stripped when browser storage fails, redact approval-page HTTP errors, and cap mock dataset scaling.
+
+- Avoid duplicate approval-page error logging and preserve one contextual toast for unexpected approval failures.
+
+- Preserve contextual diagnostics when debug template output validation rejects unsafe actions.
+
+- Debug template admission now checks output actions without executing template code. Dynamic string output must end in a scalar serializer; migrate aliases and transformed expressions to `yamlQuote`. Runtime removes `env`/`expandenv` and limits serialized output to 1 MiB. Requester values are preserved; `yamlQuote` and `yamlSafe` always emit strings. Auxiliary defaults use category keys and inaccessible select defaults are omitted.
+
+- Deduplicate notification group badges and avoid a second explicit-user email
+  when that recipient is already covered by an approver group.
+
+- Report unresolved privacy membership as notification suppression separately from
+  the normal case where all recipients were filtered by configuration.
+
+- Bound per-group notification attribution rendering while preserving the full
+  membership snapshot used for privacy exclusions and hidden approver filtering.
+
+- Restrict session notification group recipients to the configured approver
+  identity providers; unresolved membership never falls back to another provider,
+  including hidden and excluded groups.
+
+- Scope session request emails to the matched escalation, suppress notifications
+  when hidden or excluded group membership is unresolved, and remove hidden group
+  names from email content.
+
+- Log cluster identity-policy lookup failures and attribute issuer uniqueness errors to the configured issuer or fallback authority field.
+
+- Explain how to recover legacy debug sessions whose auxiliary resource UIDs were not recorded.
+
+- Reuse each provider/group membership result within one pod-security approval decision, including failed lookups, while retrying on later decisions.
+
+- Accept configured Kubernetes default node-condition toleration durations when checking debug workload identity, and reuse one live Pod lookup per authorization request while retaining UID checks.
+
+- Use indexed advisory quota prechecks when durable admission is enabled, retaining authoritative enforcement before session success.
+
+- Reuse provider-bound approver group resolvers after reloading provider configuration and credentials; unchanged providers retain the configured membership-cache TTL.
+
+- Reject missing, empty, or multiple issuer extras explicitly for ephemeral-container subresource requests, including updates that add no containers; valid issuer provenance and an active session are required before inspecting additions. Resolve debug constraints into independent snapshots so returned values cannot mutate template or binding configuration.
+
+- Quota admission rejects ambiguous escalation ownership and reclaims durable reservations only under quota or storage pressure, reducing unrelated API reads while preserving exact-UID checks.
+- Fail writing-role startup when the durable quota namespace is empty, with actionable flag and environment-variable guidance; read-only instances may omit it.
+- Saturated quota cleanup continues checking other reservations after an unreadable UID while retaining that slot and failing closed when capacity remains unproven.
+- Retry debug-session quota admission after the reconciler advances the resource
+  version, rechecking the original UID and spec; API creation is never repeated
+  and replacement or terminal objects fail closed.
+
+- Update the frontend development dependency `qs` to 6.16.0 to fix query parsing and serialization denial-of-service advisories.
+
+- Update vulnerable Go crypto and frontend humanfs dependencies. Trivy filesystem findings now produce visible warnings and retained reports on pull requests; main, scheduled, and manual scans still fail on findings.
+
+- Bind session owner and debug participant operations to their authenticated identity provider and issuer, enforce cluster identity-provider allowlists, and retain approver provider provenance. Unbound legacy identities are accepted only in an explicitly resolved single-provider configuration; multi-provider deployments must migrate ambiguous legacy sessions. Spoke debug authorization and ephemeral admission require issuer propagation.
+
+- Preserve the original session resource version on status writes so concurrent cancellation or withdrawal cannot be overwritten by stale approval.
+
+- Pod security policy honors inherited root identity, present label keys, valid namespace filters, and exact escalation ownership. Additional approvals use each recorded approver's identity provider for explicit-user restrictions and group membership; explicit approver email matching is case-insensitive. Unknown legacy group provenance fails closed; debug admission retains issuer-bound owner/participant checks and spoke namespace labels.
+- Session quota reservations persist across replicas and crashes while preserving provider-bound identity and approval history. Debug lifecycle and workload deployment stop on unresolved binding policy.
+- The packaged controller Deployment passes its pod namespace as the durable quota and breakglass resource namespace, so API admission can create the shared reservation ledger.
+- **DebugSession authoring guidance**: Added provider-neutral documentation for
+  digest-pinned utility templates, namespaced RBAC, isolation, lifecycle
+  cleanup, and downstream admission boundaries.
+### Changed
+
+- Clarified privileged CR writers, browser token storage, and the gateway/network
+  authentication required for both SAR webhook routes (PR #1311).
+
+- Refresh embedded Kubernetes CRD schemas and the certificate-manager test recorder for the Kubernetes/controller-runtime dependency update.
+
+- **Frontend Node.js engine baseline**: Raised the frontend package, lockfile,
+  documentation, and all `setup-node` CI pins to Node.js 24.15.0, the minimum
+  Node 24 release line required by the existing dependency graph (including
+  the `abbrev` and `nopt` versions brought in by Dependabot #1288). The
+  supported engine range is `^24.15.0 || >=26.0.0`, and a contract test keeps
+  dependency engines and CI pins aligned without admitting Node 25.
+
+- Preserve independently managed escalation validation and group-sync status fields during concurrent updates.
+
+- Keep debug session CRUD fixtures in the hub namespace while using the default
+  `breakglass-debug` target, and use valid exact node names in Helm scheduling
+  fixtures.
+
+- **OIDC credential and issuer boundaries**: Refuse discovery and token-endpoint
+  redirects, preserve explicit issuer bindings in runtime selection and admission,
+  and invalidate cluster credentials
+  when an inherited IdentityProvider client Secret changes. An escalation with an
+  updated specification remains unavailable until its Ready condition reflects
+  the current generation.
+
+- Hardened bgctl OAuth endpoint and redirect handling, device timing, bounded response reads, terminal output, token-cache isolation, config redaction, and Windows private-file creation. Existing token caches require reauthentication; see [CLI security safeguards](docs/security-defender-cli.md).
+
+- Preserve healthy, known-empty, and provider-scoped privacy group snapshots for
+  restricted session notifications without changing approver readiness.
+
+- Refresh workload-debug Alpine bind-tools, curl and jq pins and the node-maintenance flock pin so image validation can build against the current Alpine 3.24 repositories.
+
+- Reject ambiguous normalized IdentityProvider issuers at authentication and
+  duplicate effective issuers at admission. An explicit `spec.issuer` now takes
+  precedence over `oidc.authority`; configure it to match the token issuer.
+
+- Prevent debug bindings from widening template duration and renewal limits,
+  including the default renewal cap, and ignore legacy empty cluster selectors.
+
+- Reject nonfinite numeric variables and overflowing extended durations, and
+  avoid disclosing restricted extra-deploy options in validation errors.
+
+- Recheck debug-session state and participant authority before spoke mutations,
+  retain late ephemeral-injection evidence, and compensate copied/node pods with
+  UID-guarded deletion. Cross-cluster revocation remains non-atomic.
+
+- Enforce resolved node affinity and legacy target namespaces, preserve empty
+  affinity restrictions, and deny approver reads when a recorded binding is missing.
+
+- Resolve debug-notification excluded group members before filtering mailboxes,
+  and preserve historical participant leave timestamps across repeated requests.
+
+- Bind debug resource cleanup, readiness, and pod access to original UIDs; retain cleanup inventory when cluster access is unavailable. Legacy sessions have an explicit operator recovery path. Reject unsupported denied-node globs at admission instead of silently ignoring them; migrate these entries to exact node names or denied node labels before upgrading.
+- **Authorization webhook session selection**: Register shared BreakglassSession
+  field indexes even when reconcilers are disabled, so approved sessions remain
+  discoverable by the SubjectAccessReview path (PR #1297).
+- **`bgctl session drop` empty requests**: Omit the JSON `Content-Type` header
+  for empty drop requests, matching the API's empty-body contract (PR #1298).
+- **Authorization webhook cache consistency**: Refresh session selection from
+  the live API reader when an indexed cache lookup has no currently eligible
+  session, avoiding transient denials after approval or cache lag (PR #1300).
+- **Node-maintenance recovery verification outcome**: Recovery evidence now
+  distinguishes a verified-file digest mismatch from failure to capture, read,
+  or parse a digest. Both outcomes fail closed without executing kexec, while
+  preserving the truthful outcome for incident handling.
 ### Changed
 
 - Static pod overrides now apply the same validated container command and
@@ -198,8 +356,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   OCI attestation links, byte-identical chart reruns, strict release tags,
   complete workload selectors, and rejected unknown pod overrides. (#1256)
 - Debug-session pod-template cleanup now preserves live unmarked resources
-  whose names were reused, requiring exact UID ownership markers or both
-  valid legacy session markers before deletion.
+  whose names were reused, requiring exact original UID ownership; legacy
+  sessions require explicit operator recovery before cleanup.
 
 - Preserve independently managed escalation validation and group-sync status fields during concurrent updates.
 

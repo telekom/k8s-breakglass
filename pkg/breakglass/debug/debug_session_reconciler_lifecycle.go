@@ -230,6 +230,17 @@ func (c *DebugSessionController) podBelongsToTrackedWorkload(ctx context.Context
 			if podMatchesAdmittedWorkloadTemplate(ctx, targetClient, pod, &rs.Spec.Template, false) {
 				return true
 			}
+		case "Job":
+			if owner.Kind != "Job" || owner.APIVersion != "batch/v1" || owner.Name != ref.Name || string(owner.UID) != ref.UID {
+				continue
+			}
+			job := &batchv1.Job{}
+			if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, job); err != nil || string(job.UID) != ref.UID {
+				continue
+			}
+			if podMatchesAdmittedWorkloadTemplate(ctx, targetClient, pod, &job.Spec.Template, false) {
+				return true
+			}
 		}
 	}
 	return false

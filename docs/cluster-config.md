@@ -1076,9 +1076,12 @@ rules:
 - apiGroups: [""]
   resources: ["nodes"]
   verbs: ["get", "list", "watch"]
-# Manage workloads (daemonsets, deployments) for debug sessions
+# Manage workloads (daemonsets, deployments, jobs) for debug sessions
 - apiGroups: ["apps"]
   resources: ["deployments", "daemonsets", "replicasets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # Verify admission-derived scheduling fields for workload identity checks
 - apiGroups: ["scheduling.k8s.io"]

@@ -2,12 +2,14 @@ package utils
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -21,6 +23,7 @@ func newSSATestScheme() *runtime.Scheme {
 	_ = breakglassv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
+	_ = batchv1.AddToScheme(scheme)
 	return scheme
 }
 
@@ -201,6 +204,15 @@ func TestToApplyConfiguration_UnsupportedType(t *testing.T) {
 	_, err := ToApplyConfiguration(unsupported)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported type")
+}
+
+func TestToApplyConfiguration_Job(t *testing.T) {
+	job := &batchv1.Job{TypeMeta: metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"}, ObjectMeta: metav1.ObjectMeta{Name: "debug-job", Namespace: "default"}}
+	cfg, err := ToApplyConfiguration(job)
+	require.NoError(t, err)
+	data, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"apiVersion":"batch/v1","kind":"Job","metadata":{"name":"debug-job","namespace":"default"},"spec":{"template":{"metadata":{},"spec":{}}}}`, string(data))
 }
 
 func TestToStatusApplyConfiguration_UnsupportedType(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
@@ -145,6 +146,17 @@ func TestTrackedWorkloadPodMembership(t *testing.T) {
 			require.Equal(t, tc.want, (&DebugSessionController{}).podBelongsToTrackedWorkload(context.Background(), target, ds, pod))
 		})
 	}
+
+	t.Run("job controller and UID are required", func(t *testing.T) {
+		jobTemplate := corev1.PodTemplateSpec{Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, Containers: []corev1.Container{{Name: "debug", Image: "debug:v1"}}}}
+		job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", Namespace: "ns", UID: "job-uid"}, Spec: batchv1.JobSpec{Template: jobTemplate}}
+		target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(job).Build()
+		pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "job-pod", Namespace: "ns", UID: "pod-uid", OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID, Controller: ptr.To(true)}}}, Spec: *jobTemplate.Spec.DeepCopy()}
+		session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name, Namespace: job.Namespace, UID: string(job.UID), Source: "debug-pod"}}}}
+		require.True(t, (&DebugSessionController{}).podBelongsToTrackedWorkload(context.Background(), target, session, pod))
+		pod.OwnerReferences[0].UID = "replacement-uid"
+		require.False(t, (&DebugSessionController{}).podBelongsToTrackedWorkload(context.Background(), target, session, pod))
+	})
 }
 
 func TestPodTemplateIdentityComesFromApplyResponse(t *testing.T) {
