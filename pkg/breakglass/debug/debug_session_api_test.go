@@ -48,6 +48,95 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
+func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing.T) {
+	now := time.Now()
+	future := metav1.NewTime(now.Add(time.Hour))
+	past := metav1.NewTime(now.Add(-time.Minute))
+	client := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "username-match"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "tenant-a",
+				User:         "platform-requester",
+				GrantedGroup: "breakglass:platform:debugsession",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: future,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "email-match"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "tenant-a",
+				User:         "platform-requester@example.test",
+				GrantedGroup: "breakglass:platform:diagnostics",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: future,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "expired"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "tenant-a",
+				User:         "platform-requester@example.test",
+				GrantedGroup: "expired",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: past,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "pending"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "tenant-a",
+				User:         "platform-requester@example.test",
+				GrantedGroup: "pending",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStatePending,
+				ExpiresAt: future,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "wrong-cluster"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "tenant-b",
+				User:         "platform-requester@example.test",
+				GrantedGroup: "wrong-cluster",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: future,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "wrong-user"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:      "tenant-a",
+				User:         "other@example.test",
+				GrantedGroup: "wrong-user",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: future,
+			},
+		},
+	).Build()
+
+	controller := &DebugSessionAPIController{}
+	groups, err := controller.activeBreakglassGroups(context.Background(), client, "tenant-a", "platform-requester", "platform-requester@example.test")
+
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{
+		"breakglass:platform:debugsession",
+		"breakglass:platform:diagnostics",
+	}, groups)
+}
+
 func debugSessionAPITestRouter(t *testing.T, ctrl *DebugSessionAPIController, username, email string, groups []string) *gin.Engine {
 	t.Helper()
 	router := gin.New()

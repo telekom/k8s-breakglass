@@ -821,6 +821,13 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
 	authorizationReader := c.reader()
+	sessionGroups, err := c.activeBreakglassGroups(apiCtx, authorizationReader, req.Cluster, currentUserStr, userEmail)
+	if err != nil {
+		reqLog.Errorw("Failed to load active Breakglass session groups", "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate Breakglass access")
+		return
+	}
+	userGroups = append(userGroups, sessionGroups...)
 
 	if err := authorizationReader.Get(apiCtx, ctrlclient.ObjectKey{Name: req.TemplateRef}, template); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -1378,6 +1385,26 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		reqLog.Infow("Session created with warnings", "warnings", warnings)
 	}
 	ctx.JSON(http.StatusCreated, response)
+}
+
+func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, reader ctrlclient.Reader, cluster, username, email string) ([]string, error) {
+	var sessions breakglassv1alpha1.BreakglassSessionList
+	if err := reader.List(ctx, &sessions); err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	groups := make([]string, 0)
+	for _, session := range sessions.Items {
+		if session.Spec.Cluster != cluster ||
+			session.Status.State != breakglassv1alpha1.SessionStateApproved ||
+			session.Status.ExpiresAt.IsZero() ||
+			!session.Status.ExpiresAt.After(now) ||
+			(session.Spec.User != username && session.Spec.User != email) {
+			continue
+		}
+		groups = append(groups, session.Spec.GrantedGroup)
+	}
+	return groups, nil
 }
 
 // admitCreatedDebugSession retries only the bounded resource-version race
