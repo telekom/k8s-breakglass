@@ -28,25 +28,8 @@ func recordingFixture(enabled bool) (*breakglassv1alpha1.DebugSession, *breakgla
 func TestInjectTerminalRecordingContract(t *testing.T) {
 	ds, template := recordingFixture(true)
 	spec := &corev1.PodSpec{Containers: []corev1.Container{{Name: "debug", Image: "example/debug"}}}
-	if err := injectTerminalRecording(spec, ds, template, "registry.example/recorder@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"); err != nil {
-		t.Fatalf("inject terminal recording: %v", err)
-	}
-	if len(spec.Containers) != 2 || spec.Containers[1].Name != "terminal-recorder" {
-		t.Fatalf("expected recorder sidecar, got %#v", spec.Containers)
-	}
-	if len(spec.Volumes) != 1 || spec.Volumes[0].Name != terminalRecordingVolumeName {
-		t.Fatalf("expected private recording volume, got %#v", spec.Volumes)
-	}
-	for _, env := range spec.Containers[1].Env {
-		if env.Name == "AUTHORIZATION" || env.Name == "TOKEN" {
-			t.Fatalf("secret-like environment variable copied to sidecar: %s", env.Name)
-		}
-	}
-	if len(spec.Containers[0].VolumeMounts) != 0 {
-		t.Fatal("workload container must not have access to the recording artifact volume")
-	}
-	if !recordingEnvValue(spec.Containers[1].Env, TerminalRecordingRedactionEnv, "true") {
-		t.Fatal("expected recording redaction marker on sidecar")
+	if err := injectTerminalRecording(spec, ds, template, "registry.example/recorder@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"); err == nil || !strings.Contains(err.Error(), "terminal-byte transport") {
+		t.Fatalf("expected unavailable transport to fail closed, got %v", err)
 	}
 }
 
@@ -66,11 +49,8 @@ func TestBuildPodSpecInjectsTerminalRecording(t *testing.T) {
 		terminalRecordingImage: "registry.example/recorder@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	}
 	result, err := controller.buildPodSpec(ds, template, podTemplate)
-	if err != nil {
-		t.Fatalf("build pod spec: %v", err)
-	}
-	if len(result.PodSpec.Containers) != 2 || result.PodSpec.Containers[1].Name != "terminal-recorder" {
-		t.Fatalf("expected production pod rendering to inject recorder sidecar, got %#v", result.PodSpec.Containers)
+	if err == nil || !strings.Contains(err.Error(), "terminal-byte transport") {
+		t.Fatalf("expected production pod rendering to fail closed, got result=%#v err=%v", result, err)
 	}
 }
 
