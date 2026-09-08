@@ -210,14 +210,10 @@ new_fixture() {
 	volume_owner_id=
 	fixture_dir="$tmp_dir/$label"
 	mkdir -p "$fixture_dir"
-	"$docker_bin" run -d --name "$volume_owner_name" --user 0 --network none --read-only --cap-drop ALL \
+	volume_owner_id=$(docker_run_detached_with_id "$docker_bin" "$volume_owner_name" --user 0 --network none --read-only --cap-drop ALL \
 		--security-opt no-new-privileges --security-opt seccomp=builtin \
 		--mount type=volume,destination=/evidence --entrypoint /bin/sh "$image" \
-		-c 'while :; do sleep 60; done' >/dev/null || fail "could not create disposable volume owner '$volume_owner_name'"
-	volume_owner_id=$(docker_capture_resource_id "$docker_bin" container "$volume_owner_name") || {
-		"$docker_bin" rm -fv "$volume_owner_name" >/dev/null 2>&1 || true
-		fail "could not capture volume owner ID for '$volume_owner_name'"
-	}
+		-c 'while :; do sleep 60; done') || fail "could not create disposable volume owner '$volume_owner_name' or capture its immutable ID"
 	volume_name=$("$docker_bin" inspect --format '{{range .Mounts}}{{if eq .Destination "/evidence"}}{{.Name}}{{end}}{{end}}' "$volume_owner_id") || fail "could not resolve anonymous volume for '$volume_owner_name'"
 	[ -n "$volume_name" ] || fail "volume owner '$volume_owner_name' did not expose an anonymous volume"
 	case "$label" in

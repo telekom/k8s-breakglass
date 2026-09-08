@@ -27,6 +27,20 @@ docker_capture_resource_id() {
 	esac
 }
 
+# Register the immutable ID emitted by Docker before any mutable-name lookup.
+# A caller that cannot validate this output must leave the resource for runner
+# cleanup instead of attempting a name-based removal.
+docker_run_detached_with_id() {
+	[ "$#" -ge 2 ] || return 2
+	local docker_bin=$1 name=$2 id
+	shift 2
+	id=$(docker_resource_call "$docker_bin" run -d --name "$name" "$@") || return 1
+	case "$id" in
+		''|*[!0-9a-f]*) return 1 ;;
+	esac
+	printf '%s\n' "$id"
+}
+
 docker_remove_resource_id() {
 	[ "$#" -eq 3 ] || return 2
 	local docker_bin=$1 kind=$2 id=$3

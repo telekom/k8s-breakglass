@@ -58,13 +58,9 @@ create_owned_volume() {
 	owner_name=$1
 	owner_id_var=$2
 	volume_var=$3
-	docker run -d --name "$owner_name" --user 0 --network none --read-only --cap-drop=ALL \
+	owner_id=$(docker_run_detached_with_id docker "$owner_name" --user 0 --network none --read-only --cap-drop=ALL \
 		--security-opt no-new-privileges --mount type=volume,destination=/owned \
-		--entrypoint /bin/sh "$image" -c 'while :; do sleep 60; done' >/dev/null || return 1
-	owner_id=$(docker_capture_resource_id docker container "$owner_name") || {
-		docker_remove_resource_with_volumes docker container "$owner_name" >/dev/null 2>&1 || true
-		return 1
-	}
+		--entrypoint /bin/sh "$image" -c 'while :; do sleep 60; done') || return 1
 	volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/owned"}}{{.Name}}{{end}}{{end}}' "$owner_id") || {
 		docker_remove_resource_with_volumes docker container "$owner_id" >/dev/null 2>&1 || true
 		return 1
