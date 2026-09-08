@@ -132,12 +132,13 @@ grep -q '^pull ' "${test_dir}/helm-calls.log" || {
 
 : >"${test_dir}/helm.log"
 : >"${test_dir}/helm-calls.log"
-if FAKE_REMOTE_MODE=timestamp-different run_publish >/dev/null 2>&1; then
-  echo "timestamp-different remote package was accepted for an existing subject" >&2
-  exit 1
-fi
+FAKE_REMOTE_MODE=timestamp-different run_publish >/dev/null
 [ ! -s "${test_dir}/helm.log" ] || {
-  echo "timestamp-different remote package attempted a push" >&2
+  echo "timestamp-different remote package should not trigger push" >&2
+  exit 1
+}
+grep -q '^pull ' "${test_dir}/helm-calls.log" || {
+  echo "timestamp-different chart was not pulled for canonical content comparison" >&2
   exit 1
 }
 

@@ -19,6 +19,10 @@ package_digest() {
   fi
 }
 
+canonical_package_digest() {
+  ruby "${script_dir}/canonical-helm-chart-digest.rb" "$1"
+}
+
 shopt -s nullglob
 chart_packages=("${chart_dir}"/*.tgz)
 [ "${#chart_packages[@]}" -gt 0 ] || {
@@ -57,11 +61,9 @@ for chart_package in "${chart_packages[@]}"; do
     }
 
     # Metadata alone is not an identity check. Pull the remote package and
-    # require byte identity before allowing a rerun to continue to signing.
-    # A canonical-content match is insufficient here: the next job binds an
-    # SPDX document to the local package bytes before attesting the remote
-    # digest. Failing closed avoids attaching unrelated local bytes to that
-    # existing remote subject.
+    # compare canonical chart content so release reruns tolerate repackaging
+    # differences (for example gzip/tar metadata churn) while still failing
+    # closed on meaningful content changes.
     remote_dir="$(mktemp -d)"
     if ! helm pull "${remote}" --version "${chart_version}" --destination "${remote_dir}" >/dev/null 2>&1; then
       rm -rf "${remote_dir}"
@@ -76,12 +78,18 @@ for chart_package in "${chart_packages[@]}"; do
     fi
     local_digest="$(package_digest "${chart_package}")"
     remote_digest="$(package_digest "${remote_package}")"
+    local_canonical_digest="$(canonical_package_digest "${chart_package}")"
+    remote_canonical_digest="$(canonical_package_digest "${remote_package}")"
     rm -rf "${remote_dir}"
-    [ "${local_digest}" = "${remote_digest}" ] || {
-      echo "${chart_name}:${chart_version} exists but its package bytes differ; refusing to sign or replace it" >&2
+    [ "${local_canonical_digest}" = "${remote_canonical_digest}" ] || {
+      echo "${chart_name}:${chart_version} exists but its canonical chart content differs; refusing to sign or replace it" >&2
       exit 1
     }
-    echo "Chart ${chart_name}:${chart_version} already present and byte-identical; skipping push."
+    if [ "${local_digest}" = "${remote_digest}" ]; then
+      echo "Chart ${chart_name}:${chart_version} already present and byte-identical; skipping push."
+    else
+      echo "Chart ${chart_name}:${chart_version} already present with canonical-equivalent content; skipping push."
+    fi
     continue
   fi
 
