@@ -130,9 +130,10 @@ cluster is removable only through the exact Docker node IDs captured after a
 successful create; failed creates and same-name node replacement are leaked
 for inspection. Kubernetes Pod, PVC, PV, namespace, and fixture cleanup uses
 the API server's UID precondition on DELETE, so a replacement between
-observation and cleanup is preserved. Locally built images are intentionally
-left for the runner's managed cleanup; the harness does not race a mutable image
-tag during teardown.
+observation and cleanup is preserved. Locally built images are removed only when
+the harness can prove ownership from the captured immutable image ID; otherwise
+they are left for the runner's managed cleanup. The harness does not race a
+mutable image tag during teardown.
 
 ## Release Checklist
 
