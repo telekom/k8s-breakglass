@@ -69,19 +69,19 @@ const (
 
 // DebugSessionController manages DebugSession lifecycle
 type DebugSessionController struct {
-	quotaNamespace         string
-	quotaEnabled           bool
-	log                    *zap.SugaredLogger
-	client                 ctrlclient.Client
-	apiReader              ctrlclient.Reader
-	ccProvider             *cluster.ClientProvider
-	auditService           *audit.Service
-	auditManager           *audit.Manager
-	mailService            breakglass.MailEnqueuer
-	auxiliaryMgr           *AuxiliaryResourceManager
-	brandingName           string
-	baseURL                string
-	disableEmail           bool
+	quotaNamespace string
+	quotaEnabled   bool
+	log            *zap.SugaredLogger
+	client         ctrlclient.Client
+	apiReader      ctrlclient.Reader
+	ccProvider     *cluster.ClientProvider
+	auditService   *audit.Service
+	auditManager   *audit.Manager
+	mailService    breakglass.MailEnqueuer
+	auxiliaryMgr   *AuxiliaryResourceManager
+	brandingName   string
+	baseURL        string
+	disableEmail   bool
 }
 
 // NewDebugSessionController creates a new DebugSessionController
