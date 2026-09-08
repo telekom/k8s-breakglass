@@ -10,6 +10,7 @@ PLATFORM ?= linux/amd64
 
 test:
 	./tests/test-package-contract.sh
+	./tests/test-kind-kubestr-contract.sh
 	./tests/test.sh
 
 package-contract-test:
