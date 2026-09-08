@@ -1334,6 +1334,9 @@ Kubectl-debug outcome and cleanup status writes also require the session UID
 captured by the operation; a same-name replacement is rejected. Cleanup stays
 pending when tracked spoke resources exist but the cluster client provider is
 unavailable.
+Cleanup status merges the latest persisted inventory with the entries retired
+by the current attempt, preserving targets recorded concurrently by the same
+session.
 Terminal DebugSession states cannot transition again on the status mutation
 path or status admission path. Renewal performs its final uncached state and
 strict `now < expiresAt` check immediately before the optimistic status patch,

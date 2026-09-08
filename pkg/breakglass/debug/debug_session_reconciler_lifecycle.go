@@ -395,6 +395,11 @@ func buildContainerStatus(pod *corev1.Pod) *breakglassv1alpha1.PodContainerStatu
 // cleanupResources removes deployed resources from the target cluster
 func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
 	log := c.log.With("debugSession", ds.Name, "cluster", ds.Spec.Cluster)
+	// Keep the inventory observed at the start of this cleanup attempt.  A
+	// concurrent outcome writer may add a newer target while cleanup is in
+	// progress; the status patch below must remove only entries that this
+	// attempt actually retired.
+	cleanupBaseline := ds.Status.DeepCopy()
 
 	if c.ccProvider == nil {
 		if hasTrackedSpokeResources(ds) {
@@ -417,7 +422,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 			ds.Status.KubectlDebugStatus = nil
 			ds.Status.AuxiliaryResourceStatuses = nil
 			ds.Status.PodTemplateResourceStatuses = nil
-			return c.patchDebugSessionCleanupStatus(ctx, ds)
+			return c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline)
 		}
 		log.Errorw("Failed to cleanup kubectl-debug resources", "error", err)
 		cleanupErrors = append(cleanupErrors, err)
@@ -426,7 +431,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	if len(ds.Status.DeployedResources) == 0 &&
 		len(ds.Status.AuxiliaryResourceStatuses) == 0 &&
 		len(ds.Status.PodTemplateResourceStatuses) == 0 {
-		if err := c.patchDebugSessionCleanupStatus(ctx, ds); err != nil {
+		if err := c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
 		}
 		return errors.Join(cleanupErrors...)
@@ -464,7 +469,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 
 	if len(ds.Status.DeployedResources) == 0 {
 		// Persist any status changes from auxiliary/pod-template cleanup above
-		if err := c.patchDebugSessionCleanupStatus(ctx, ds); err != nil {
+		if err := c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
 		}
 		return errors.Join(cleanupErrors...)
@@ -473,7 +478,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	if err := c.cleanupDeployedResources(ctx, ds, targetClient, auxiliaryCleanupFailed, len(ds.Status.PodTemplateResourceStatuses) > 0); err != nil {
 		cleanupErrors = append(cleanupErrors, err)
 	}
-	if err := c.patchDebugSessionCleanupStatus(ctx, ds); err != nil {
+	if err := c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline); err != nil {
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
 	}
 	return errors.Join(cleanupErrors...)
@@ -482,8 +487,13 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 	ctx context.Context,
 	ds *breakglassv1alpha1.DebugSession,
+	baseline ...*breakglassv1alpha1.DebugSessionStatus,
 ) error {
 	desiredStatus := ds.Status
+	cleanupBaseline := desiredStatus
+	if len(baseline) > 0 && baseline[0] != nil {
+		cleanupBaseline = *baseline[0]
+	}
 	var patchedStatus breakglassv1alpha1.DebugSessionStatus
 	var patchedResourceVersion string
 
@@ -497,11 +507,25 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 		}
 
 		base := current.DeepCopy()
-		current.Status.DeployedResources = desiredStatus.DeployedResources
-		current.Status.AllowedPods = desiredStatus.AllowedPods
-		current.Status.KubectlDebugStatus = desiredStatus.KubectlDebugStatus
-		current.Status.AuxiliaryResourceStatuses = desiredStatus.AuxiliaryResourceStatuses
-		current.Status.PodTemplateResourceStatuses = desiredStatus.PodTemplateResourceStatuses
+		current.Status.DeployedResources = mergeCleanupInventory(
+			cleanupBaseline.DeployedResources, desiredStatus.DeployedResources, current.Status.DeployedResources,
+			deployedResourceKey,
+		)
+		current.Status.AllowedPods = mergeCleanupInventory(
+			cleanupBaseline.AllowedPods, desiredStatus.AllowedPods, current.Status.AllowedPods,
+			allowedPodKey,
+		)
+		current.Status.AuxiliaryResourceStatuses = mergeCleanupInventory(
+			cleanupBaseline.AuxiliaryResourceStatuses, desiredStatus.AuxiliaryResourceStatuses, current.Status.AuxiliaryResourceStatuses,
+			auxiliaryResourceStatusKey,
+		)
+		current.Status.PodTemplateResourceStatuses = mergeCleanupInventory(
+			cleanupBaseline.PodTemplateResourceStatuses, desiredStatus.PodTemplateResourceStatuses, current.Status.PodTemplateResourceStatuses,
+			podTemplateResourceStatusKey,
+		)
+		current.Status.KubectlDebugStatus = mergeKubectlDebugStatus(
+			cleanupBaseline.KubectlDebugStatus, desiredStatus.KubectlDebugStatus, current.Status.KubectlDebugStatus,
+		)
 		if current.Generation > 0 {
 			current.Status.ObservedGeneration = current.Generation
 		}
@@ -520,6 +544,84 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 	ds.Status = patchedStatus
 	ds.ResourceVersion = patchedResourceVersion
 	return nil
+}
+
+// mergeCleanupInventory applies the removals observed by one cleanup attempt
+// to the latest persisted list.  Entries absent from the baseline are newer
+// writes and must survive, even when the cleanup caller started from an older
+// same-UID session object.
+func mergeCleanupInventory[T any](baseline, desired, current []T, key func(T) string) []T {
+	baselineKeys := make(map[string]struct{}, len(baseline))
+	for _, item := range baseline {
+		baselineKeys[key(item)] = struct{}{}
+	}
+	desiredKeys := make(map[string]struct{}, len(desired))
+	for _, item := range desired {
+		desiredKeys[key(item)] = struct{}{}
+	}
+	merged := append([]T(nil), desired...)
+	for _, item := range current {
+		itemKey := key(item)
+		if _, wasTracked := baselineKeys[itemKey]; wasTracked {
+			if _, stillDesired := desiredKeys[itemKey]; !stillDesired {
+				continue
+			}
+			continue
+		}
+		if _, alreadyDesired := desiredKeys[itemKey]; !alreadyDesired {
+			merged = append(merged, item)
+		}
+	}
+	return merged
+}
+
+func deployedResourceKey(ref breakglassv1alpha1.DeployedResourceRef) string {
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s", ref.APIVersion, ref.Kind, ref.Namespace, ref.Name, ref.Source, ref.UID)
+}
+
+func allowedPodKey(ref breakglassv1alpha1.AllowedPodRef) string {
+	return fmt.Sprintf("%s|%s|%s", ref.Namespace, ref.Name, ref.UID)
+}
+
+func auxiliaryResourceStatusKey(status breakglassv1alpha1.AuxiliaryResourceStatus) string {
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", status.Name, status.Category, status.APIVersion, status.Kind, status.ResourceName, status.Namespace, status.UID)
+}
+
+func podTemplateResourceStatusKey(status breakglassv1alpha1.PodTemplateResourceStatus) string {
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s", status.APIVersion, status.Kind, status.Namespace, status.ResourceName, status.Source, status.UID)
+}
+
+func mergeKubectlDebugStatus(baseline, desired, current *breakglassv1alpha1.KubectlDebugStatus) *breakglassv1alpha1.KubectlDebugStatus {
+	if baseline == nil && desired == nil {
+		return current.DeepCopy()
+	}
+	var empty breakglassv1alpha1.KubectlDebugStatus
+	if baseline == nil {
+		baseline = &empty
+	}
+	if desired == nil {
+		desired = &empty
+	}
+	if current == nil {
+		current = &empty
+	}
+	merged := desired.DeepCopy()
+	merged.EphemeralContainersInjected = mergeCleanupInventory(
+		baseline.EphemeralContainersInjected, desired.EphemeralContainersInjected, current.EphemeralContainersInjected,
+		func(ref breakglassv1alpha1.EphemeralContainerRef) string {
+			return fmt.Sprintf("%s|%s|%s|%s|%s", ref.Namespace, ref.PodName, ref.ContainerName, ref.PodUID, ref.Image)
+		},
+	)
+	merged.CopiedPods = mergeCleanupInventory(
+		baseline.CopiedPods, desired.CopiedPods, current.CopiedPods,
+		func(ref breakglassv1alpha1.CopiedPodRef) string {
+			return fmt.Sprintf("%s|%s|%s|%s|%s", ref.CopyNamespace, ref.CopyName, ref.CopyUID, ref.OriginalNamespace, ref.OriginalPod)
+		},
+	)
+	if len(merged.EphemeralContainersInjected) == 0 && len(merged.CopiedPods) == 0 {
+		return nil
+	}
+	return merged
 }
 
 func (c *DebugSessionController) cleanupDeployedResources(

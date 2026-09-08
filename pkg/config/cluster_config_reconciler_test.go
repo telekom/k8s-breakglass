@@ -89,6 +89,32 @@ func TestClusterConfigReconciler_NotFound(t *testing.T) {
 	assert.Equal(t, reconcile.Result{}, result)
 }
 
+func TestClusterConfigReconciler_KeepsFinalizerForFailedDebugInventory(t *testing.T) {
+	scheme := newTestClusterConfigReconcilerScheme()
+	now := metav1.Now()
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster", Namespace: "default", Finalizers: []string{ClusterConfigFinalizer}, DeletionTimestamp: &now},
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{ClusterID: "test-cluster-id"},
+	}
+	failed := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "failed-debug", Namespace: "default"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:             breakglassv1alpha1.DebugSessionStateFailed,
+			DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "v1", Kind: "Pod", Name: "debug", Namespace: "target", UID: "pod-uid"}},
+		},
+	}
+	hub := newTestClusterConfigFakeClient(scheme, clusterConfig, failed)
+	r := &ClusterConfigReconciler{Client: hub, Scheme: scheme, Log: zap.NewNop().Sugar()}
+
+	result, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "test-cluster", Namespace: "default"}})
+	require.ErrorContains(t, err, "still tracks spoke resources")
+	require.Equal(t, reconcile.Result{}, result)
+	updated := &breakglassv1alpha1.ClusterConfig{}
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(clusterConfig), updated))
+	assert.Contains(t, updated.Finalizers, ClusterConfigFinalizer)
+}
+
 func TestClusterConfigReconciler_AddsFinalizer(t *testing.T) {
 	scheme := newTestClusterConfigReconcilerScheme()
 	ctx := context.Background()
