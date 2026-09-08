@@ -64,6 +64,21 @@ func TestSessionUserAliasMatches(t *testing.T) {
 	}
 }
 
+func TestSessionsMatchingIdentityAlias(t *testing.T) {
+	sessions := []breakglassv1alpha1.BreakglassSession{
+		{Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User: "platform-requester@example.test", IdentityProviderIssuer: "https://idp-a.example",
+		}},
+		{Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User: "platform-requester@example.test", IdentityProviderIssuer: "https://idp-b.example",
+		}},
+	}
+	assert.Len(t, sessionsMatchingIdentityAlias(sessions[:1], "platform-requester", "https://idp-a.example"), 1)
+	assert.Len(t, sessionsMatchingIdentityAlias(sessions, "platform-requester", "https://idp-a.example"), 1)
+	assert.Empty(t, sessionsMatchingIdentityAlias(sessions, "platform-requester", ""))
+	assert.Empty(t, sessionsMatchingIdentityAlias(sessions[:1], "platform-requester", "https://other.example"))
+}
+
 var debugSessionIndexFnsWebhook = map[string]client.IndexerFunc{
 	"spec.cluster": func(o client.Object) []string {
 		ds := o.(*breakglassv1alpha1.DebugSession)

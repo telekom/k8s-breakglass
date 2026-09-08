@@ -943,17 +943,12 @@ func (wc *WebhookController) getSessionsWithIDPMismatchInfo(ctx context.Context,
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(all) == 0 && username != "" && issuer != "" {
+	if len(all) == 0 && username != "" {
 		clusterSessions, listErr := wc.sesManager.GetClusterBreakglassSessions(ctx, clustername)
 		if listErr != nil {
 			return nil, nil, listErr
 		}
-		for _, session := range clusterSessions {
-			if session.Spec.IdentityProviderIssuer == issuer &&
-				sessionUserAliasMatches(username, session.Spec.User) {
-				all = append(all, session)
-			}
-		}
+		all = sessionsMatchingIdentityAlias(clusterSessions, username, issuer)
 	}
 	out, idpMismatches := filterSessionsForAuthorization(all, issuer, time.Now())
 	return out, idpMismatches, nil
@@ -965,6 +960,26 @@ func sessionUserAliasMatches(username, sessionUser string) bool {
 	}
 	at := strings.LastIndexByte(sessionUser, '@')
 	return at > 0 && strings.EqualFold(username, sessionUser[:at])
+}
+
+func sessionsMatchingIdentityAlias(sessions []breakglassv1alpha1.BreakglassSession, username, issuer string) []breakglassv1alpha1.BreakglassSession {
+	matches := make([]breakglassv1alpha1.BreakglassSession, 0)
+	issuers := map[string]struct{}{}
+	for _, session := range sessions {
+		if !sessionUserAliasMatches(username, session.Spec.User) ||
+			session.Spec.IdentityProviderIssuer == "" {
+			continue
+		}
+		if issuer != "" && session.Spec.IdentityProviderIssuer != issuer {
+			continue
+		}
+		matches = append(matches, session)
+		issuers[session.Spec.IdentityProviderIssuer] = struct{}{}
+	}
+	if issuer == "" && len(issuers) != 1 {
+		return nil
+	}
+	return matches
 }
 
 func grantedGroupsFromSessions(sessions []breakglassv1alpha1.BreakglassSession) []string {
