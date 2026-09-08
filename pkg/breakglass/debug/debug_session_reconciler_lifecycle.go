@@ -633,7 +633,17 @@ func (c *DebugSessionController) cleanupDeployedResources(
 			remaining.SetName(ref.Name)
 			remaining.SetNamespace(ref.Namespace)
 			if getErr := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: ref.Name, Namespace: ref.Namespace}, remaining); getErr == nil {
-				if ref.UID != "" && remaining.GetUID() != types.UID(ref.UID) {
+				expectedUID := types.UID(ref.UID)
+				if expectedUID == "" {
+					var resolveErr error
+					expectedUID, resolveErr = legacyCleanupUID(ds, obj.GroupVersionKind(), ref.Namespace, ref.Name)
+					if resolveErr != nil {
+						remainingDeployedResources = append(remainingDeployedResources, ref)
+						cleanupErrors = append(cleanupErrors, fmt.Errorf("resolve legacy identity for debug resource %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, resolveErr))
+						continue
+					}
+				}
+				if remaining.GetUID() != expectedUID {
 					// The recorded instance is gone and a same-name replacement is
 					// intentionally left untouched.
 					continue

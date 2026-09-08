@@ -134,6 +134,9 @@ func ParseDuration(s string) (time.Duration, error) {
 		total += term
 		pos += match[1]
 	}
+	if total < 0 {
+		return 0, fmt.Errorf("duration must be positive")
+	}
 	return total, nil
 }
 
