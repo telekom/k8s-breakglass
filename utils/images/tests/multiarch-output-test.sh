@@ -28,7 +28,7 @@ Dir.mktmpdir("multiarch-output-fixture") do |root|
   manifests = []
   attestations = []
   %w[amd64 arm64].each do |architecture|
-    config = write_blob.call("config" => architecture)
+    config = write_blob.call("os" => "linux", "architecture" => architecture)
     image = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.manifest.v1+json", "config" => config.merge("mediaType" => "application/vnd.oci.image.config.v1+json"), "layers" => [] }
     image_blob = write_blob.call(image)
     image_digest = image_blob.fetch("digest")
@@ -39,7 +39,8 @@ Dir.mktmpdir("multiarch-output-fixture") do |root|
     ].each do |predicate_type, predicate|
       statement = { "_type" => "https://in-toto.io/Statement/v1", "subject" => [{ "name" => architecture, "digest" => { "sha256" => image_digest.delete_prefix("sha256:") } }], "predicateType" => predicate_type, "predicate" => predicate }
       layer = write_blob.call(statement).merge("mediaType" => "application/vnd.in-toto+json")
-      attestation = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.manifest.v1+json", "layers" => [layer] }
+      attestation_config = write_blob.call({})
+      attestation = { "schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.manifest.v1+json", "config" => attestation_config.merge("mediaType" => "application/vnd.oci.image.config.v1+json"), "layers" => [layer] }
       attestation_blob = write_blob.call(attestation)
       attestations << attestation_blob.merge("mediaType" => attestation["mediaType"], "annotations" => { "vnd.docker.reference.type" => "attestation-manifest", "vnd.docker.reference.digest" => image_digest })
     end
