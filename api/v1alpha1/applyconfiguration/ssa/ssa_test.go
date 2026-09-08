@@ -1909,24 +1909,13 @@ func TestDebugContainerOverrideFrom(t *testing.T) {
 
 		nilJSON, err := json.Marshal(nilResult)
 		require.NoError(t, err)
+		assert.NotContains(t, string(nilJSON), `"command"`)
+		assert.NotContains(t, string(nilJSON), `"args"`)
 		emptyJSON, err := json.Marshal(emptyResult)
 		require.NoError(t, err)
-
-		var nilPayload map[string]any
-		require.NoError(t, json.Unmarshal(nilJSON, &nilPayload))
-		var emptyPayload map[string]any
-		require.NoError(t, json.Unmarshal(emptyJSON, &emptyPayload))
-
-		_, hasNilCommand := nilPayload["command"]
-		_, hasNilArgs := nilPayload["args"]
-		assert.False(t, hasNilCommand)
-		assert.False(t, hasNilArgs)
-
-		emptyCommand, hasEmptyCommand := emptyPayload["command"]
-		emptyArgs, hasEmptyArgs := emptyPayload["args"]
-		require.True(t, hasEmptyCommand)
-		require.True(t, hasEmptyArgs)
-		assert.Empty(t, emptyCommand)
-		assert.Empty(t, emptyArgs)
+		var encoded map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(emptyJSON, &encoded))
+		assert.JSONEq(t, `[]`, string(encoded["command"]))
+		assert.JSONEq(t, `[]`, string(encoded["args"]))
 	})
 }
