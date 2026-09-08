@@ -5,7 +5,9 @@
 require "digest"
 require "fileutils"
 require "json"
+require "stringio"
 require "tmpdir"
+require "zlib"
 
 archive = ARGV.fetch(0) { abort "OCI attestation normalization: archive path is required" }
 abort "OCI attestation normalization: archive does not exist: #{archive}" unless File.file?(archive)
@@ -22,10 +24,19 @@ Dir.mktmpdir("oci-attestation-normalize") do |root|
     payload = File.binread(path)
     abort "OCI attestation normalization: digest mismatch for #{digest}" unless Digest::SHA256.hexdigest(payload) == digest.delete_prefix("sha256:")
 
-    [path, JSON.parse(payload)]
+    compressed = payload.start_with?("\x1f\x8b")
+    payload = Zlib::GzipReader.new(StringIO.new(payload)).read if compressed
+    [path, JSON.parse(payload), compressed]
   end
-  write_json = lambda do |value|
+  write_json = lambda do |value, compressed: false|
     payload = JSON.generate(value)
+    if compressed
+      io = StringIO.new
+      gzip = Zlib::GzipWriter.new(io)
+      gzip.write(payload)
+      gzip.close
+      payload = io.string
+    end
     digest = "sha256:#{Digest::SHA256.hexdigest(payload)}"
     path = blob_path.call(digest)
     File.binwrite(path, payload)
@@ -37,7 +48,7 @@ Dir.mktmpdir("oci-attestation-normalize") do |root|
     return descriptor unless media_type == "application/vnd.oci.image.index.v1+json" ||
       media_type == "application/vnd.oci.image.manifest.v1+json"
 
-    path, document = read_json.call(descriptor.fetch("digest"))
+    _path, document, = read_json.call(descriptor.fetch("digest"))
     changed = false
     if media_type == "application/vnd.oci.image.index.v1+json"
       document.fetch("manifests").each do |child|
@@ -55,14 +66,14 @@ Dir.mktmpdir("oci-attestation-normalize") do |root|
       document.fetch("layers").each do |layer|
         next unless layer["mediaType"] == "application/vnd.in-toto+json"
 
-        layer_path, statement = read_json.call(layer.fetch("digest"))
+        layer_path, statement, compressed = read_json.call(layer.fetch("digest"))
         subject = statement["subject"]
         layer_changed = false
         if subject.nil? || !subject.is_a?(Array)
           abort "OCI attestation normalization: in-toto subject is malformed"
         elsif subject.empty?
           statement["subject"] = [{ "name" => "_", "digest" => { "sha256" => reference.delete_prefix("sha256:") } }]
-          digest, size = write_json.call(statement)
+          digest, size = write_json.call(statement, compressed: compressed)
           layer["digest"] = digest
           layer["size"] = size
           changed = true
@@ -85,12 +96,16 @@ Dir.mktmpdir("oci-attestation-normalize") do |root|
   end
 
   index_path = File.join(root, "index.json")
+  layout_path = File.join(root, "oci-layout")
+  abort "OCI attestation normalization: oci-layout is missing" unless File.file?(layout_path)
+  layout = JSON.parse(File.binread(layout_path))
+  abort "OCI attestation normalization: unsupported OCI layout" unless layout["imageLayoutVersion"] == "1.0.0"
   index = JSON.parse(File.binread(index_path))
   index.fetch("manifests").map! { |descriptor| rewrite_descriptor.call(descriptor) }
   File.binwrite(index_path, JSON.generate(index))
 
   normalized = "#{archive}.normalized"
-  system("tar", "-cf", normalized, "-C", root, "index.json", "blobs", exception: true)
+  system("tar", "-cf", normalized, "-C", root, "index.json", "oci-layout", "blobs", exception: true)
   File.rename(normalized, archive)
 end
 
