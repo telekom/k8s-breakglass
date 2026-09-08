@@ -23,7 +23,7 @@ ARG BUILD_DATE=unknown
 # toolbox, a compiler, a package manager, or an interactive shell entrypoint.
 RUN apk add --no-cache \
         ethtool=7.0-r0 \
-        flock=2.42.1-r0 \
+        flock=2.42.3-r1 \
         iproute2=7.0.0-r0 \
         libcrypto3=3.5.8-r0 \
         libssl3=3.5.8-r0 \
