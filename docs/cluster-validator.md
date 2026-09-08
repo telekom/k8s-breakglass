@@ -130,7 +130,7 @@ env:
 
 The same image backs the restricted `cluster-validation` catalogue profile as
 the main container of a one-shot `Job`; it is not an init-container plus
-hold-open workload. The rendered Job mounts its bounded `/reports` volume and
+hold-open workload. The rendered Job mounts its writable `/reports` volume and
 sets `automountServiceAccountToken: true`. Bind that pod to a dedicated
 `cluster-validator` ServiceAccount with the read-only role above; do not reuse
 the controller or node ServiceAccount. Use an exact signed image reference
