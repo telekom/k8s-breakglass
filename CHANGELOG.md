@@ -139,6 +139,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sessions with tracked spoke resources block ClusterConfig finalizer removal,
   and reconciler setup restores uncached approval reads plus audit Secret
   namespace wiring.
+- **ClusterConfig cleanup inventory fencing**: ClusterConfig finalizers now
+  remain until retained inventory is gone for every DebugSession state,
+  including sessions terminalized during the same reconciliation. Cleanup also
+  preserves concurrently recorded auxiliary child-document UIDs.
 - **DebugSession API mutation identity matching**: Mutating kubectl-debug
   operations now authorize requester and participant identities using the same
   provider-aware username/email matching used by read authorization, preventing

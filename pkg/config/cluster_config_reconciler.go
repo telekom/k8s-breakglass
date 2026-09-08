@@ -290,14 +290,12 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 	for i := range sessionList.Items {
 		session := &sessionList.Items[i]
 
-		// Skip sessions that are already in cleanup or already cleaned up.
-		if session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
-			session.Status.State == breakglassv1alpha1.DebugSessionStateExpired {
-			continue
-		}
-		if session.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
+		// Terminal sessions may still need the DebugSession controller to clean
+		// their tracked spoke inventory. Keep the ClusterConfig finalizer until
+		// that inventory is empty, regardless of the terminal state.
+		if isDebugSessionTerminal(session.Status.State) {
 			if debugSessionHasTrackedSpokeResources(session) {
-				terminateErrs = append(terminateErrs, fmt.Errorf("failed DebugSession %s/%s still tracks spoke resources", session.Namespace, session.Name))
+				terminateErrs = append(terminateErrs, debugSessionCleanupPendingError(session))
 			}
 			continue
 		}
@@ -311,13 +309,9 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 			if err := r.Get(ctx, client.ObjectKeyFromObject(session), live); err != nil {
 				return err
 			}
-			if live.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
-				live.Status.State == breakglassv1alpha1.DebugSessionStateExpired {
-				return nil
-			}
-			if live.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
+			if isDebugSessionTerminal(live.Status.State) {
 				if debugSessionHasTrackedSpokeResources(live) {
-					return fmt.Errorf("failed DebugSession %s/%s still tracks spoke resources", live.Namespace, live.Name)
+					return debugSessionCleanupPendingError(live)
 				}
 				return nil
 			}
@@ -327,7 +321,13 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 			if live.Generation > 0 {
 				live.Status.ObservedGeneration = live.Generation
 			}
-			return r.Status().Patch(ctx, live, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+			if err := r.Status().Patch(ctx, live, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+				return err
+			}
+			if debugSessionHasTrackedSpokeResources(live) {
+				return debugSessionCleanupPendingError(live)
+			}
+			return nil
 		}); err != nil {
 			log.Warnw("Failed to terminate DebugSession", "session", session.Name, "error", err)
 			terminateErrs = append(terminateErrs, fmt.Errorf("terminate DebugSession %s/%s: %w", session.Namespace, session.Name, err))
@@ -351,6 +351,16 @@ func debugSessionHasTrackedSpokeResources(session *breakglassv1alpha1.DebugSessi
 		len(session.Status.PodTemplateResourceStatuses) > 0 ||
 		len(session.Status.AllowedPods) > 0 ||
 		session.Status.KubectlDebugStatus != nil
+}
+
+func isDebugSessionTerminal(state breakglassv1alpha1.DebugSessionState) bool {
+	return state == breakglassv1alpha1.DebugSessionStateTerminated ||
+		state == breakglassv1alpha1.DebugSessionStateExpired ||
+		state == breakglassv1alpha1.DebugSessionStateFailed
+}
+
+func debugSessionCleanupPendingError(session *breakglassv1alpha1.DebugSession) error {
+	return fmt.Errorf("DebugSession %s/%s in state %q still tracks spoke resources", session.Namespace, session.Name, session.Status.State)
 }
 
 // SetupWithManager sets up the controller with the Manager.

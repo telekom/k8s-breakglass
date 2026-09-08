@@ -515,9 +515,8 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 			cleanupBaseline.AllowedPods, desiredStatus.AllowedPods, current.Status.AllowedPods,
 			allowedPodKey,
 		)
-		current.Status.AuxiliaryResourceStatuses = mergeCleanupInventory(
+		current.Status.AuxiliaryResourceStatuses = mergeAuxiliaryResourceStatuses(
 			cleanupBaseline.AuxiliaryResourceStatuses, desiredStatus.AuxiliaryResourceStatuses, current.Status.AuxiliaryResourceStatuses,
-			auxiliaryResourceStatusKey,
 		)
 		current.Status.PodTemplateResourceStatuses = mergeCleanupInventory(
 			cleanupBaseline.PodTemplateResourceStatuses, desiredStatus.PodTemplateResourceStatuses, current.Status.PodTemplateResourceStatuses,
@@ -582,6 +581,41 @@ func allowedPodKey(ref breakglassv1alpha1.AllowedPodRef) string {
 
 func auxiliaryResourceStatusKey(status breakglassv1alpha1.AuxiliaryResourceStatus) string {
 	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", status.Name, status.Category, status.APIVersion, status.Kind, status.ResourceName, status.Namespace, status.UID)
+}
+
+func additionalResourceKey(ref breakglassv1alpha1.AdditionalResourceRef) string {
+	return fmt.Sprintf("%s|%s|%s|%s|%s", ref.APIVersion, ref.Kind, ref.Namespace, ref.ResourceName, ref.UID)
+}
+
+func mergeAuxiliaryResourceStatuses(
+	baseline, desired, current []breakglassv1alpha1.AuxiliaryResourceStatus,
+) []breakglassv1alpha1.AuxiliaryResourceStatus {
+	merged := append([]breakglassv1alpha1.AuxiliaryResourceStatus(nil), desired...)
+	desiredByKey := make(map[string]int, len(desired))
+	baselineByKey := make(map[string]breakglassv1alpha1.AuxiliaryResourceStatus, len(baseline))
+	for i, status := range desired {
+		desiredByKey[auxiliaryResourceStatusKey(status)] = i
+	}
+	for _, status := range baseline {
+		baselineByKey[auxiliaryResourceStatusKey(status)] = status
+	}
+	for _, status := range current {
+		key := auxiliaryResourceStatusKey(status)
+		if desiredIndex, ok := desiredByKey[key]; ok {
+			baselineStatus := baselineByKey[key]
+			merged[desiredIndex].AdditionalResources = mergeCleanupInventory(
+				baselineStatus.AdditionalResources,
+				desired[desiredIndex].AdditionalResources,
+				status.AdditionalResources,
+				additionalResourceKey,
+			)
+			continue
+		}
+		if _, wasTracked := baselineByKey[key]; !wasTracked {
+			merged = append(merged, status)
+		}
+	}
+	return merged
 }
 
 func podTemplateResourceStatusKey(status breakglassv1alpha1.PodTemplateResourceStatus) string {

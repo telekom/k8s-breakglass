@@ -1336,7 +1336,9 @@ pending when tracked spoke resources exist but the cluster client provider is
 unavailable.
 Cleanup status merges the latest persisted inventory with the entries retired
 by the current attempt, preserving targets recorded concurrently by the same
-session.
+session, including nested auxiliary-document identities. ClusterConfig deletion
+keeps its finalizer while any DebugSession state still retains spoke inventory,
+including a session just transitioned to a terminal state.
 Terminal DebugSession states cannot transition again on the status mutation
 path or status admission path. Renewal performs its final uncached state and
 strict `now < expiresAt` check immediately before the optimistic status patch,
