@@ -26,9 +26,8 @@ func recordingFixture(enabled bool) (*breakglassv1alpha1.DebugSession, *breakgla
 }
 
 func TestInjectTerminalRecordingContract(t *testing.T) {
-	ds, template := recordingFixture(true)
-	spec := &corev1.PodSpec{Containers: []corev1.Container{{Name: "debug", Image: "example/debug"}}}
-	if err := injectTerminalRecording(spec, ds, template, "registry.example/recorder@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"); err == nil || !strings.Contains(err.Error(), "terminal-byte transport") {
+	_, template := recordingFixture(true)
+	if err := injectTerminalRecording(template); err == nil || !strings.Contains(err.Error(), "terminal-byte transport") {
 		t.Fatalf("expected unavailable transport to fail closed, got %v", err)
 	}
 }
@@ -45,8 +44,7 @@ func TestBuildPodSpecInjectsTerminalRecording(t *testing.T) {
 		},
 	}
 	controller := &DebugSessionController{
-		log:                    zap.NewNop().Sugar(),
-		terminalRecordingImage: "registry.example/recorder@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		log: zap.NewNop().Sugar(),
 	}
 	result, err := controller.buildPodSpec(ds, template, podTemplate)
 	if err == nil || !strings.Contains(err.Error(), "terminal-byte transport") {
@@ -54,66 +52,12 @@ func TestBuildPodSpecInjectsTerminalRecording(t *testing.T) {
 	}
 }
 
-func recordingEnvValue(env []corev1.EnvVar, name, want string) bool {
-	for _, item := range env {
-		if item.Name == name && item.Value == want {
-			return true
-		}
-	}
-	return false
-}
-
 func TestInjectTerminalRecordingFailsClosed(t *testing.T) {
-	ds, template := recordingFixture(true)
-	spec := &corev1.PodSpec{Containers: []corev1.Container{{Name: "debug"}}}
-	if err := injectTerminalRecording(spec, ds, template, ""); err == nil {
-		t.Fatal("expected missing sidecar image to fail")
-	}
-	template.Spec.Audit.RecordingRetention = "not-a-duration"
-	if err := injectTerminalRecording(spec, ds, template, "example/recorder@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"); err == nil {
-		t.Fatal("expected invalid retention to fail")
-	}
-	template.Spec.Audit.RecordingRetention = "30d"
-	spec.Containers = nil
-	if err := injectTerminalRecording(spec, ds, template, "example/recorder@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"); err == nil {
-		t.Fatal("expected pod without workload container to fail")
+	_, template := recordingFixture(true)
+	if err := injectTerminalRecording(template); err == nil {
+		t.Fatal("expected terminal recording to fail closed")
 	}
 }
-
-func TestRecordingRetentionDuration(t *testing.T) {
-	for _, tc := range []struct {
-		value string
-		want  int64
-	}{
-		{"90d", int64(90 * 24 * 60 * 60)},
-		{"14d", int64(14 * 24 * 60 * 60)},
-		{"1d12h", int64(36 * 60 * 60)},
-		{"1h", int64(60 * 60)},
-	} {
-		d, err := recordingRetentionDuration(tc.value)
-		if err != nil || int64(d.Seconds()) != tc.want {
-			t.Errorf("retention %q = %v, %v", tc.value, d, err)
-		}
-	}
-	if _, err := recordingRetentionDuration("0d"); err == nil {
-		t.Fatal("expected non-positive retention to fail")
-	}
-	reserved := &corev1.PodSpec{Containers: []corev1.Container{{Name: "terminal-recorder"}}}
-	if err := injectTerminalRecording(reserved, &breakglassv1alpha1.DebugSession{}, recordingFixtureTemplate(), "registry.example/recorder@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"); err == nil {
-		t.Fatal("expected user-owned recorder container name to fail closed")
-	}
-	reserved = &corev1.PodSpec{Containers: []corev1.Container{{Name: "debug"}}, Volumes: []corev1.Volume{{Name: terminalRecordingVolumeName}}}
-	if err := injectTerminalRecording(reserved, &breakglassv1alpha1.DebugSession{}, recordingFixtureTemplate(), "registry.example/recorder@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"); err == nil {
-		t.Fatal("expected user-owned recorder volume name to fail closed")
-	}
-}
-
-func recordingFixtureTemplate() *breakglassv1alpha1.DebugSessionTemplate {
-	return &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
-		Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: true, RecordingRetention: "30d"},
-	}}
-}
-
 func TestSafeRecordingFailureRedactsSecretsAndBoundsLength(t *testing.T) {
 	got := safeRecordingFailure("sidecar rejected Authorization: Bearer super-secret-token")
 	if got == "" || got == "sidecar rejected Authorization: Bearer super-secret-token" {
