@@ -177,9 +177,6 @@ for variant in bad missing-sbom missing-provenance empty-provenance bad-image-me
 done
 
 before_digest="$(sha256sum "$test_root/good.tar" | awk '{print $1}')"
-if ! ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/good.tar" >/dev/null; then
-    ruby "$(dirname "$0")/normalize-oci-attestations.rb" "$test_root/good.tar" >/dev/null
-fi
 ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/good.tar" >/dev/null
 after_digest="$(sha256sum "$test_root/good.tar" | awk '{print $1}')"
 [ "$before_digest" = "$after_digest" ] || {

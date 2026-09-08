@@ -11,7 +11,7 @@ storage-test:
 dump-test:
 	./dump-reader/tests/test.sh
 
-oci-attestation-test:
+oci-attestation-test: multiarch-output-test
 	./tests/verify-oci-attestations-test.sh
 
 multiarch-output-test:
