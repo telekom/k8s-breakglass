@@ -127,6 +127,13 @@ func TestActivateSessionEstablishesLeaseBeforeDeployment(t *testing.T) {
 	c, ds, template, target := newDeploymentFenceFixture(t)
 	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
 	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{Required: false}
+	// The fake client does not assign UIDs to newly created objects. Seed the
+	// same-session workload so the production UID capture path exercises the
+	// exact identity returned by the API rather than a name-only fallback.
+	require.NoError(t, target.Create(context.Background(), &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{
+		Name: ds.Name, Namespace: "breakglass-debug", UID: "workload-uid",
+		Annotations: map[string]string{sourceSessionUIDAnnotation: string(ds.UID)},
+	}}))
 
 	_, err := c.activateSession(context.Background(), ds, template, nil)
 	require.NoError(t, err)

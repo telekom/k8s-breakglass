@@ -362,11 +362,13 @@ func (h *KubectlDebugHandler) liveSessionForMutation(
 		live.Status.ExpiresAt == nil || !time.Now().UTC().Before(live.Status.ExpiresAt.Time) {
 		return nil, kubectlDebugPolicyErrorf("debug session is no longer active")
 	}
-	if live.Spec.RequestedBy != user {
+	identity := h.operationIdentity(user)
+	if !debugSessionOperationIdentityMatches(identity, live.Spec.IdentityProviderName, live.Spec.IdentityProviderIssuer, live.Spec.RequestedBy) {
 		allowed := false
 		for _, participant := range live.Status.Participants {
-			if participant.User == user && participant.LeftAt == nil &&
-				(participant.Role == breakglassv1alpha1.ParticipantRoleOwner || participant.Role == breakglassv1alpha1.ParticipantRoleParticipant) {
+			if participant.LeftAt == nil &&
+				(participant.Role == breakglassv1alpha1.ParticipantRoleOwner || participant.Role == breakglassv1alpha1.ParticipantRoleParticipant) &&
+				debugSessionOperationIdentityMatches(identity, participant.IdentityProviderName, participant.IdentityProviderIssuer, participant.User) {
 				allowed = true
 				break
 			}
@@ -376,6 +378,16 @@ func (h *KubectlDebugHandler) liveSessionForMutation(
 		}
 	}
 	return live, nil
+}
+
+// debugSessionOperationIdentityMatches preserves compatibility for sessions
+// created before identity-provider binding existed while enforcing every
+// provider/issuer field that is present on the immutable session record.
+func debugSessionOperationIdentityMatches(identity debugSessionReadIdentity, provider, issuer string, values ...string) bool {
+	if provider == "" && issuer == "" {
+		return debugSessionIdentityMatches(identity, values...)
+	}
+	return debugSessionIdentityMatchesProvider(identity, provider, issuer, values...)
 }
 
 func (h *KubectlDebugHandler) privilegedOperationClient(

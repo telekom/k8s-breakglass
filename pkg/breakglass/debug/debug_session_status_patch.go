@@ -18,13 +18,8 @@ package debug
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 )
 
 func (c *DebugSessionController) patchDebugSessionAllowedPods(
@@ -32,33 +27,9 @@ func (c *DebugSessionController) patchDebugSessionAllowedPods(
 	ds *breakglassv1alpha1.DebugSession,
 	allowedPods []breakglassv1alpha1.AllowedPodRef,
 ) error {
-	patch := struct {
-		Status struct {
-			AllowedPods []breakglassv1alpha1.AllowedPodRef `json:"allowedPods"`
-		} `json:"status"`
-	}{}
-	patch.Status.AllowedPods = allowedPods
-
-	patchBytes, err := json.Marshal(patch)
-	if err != nil {
-		return fmt.Errorf("marshal DebugSession allowed pods status patch: %w", err)
-	}
-
-	target := &breakglassv1alpha1.DebugSession{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: breakglassv1alpha1.GroupVersion.String(),
-			Kind:       "DebugSession",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      ds.Name,
-			Namespace: ds.Namespace,
-		},
-	}
-
-	if err := c.client.Status().Patch(ctx, target, ctrlclient.RawPatch(types.MergePatchType, patchBytes)); err != nil {
-		return fmt.Errorf("patch DebugSession allowed pods status: %w", err)
-	}
-	return nil
+	return breakglass.PatchDebugSessionStatusWithReader(ctx, c.client, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.AllowedPods = allowedPods
+	})
 }
 
 func (c *DebugSessionController) patchDebugSessionAllowedPodsAndAuxiliaryStatuses(
@@ -67,33 +38,8 @@ func (c *DebugSessionController) patchDebugSessionAllowedPodsAndAuxiliaryStatuse
 	allowedPods []breakglassv1alpha1.AllowedPodRef,
 	auxiliaryResourceStatuses []breakglassv1alpha1.AuxiliaryResourceStatus,
 ) error {
-	patch := struct {
-		Status struct {
-			AllowedPods               []breakglassv1alpha1.AllowedPodRef           `json:"allowedPods"`
-			AuxiliaryResourceStatuses []breakglassv1alpha1.AuxiliaryResourceStatus `json:"auxiliaryResourceStatuses"`
-		} `json:"status"`
-	}{}
-	patch.Status.AllowedPods = allowedPods
-	patch.Status.AuxiliaryResourceStatuses = auxiliaryResourceStatuses
-
-	patchBytes, err := json.Marshal(patch)
-	if err != nil {
-		return fmt.Errorf("marshal DebugSession allowed pods and auxiliary statuses patch: %w", err)
-	}
-
-	target := &breakglassv1alpha1.DebugSession{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: breakglassv1alpha1.GroupVersion.String(),
-			Kind:       "DebugSession",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      ds.Name,
-			Namespace: ds.Namespace,
-		},
-	}
-
-	if err := c.client.Status().Patch(ctx, target, ctrlclient.RawPatch(types.MergePatchType, patchBytes)); err != nil {
-		return fmt.Errorf("patch DebugSession allowed pods and auxiliary statuses: %w", err)
-	}
-	return nil
+	return breakglass.PatchDebugSessionStatusWithReader(ctx, c.client, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.AllowedPods = allowedPods
+		status.AuxiliaryResourceStatuses = auxiliaryResourceStatuses
+	})
 }

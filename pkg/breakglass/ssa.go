@@ -36,6 +36,10 @@ func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *brea
 	// fields written by another controller between the caller's read and this
 	// apply.  Retain the optimistic resource-version precondition explicitly;
 	// the caller can re-read and recompute its complete status on conflict.
+	if session.UID != "" && current.UID != session.UID {
+		return fmt.Errorf("apply DebugSession %s/%s status: %w", session.Namespace, session.Name,
+			apierrors.NewConflict(schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "debugsessions"}, session.Name, nil))
+	}
 	if session.ResourceVersion != "" && current.ResourceVersion != session.ResourceVersion {
 		return fmt.Errorf("apply DebugSession %s/%s status: %w", session.Namespace, session.Name,
 			apierrors.NewConflict(schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "debugsessions"}, session.Name, nil))
@@ -124,6 +128,14 @@ func validateDebugSessionStatusMutation(oldStatus, newStatus breakglassv1alpha1.
 	}
 	if oldStatus.ResolvedBindingSpec != nil && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedBindingSpec, newStatus.ResolvedBindingSpec) {
 		return fmt.Errorf("approved resolved binding snapshot is immutable")
+	}
+	if oldStatus.ResolvedBindingSnapshotCaptured && !newStatus.ResolvedBindingSnapshotCaptured {
+		return fmt.Errorf("approved resolved binding decision cannot be cleared")
+	}
+	if oldStatus.ResolvedBindingSnapshotCaptured &&
+		(!apiequality.Semantic.DeepEqual(oldStatus.ResolvedBindingSpec, newStatus.ResolvedBindingSpec) ||
+			!apiequality.Semantic.DeepEqual(oldStatus.ResolvedBinding, newStatus.ResolvedBinding)) {
+		return fmt.Errorf("approved resolved binding decision is immutable")
 	}
 	if oldStatus.ResolvedPodTemplate != nil && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedPodTemplate, newStatus.ResolvedPodTemplate) {
 		return fmt.Errorf("approved resolved pod-template snapshot is immutable")

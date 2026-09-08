@@ -1536,7 +1536,7 @@ func TestAuditConfigReconcile_EmptyTLSNamespaceExcludedFromReload(t *testing.T) 
 	r.SetControllerNamespace("controller")
 	reloadCalled := false
 	var reloaded []*breakglassv1alpha1.AuditConfig
-	r.onReloadMultiple = func(_ context.Context, configs []*breakglassv1alpha1.AuditConfig) error {
+	r.onReloadMultiple = func(_ context.Context, configs []*breakglassv1alpha1.AuditConfig, _ bool) error {
 		reloadCalled = true
 		reloaded = configs
 		return nil

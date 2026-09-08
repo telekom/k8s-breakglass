@@ -36,7 +36,22 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	}
 
 	var binding *breakglassv1alpha1.DebugSessionClusterBinding
-	if ds.Status.ResolvedBindingSpec != nil {
+	if ds.Status.ResolvedBindingSnapshotCaptured {
+		// The captured decision is authoritative, including an explicit
+		// no-binding result. Never rediscover a live binding after approval.
+		if ds.Status.ResolvedBindingSpec == nil {
+			binding = nil
+		} else {
+			binding = &breakglassv1alpha1.DebugSessionClusterBinding{}
+			if err := json.Unmarshal(ds.Status.ResolvedBindingSpec.Raw, &binding.Spec); err != nil {
+				return fmt.Errorf("decode approved binding snapshot: %w", err)
+			}
+			if ds.Status.ResolvedBinding != nil {
+				binding.Name = ds.Status.ResolvedBinding.Name
+				binding.Namespace = ds.Status.ResolvedBinding.Namespace
+			}
+		}
+	} else if ds.Status.ResolvedBindingSpec != nil {
 		binding = &breakglassv1alpha1.DebugSessionClusterBinding{}
 		if err := json.Unmarshal(ds.Status.ResolvedBindingSpec.Raw, &binding.Spec); err != nil {
 			return fmt.Errorf("decode approved binding snapshot: %w", err)

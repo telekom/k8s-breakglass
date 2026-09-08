@@ -694,11 +694,9 @@ func respondKubectlDebugOperationError(ctx *gin.Context, err error, fallback str
 	case http.StatusForbidden:
 		var operationErr *kubectlDebugOperationError
 		if errors.As(err, &operationErr) && operationErr.kind == kubectlDebugOperationErrorPolicy {
-			if apierrors.IsForbidden(err) {
-				apiresponses.RespondForbidden(ctx, "debug operation is not allowed")
-			} else {
-				apiresponses.RespondForbidden(ctx, "debug operation is not allowed: "+err.Error())
-			}
+			// Policy errors may wrap provider, policy, or credential details.
+			// Keep the public response stable and log-sensitive causes private.
+			apiresponses.RespondForbidden(ctx, "debug operation is not allowed")
 			return
 		}
 		apiresponses.RespondForbidden(ctx, err.Error())

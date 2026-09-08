@@ -642,11 +642,26 @@ func deleteOwnedResource(ctx context.Context, targetClient ctrlclient.Client, ob
 }
 
 func captureResourceUID(ctx context.Context, targetClient ctrlclient.Client, obj ctrlclient.Object) (string, error) {
-	live := obj.DeepCopyObject().(ctrlclient.Object)
-	if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(obj), live); err != nil {
-		return "", err
+	// Create/recover mutates obj with the exact object identity returned by the
+	// API server. Never perform a name-only GET here: a delete/recreate between
+	// the mutation and that GET would attribute a replacement to this session.
+	if obj.GetUID() == "" {
+		// Some test/fake clients do not populate Create responses. Keep this
+		// narrow compatibility path fail-closed: require a live UID and the
+		// immutable session marker to match before accepting the fallback.
+		live := obj.DeepCopyObject().(ctrlclient.Object)
+		if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(obj), live); err != nil {
+			return "", err
+		}
+		if live.GetUID() == "" {
+			return "", fmt.Errorf("resource %s/%s has no UID after mutation", obj.GetNamespace(), obj.GetName())
+		}
+		if expected, actual := obj.GetAnnotations()[sourceSessionUIDAnnotation], live.GetAnnotations()[sourceSessionUIDAnnotation]; expected != "" && expected != actual {
+			return "", fmt.Errorf("resource %s/%s ownership changed during UID capture", obj.GetNamespace(), obj.GetName())
+		}
+		return string(live.GetUID()), nil
 	}
-	return string(live.GetUID()), nil
+	return string(obj.GetUID()), nil
 }
 
 func allowedPodsForRemainingDeployedPods(

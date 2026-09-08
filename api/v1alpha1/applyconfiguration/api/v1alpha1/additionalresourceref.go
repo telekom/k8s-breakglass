@@ -41,7 +41,6 @@ func AdditionalResourceRef() *AdditionalResourceRefApplyConfiguration {
 	return &AdditionalResourceRefApplyConfiguration{}
 }
 
-
 // WithKind sets the Kind field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Kind field is set to the value of the last call.

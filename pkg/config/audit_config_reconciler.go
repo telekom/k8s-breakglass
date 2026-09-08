@@ -64,12 +64,18 @@ type AuditConfigReconciler struct {
 	// getStats returns the current audit manager statistics (optional)
 	getStats func() *AuditStats
 	// resyncPeriod defines the full reconciliation interval (default 10m)
-	resyncPeriod time.Duration
+	resyncPeriod        time.Duration
+	controllerNamespace string
 
 	// Cache for all active AuditConfigs
 	configMutex        sync.RWMutex
 	activeConfigs      []*breakglassv1alpha1.AuditConfig
 	configurationState AuditConfigurationState
+}
+
+// SetControllerNamespace sets the namespace allowed for audit sink Secrets.
+func (r *AuditConfigReconciler) SetControllerNamespace(namespace string) {
+	r.controllerNamespace = namespace
 }
 
 // AuditConfigurationState distinguishes intentional disablement from an
@@ -250,6 +256,13 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 			for i := range allConfigs.Items {
 				cfg := &allConfigs.Items[i]
 				if cfg.Spec.Enabled && r.isConfigInList(cfg.Name, validConfigs) {
+					apimeta.SetStatusCondition(&cfg.Status.Conditions, metav1.Condition{
+						Type: "Ready", Status: metav1.ConditionFalse, Reason: "ReloadFailed",
+						Message: err.Error(), ObservedGeneration: cfg.Generation, LastTransitionTime: metav1.Now(),
+					})
+					if statusErr := r.applyStatus(ctx, cfg); statusErr != nil {
+						r.logger.Errorw("Failed to record audit reload failure", "name", cfg.Name, "error", statusErr)
+					}
 					if r.recorder != nil {
 						r.recorder.Eventf(cfg, nil, corev1.EventTypeWarning, "ReloadFailed", "Reload",
 							"Failed to reload audit configuration: %v", err)
@@ -388,6 +401,15 @@ func (r *AuditConfigReconciler) validateSink(ctx context.Context, sink breakglas
 
 // validateSecretExists checks if a secret exists
 func (r *AuditConfigReconciler) validateSecretExists(ctx context.Context, name, namespace string) error {
+	if r.controllerNamespace == "" {
+		return fmt.Errorf("controller namespace is not configured; refusing to read secret %q", name)
+	}
+	if namespace == "" {
+		return fmt.Errorf("secret %q namespace must be set explicitly to controller namespace %q", name, r.controllerNamespace)
+	}
+	if namespace != r.controllerNamespace {
+		return fmt.Errorf("secret %q namespace must be controller namespace %q", name, r.controllerNamespace)
+	}
 	secret := &corev1.Secret{}
 	if err := r.client.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, secret); err != nil {
 		return err

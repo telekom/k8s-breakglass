@@ -834,7 +834,7 @@ func TestHandleInjectEphemeralContainer_UsesLiveSessionBeforeUpdate(t *testing.T
 	router.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusForbidden, rr.Code)
-	assert.Contains(t, rr.Body.String(), "debug session is no longer active")
+	assert.Contains(t, rr.Body.String(), "debug operation is not allowed")
 
 	storedPod := &corev1.Pod{}
 	require.NoError(t, targetClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "app-pod"}, storedPod))
@@ -1156,7 +1156,7 @@ func TestHandleCreatePodCopy_FinalFenceUsesLiveReader(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusForbidden, rr.Code)
-	assert.Contains(t, rr.Body.String(), "debug session is no longer active")
+	assert.Contains(t, rr.Body.String(), "debug operation is not allowed")
 
 	copyName := fmt.Sprintf("debug-copy-%s-%s", "app-pod", active.Name[:8])
 	storedCopy := &corev1.Pod{}
@@ -1434,7 +1434,7 @@ func TestHandleCreateNodeDebugPod_FinalFenceUsesLiveReader(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusForbidden, rr.Code)
-	assert.Contains(t, rr.Body.String(), "debug session is no longer active")
+	assert.Contains(t, rr.Body.String(), "debug operation is not allowed")
 
 	debugPodName := fmt.Sprintf("node-debugger-%s-%s", "worker-1", active.Name[:8])
 	debugPod := &corev1.Pod{}

@@ -54,6 +54,9 @@ func applyStatusViaUnstructuredWithOwner(ctx context.Context, c client.Client, a
 func ApplyBreakglassSessionStatus(ctx context.Context, c client.Client, session *breakglassv1alpha1.BreakglassSession) error {
 	applyConfig := ac.BreakglassSession(session.Name, session.Namespace).
 		WithStatus(BreakglassSessionStatusFrom(&session.Status))
+	if session.ResourceVersion != "" {
+		applyConfig.WithResourceVersion(session.ResourceVersion)
+	}
 
 	return applyStatusViaUnstructured(ctx, c, applyConfig)
 }
@@ -62,6 +65,9 @@ func ApplyBreakglassSessionStatus(ctx context.Context, c client.Client, session 
 func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *breakglassv1alpha1.DebugSession) error {
 	applyConfig := ac.DebugSession(session.Name, session.Namespace).
 		WithStatus(DebugSessionStatusFrom(&session.Status))
+	if session.ResourceVersion != "" {
+		applyConfig.WithResourceVersion(session.ResourceVersion)
+	}
 
 	return applyStatusViaUnstructured(ctx, c, applyConfig)
 }
@@ -167,8 +173,14 @@ func BreakglassSessionStatusFrom(status *breakglassv1alpha1.BreakglassSessionSta
 	if status.Approver != "" {
 		result.WithApprover(status.Approver)
 	}
+	if status.ApproverIdentityProvider != "" {
+		result.WithApproverIdentityProvider(status.ApproverIdentityProvider)
+	}
 	if len(status.Approvers) > 0 {
 		result.WithApprovers(status.Approvers...)
+	}
+	if status.ApproverIdentityProviders != nil {
+		result.WithApproverIdentityProviders(status.ApproverIdentityProviders...)
 	}
 	if status.ApprovalReason != "" {
 		result.WithApprovalReason(status.ApprovalReason)
@@ -485,11 +497,17 @@ func DebugSessionApprovalFrom(a *breakglassv1alpha1.DebugSessionApproval) *ac.De
 	if a.ApprovedBy != "" {
 		result.WithApprovedBy(a.ApprovedBy)
 	}
+	if a.ApprovedByIdentityProvider != "" {
+		result.WithApprovedByIdentityProvider(a.ApprovedByIdentityProvider)
+	}
 	if a.ApprovedAt != nil {
 		result.WithApprovedAt(*a.ApprovedAt)
 	}
 	if a.RejectedBy != "" {
 		result.WithRejectedBy(a.RejectedBy)
+	}
+	if a.RejectedByIdentityProvider != "" {
+		result.WithRejectedByIdentityProvider(a.RejectedByIdentityProvider)
 	}
 	if a.RejectedAt != nil {
 		result.WithRejectedAt(*a.RejectedAt)
@@ -516,6 +534,12 @@ func DebugSessionParticipantFrom(p *breakglassv1alpha1.DebugSessionParticipant) 
 	}
 	if p.DisplayName != "" {
 		result.WithDisplayName(p.DisplayName)
+	}
+	if p.IdentityProviderName != "" {
+		result.WithIdentityProviderName(p.IdentityProviderName)
+	}
+	if p.IdentityProviderIssuer != "" {
+		result.WithIdentityProviderIssuer(p.IdentityProviderIssuer)
 	}
 	if p.LeftAt != nil {
 		result.WithLeftAt(*p.LeftAt)
@@ -555,6 +579,9 @@ func DeployedResourceRefFrom(r *breakglassv1alpha1.DeployedResourceRef) *ac.Depl
 	if r.Namespace != "" {
 		result.WithNamespace(r.Namespace)
 	}
+	if r.Source != "" {
+		result.WithSource(r.Source)
+	}
 	if r.UID != "" {
 		result.WithUID(r.UID)
 	}
@@ -574,6 +601,9 @@ func AllowedPodRefFrom(p *breakglassv1alpha1.AllowedPodRef) *ac.AllowedPodRefApp
 
 	if p.NodeName != "" {
 		result.WithNodeName(p.NodeName)
+	}
+	if p.UID != "" {
+		result.WithUID(p.UID)
 	}
 	if p.Phase != "" {
 		result.WithPhase(p.Phase)
@@ -775,6 +805,9 @@ func EphemeralContainerRefFrom(e *breakglassv1alpha1.EphemeralContainerRef) *ac.
 		WithImage(e.Image).
 		WithInjectedAt(e.InjectedAt).
 		WithInjectedBy(e.InjectedBy)
+	if e.PodUID != "" {
+		result.WithPodUID(e.PodUID)
+	}
 
 	return result
 }
@@ -792,6 +825,9 @@ func CopiedPodRefFrom(c *breakglassv1alpha1.CopiedPodRef) *ac.CopiedPodRefApplyC
 		WithCreatedAt(c.CreatedAt)
 	if c.UID != "" {
 		result.WithUID(c.UID)
+	}
+	if c.CopyUID != "" {
+		result.WithCopyUID(c.CopyUID)
 	}
 
 	if c.ExpiresAt != nil {
