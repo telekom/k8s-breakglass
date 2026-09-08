@@ -235,8 +235,11 @@ profiles:
     capabilities: []
   - name: network-repair
     intent: network-repair
-    enabled: ${RUN_ELEVATED}
-    elevated: ${RUN_ELEVATED}
+    # The catalogue cannot supply the controller-issued immutable approval
+    # tuple required by node-maintenance. Keep this profile disabled until the
+    # reference flow has that trusted integration.
+    enabled: false
+    elevated: false
     displayName: Network repair (opt-in)
     description: Explicit elevated network repair profile.
     workloadType: Job
@@ -604,9 +607,8 @@ run_debug_session() {
 debug_session_flow() {
   log "Running restricted DebugSession request, approval, command, audit, and cleanup"
   run_debug_session "${CATALOGUE_RELEASE}-workload-diagnostics" false
-  [[ "${RUN_ELEVATED}" == true ]] || { log "Elevated DebugSession disabled (set REFERENCE_RUN_ELEVATED=true to opt in)"; return; }
-  log "Running explicitly elevated DebugSession opt-in"
-  run_debug_session "${CATALOGUE_RELEASE}-network-repair" true
+  [[ "${RUN_ELEVATED}" == true ]] || { log "Elevated DebugSession disabled"; return; }
+  log "Elevated DebugSession requested but disabled: the catalogue lacks the controller-issued approval tuple"
 }
 
 assert_zero_residual() {
