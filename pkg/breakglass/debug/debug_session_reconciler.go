@@ -532,10 +532,24 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 // anything that was deployed to the spoke cluster.
 func hasTrackedSpokeResources(ds *breakglassv1alpha1.DebugSession) bool {
 	return len(ds.Status.DeployedResources) > 0 ||
-		len(ds.Status.AuxiliaryResourceStatuses) > 0 ||
+		hasOutstandingAuxiliaryResources(ds) ||
 		len(ds.Status.PodTemplateResourceStatuses) > 0 ||
 		len(ds.Status.AllowedPods) > 0 ||
 		ds.Status.KubectlDebugStatus != nil
+}
+
+func hasOutstandingAuxiliaryResources(ds *breakglassv1alpha1.DebugSession) bool {
+	for _, status := range ds.Status.AuxiliaryResourceStatuses {
+		if status.Created && !status.Deleted {
+			return true
+		}
+		for _, child := range status.AdditionalResources {
+			if !child.Deleted {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // handleCleanup removes deployed resources for expired/terminated sessions

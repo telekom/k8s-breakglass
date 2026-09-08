@@ -146,6 +146,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Auxiliary cleanup retries**: Additional resources are retried after their
   primary document has already been deleted, and completed auxiliary history no
   longer keeps ClusterConfig deletion blocked.
+- **Failed-session cleanup completion**: Fully deleted auxiliary history no
+  longer causes a Failed DebugSession to requeue forever.
 - **DebugSession API mutation identity matching**: Mutating kubectl-debug
   operations now authorize requester and participant identities using the same
   provider-aware username/email matching used by read authorization, preventing

@@ -1342,6 +1342,8 @@ including a session just transitioned to a terminal state.
 Auxiliary documents continue to be retried after their primary resource is
 deleted; once the primary and every child are deleted, their history no longer
 counts as outstanding cleanup inventory.
+Failed sessions finish cleanup once all primary and child auxiliary resources
+are marked deleted; retained history alone does not trigger another retry.
 Terminal DebugSession states cannot transition again on the status mutation
 path or status admission path. Renewal performs its final uncached state and
 strict `now < expiresAt` check immediately before the optimistic status patch,
