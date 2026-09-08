@@ -25,16 +25,25 @@ volume)
 	;;
 ps)
 	case "${FAKE_MODE:-owned}" in
-	owned) printf '%s\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
+	owned)
+		printf '%s\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+		printf '%s\n' cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+		;;
 	foreign) printf '%s\n' bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ;;
 	list-failure) exit 42 ;;
 	*) exit 2 ;;
 	esac
 	;;
+inspect)
+	printf '%s\n' "${FAKE_LABEL:-run-label}"
+	;;
 rm)
 	[ "${2:-}" = -fv ]
-	[ "${3:-}" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ] || exit 1
-	rm -f "$FAKE_STATE/attached"
+	case "${3:-}" in
+	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) rm -f "$FAKE_STATE/owned" ;;
+	cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc) rm -f "$FAKE_STATE/second-owned" ;;
+	*) exit 1 ;;
+	esac
 	;;
 *) exit 2 ;;
 esac
@@ -43,16 +52,20 @@ chmod +x "$fixture/docker"
 
 run_case() {
 	mode=$1
+	label=run-label
+	[ "$mode" = foreign ] && label=foreign-label
 	printf x >"$fixture/volume-present"
 	: >"$fixture/attached"
-	if FAKE_STATE=$fixture FAKE_MODE=$mode docker_bin="$fixture/docker" volume_name=volume volume_owner_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+	: >"$fixture/owned"
+	: >"$fixture/second-owned"
+	if FAKE_STATE=$fixture FAKE_MODE=$mode FAKE_LABEL=$label docker_bin="$fixture/docker" docker_run_label=run-label volume_name=volume volume_owner_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
 		remove_captured_volume; then
 		result=0
 	else
 		result=$?
 	fi
 	case "$mode" in
-	owned) [ "$result" -eq 0 ] && [ ! -e "$fixture/volume-present" ] ;;
+	owned) [ "$result" -eq 0 ] && [ ! -e "$fixture/volume-present" ] && [ ! -e "$fixture/owned" ] && [ ! -e "$fixture/second-owned" ] ;;
 	foreign|list-failure) [ "$result" -ne 0 ] && [ -e "$fixture/volume-present" ] && [ -e "$fixture/attached" ] ;;
 	esac
 }

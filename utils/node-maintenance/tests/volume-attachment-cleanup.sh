@@ -10,7 +10,8 @@ remove_captured_volume() {
 		"$docker_bin" volume inspect "$volume_name" >/dev/null 2>&1 || return 0
 		attached_ids=$("$docker_bin" ps -aq --no-trunc --filter "volume=$volume_name") || return 1
 		for attached_id in $attached_ids; do
-			[ "$attached_id" = "$volume_owner_id" ] || return 1
+			attached_label=$("$docker_bin" inspect --format '{{index .Config.Labels "io.telekom.node-maintenance.test-run"}}' "$attached_id") || return 1
+			[ "$attached_label" = "$docker_run_label" ] || return 1
 			docker_remove_resource_with_volumes "$docker_bin" container "$attached_id" >/dev/null 2>&1 || return 1
 		done
 		"$docker_bin" volume rm "$volume_name" >/dev/null 2>&1 || true
