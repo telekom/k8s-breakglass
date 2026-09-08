@@ -567,6 +567,9 @@ validatingAdmissionPolicy:
 | `validatingAdmissionPolicy.enabled` | Create ValidatingAdmissionPolicy and binding resources | `false` |
 | `validatingAdmissionPolicy.validationActions` | Binding actions for policy violations (`Deny`, `Warn`, `Audit`). `Deny` and `Warn` cannot be combined. | `[Warn, Audit]` |
 
+`Deny` is enforcing: a policy violation blocks the API request. Keep the default
+`Warn, Audit` actions during phase 1 unless request blocking is intentional.
+
 ## Uninstalling
 
 ```bash

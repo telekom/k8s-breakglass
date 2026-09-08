@@ -127,6 +127,11 @@ leave the chart value disabled. To move ownership to Helm, first remove or adopt
 the existing `ValidatingAdmissionPolicy` and `ValidatingAdmissionPolicyBinding`
 objects so Helm does not collide with unmanaged cluster-scoped resources.
 
+The Helm value `validatingAdmissionPolicy.validationActions` accepts `Deny`,
+`Warn`, and `Audit`. `Deny` is enforcing and blocks requests that fail a policy,
+so keep the default `Warn, Audit` actions during phase 1 unless request blocking
+is intentional. `Deny` and `Warn` cannot be combined.
+
 ### Verify
 
 Check policies are deployed:
