@@ -214,10 +214,11 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 	var cleanupErrors []error
 
 	for i, status := range session.Status.AuxiliaryResourceStatuses {
-		if !status.Created || status.Deleted {
+		if !status.Created {
 			continue
 		}
-		if !shouldDeleteAuxiliaryResource(session, status.Name) {
+		deleteAfter := shouldDeleteAuxiliaryResource(session, status.Name)
+		if !deleteAfter {
 			log.Debugw("Skipping auxiliary resource cleanup because deleteAfter is false",
 				"resource", status.Name,
 				"resourceName", status.ResourceName,
@@ -225,21 +226,25 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 			continue
 		}
 
-		// Delete the primary resource
-		err := m.deleteResource(ctx, targetClient, status, session)
-		if err != nil {
-			log.Warnw("Failed to delete auxiliary resource",
-				"resource", status.Name,
-				"resourceName", status.ResourceName,
-				"namespace", status.Namespace,
-				"error", err)
-			cleanupErrors = append(cleanupErrors, err)
-			session.Status.AuxiliaryResourceStatuses[i].Error = err.Error()
-		} else {
-			now := time.Now().UTC().Format(time.RFC3339)
-			session.Status.AuxiliaryResourceStatuses[i].Deleted = true
-			session.Status.AuxiliaryResourceStatuses[i].DeletedAt = &now
-			metrics.AuxiliaryResourceCleanups.WithLabelValues(session.Spec.Cluster, status.Category, "success").Inc()
+		// Delete the primary resource when it has not already been retired. A
+		// primary can be Deleted while one of its additional documents remains;
+		// child cleanup must still run on the next retry.
+		if !status.Deleted {
+			err := m.deleteResource(ctx, targetClient, status, session)
+			if err != nil {
+				log.Warnw("Failed to delete auxiliary resource",
+					"resource", status.Name,
+					"resourceName", status.ResourceName,
+					"namespace", status.Namespace,
+					"error", err)
+				cleanupErrors = append(cleanupErrors, err)
+				session.Status.AuxiliaryResourceStatuses[i].Error = err.Error()
+			} else {
+				now := time.Now().UTC().Format(time.RFC3339)
+				session.Status.AuxiliaryResourceStatuses[i].Deleted = true
+				session.Status.AuxiliaryResourceStatuses[i].DeletedAt = &now
+				metrics.AuxiliaryResourceCleanups.WithLabelValues(session.Spec.Cluster, status.Category, "success").Inc()
+			}
 		}
 
 		// Also delete any additional resources from multi-document YAML templates

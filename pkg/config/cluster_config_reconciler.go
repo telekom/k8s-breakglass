@@ -347,10 +347,24 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 
 func debugSessionHasTrackedSpokeResources(session *breakglassv1alpha1.DebugSession) bool {
 	return len(session.Status.DeployedResources) > 0 ||
-		len(session.Status.AuxiliaryResourceStatuses) > 0 ||
+		debugSessionHasOutstandingAuxiliaryResources(session) ||
 		len(session.Status.PodTemplateResourceStatuses) > 0 ||
 		len(session.Status.AllowedPods) > 0 ||
 		session.Status.KubectlDebugStatus != nil
+}
+
+func debugSessionHasOutstandingAuxiliaryResources(session *breakglassv1alpha1.DebugSession) bool {
+	for _, status := range session.Status.AuxiliaryResourceStatuses {
+		if status.Created && !status.Deleted {
+			return true
+		}
+		for _, child := range status.AdditionalResources {
+			if !child.Deleted {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isDebugSessionTerminal(state breakglassv1alpha1.DebugSessionState) bool {

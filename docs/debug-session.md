@@ -1339,6 +1339,9 @@ by the current attempt, preserving targets recorded concurrently by the same
 session, including nested auxiliary-document identities. ClusterConfig deletion
 keeps its finalizer while any DebugSession state still retains spoke inventory,
 including a session just transitioned to a terminal state.
+Auxiliary documents continue to be retried after their primary resource is
+deleted; once the primary and every child are deleted, their history no longer
+counts as outstanding cleanup inventory.
 Terminal DebugSession states cannot transition again on the status mutation
 path or status admission path. Renewal performs its final uncached state and
 strict `now < expiresAt` check immediately before the optimistic status patch,
