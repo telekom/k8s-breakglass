@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	apiextensionsinternal "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextensionsinstall "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/install"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -105,6 +107,31 @@ func TestCRDSchemaValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDebugSessionClusterBindingCRDMatchesHiddenField verifies that the
+// generated schema exposes the API type's hidden field to the API server.
+func TestDebugSessionClusterBindingCRDMatchesHiddenField(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(crdBasesDir(), "breakglass.t-caas.telekom.com_debugsessionclusterbindings.yaml"))
+	require.NoError(t, err, "CRD file not found (run 'make manifests' first)")
+
+	scheme := runtime.NewScheme()
+	apiextensionsinstall.Install(scheme)
+	crd, _, err := serializer.NewCodecFactory(scheme).UniversalDeserializer().Decode(data, nil, nil)
+	require.NoError(t, err)
+
+	v1CRD, ok := crd.(*apiextensionsv1.CustomResourceDefinition)
+	require.True(t, ok, "decoded object is %T, expected *v1.CustomResourceDefinition", crd)
+	require.NotEmpty(t, v1CRD.Spec.Versions)
+	require.NotNil(t, v1CRD.Spec.Versions[0].Schema)
+	require.NotNil(t, v1CRD.Spec.Versions[0].Schema.OpenAPIV3Schema)
+
+	specSchema, ok := v1CRD.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+	require.True(t, ok, "generated CRD is missing spec schema")
+	hiddenSchema, ok := specSchema.Properties["hidden"]
+	require.True(t, ok, "generated CRD is missing spec.hidden")
+	assert.Equal(t, "boolean", hiddenSchema.Type)
+	assert.Contains(t, hiddenSchema.Description, "hidden hides this binding")
 }
 
 // TestCRDInstallation installs all CRDs into a real envtest API server to
