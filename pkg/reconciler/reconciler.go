@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -324,7 +323,6 @@ func Setup(
 		debugSessionReconciler := debug.NewDebugSessionController(log, mgr.GetClient(), ccProvider).
 			WithAPIReader(mgr.GetAPIReader()).
 			WithAuditService(auditService).
-			WithTerminalRecordingImage(os.Getenv("BREAKGLASS_TERMINAL_RECORDING_IMAGE")).
 			WithMailService(mailService, frontendConfig.BrandingName, frontendConfig.BaseURL, disableEmail)
 		if auditService != nil {
 			debugSessionReconciler.WithQuotaNamespace(auditService.ControllerNamespace())
