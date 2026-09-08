@@ -30,6 +30,7 @@ PUBLISHED_IMAGE="${PUBLISHED_IMAGE:-ghcr.io/telekom/k8s-breakglass:${BREAKGLASS_
 CATALOGUE_CHART="${CATALOGUE_CHART:-oci://ghcr.io/telekom/k8s-breakglass/charts/debug-session-catalogue}"
 CATALOGUE_CHART_DIGEST="${CATALOGUE_CHART_DIGEST:-}"
 DEBUG_NAMESPACE="${REFERENCE_DEBUG_NAMESPACE:-reference-debug}"
+DEBUG_NAMESPACE_CREATED=false
 CATALOGUE_RELEASE="${REFERENCE_CATALOGUE_RELEASE:-debug-catalogue}"
 CATALOGUE_VALUES_FILE=""
 
@@ -206,7 +207,12 @@ install_stack() {
     --version "${AUTH_OPERATOR_VERSION}" --namespace auth-operator-system \
     --create-namespace --wait --timeout 5m
 
-  kubectl create namespace "${DEBUG_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+  if kubectl get namespace "${DEBUG_NAMESPACE}" >/dev/null 2>&1; then
+    log "Reusing existing debug namespace ${DEBUG_NAMESPACE}; it will not be deleted"
+  else
+    kubectl create namespace "${DEBUG_NAMESPACE}" >/dev/null
+    DEBUG_NAMESPACE_CREATED=true
+  fi
   log "Installing debug-session-catalogue ${CATALOGUE_VERSION}"
   CATALOGUE_VALUES_FILE="$(mktemp)"
   cat >"${CATALOGUE_VALUES_FILE}" <<YAML
@@ -646,7 +652,9 @@ assert_zero_residual() {
     -l "breakglass.t-caas.telekom.com/session" -o name 2>/dev/null | grep -q . && die "debug workload or policy resources remain"
   kubectl get clusterrole,clusterrolebinding -l "breakglass.t-caas.telekom.com/session" \
     -o name 2>/dev/null | grep -q . && die "debug cluster policy resources remain"
-  kubectl delete namespace "${DEBUG_NAMESPACE}" --ignore-not-found --wait >/dev/null
+  if [[ "${DEBUG_NAMESPACE_CREATED}" == true ]]; then
+    kubectl delete namespace "${DEBUG_NAMESPACE}" --ignore-not-found --wait >/dev/null
+  fi
   log "Reference resources have zero residual objects"
 }
 

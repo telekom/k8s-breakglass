@@ -2,6 +2,7 @@ package debug
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
@@ -45,7 +47,20 @@ func TestRenewDebugSessionExtendsTrackedJobDeadline(t *testing.T) {
 	}
 
 	controlClient := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).WithStatusSubresource(session).Build()
-	targetClient := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(job).Build()
+	targetClient := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
+		Patch: func(ctx context.Context, underlying client.WithWatch, object client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			data, err := patch.Data(object)
+			require.NoError(t, err)
+			var payload struct {
+				Metadata struct {
+					ResourceVersion string `json:"resourceVersion"`
+				} `json:"metadata"`
+			}
+			require.NoError(t, json.Unmarshal(data, &payload))
+			require.Equal(t, object.GetResourceVersion(), payload.Metadata.ResourceVersion)
+			return underlying.Patch(ctx, object, patch, opts...)
+		},
+	}).WithObjects(job).Build()
 	ctrl := NewDebugSessionAPIController(zap.NewNop().Sugar(), controlClient, nil, nil).
 		WithClusterClients(&mockClientProvider{clients: map[string]client.Client{"production": targetClient}})
 	router := debugSessionAPITestRouter(t, ctrl, "alice@example.com", "", nil)
@@ -109,6 +124,27 @@ func TestExtendTrackedJobDeadlinesUsesUIDAndIsIdempotent(t *testing.T) {
 	require.NoError(t, targetClient.Get(context.Background(), client.ObjectKey{Name: job.Name, Namespace: job.Namespace}, updated))
 	require.NotNil(t, updated.Spec.ActiveDeadlineSeconds)
 	require.Equal(t, int64(7200), *updated.Spec.ActiveDeadlineSeconds)
+}
+
+func TestExtendTrackedJobDeadlinesRejectsExpiryBeforeStart(t *testing.T) {
+	start := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
+	deadline := int64(3600)
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "debug-job", Namespace: "default", UID: "job-uid"},
+		Status:     batchv1.JobStatus{StartTime: &start},
+		Spec:       batchv1.JobSpec{ActiveDeadlineSeconds: &deadline},
+	}
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "renew-job-session", Namespace: "default"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "production"},
+		Status: breakglassv1alpha1.DebugSessionStatus{DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{
+			Kind: "Job", Name: job.Name, Namespace: job.Namespace, UID: string(job.UID),
+		}}},
+	}
+	targetClient := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(job).Build()
+	ctrl := NewDebugSessionAPIController(zap.NewNop().Sugar(), nil, nil, nil).
+		WithClusterClients(&mockClientProvider{clients: map[string]client.Client{"production": targetClient}})
+	require.ErrorContains(t, ctrl.extendTrackedJobDeadlines(context.Background(), session, metav1.NewTime(start.Add(-time.Second))), "precedes its start time")
 }
 
 func ptrTime(value metav1.Time) *metav1.Time {
