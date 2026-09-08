@@ -109,6 +109,10 @@ storage and dump mounts match the
 `/scratch`, `/reports`, `/input`, and `/output` paths consumed by their images.
 The elevated network, repair, and recovery profiles are disabled by default
 and must not be treated as shipping node tooling until explicitly approved.
+The reference-usage example keeps its elevated profile disabled even when its
+opt-in flag is set because the catalogue contract does not carry the
+controller-issued immutable approval tuple required by node-maintenance; the
+example logs that limitation and does not attempt to bypass the chart gate.
 The restricted `dump-access` profile is also disabled by default, but does not
 require elevation; it remains a non-public placeholder until its image and
 reviewed source-volume contract are approved.

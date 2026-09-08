@@ -14,7 +14,7 @@ on:
         type: choice
         options: [source, published]
       elevated:
-        description: Run the explicit elevated opt-in case
+        description: Reserved; elevated catalogue profiles are disabled until trusted approval wiring exists
         required: true
         default: false
         type: boolean
