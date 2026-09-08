@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Retained final-main Unreleased entries
+### Fixed
+
+- Static pod overrides now serialize explicitly empty command and argument lists through server-side apply, so an administrator can clear a previous override. Job workloads retain exact owner-chain cleanup and spoke workload RBAC for batch resources.
+- Local BuildKit OCI archives retain strict attestation checks for Statement v0.1/v1 and SLSA v0.2/v1 provenance forms; descriptor annotations remain bound to the referenced image digest.
+- Helm chart provenance reruns use the canonical package digest, preserving deterministic release identity across archive timestamps.
 
 ### Security
 

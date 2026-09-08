@@ -12,13 +12,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// MarshalJSON preserves explicit empty command/args slices for SSA field ownership.
+// MarshalJSON keeps explicit empty command and args slices in SSA patches.
 func (b *DebugContainerOverrideApplyConfiguration) MarshalJSON() ([]byte, error) {
 	if b == nil {
 		return []byte("null"), nil
 	}
 
-	type debugContainerOverrideAlias struct {
+	type payload struct {
 		Name            *string                      `json:"name,omitempty"`
 		Command         *[]string                    `json:"command,omitempty"`
 		Args            *[]string                    `json:"args,omitempty"`
@@ -26,24 +26,21 @@ func (b *DebugContainerOverrideApplyConfiguration) MarshalJSON() ([]byte, error)
 		Resources       *corev1.ResourceRequirements `json:"resources,omitempty"`
 		Env             []corev1.EnvVar              `json:"env,omitempty"`
 	}
-
-	payload := debugContainerOverrideAlias{
+	value := payload{
 		Name:            b.Name,
 		SecurityContext: b.SecurityContext,
 		Resources:       b.Resources,
 		Env:             b.Env,
 	}
-
 	if b.Command != nil {
 		command := make([]string, len(b.Command))
 		copy(command, b.Command)
-		payload.Command = &command
+		value.Command = &command
 	}
 	if b.Args != nil {
 		args := make([]string, len(b.Args))
 		copy(args, b.Args)
-		payload.Args = &args
+		value.Args = &args
 	}
-
-	return json.Marshal(payload)
+	return json.Marshal(value)
 }
