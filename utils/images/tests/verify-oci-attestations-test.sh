@@ -53,7 +53,10 @@ end
                   predicate = if architecture == "arm64"
                                 { "builder" => { "id" => "https://example.invalid/builder" }, "buildType" => "https://example.invalid/build" }
                               else
-                                { "buildDefinition" => { "buildType" => "https://example.invalid/build" }, "runDetails" => { "builder" => { "id" => "https://example.invalid/builder" } } }
+                                # BuildKit's default SLSA v1 output may omit an
+                                # explicit builder-id and therefore use an empty
+                                # string while retaining the build type.
+                                { "buildDefinition" => { "buildType" => "https://example.invalid/build" }, "runDetails" => { "builder" => { "id" => "" } } }
                               end
                   { "_type" => (architecture == "arm64" ? "https://in-toto.io/Statement/v0.1" : "https://in-toto.io/Statement/v1"), "subject" => subject, "predicateType" => predicate_type, "predicate" => predicate }
                 end
@@ -127,7 +130,7 @@ amd64_image = descriptors.find { |descriptor| descriptor.dig("platform", "archit
 arm64_image = descriptors.find { |descriptor| descriptor.dig("platform", "architecture") == "arm64" }
 mismatched_reference_descriptors = descriptors.map do |descriptor|
   if descriptor.dig("annotations", "vnd.docker.reference.type") == "attestation-manifest" && descriptor.dig("annotations", "vnd.docker.reference.digest") == amd64_image["digest"]
-    descriptor.merge("annotations" => descriptor["annotations"].merge("vnd.docker.reference.digest" => arm64_image["digest"]))
+    descriptor.merge("annotations" => descriptor["annotations"].merge("vnd.docker.reference.digest" => "sha256:#{"f" * 64}"))
   else
     descriptor
   end
@@ -252,6 +255,18 @@ for variant in bad missing-sbom missing-provenance empty-provenance bad-image-me
         exit 1
     fi
 done
+
+missing_reference_error="$(ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/missing-reference.tar" 2>&1 || true)"
+printf '%s\n' "$missing_reference_error" | grep -Fq "attestation has no image subject reference" || {
+  echo "missing reference did not report the missing-subject error" >&2
+  exit 1
+}
+
+mismatched_reference_error="$(ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/mismatched-reference.tar" 2>&1 || true)"
+printf '%s\n' "$mismatched_reference_error" | grep -Fq "reference does not match any image manifest digest" || {
+    echo "unknown reference did not report the digest mismatch error" >&2
+    exit 1
+}
 
 for layout in missing-layout bad-layout; do
     mkdir "$test_root/$layout"

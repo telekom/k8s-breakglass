@@ -145,7 +145,10 @@ attestations.each do |descriptor|
                    else
                      build_definition = predicate.is_a?(Hash) ? predicate["buildDefinition"] : nil
                      run_details = predicate.is_a?(Hash) ? predicate["runDetails"] : nil
-                     build_definition.is_a?(Hash) && build_definition["buildType"].is_a?(String) && !build_definition["buildType"].empty? && run_details.is_a?(Hash) && run_details.dig("builder", "id").is_a?(String) && !run_details.dig("builder", "id").empty?
+                     # BuildKit may omit an explicit builder-id in SLSA v1;
+                     # the build type and bound statement subject remain the
+                     # required provenance identity checks.
+                     build_definition.is_a?(Hash) && build_definition["buildType"].is_a?(String) && !build_definition["buildType"].empty? && run_details.is_a?(Hash) && run_details.dig("builder", "id").is_a?(String)
                    end
       fail_archive("SLSA predicate is empty or malformed") unless valid_slsa
       image_attestations.fetch(reference_digest)["provenance"] = true
