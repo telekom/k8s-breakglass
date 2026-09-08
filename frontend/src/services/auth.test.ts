@@ -518,6 +518,48 @@ describe("AuthService", () => {
   });
 
   describe("OIDC user manager events", () => {
+    it("clears selected OIDC hints when sanitized storage cleanup fails", async () => {
+      sessionStorage.setItem("oidc_idp_name", "corp");
+      sessionStorage.setItem("oidc_direct_authority", "https://direct.corp");
+      sessionStorage.setItem("breakglass_active_oidc_user_storage_key", "oidc.user:/api/oidc/authority:corp-ui");
+
+      let userLoadedHandler: ((user: User) => void) | undefined;
+      let userUnloadedHandler: (() => void) | undefined;
+      const removeUser = vi.fn().mockImplementation(async () => {
+        userUnloadedHandler?.();
+        throw new Error("cleanup unavailable");
+      });
+      const manager = {
+        storeUser: vi.fn().mockRejectedValue(new Error("storage unavailable")),
+        removeUser,
+        events: {
+          addUserLoaded: (handler: (user: User) => void) => {
+            userLoadedHandler = handler;
+          },
+          addUserUnloaded: (handler: () => void) => {
+            userUnloadedHandler = handler;
+          },
+          addAccessTokenExpiring: vi.fn(),
+          addAccessTokenExpired: vi.fn(),
+          addSilentRenewError: vi.fn(),
+          addUserSignedOut: vi.fn(),
+        },
+      } as unknown as UserManager;
+
+      (authService as unknown as { registerUserManagerEvents: (manager: UserManager) => void }).registerUserManagerEvents(
+        manager,
+      );
+
+      const loadedUser = { refresh_token: "stale-refresh-token" } as User;
+      userLoadedHandler?.(loadedUser);
+      await vi.waitFor(() => expect(removeUser).toHaveBeenCalledOnce());
+
+      expect(loadedUser.refresh_token).toBeUndefined();
+      expect(sessionStorage.getItem("oidc_idp_name")).toBeNull();
+      expect(sessionStorage.getItem("oidc_direct_authority")).toBeNull();
+      expect(sessionStorage.getItem("breakglass_active_oidc_user_storage_key")).toBeNull();
+    });
+
     it("clears reactive and persisted user state when the access token expires", async () => {
       const userRef = useUser();
       const loadedUser = {
