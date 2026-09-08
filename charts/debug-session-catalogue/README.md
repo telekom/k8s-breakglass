@@ -65,8 +65,11 @@ The source path and source volume are deployment-supplied; the generic chart
 does not silently select a node path or artifact name. It never starts an
 interactive or host-network shell.
 
-The node-oriented profiles are elevated. Enable them only with an explicit
-two-part opt-in, including host networking only for profiles that need it.
+The node-oriented profiles are reserved and unavailable in this chart. Their
+controller-issued immutable approval tuple is not wired into catalogue values,
+so `network-repair` and `node-recovery` remain disabled and fail closed even if
+an operator attempts to enable them. Use the supported default/reference
+profiles until that controller contract is available.
 Because Helm replaces list values instead of merging list items by `name`,
 use a complete profiles fixture (for example
 `ci/elevated-optin-values.yaml`) or copy the full `profiles` list from
@@ -191,13 +194,10 @@ profiles:
     args: []
 ```
 
-For `network-repair` and `node-recovery`, the shipped profiles require the
-per-session `targetNode`, `interface`, and exact confirmation variables. Repair
-also requires an allowlisted `action`; the generated pod is scheduled to the
-selected node and writes evidence beneath `/evidence`. The node-maintenance
-profiles disable `exec`; use their fixed operation entrypoints and retrieve
-logs/evidence after completion. Keep these variables bound to the approved
-binding and scheduling policy.
+The node-maintenance profiles document the future per-session `targetNode`,
+`interface`, and immutable confirmation variables, but the generated chart
+currently rejects enablement because those controller-owned values are not
+available from Helm. No user-supplied substitute is accepted.
 
 The chart rejects map-shaped profiles, duplicate or invalid names, unresolved
 image references, and enabled profiles that require elevation without an

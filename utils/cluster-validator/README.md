@@ -23,3 +23,8 @@ The image is built from the repository root with
 `-f utils/cluster-validator/Dockerfile`, supports `linux/amd64` and
 `linux/arm64`, and runs as UID/GID `65532`. Read
 `/usr/share/cluster-validator/RUNBOOK.md` before operating it.
+
+The image builder is pinned to Go 1.27 for this independently built utility
+image. Repository and controller CI compilation continues to use the Go
+1.26.6 version declared in `go.mod`; the separate image toolchain does not
+change the module's supported compiler.

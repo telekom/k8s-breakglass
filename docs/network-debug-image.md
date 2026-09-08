@@ -28,8 +28,9 @@ permissions or authorize network mutation.
 
 ## Safety and permissions
 
-The image is root because `tcpdump` and `pwru` need kernel access. Prefer an
-ephemeral container with only `CAP_NET_RAW` and `CAP_NET_ADMIN`; eBPF tracing
+The image is root because `tcpdump` and `pwru` need kernel access. The
+selected-Pod ephemeral capture uses only `CAP_NET_RAW` after dropping all
+other capabilities. Host tracing separately requires `CAP_NET_ADMIN`; eBPF tracing
 may additionally require explicit BPF/PERFMON permissions, read-only debugfs,
 tracefs, and securityfs mounts, and a kernel with BTF. Follow the target
 cluster's Pod Security policy. Never copy a
@@ -37,8 +38,9 @@ capture to a public tracker without redaction.
 
 The image runs as UID 0 to support packet capture and eBPF tools. A workload
 or DebugSession using it must isolate the network namespace and grant only the
-capabilities required for the selected operation (`NET_RAW`/`NET_ADMIN`, and
-for `pwru`, the platform's approved BPF/perfmon permissions). Do not combine
+capabilities required for the selected operation (`NET_RAW` for selected Pod
+capture; `NET_ADMIN` and the platform's approved BPF/perfmon permissions for
+host tracing). Do not combine
 this image with host networking or broad write-capable service-account RBAC
 unless the incident approval explicitly requires it. The shell is an operator
 tool, not a bounded repair API: commands such as `ip route`, `ip link`, and

@@ -52,7 +52,19 @@ command -v openssl >/dev/null 2>&1 || {
 	echo "OpenSSL is required for the disposable HTTPS uploader fixture" >&2
 	exit 1
 }
-docker build --tag "$image" "$root"
+docker build \
+	--build-arg VERSION=contract-test \
+	--build-arg VCS_REF=contract-ref \
+	--build-arg BUILD_DATE=2026-01-01T00:00:00Z \
+	--tag "$image" "$root"
+
+label() {
+	docker image inspect --format "{{index .Config.Labels \"$1\"}}" "$image"
+}
+[ "$(label org.opencontainers.image.version)" = contract-test ]
+[ "$(label org.opencontainers.image.revision)" = contract-ref ]
+[ "$(label org.opencontainers.image.created)" = 2026-01-01T00:00:00Z ]
+[ "$(label org.opencontainers.image.base.digest)" = sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0 ]
 
 create_owned_volume() {
 	owner_name=$1

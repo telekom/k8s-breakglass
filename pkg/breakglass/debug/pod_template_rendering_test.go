@@ -2591,6 +2591,34 @@ func TestValidateRestrictedCatalogueRejectsPSSSurfaces(t *testing.T) {
 	}
 }
 
+func TestValidateRestrictedCataloguePodSpec_AllowsValidatorIdentityFieldRefs(t *testing.T) {
+	trueValue := true
+	falseValue := false
+	spec := corev1.PodSpec{
+		AutomountServiceAccountToken: &trueValue,
+		ServiceAccountName:           "cluster-validator",
+		SecurityContext: &corev1.PodSecurityContext{
+			RunAsNonRoot:   &trueValue,
+			SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		},
+		Containers: []corev1.Container{{
+			Name: "validator",
+			SecurityContext: &corev1.SecurityContext{
+				AllowPrivilegeEscalation: &falseValue,
+				ReadOnlyRootFilesystem:   &trueValue,
+				Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			},
+			Env: []corev1.EnvVar{
+				{Name: "VALIDATOR_POD_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
+				{Name: "VALIDATOR_POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"}}},
+			},
+		}},
+	}
+	require.NoError(t, validateRestrictedCataloguePodSpec(&spec, "cluster-validation"))
+	spec.Containers[0].Env[0].ValueFrom.FieldRef.FieldPath = "metadata.uid"
+	require.ErrorContains(t, validateRestrictedCataloguePodSpec(&spec, "cluster-validation"), "VALIDATOR_POD_NAME")
+}
+
 func TestBuildWorkload_RestrictedCatalogueRejectsLegacyAppArmorAnnotationAfterMerge(t *testing.T) {
 	controller := newBuildWorkloadController()
 	ds := newBuildWorkloadSession("restricted-apparmor-annotation")

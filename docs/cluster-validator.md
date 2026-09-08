@@ -128,10 +128,10 @@ env:
 
 ## Use from a DebugSession
 
-The same image can back a restricted `cluster-validation` DebugSession
-profile. Configure a `DebugPodTemplate` with the validator as an
-`initContainer`, a small hold-open container for the session workload, and
-`automountServiceAccountToken: true`. Bind that pod to a dedicated
+The same image backs the restricted `cluster-validation` catalogue profile as
+the main container of a one-shot `Job`; it is not an init-container plus
+hold-open workload. The rendered Job mounts its bounded `/reports` volume and
+sets `automountServiceAccountToken: true`. Bind that pod to a dedicated
 `cluster-validator` ServiceAccount with the read-only role above; do not reuse
 the controller or node ServiceAccount. Use an exact signed image reference
 (preferably a digest) and pass `--mode one-time --report -` so the result is
@@ -142,7 +142,7 @@ available in the pod log. The `DebugSessionTemplate` should set
 For post-upgrade checks, run the standalone command after the upgrade rather
 than restarting a long-lived workload. If a catalogue supplies the generic
 `cluster-validation` intent, it must preserve these same ServiceAccount,
-read-only RBAC, exact-image, and mode requirements.
+read-only RBAC, exact-image, mode, Job, and `/reports` volume requirements.
 
 ## Real-cluster integration contract
 

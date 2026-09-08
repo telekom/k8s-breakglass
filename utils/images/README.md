@@ -10,9 +10,9 @@ Kubernetes debug sessions. The `storage-debug` and `dump-reader` images are
 multi-architecture (`linux/amd64` and `linux/arm64`), run without privilege as
 UID/GID 65532, pin their base images and runtime dependencies, and carry
 signing/SBOM/provenance metadata. The
-`diagnostic-artifact-collector` is an explicit root-only exception for
-crashdump collection and uploader operation; its metadata documents that
-boundary.
+`diagnostic-artifact-collector` is an explicit root-only exception only for
+the host-mounted crashdump collector init container; its portable collector
+and uploader remain UID/GID 65532, as its metadata documents.
 
 | Image | Purpose | Source access | Writes |
 | --- | --- | --- | --- |

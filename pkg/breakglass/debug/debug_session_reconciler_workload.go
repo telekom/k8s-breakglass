@@ -1098,6 +1098,10 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 		}
 		for _, env := range container.Env {
 			if env.ValueFrom != nil {
+				if intent == "cluster-validation" && ((env.Name == "VALIDATOR_POD_NAME" && env.ValueFrom.FieldRef != nil && env.ValueFrom.FieldRef.FieldPath == "metadata.name") ||
+					(env.Name == "VALIDATOR_POD_NAMESPACE" && env.ValueFrom.FieldRef != nil && env.ValueFrom.FieldRef.FieldPath == "metadata.namespace")) {
+					continue
+				}
 				return fmt.Errorf("restricted catalogue profile container %q cannot source environment variable %q", container.Name, env.Name)
 			}
 		}
