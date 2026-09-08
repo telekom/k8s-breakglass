@@ -18,6 +18,10 @@ def fail_archive(message)
 end
 
 archive = ARGV.fetch(0) { fail_archive("archive path is required") }
+if archive == "--help"
+  puts "Usage: verify-oci-attestations.rb ARCHIVE"
+  exit 0
+end
 fail_archive("archive does not exist: #{archive}") unless File.file?(archive)
 
 def read_entry(archive, entry)
