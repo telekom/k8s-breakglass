@@ -960,10 +960,10 @@ func TestDebugSessionReconciler_UpdateAllowedPodsDoesNotOverwriteRenewalOrPartic
 func TestDebugSessionController_UpdateAuxiliaryResourceReadiness(t *testing.T) {
 	scheme := testScheme()
 	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: "ready-config", Namespace: "debug-ns"},
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-config", Namespace: "debug-ns", UID: types.UID("ready-config-uid")},
 	}
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "ready-secret", Namespace: "debug-ns"},
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-secret", Namespace: "debug-ns", UID: types.UID("ready-secret-uid")},
 	}
 	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm, secret).Build()
 	session := newTestDebugSession("aux-readiness", "test-template", "test-cluster", "user@example.com")
@@ -974,6 +974,7 @@ func TestDebugSessionController_UpdateAuxiliaryResourceReadiness(t *testing.T) {
 			APIVersion:   "v1",
 			ResourceName: "ready-config",
 			Namespace:    "debug-ns",
+			UID:          "ready-config-uid",
 			Created:      true,
 			AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
 				{
@@ -981,6 +982,7 @@ func TestDebugSessionController_UpdateAuxiliaryResourceReadiness(t *testing.T) {
 					APIVersion:   "v1",
 					ResourceName: "ready-secret",
 					Namespace:    "debug-ns",
+					UID:          "ready-secret-uid",
 				},
 			},
 		},
@@ -3830,8 +3832,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 		constraints := &breakglassv1alpha1.SchedulingConstraints{
 			DeniedNodes: []string{"control-plane-*"},
 		}
-		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
-		assert.Nil(t, spec.Affinity)
+		require.ErrorContains(t, ctrl.applySchedulingConstraints(spec, constraints), "deniedNodes pattern")
 	})
 
 	t.Run("rejects invalid denied node label key before rendering", func(t *testing.T) {
@@ -5141,17 +5142,16 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		require.NoError(t, err)
+		require.Error(t, err)
 
 		var updated breakglassv1alpha1.DebugSession
 		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
 		require.NoError(t, err)
-		assert.Empty(t, updated.Status.DeployedResources)
-		assert.Empty(t, updated.Status.AllowedPods)
-		assert.Nil(t, updated.Status.KubectlDebugStatus)
-		assert.Empty(t, updated.Status.AuxiliaryResourceStatuses)
-		assert.Empty(t, updated.Status.PodTemplateResourceStatuses)
-		assert.Equal(t, session.Generation, updated.Status.ObservedGeneration)
+		assert.Len(t, updated.Status.DeployedResources, 1)
+		assert.Len(t, updated.Status.AllowedPods, 1)
+		assert.Len(t, updated.Status.AuxiliaryResourceStatuses, 1)
+		assert.Len(t, updated.Status.PodTemplateResourceStatuses, 1)
+		assert.Zero(t, updated.Status.ObservedGeneration)
 	})
 }
 

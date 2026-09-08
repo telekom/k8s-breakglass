@@ -18,6 +18,7 @@ package debug
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -31,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -45,6 +47,22 @@ func fakeClientWithUID() ctrlclient.Client {
 					obj.SetUID("test-created-uid")
 				}
 				return client.Create(ctx, obj, opts...)
+			},
+			Apply: func(_ context.Context, _ ctrlclient.WithWatch, cfg runtime.ApplyConfiguration, _ ...ctrlclient.ApplyOption) error {
+				body, err := json.Marshal(cfg)
+				if err != nil {
+					return err
+				}
+				var object map[string]interface{}
+				if err := json.Unmarshal(body, &object); err != nil {
+					return err
+				}
+				object["metadata"].(map[string]interface{})["uid"] = "test-created-uid"
+				body, err = json.Marshal(object)
+				if err != nil {
+					return err
+				}
+				return json.Unmarshal(body, cfg)
 			},
 		}).
 		Build()

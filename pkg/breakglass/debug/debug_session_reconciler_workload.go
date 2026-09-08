@@ -41,6 +41,18 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		if err := json.Unmarshal(ds.Status.ResolvedBindingSpec.Raw, &binding.Spec); err != nil {
 			return fmt.Errorf("decode approved binding snapshot: %w", err)
 		}
+	} else if ds.Spec.BindingRef != nil {
+		var err error
+		binding, err = c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace)
+		if err != nil {
+			return fmt.Errorf("resolve workload binding: %w", err)
+		}
+	} else {
+		var err error
+		binding, err = c.findBindingForSession(ctx, template, ds.Spec.Cluster)
+		if err != nil {
+			return fmt.Errorf("resolve workload binding: %w", err)
+		}
 	}
 
 	// Cache resolved binding info in session status for observability
@@ -667,10 +679,11 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		}
 	}
 
-	// Create without adopting an object belonging to another session.
+	// Apply only after checking ownership; a same-name resource from another
+	// session must never be adopted.
 	obj.SetManagedFields(nil)
-	if err := createOrRecoverTargetObject(ctx, targetClient, obj, ds); err != nil {
-		return fmt.Errorf("create pod template resource failed: %w", err)
+	if err := applyOwnedTrackedResource(ctx, targetClient, obj, ds); err != nil {
+		return fmt.Errorf("apply pod template resource failed: %w", err)
 	}
 	// Record the target UID as the durable outcome.
 	statusRef := &ds.Status.PodTemplateResourceStatuses[len(ds.Status.PodTemplateResourceStatuses)-1]
@@ -918,7 +931,7 @@ func (c *DebugSessionController) buildVarsFromSession(
 	// substituted into YAML documents, so they must not be able to inject
 	// sibling keys. See template_vars_sanitize.go.
 	vars, changed := sanitizeTemplateVarsReportingChanges(vars)
-	if len(changed) > 0 {
+	if len(changed) > 0 && c.log != nil {
 		c.log.Warnw("Sanitized YAML-unsafe characters in extraDeployValues before pod template rendering",
 			"session", ds.Name, "variables", changed)
 	}

@@ -1160,9 +1160,8 @@ func TestCleanupAuxiliaryResources_WithAdditionalResources(t *testing.T) {
 	cm1 := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "config-1",
-			UID:       "fixture-config-1",
 			Namespace: "debug-ns",
-			UID:       types.UID("config-1-uid"),
+			UID:       types.UID("fixture-config-1"),
 			Annotations: map[string]string{
 				"breakglass.t-caas.telekom.com/source-session":     "breakglass-system/test-session",
 				"breakglass.t-caas.telekom.com/source-session-uid": "session-uid",
@@ -1172,9 +1171,8 @@ func TestCleanupAuxiliaryResources_WithAdditionalResources(t *testing.T) {
 	cm2 := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "config-2",
-			UID:       "fixture-config-2",
 			Namespace: "debug-ns",
-			UID:       types.UID("config-2-uid"),
+			UID:       types.UID("fixture-config-2"),
 			Annotations: map[string]string{
 				"breakglass.t-caas.telekom.com/source-session":     "breakglass-system/test-session",
 				"breakglass.t-caas.telekom.com/source-session-uid": "session-uid",
@@ -1193,7 +1191,6 @@ func TestCleanupAuxiliaryResources_WithAdditionalResources(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
-			UID:       "fixture-test-session",
 			Namespace: "breakglass-system",
 			UID:       types.UID("session-uid"),
 		},
@@ -2495,9 +2492,8 @@ func TestCleanupAuxiliaryResources_PartialFailure(t *testing.T) {
 	cm1 := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "config-1",
-			UID:       "fixture-config-1",
 			Namespace: "debug-ns",
-			UID:       types.UID("config-1-uid"),
+			UID:       types.UID("fixture-config-1"),
 			Annotations: map[string]string{
 				"breakglass.t-caas.telekom.com/source-session":     "breakglass-system/test-session",
 				"breakglass.t-caas.telekom.com/source-session-uid": "session-uid",
@@ -2516,7 +2512,6 @@ func TestCleanupAuxiliaryResources_PartialFailure(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-session",
-			UID:       "fixture-test-session",
 			Namespace: "breakglass-system",
 			UID:       types.UID("session-uid"),
 		},

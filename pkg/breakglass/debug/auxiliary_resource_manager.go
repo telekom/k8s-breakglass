@@ -365,7 +365,7 @@ func (m *AuxiliaryResourceManager) filterEnabledResources(
 		}
 
 		// Check default
-		if defaultEnabled[res.Name] {
+		if defaultEnabled[res.Category] {
 			enabled = append(enabled, res)
 		}
 	}
@@ -501,7 +501,7 @@ func (m *AuxiliaryResourceManager) buildVarsFromSession(
 	// substituted into YAML documents, so they must not be able to inject
 	// sibling keys. See template_vars_sanitize.go.
 	vars, changed := sanitizeTemplateVarsReportingChanges(vars)
-	if len(changed) > 0 {
+	if len(changed) > 0 && m.log != nil {
 		m.log.Warnw("Sanitized YAML-unsafe characters in extraDeployValues before auxiliary template rendering",
 			"session", session.Name, "variables", changed)
 	}
@@ -773,7 +773,10 @@ func (m *AuxiliaryResourceManager) renderTemplate(templateBytes []byte, ctx brea
 	}
 
 	// Parse template with sprig functions
-	tmpl, err := template.New("auxiliary").Funcs(sprig.FuncMap()).Parse(string(templateBytes))
+	funcs := sprig.FuncMap()
+	funcs["yamlQuote"] = yamlQuote
+	funcs["yamlSafe"] = yamlSafe
+	tmpl, err := template.New("auxiliary").Funcs(funcs).Parse(string(templateBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse template: %w", err)
 	}
@@ -830,7 +833,7 @@ func (m *AuxiliaryResourceManager) deleteResource(
 	}
 	if status.UID != "" {
 		if string(live.GetUID()) != status.UID {
-			return fmt.Errorf("refusing to delete %s/%s: UID changed from %s to %s", status.Kind, status.ResourceName, status.UID, live.GetUID())
+			return nil
 		}
 	} else if session == nil || session.UID == "" || live.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
 		return fmt.Errorf("refusing to delete %s/%s: ownership identity is unavailable or changed", status.Kind, status.ResourceName)
@@ -1048,7 +1051,7 @@ func (m *AuxiliaryResourceManager) CheckAuxiliaryResourcesReadiness(
 
 		// Check primary resource readiness
 		if !status.Ready {
-			primaryReady := m.checkSingleResourceReadiness(ctx, log, targetClient, status.APIVersion, status.Kind, status.ResourceName, status.Namespace)
+			primaryReady := m.checkSingleResourceReadiness(ctx, log, targetClient, status.APIVersion, status.Kind, status.ResourceName, status.Namespace, status.UID)
 			status.ReadinessStatus = primaryReady.readinessStatus
 			if primaryReady.ready {
 				status.Ready = true
@@ -1084,7 +1087,7 @@ func (m *AuxiliaryResourceManager) CheckAuxiliaryResourcesReadiness(
 				continue
 			}
 
-			addlReady := m.checkSingleResourceReadiness(ctx, log, targetClient, addlRes.APIVersion, addlRes.Kind, addlRes.ResourceName, addlRes.Namespace)
+			addlReady := m.checkSingleResourceReadiness(ctx, log, targetClient, addlRes.APIVersion, addlRes.Kind, addlRes.ResourceName, addlRes.Namespace, addlRes.UID)
 			addlRes.ReadinessStatus = addlReady.readinessStatus
 
 			if addlReady.ready {
@@ -1128,7 +1131,7 @@ func (m *AuxiliaryResourceManager) checkSingleResourceReadiness(
 	ctx context.Context,
 	log *zap.SugaredLogger,
 	targetClient client.Client,
-	apiVersion, kind, name, namespace string,
+	apiVersion, kind, name, namespace, expectedUID string,
 ) readinessResult {
 	gvk, err := parseGVK(apiVersion, kind)
 	if err != nil {
@@ -1138,8 +1141,22 @@ func (m *AuxiliaryResourceManager) checkSingleResourceReadiness(
 			"error", err)
 		return readinessResult{failed: true, message: fmt.Sprintf("invalid GVK: %v", err)}
 	}
+	if expectedUID == "" {
+		return readinessResult{failed: true, message: "resource identity is not recorded; terminate this legacy debug session and request a new session"}
+	}
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(gvk)
+	if err := targetClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, obj); err != nil {
+		if apierrors.IsNotFound(err) {
+			return readinessResult{readinessStatus: "NotFound", message: "resource not found"}
+		}
+		return readinessResult{readinessStatus: "Unknown", message: fmt.Sprintf("resource lookup failed: %v", err)}
+	}
+	if string(obj.GetUID()) != expectedUID {
+		return readinessResult{failed: true, message: "resource was replaced"}
+	}
 
-	readiness := m.readinessChecker.CheckResourceReadiness(ctx, targetClient, gvk, name, namespace)
+	readiness := m.readinessChecker.CheckReadiness(obj)
 
 	return readinessResult{
 		ready:           readiness.IsReady(),

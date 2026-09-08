@@ -25,6 +25,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
+func defenderExpiry() *metav1.Time {
+	expires := metav1.NewTime(time.Now().Add(time.Hour))
+	return &expires
+}
+
 func TestDefenderNamespaceUsesTemplateTarget(t *testing.T) {
 	c := &DebugSessionAPIController{log: zap.NewNop().Sugar()}
 	template := &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{TargetNamespace: "admin-debug"}}
@@ -103,7 +108,7 @@ func TestDefenderMutationRechecksAfterSpokeRead(t *testing.T) {
 	for _, revoke := range []string{"terminated", "participant-left", "provider-replaced"} {
 		t.Run(revoke, func(t *testing.T) {
 			ctx := context.Background()
-			ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "operator", IdentityProviderName: "a", IdentityProviderIssuer: "https://a.example", Role: breakglassv1alpha1.ParticipantRoleParticipant}}}}
+			ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: types.UID("session-uid")}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: defenderExpiry(), Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "operator", IdentityProviderName: "a", IdentityProviderIssuer: "https://a.example", Role: breakglassv1alpha1.ParticipantRoleParticipant}}}}
 			hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
 			mutations := 0
 			spoke := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default"}}).WithInterceptorFuncs(interceptor.Funcs{
@@ -141,7 +146,7 @@ func TestDefenderMutationRechecksAfterSpokeRead(t *testing.T) {
 func TestDefenderLateInjectionRetainsEvidenceAfterTerminationAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke", RequestedBy: "owner"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive}}
+	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: types.UID("session-uid")}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke", RequestedBy: "owner"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: defenderExpiry(), ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{Enabled: true}}}}}
 	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
 	mutations := 0
 	spoke := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default", UID: types.UID("injected-pod-uid")}}).WithInterceptorFuncs(interceptor.Funcs{
@@ -176,9 +181,9 @@ func TestDefenderNodePolicyRejectsAffinityAndAbsentEmptyLabel(t *testing.T) {
 		{NodeSelector: map[string]string{"required": ""}},
 		{RequiredNodeAffinity: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "pool", Operator: corev1.NodeSelectorOpIn, Values: []string{"approved"}}}}}}},
 	} {
-		ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke", RequestedBy: "owner", ResolvedSchedulingConstraints: sc}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{NodeDebug: &breakglassv1alpha1.NodeDebugConfig{Enabled: true}}}}}
+		ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: types.UID("session-uid")}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke", RequestedBy: "owner", ResolvedSchedulingConstraints: sc}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: defenderExpiry(), ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{NodeDebug: &breakglassv1alpha1.NodeDebugConfig{Enabled: true}}}}}
 		hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).Build()
-		spoke := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", Labels: map[string]string{"pool": "other"}}}).Build()
+		spoke := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug", UID: types.UID("namespace-uid")}}, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", UID: types.UID("node-uid"), Labels: map[string]string{"pool": "other"}}}).Build()
 		h := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"spoke": spoke}}).withIdentity(debugSessionReadIdentity{legacyAllowed: true})
 		_, err := h.CreateNodeDebugPod(context.Background(), ds, "node", "owner")
 		require.ErrorContains(t, err, "does not match")
@@ -191,7 +196,7 @@ func TestDefenderNodePolicyRejectsAffinityAndAbsentEmptyLabel(t *testing.T) {
 func TestDefenderOrphanCompensationUsesCreatedUID(t *testing.T) {
 	for _, replacedBeforeRead := range []bool{true, false} {
 		t.Run(fmt.Sprintf("replaced-before-read=%t", replacedBeforeRead), func(t *testing.T) {
-			created := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "debug", Namespace: "default", UID: types.UID("created")}}
+			created := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "debug", Namespace: "default", UID: types.UID("created"), Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}}}
 			replacement := created.DeepCopy()
 			replacement.UID = types.UID("replacement")
 			initial := created
@@ -232,7 +237,7 @@ func TestDefenderOrphanCompensationUsesCreatedUID(t *testing.T) {
 
 func TestDefenderLeaveTargetsActiveRejoinAndPreservesHistory(t *testing.T) {
 	oldLeft := metav1.NewTime(time.Now().Add(-time.Hour).Truncate(time.Second))
-	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub"}, Spec: breakglassv1alpha1.DebugSessionSpec{RequestedBy: "owner"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, Participants: []breakglassv1alpha1.DebugSessionParticipant{
+	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: types.UID("session-uid")}, Spec: breakglassv1alpha1.DebugSessionSpec{RequestedBy: "owner"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: defenderExpiry(), Participants: []breakglassv1alpha1.DebugSessionParticipant{
 		{User: "member", Role: breakglassv1alpha1.ParticipantRoleParticipant, LeftAt: &oldLeft},
 		{User: "member", Role: breakglassv1alpha1.ParticipantRoleParticipant},
 	}}}
@@ -257,10 +262,19 @@ func TestDefenderLeaveTargetsActiveRejoinAndPreservesHistory(t *testing.T) {
 
 func TestDefenderNodeCreationCompensatesTerminationAfterCreate(t *testing.T) {
 	ctx := context.Background()
-	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session-12345678", Namespace: "hub"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke", RequestedBy: "owner", TargetNamespace: "debug"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{TargetNamespace: "debug", KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{NodeDebug: &breakglassv1alpha1.NodeDebugConfig{Enabled: true}}}}}
+	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session-12345678", Namespace: "hub", UID: types.UID("session-uid")}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke", RequestedBy: "owner", TargetNamespace: "debug"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: defenderExpiry(), ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{TargetNamespace: "debug", KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{NodeDebug: &breakglassv1alpha1.NodeDebugConfig{Enabled: true}}}}}
 	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
 	created := false
-	spoke := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug"}}).WithInterceptorFuncs(interceptor.Funcs{
+	spoke := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug", UID: types.UID("namespace-uid")}}, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", UID: types.UID("node-uid")}}).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+			if err := cl.Get(ctx, key, obj, opts...); err != nil {
+				return err
+			}
+			if ns, ok := obj.(*corev1.Namespace); ok && ns.UID == "" {
+				ns.UID = types.UID("namespace-uid")
+			}
+			return nil
+		},
 		Create: func(ctx context.Context, cl ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.CreateOption) error {
 			obj.SetUID(types.UID("created"))
 			if err := cl.Create(ctx, obj, opts...); err != nil {
@@ -277,7 +291,7 @@ func TestDefenderNodeCreationCompensatesTerminationAfterCreate(t *testing.T) {
 	}).Build()
 	h := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"spoke": spoke}}).withIdentity(debugSessionReadIdentity{legacyAllowed: true}).WithAPIReader(hub)
 	pod, err := h.CreateNodeDebugPod(ctx, ds, "node", "owner")
-	require.True(t, created)
+	require.True(t, created, "create did not reach the target API: %v", err)
 	require.Error(t, err)
 	require.Nil(t, pod)
 	pods := &corev1.PodList{}
@@ -287,7 +301,7 @@ func TestDefenderNodeCreationCompensatesTerminationAfterCreate(t *testing.T) {
 
 func TestMergedStatusRetryRejectsReboundParticipant(t *testing.T) {
 	ctx := context.Background()
-	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "operator", IdentityProviderName: "a", IdentityProviderIssuer: "https://a.example", Role: breakglassv1alpha1.ParticipantRoleParticipant}}}}
+	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: types.UID("session-uid")}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: defenderExpiry(), Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "operator", IdentityProviderName: "a", IdentityProviderIssuer: "https://a.example", Role: breakglassv1alpha1.ParticipantRoleParticipant}}}}
 	base := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
 	attempts := 0
 	cli := interceptor.NewClient(base, interceptor.Funcs{SubResourcePatch: func(ctx context.Context, c ctrlclient.Client, _ string, _ ctrlclient.Object, _ ctrlclient.Patch, _ ...ctrlclient.SubResourcePatchOption) error {

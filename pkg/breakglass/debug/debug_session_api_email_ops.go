@@ -400,10 +400,12 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		return
 	}
 
-	username, ok := requireDebugSessionUsername(ctx)
+	identity, ok := debugSessionRequestIdentity(ctx)
 	if !ok {
+		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
+	username := identity.username
 
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
@@ -431,7 +433,7 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	}
 
 	// Verify user can perform mutating debug operations
-	if !c.canUserOperateDebugResources(session, username) {
+	if !c.canUserOperateDebugResources(session, identity) {
 		apiresponses.RespondForbidden(ctx, "user is not allowed to modify debug resources for this session")
 		return
 	}
@@ -449,7 +451,7 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	if provider == nil {
 		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
 	}
-	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider)
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
 
 	// Validate the request
 	capabilities := extractCapabilities(req.SecurityContext)
@@ -508,10 +510,12 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 		return
 	}
 
-	username, ok := requireDebugSessionUsername(ctx)
+	identity, ok := debugSessionRequestIdentity(ctx)
 	if !ok {
+		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
+	username := identity.username
 
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
@@ -539,7 +543,7 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	}
 
 	// Verify user can perform mutating debug operations
-	if !c.canUserOperateDebugResources(session, username) {
+	if !c.canUserOperateDebugResources(session, identity) {
 		apiresponses.RespondForbidden(ctx, "user is not allowed to modify debug resources for this session")
 		return
 	}
@@ -557,7 +561,7 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	if provider == nil {
 		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
 	}
-	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider)
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
 
 	// Create the pod copy
 	pod, err := handler.CreatePodCopy(apiCtx, session, req.Namespace, req.PodName, req.DebugImage, username)
@@ -605,10 +609,12 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 		return
 	}
 
-	username, ok := requireDebugSessionUsername(ctx)
+	identity, ok := debugSessionRequestIdentity(ctx)
 	if !ok {
+		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
+	username := identity.username
 
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
@@ -636,7 +642,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	}
 
 	// Verify user can perform mutating debug operations
-	if !c.canUserOperateDebugResources(session, username) {
+	if !c.canUserOperateDebugResources(session, identity) {
 		apiresponses.RespondForbidden(ctx, "user is not allowed to modify debug resources for this session")
 		return
 	}
@@ -654,7 +660,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	if provider == nil {
 		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
 	}
-	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider)
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
 
 	// Create the node debug pod
 	pod, err := handler.CreateNodeDebugPod(apiCtx, session, req.NodeName, username)
@@ -686,6 +692,15 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 func respondKubectlDebugOperationError(ctx *gin.Context, err error, fallback string) {
 	switch kubectlDebugOperationHTTPStatus(err) {
 	case http.StatusForbidden:
+		var operationErr *kubectlDebugOperationError
+		if errors.As(err, &operationErr) && operationErr.kind == kubectlDebugOperationErrorPolicy {
+			if apierrors.IsForbidden(err) {
+				apiresponses.RespondForbidden(ctx, "debug operation is not allowed")
+			} else {
+				apiresponses.RespondForbidden(ctx, "debug operation is not allowed: "+err.Error())
+			}
+			return
+		}
 		apiresponses.RespondForbidden(ctx, err.Error())
 	case http.StatusBadRequest:
 		apiresponses.RespondBadRequest(ctx, err.Error())
@@ -784,19 +799,19 @@ func (c *DebugSessionAPIController) isUserParticipant(session *breakglassv1alpha
 }
 
 // canUserOperateDebugResources checks if the user can run mutating kubectl-debug operations.
-func (c *DebugSessionAPIController) canUserOperateDebugResources(session *breakglassv1alpha1.DebugSession, user string) bool {
-	if session.Spec.RequestedBy == user {
+func (c *DebugSessionAPIController) canUserOperateDebugResources(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
+	if session.Spec.RequestedBy == identity.username && debugSessionIdentityMatchesProvider(identity, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.RequestedBy) {
 		return true
 	}
 
 	for _, p := range session.Status.Participants {
-		if p.User != user || p.LeftAt != nil {
+		if p.User != identity.username || p.LeftAt != nil {
 			continue
 		}
 
 		switch p.Role {
 		case breakglassv1alpha1.ParticipantRoleOwner, breakglassv1alpha1.ParticipantRoleParticipant:
-			return true
+			return debugSessionIdentityMatchesProvider(identity, p.IdentityProviderName, p.IdentityProviderIssuer, p.User)
 		default:
 			continue
 		}

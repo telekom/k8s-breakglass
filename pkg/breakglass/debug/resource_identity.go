@@ -198,7 +198,18 @@ func isDefaultServiceAccountVolume(volume corev1.Volume) bool {
 // the supplied configuration; a subsequent Get could instead observe a replacement.
 func applyTrackedResource(ctx context.Context, target client.Client, obj client.Object) error {
 	if u, ok := obj.(*unstructured.Unstructured); ok {
-		return target.Apply(ctx, client.ApplyConfigurationFromUnstructured(u), client.FieldOwner(utils.FieldOwnerController), client.ForceOwnership)
+		cfg := client.ApplyConfigurationFromUnstructured(u)
+		if err := target.Apply(ctx, cfg, client.FieldOwner(utils.FieldOwnerController), client.ForceOwnership); err != nil {
+			return err
+		}
+		response, err := json.Marshal(cfg)
+		if err != nil {
+			return fmt.Errorf("encode tracked apply response: %w", err)
+		}
+		if err := json.Unmarshal(response, u); err != nil {
+			return fmt.Errorf("decode tracked apply response: %w", err)
+		}
+		return nil
 	}
 	cfg, err := utils.ToApplyConfiguration(obj)
 	if err != nil {
@@ -215,4 +226,16 @@ func applyTrackedResource(ctx context.Context, target client.Client, obj client.
 		return fmt.Errorf("decode tracked apply response: %w", err)
 	}
 	return nil
+}
+
+func applyOwnedTrackedResource(ctx context.Context, target client.Client, obj client.Object, session *breakglassv1alpha1.DebugSession) error {
+	existing := obj.DeepCopyObject().(client.Object)
+	if err := target.Get(ctx, client.ObjectKeyFromObject(obj), existing); err == nil {
+		if session == nil || existing.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
+			return fmt.Errorf("target resource %s/%s already exists and is owned by another session", obj.GetNamespace(), obj.GetName())
+		}
+	} else if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("check tracked resource ownership: %w", err)
+	}
+	return applyTrackedResource(ctx, target, obj)
 }

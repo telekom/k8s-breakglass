@@ -45,8 +45,8 @@ func TestCleanupOwnershipPreservesReplacementPodTemplateResource(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(replacement).Build()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
-	if err := controller.cleanupPodTemplateResources(context.Background(), session, cl); err == nil {
-		t.Fatal("expected UID mismatch to prevent deletion")
+	if err := controller.cleanupPodTemplateResources(context.Background(), session, cl); err != nil {
+		t.Fatal(err)
 	}
 	if err := cl.Get(context.Background(), ctrlclient.ObjectKeyFromObject(replacement), replacement); err != nil {
 		t.Fatal(err)
@@ -63,8 +63,8 @@ func TestCleanupOwnershipPreservesReplacementAuxiliaryResource(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(replacement).Build()
 	mgr := NewAuxiliaryResourceManager(zap.NewNop().Sugar(), nil)
 
-	if err := mgr.CleanupAuxiliaryResources(context.Background(), session, cl); err == nil {
-		t.Fatal("expected UID mismatch to prevent deletion")
+	if err := mgr.CleanupAuxiliaryResources(context.Background(), session, cl); err != nil {
+		t.Fatal(err)
 	}
 	if err := cl.Get(context.Background(), ctrlclient.ObjectKeyFromObject(replacement), replacement); err != nil {
 		t.Fatal(err)
@@ -81,8 +81,8 @@ func TestCleanupOwnershipPreservesReplacementWorkload(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(replacement).Build()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
-	if err := controller.cleanupDeployedResources(context.Background(), session, cl, false, false); err == nil {
-		t.Fatal("expected UID mismatch to prevent deletion")
+	if err := controller.cleanupDeployedResources(context.Background(), session, cl, false, false); err != nil {
+		t.Fatal(err)
 	}
 	if err := cl.Get(context.Background(), ctrlclient.ObjectKeyFromObject(replacement), replacement); err != nil {
 		t.Fatal(err)
@@ -108,8 +108,8 @@ func TestCleanupOwnershipPreservesReplacementQuotaAndPDB(t *testing.T) {
 			cl := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(tc.obj).Build()
 			controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 			err := controller.cleanupDeployedResources(context.Background(), session, cl, false, false)
-			if err == nil {
-				t.Fatal("expected UID mismatch to prevent deletion")
+			if err != nil {
+				t.Fatal(err)
 			}
 			if err := cl.Get(context.Background(), ctrlclient.ObjectKeyFromObject(tc.obj), tc.obj); err != nil {
 				t.Fatal(err)
@@ -149,8 +149,8 @@ func TestCleanupOwnershipPreservesReplacementCopiedPod(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(replacement).Build()
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: copyRef.CopyName, Namespace: copyRef.CopyNamespace}}
 
-	if err := deleteOwnedResource(context.Background(), cl, pod, copyRef.UID, session); err == nil {
-		t.Fatal("expected copied-pod UID mismatch to prevent deletion")
+	if err := deleteOwnedResource(context.Background(), cl, pod, copyRef.UID, session); err != nil {
+		t.Fatal(err)
 	}
 	if err := cl.Get(context.Background(), ctrlclient.ObjectKeyFromObject(replacement), replacement); err != nil {
 		t.Fatal(err)

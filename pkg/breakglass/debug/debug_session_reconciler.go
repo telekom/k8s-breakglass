@@ -61,23 +61,31 @@ const (
 
 // DebugSessionController manages DebugSession lifecycle
 type DebugSessionController struct {
-	log          *zap.SugaredLogger
-	client       ctrlclient.Client
-	reader       ctrlclient.Reader
-	ccProvider   *cluster.ClientProvider
-	auditService *audit.Service
-	auditManager *audit.Manager
-	mailService  breakglass.MailEnqueuer
-	auxiliaryMgr *AuxiliaryResourceManager
-	brandingName string
-	baseURL      string
-	disableEmail bool
+	quotaNamespace string
+	quotaEnabled   bool
+	log            *zap.SugaredLogger
+	client         ctrlclient.Client
+	reader         ctrlclient.Reader
+	apiReader      ctrlclient.Reader
+	ccProvider     *cluster.ClientProvider
+	auditService   *audit.Service
+	auditManager   *audit.Manager
+	mailService    breakglass.MailEnqueuer
+	auxiliaryMgr   *AuxiliaryResourceManager
+	brandingName   string
+	baseURL        string
+	disableEmail   bool
 	// targetClientFactory and beforeDebugTargetWrite are nil in production. They
 	// are narrow seams for deployment fence tests: the former keeps tests from
 	// needing a live spoke API, while the latter injects a hub-side change after
 	// preparation and before the next authorization fence.
 	targetClientFactory    func(*rest.Config) (ctrlclient.Client, error)
 	beforeDebugTargetWrite func(string)
+}
+
+func (c *DebugSessionController) WithAPIReader(reader ctrlclient.Reader) *DebugSessionController {
+	c.apiReader = reader
+	return c
 }
 
 // NewDebugSessionController creates a new DebugSessionController
@@ -244,7 +252,10 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		}
 	}
 	if binding == nil {
-		binding, _ = c.findBindingForSession(ctx, template, ds.Spec.Cluster)
+		binding, err = c.findBindingForSession(ctx, template, ds.Spec.Cluster)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("resolve workload binding: %w", err)
+		}
 		if binding != nil {
 			log.Infow("Auto-discovered binding for session",
 				"binding", binding.Name,
@@ -310,6 +321,8 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 				if _, err := c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace); err != nil {
 					return c.deferOnUnresolvedBinding(ctx, ds, err)
 				}
+			} else if _, err := c.findBindingForSession(ctx, template, ds.Spec.Cluster); err != nil {
+				return ctrl.Result{}, fmt.Errorf("resolve workload binding: %w", err)
 			}
 			return ctrl.Result{}, fmt.Errorf("approved activation snapshots are missing")
 		}
@@ -1043,12 +1056,13 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 	// Get cluster config for label-based matching
 	var clusterConfig *breakglassv1alpha1.ClusterConfig
 	clusterConfigList := &breakglassv1alpha1.ClusterConfigList{}
-	if err := c.approvalReader().List(ctx, clusterConfigList); err == nil {
-		for i := range clusterConfigList.Items {
-			if clusterConfigList.Items[i].Name == clusterName {
-				clusterConfig = &clusterConfigList.Items[i]
-				break
-			}
+	if err := c.approvalReader().List(ctx, clusterConfigList); err != nil {
+		return nil, fmt.Errorf("failed to list cluster configs: %w", err)
+	}
+	for i := range clusterConfigList.Items {
+		if clusterConfigList.Items[i].Name == clusterName {
+			clusterConfig = &clusterConfigList.Items[i]
+			break
 		}
 	}
 
@@ -1061,6 +1075,21 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 		// Check if binding references this template
 		if !c.bindingMatchesTemplate(binding, template) {
 			continue
+		}
+		if binding.Spec.ClusterSelector != nil && clusterConfig == nil {
+			explicitMatch := false
+			for _, configuredCluster := range binding.Spec.Clusters {
+				if configuredCluster == clusterName {
+					explicitMatch = true
+					break
+				}
+			}
+			if !explicitMatch {
+				if c.quotaEnabled {
+					return nil, fmt.Errorf("cluster config required for selector matching")
+				}
+				continue
+			}
 		}
 
 		// Check if binding matches this cluster
@@ -1076,6 +1105,9 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 }
 
 func (c *DebugSessionController) approvalReader() ctrlclient.Reader {
+	if c.apiReader != nil {
+		return c.apiReader
+	}
 	if c.reader != nil {
 		return c.reader
 	}

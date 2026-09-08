@@ -178,6 +178,58 @@ func (c *DebugSessionController) updateAuxiliaryResourceReadiness(
 	return err
 }
 
+func (c *DebugSessionController) podBelongsToTrackedWorkload(ctx context.Context, targetClient ctrlclient.Client, ds *breakglassv1alpha1.DebugSession, pod *corev1.Pod) bool {
+	if ds == nil || pod == nil {
+		return false
+	}
+	for _, ref := range ds.Status.DeployedResources {
+		if ref.Source != "debug-pod" || ref.Namespace != pod.Namespace || ref.UID == "" {
+			continue
+		}
+		if ref.Kind == "Pod" && ref.Name == pod.Name && ref.UID == string(pod.UID) {
+			return true
+		}
+		if ref.Kind == "DaemonSet" {
+			workload := &appsv1.DaemonSet{}
+			if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, workload); err != nil || string(workload.UID) != ref.UID {
+				continue
+			}
+			owner := metav1.GetControllerOf(pod)
+			if owner != nil && owner.Kind == "DaemonSet" && owner.Name == workload.Name && owner.UID == workload.UID && podMatchesAdmittedWorkloadTemplate(ctx, targetClient, pod, &workload.Spec.Template, true) {
+				return true
+			}
+		}
+		if ref.Kind == "Deployment" {
+			workload := &appsv1.Deployment{}
+			if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, workload); err != nil || string(workload.UID) != ref.UID {
+				continue
+			}
+			owner := metav1.GetControllerOf(pod)
+			if owner == nil || owner.Kind != "ReplicaSet" {
+				continue
+			}
+			replicaSet := &appsv1.ReplicaSet{}
+			if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: owner.Name}, replicaSet); err != nil {
+				continue
+			}
+			replicaOwner := metav1.GetControllerOf(replicaSet)
+			if replicaOwner != nil && replicaOwner.Kind == "Deployment" && replicaOwner.Name == workload.Name && replicaOwner.UID == workload.UID && owner.UID == replicaSet.UID && workloadSchedulingIdentityEqual(&workload.Spec.Template, &replicaSet.Spec.Template) && podMatchesAdmittedWorkloadTemplate(ctx, targetClient, pod, &workload.Spec.Template, false) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func workloadSchedulingIdentityEqual(deploymentTemplate, replicaSetTemplate *corev1.PodTemplateSpec) bool {
+	if deploymentTemplate == nil || replicaSetTemplate == nil {
+		return false
+	}
+	return deploymentTemplate.Spec.PriorityClassName == replicaSetTemplate.Spec.PriorityClassName &&
+		(deploymentTemplate.Spec.Priority == nil) == (replicaSetTemplate.Spec.Priority == nil) &&
+		(deploymentTemplate.Spec.PreemptionPolicy == nil) == (replicaSetTemplate.Spec.PreemptionPolicy == nil)
+}
+
 // monitorPodHealth checks pod status and emits audit events for failures/restarts
 func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *breakglassv1alpha1.DebugSession, pod *corev1.Pod, log *zap.SugaredLogger) {
 	// Check for pod phase failures
@@ -380,18 +432,6 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	// Get spoke cluster client for cleanup
 	restCfg, err := c.ccProvider.GetRESTConfig(ctx, ds.Spec.Cluster)
 	if err != nil {
-		// Check if the error is due to missing ClusterConfig - if so, treat as cleanup complete
-		if errors.Is(err, cluster.ErrClusterConfigNotFound) {
-			log.Warnw("ClusterConfig no longer exists, treating cleanup as complete (orphaned session)",
-				"cluster", ds.Spec.Cluster)
-			// Clear deployed resources since we can't clean them up anyway
-			ds.Status.DeployedResources = nil
-			ds.Status.AllowedPods = nil
-			ds.Status.KubectlDebugStatus = nil
-			ds.Status.AuxiliaryResourceStatuses = nil
-			ds.Status.PodTemplateResourceStatuses = nil
-			return c.patchDebugSessionCleanupStatus(ctx, ds)
-		}
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to get REST config: %w", err))
 		return errors.Join(cleanupErrors...)
 	}
@@ -589,7 +629,7 @@ func deleteOwnedResource(ctx context.Context, targetClient ctrlclient.Client, ob
 	}
 	if expectedUID != "" {
 		if string(live.GetUID()) != expectedUID {
-			return fmt.Errorf("refusing to delete %s %s/%s: UID changed from %s to %s", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetNamespace(), obj.GetName(), expectedUID, live.GetUID())
+			return nil
 		}
 	} else if session == nil || session.UID == "" || live.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
 		return fmt.Errorf("refusing to delete %s %s/%s: ownership identity is unavailable or changed", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetNamespace(), obj.GetName())

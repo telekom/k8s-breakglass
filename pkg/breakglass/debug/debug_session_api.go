@@ -148,26 +148,26 @@ func (c *DebugSessionAPIController) Handlers() []gin.HandlerFunc {
 func (c *DebugSessionAPIController) Register(rg *gin.RouterGroup) error {
 	// Session endpoints
 	rg.GET("", breakglass.InstrumentedHandler("handleListDebugSessions", c.handleListDebugSessions))
-	rg.GET(":name", breakglass.InstrumentedHandler("handleGetDebugSession", c.handleGetDebugSession))
+	rg.GET("/:name", breakglass.InstrumentedHandler("handleGetDebugSession", c.handleGetDebugSession))
 	rg.POST("", breakglass.InstrumentedHandler("handleCreateDebugSession", c.handleCreateDebugSession))
-	rg.POST(":name/join", breakglass.InstrumentedHandler("handleJoinDebugSession", c.handleJoinDebugSession))
-	rg.POST(":name/leave", breakglass.InstrumentedHandler("handleLeaveDebugSession", c.handleLeaveDebugSession))
-	rg.POST(":name/renew", breakglass.InstrumentedHandler("handleRenewDebugSession", c.handleRenewDebugSession))
-	rg.POST(":name/terminate", breakglass.InstrumentedHandler("handleTerminateDebugSession", c.handleTerminateDebugSession))
-	rg.POST(":name/approve", breakglass.InstrumentedHandler("handleApproveDebugSession", c.handleApproveDebugSession))
-	rg.POST(":name/reject", breakglass.InstrumentedHandler("handleRejectDebugSession", c.handleRejectDebugSession))
+	rg.POST("/:name/join", breakglass.InstrumentedHandler("handleJoinDebugSession", c.handleJoinDebugSession))
+	rg.POST("/:name/leave", breakglass.InstrumentedHandler("handleLeaveDebugSession", c.handleLeaveDebugSession))
+	rg.POST("/:name/renew", breakglass.InstrumentedHandler("handleRenewDebugSession", c.handleRenewDebugSession))
+	rg.POST("/:name/terminate", breakglass.InstrumentedHandler("handleTerminateDebugSession", c.handleTerminateDebugSession))
+	rg.POST("/:name/approve", breakglass.InstrumentedHandler("handleApproveDebugSession", c.handleApproveDebugSession))
+	rg.POST("/:name/reject", breakglass.InstrumentedHandler("handleRejectDebugSession", c.handleRejectDebugSession))
 
 	// Kubectl-debug mode endpoints
-	rg.POST(":name/injectEphemeralContainer", breakglass.InstrumentedHandler("handleInjectEphemeralContainer", c.handleInjectEphemeralContainer))
-	rg.POST(":name/createPodCopy", breakglass.InstrumentedHandler("handleCreatePodCopy", c.handleCreatePodCopy))
-	rg.POST(":name/createNodeDebugPod", breakglass.InstrumentedHandler("handleCreateNodeDebugPod", c.handleCreateNodeDebugPod))
+	rg.POST("/:name/injectEphemeralContainer", breakglass.InstrumentedHandler("handleInjectEphemeralContainer", c.handleInjectEphemeralContainer))
+	rg.POST("/:name/createPodCopy", breakglass.InstrumentedHandler("handleCreatePodCopy", c.handleCreatePodCopy))
+	rg.POST("/:name/createNodeDebugPod", breakglass.InstrumentedHandler("handleCreateNodeDebugPod", c.handleCreateNodeDebugPod))
 
 	// Template endpoints
-	rg.GET("templates", breakglass.InstrumentedHandler("handleListTemplates", c.handleListTemplates))
-	rg.GET("templates/:name", breakglass.InstrumentedHandler("handleGetTemplate", c.handleGetTemplate))
-	rg.GET("templates/:name/clusters", breakglass.InstrumentedHandler("handleGetTemplateClusters", c.handleGetTemplateClusters))
-	rg.GET("podTemplates", breakglass.InstrumentedHandler("handleListPodTemplates", c.handleListPodTemplates))
-	rg.GET("podTemplates/:name", breakglass.InstrumentedHandler("handleGetPodTemplate", c.handleGetPodTemplate))
+	rg.GET("/templates", breakglass.InstrumentedHandler("handleListTemplates", c.handleListTemplates))
+	rg.GET("/templates/:name", breakglass.InstrumentedHandler("handleGetTemplate", c.handleGetTemplate))
+	rg.GET("/templates/:name/clusters", breakglass.InstrumentedHandler("handleGetTemplateClusters", c.handleGetTemplateClusters))
+	rg.GET("/podTemplates", breakglass.InstrumentedHandler("handleListPodTemplates", c.handleListPodTemplates))
+	rg.GET("/podTemplates/:name", breakglass.InstrumentedHandler("handleGetPodTemplate", c.handleGetPodTemplate))
 	return nil
 }
 

@@ -418,9 +418,9 @@ func TestDebugKubectlOperationsRejectNonStringUsername(t *testing.T) {
 
 			router.ServeHTTP(rr, req)
 
-			assert.Equal(t, http.StatusInternalServerError, rr.Code)
-			assertErrorResponse(t, rr, "INTERNAL_ERROR")
-			assert.Contains(t, rr.Body.String(), "invalid user context type")
+			assert.Equal(t, http.StatusUnauthorized, rr.Code)
+			assertErrorResponse(t, rr, "UNAUTHORIZED")
+			assert.Contains(t, rr.Body.String(), "user not authenticated")
 		})
 	}
 }

@@ -41,9 +41,66 @@ import (
 
 // KubectlDebugHandler handles kubectl-debug mode operations
 type KubectlDebugHandler struct {
+	identity   debugSessionReadIdentity
 	client     ctrlclient.Client
 	reader     ctrlclient.Reader
+	apiReader  ctrlclient.Reader
 	ccProvider ClientProviderInterface
+}
+
+// withIdentity binds live mutation checks to the authenticated principal.
+func (h *KubectlDebugHandler) withIdentity(identity debugSessionReadIdentity) *KubectlDebugHandler {
+	h.identity = identity
+	return h
+}
+
+func (h *KubectlDebugHandler) operationIdentity(user string) debugSessionReadIdentity {
+	identity := h.identity
+	if identity.username == "" {
+		identity.username = user
+	}
+	return identity
+}
+
+// WithAPIReader supplies uncached hub reads for mutation fences and status CAS.
+func (h *KubectlDebugHandler) WithAPIReader(reader ctrlclient.Reader) *KubectlDebugHandler {
+	h.apiReader = reader
+	return h
+}
+
+func (h *KubectlDebugHandler) readerClient() ctrlclient.Reader {
+	if h.apiReader != nil {
+		return h.apiReader
+	}
+	if h.reader != nil {
+		return h.reader
+	}
+	return h.client
+}
+
+func (h *KubectlDebugHandler) requireActiveSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession, user string) error {
+	current := &breakglassv1alpha1.DebugSession{}
+	if err := h.readerClient().Get(ctx, ctrlclient.ObjectKey{Name: ds.Name, Namespace: ds.Namespace}, current); err != nil {
+		return fmt.Errorf("refresh debug session: %w", err)
+	}
+	if current.Status.State != breakglassv1alpha1.DebugSessionStateActive || isDebugSessionExpired(current, time.Now()) {
+		return kubectlDebugPolicyErrorf("debug session is no longer active")
+	}
+	identity := h.operationIdentity(user)
+	if identity.username == "" {
+		return kubectlDebugPolicyErrorf("user is not an active debug-session participant")
+	}
+	if current.Spec.RequestedBy == identity.username && (identity.provider == "" || current.Spec.IdentityProviderName == identity.provider) && (identity.issuer == "" || strings.TrimRight(current.Spec.IdentityProviderIssuer, "/") == strings.TrimRight(identity.issuer, "/")) {
+		return nil
+	}
+	for _, participant := range current.Status.Participants {
+		if participant.User == identity.username && participant.LeftAt == nil && (participant.Role == breakglassv1alpha1.ParticipantRoleOwner || participant.Role == breakglassv1alpha1.ParticipantRoleParticipant) &&
+			(identity.provider == "" || participant.IdentityProviderName == identity.provider) &&
+			(identity.issuer == "" || strings.TrimRight(participant.IdentityProviderIssuer, "/") == strings.TrimRight(identity.issuer, "/")) {
+			return nil
+		}
+	}
+	return kubectlDebugPolicyErrorf("user is not an active debug-session participant")
 }
 
 // deleteOrphanedPod removes a pod that was created on the spoke cluster but could
@@ -184,12 +241,40 @@ func (h *KubectlDebugHandler) patchDebugSessionStatusWithRetry(
 	ds *breakglassv1alpha1.DebugSession,
 	mutate func(*breakglassv1alpha1.DebugSessionStatus),
 ) error {
+	return h.patchDebugSessionStatusWithRetryGuarded(ctx, ds, mutate, nil)
+}
+
+func (h *KubectlDebugHandler) patchDebugSessionStatusWithRetryState(
+	ctx context.Context,
+	ds *breakglassv1alpha1.DebugSession,
+	mutate func(*breakglassv1alpha1.DebugSessionStatus),
+	requireActive bool,
+	user string,
+) error {
+	var guard func() error
+	if requireActive {
+		guard = func() error { return h.requireActiveSession(ctx, ds, user) }
+	}
+	return h.patchDebugSessionStatusWithRetryGuarded(ctx, ds, mutate, guard)
+}
+
+func (h *KubectlDebugHandler) patchDebugSessionStatusWithRetryGuarded(
+	ctx context.Context,
+	ds *breakglassv1alpha1.DebugSession,
+	mutate func(*breakglassv1alpha1.DebugSessionStatus),
+	guard func() error,
+) error {
 	var patchedStatus breakglassv1alpha1.DebugSessionStatus
 	var patchedResourceVersion string
 
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if guard != nil {
+			if err := guard(); err != nil {
+				return err
+			}
+		}
 		current := &breakglassv1alpha1.DebugSession{}
-		if err := h.client.Get(ctx, ctrlclient.ObjectKey{Name: ds.Name, Namespace: ds.Namespace}, current); err != nil {
+		if err := h.readerClient().Get(ctx, ctrlclient.ObjectKey{Name: ds.Name, Namespace: ds.Namespace}, current); err != nil {
 			return err
 		}
 
@@ -256,10 +341,7 @@ func (h *KubectlDebugHandler) liveSessionForMutation(
 	if candidate == nil || candidate.Namespace == "" || candidate.Name == "" || candidate.UID == "" {
 		return nil, kubectlDebugPolicyErrorf("debug session identity is incomplete")
 	}
-	reader := h.reader
-	if reader == nil {
-		reader = h.client
-	}
+	reader := h.readerClient()
 	if reader == nil {
 		return nil, kubectlDebugInternalErrorf("debug session live reader is not configured")
 	}
@@ -508,6 +590,7 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	injectedContainer := breakglassv1alpha1.EphemeralContainerRef{
 		PodName:       podName,
 		Namespace:     namespace,
+		PodUID:        string(pod.UID),
 		ContainerName: containerName,
 		Image:         image,
 		InjectedAt:    now,
@@ -519,13 +602,16 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 		Ready:     true,
 	}
 
-	return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+	outcomeCtx := context.WithoutCancel(ctx)
+	_, postMutationErr := h.liveSessionForMutation(outcomeCtx, ds, user)
+	if err := h.patchDebugSessionStatusWithRetry(outcomeCtx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		kubectlStatus := ensureKubectlDebugStatus(status)
 		alreadyTracked := false
 		for _, existing := range kubectlStatus.EphemeralContainersInjected {
 			if existing.Namespace == injectedContainer.Namespace &&
 				existing.PodName == injectedContainer.PodName &&
-				existing.ContainerName == injectedContainer.ContainerName {
+				existing.ContainerName == injectedContainer.ContainerName &&
+				existing.PodUID == injectedContainer.PodUID {
 				alreadyTracked = true
 				break
 			}
@@ -534,8 +620,16 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 			kubectlStatus.EphemeralContainersInjected = append(kubectlStatus.EphemeralContainersInjected, injectedContainer)
 		}
 
-		addAllowedPodIfMissing(status, allowedPod)
-	})
+		if status.State == breakglassv1alpha1.DebugSessionStateActive {
+			addAllowedPodIfMissing(status, allowedPod)
+		}
+	}); err != nil {
+		return err
+	}
+	if postMutationErr != nil {
+		return fmt.Errorf("target ephemeral-container mutation completed but outcome was recorded: %w", postMutationErr)
+	}
+	return nil
 }
 
 // CreatePodCopy creates a debug copy of a pod
@@ -602,7 +696,11 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	}
 
 	// Create copy name
-	copyName := fmt.Sprintf("debug-copy-%s-%s", originalPodName, ds.Name[:8])
+	sessionSuffix := ds.Name
+	if len(sessionSuffix) > 8 {
+		sessionSuffix = sessionSuffix[:8]
+	}
+	copyName := fmt.Sprintf("debug-copy-%s-%s", originalPodName, sessionSuffix)
 	if len(copyName) > 63 {
 		copyName = copyName[:63]
 	}
@@ -798,6 +896,9 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 			}
 		}
 	}
+	if constraints := ds.Spec.ResolvedSchedulingConstraints; constraints != nil && !nodeMatchesResolvedConstraints(node.Labels, constraints) {
+		return nil, kubectlDebugPolicyErrorf("node %s does not match required scheduling constraints", nodeName)
+	}
 
 	// Determine image
 	image := "busybox:stable"
@@ -816,7 +917,11 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	}
 
 	// Create the debug pod
-	podName := fmt.Sprintf("node-debugger-%s-%s", nodeName, ds.Name[:8])
+	sessionSuffix := ds.Name
+	if len(sessionSuffix) > 8 {
+		sessionSuffix = sessionSuffix[:8]
+	}
+	podName := fmt.Sprintf("node-debugger-%s-%s", nodeName, sessionSuffix)
 	if len(podName) > 63 {
 		podName = podName[:63]
 	}
@@ -915,6 +1020,9 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 			return nil, kubectlDebugPolicyErrorf("node %s no longer matches required selector %s=%s", nodeName, k, v)
 		}
 	}
+	if constraints := ds.Spec.ResolvedSchedulingConstraints; constraints != nil && !nodeMatchesResolvedConstraints(freshNode.Labels, constraints) {
+		return nil, kubectlDebugPolicyErrorf("node %s no longer matches required scheduling constraints", nodeName)
+	}
 	freshTargetNamespace := &corev1.Namespace{}
 	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: namespace}, freshTargetNamespace); err != nil {
 		return nil, fmt.Errorf("failed to re-read node debug namespace %s before pod creation: %w", namespace, err)
@@ -942,6 +1050,10 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	if err := targetClient.Create(ctx, debugPod); err != nil {
 		h.recoverAmbiguousCreatedPod(ctx, targetClient, debugPod, err)
 		return nil, fmt.Errorf("failed to create node debug pod: %w", err)
+	}
+	if _, err := h.liveSessionForMutation(context.WithoutCancel(ctx), ds, user); err != nil {
+		h.deleteOrphanedPod(context.WithoutCancel(ctx), targetClient, debugPod, err)
+		return nil, fmt.Errorf("debug pod was created after the session fence changed: %w", err)
 	}
 
 	// Add to allowed pods and deployed resources
@@ -971,6 +1083,63 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	}
 
 	return debugPod, nil
+}
+
+func nodeMatchesResolvedConstraints(labels map[string]string, constraints *breakglassv1alpha1.SchedulingConstraints) bool {
+	if constraints == nil {
+		return true
+	}
+	for key, value := range constraints.NodeSelector {
+		if observed, ok := labels[key]; !ok || observed != value {
+			return false
+		}
+	}
+	if constraints.RequiredNodeAffinity == nil {
+		return true
+	}
+	for _, term := range constraints.RequiredNodeAffinity.NodeSelectorTerms {
+		matched := true
+		for _, expression := range term.MatchExpressions {
+			value, exists := labels[expression.Key]
+			switch expression.Operator {
+			case corev1.NodeSelectorOpIn:
+				matched = exists
+				if matched {
+					for _, allowed := range expression.Values {
+						if value == allowed {
+							matched = true
+							break
+						}
+						matched = false
+					}
+				}
+			case corev1.NodeSelectorOpNotIn:
+				matched = !exists
+				if exists {
+					matched = true
+					for _, denied := range expression.Values {
+						if value == denied {
+							matched = false
+							break
+						}
+					}
+				}
+			case corev1.NodeSelectorOpExists:
+				matched = exists
+			case corev1.NodeSelectorOpDoesNotExist:
+				matched = !exists
+			default:
+				matched = false
+			}
+			if !matched {
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 // recoverAmbiguousCreatedPod handles a create response that may have been lost
@@ -1062,7 +1231,11 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 				Namespace: cp.CopyNamespace,
 			},
 		}
-		if err := deleteOwnedResource(ctx, targetClient, pod, cp.UID, ds); err != nil && !apierrors.IsNotFound(err) {
+		expectedUID := cp.UID
+		if expectedUID == "" {
+			expectedUID = cp.CopyUID
+		}
+		if err := deleteOwnedResource(ctx, targetClient, pod, expectedUID, ds); err != nil && !apierrors.IsNotFound(err) {
 			remainingCopiedPods = append(remainingCopiedPods, cp)
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("delete copied pod %s/%s: %w", cp.CopyNamespace, cp.CopyName, err))
 			continue
