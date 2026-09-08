@@ -58,9 +58,10 @@ func ParseDuration(s string) (time.Duration, error) {
 		return 0, nil
 	}
 	// Durations are used for positive limits and timeouts throughout the API.
-	// Reject a minus anywhere so mixed expressions cannot bypass validation.
-	if strings.Contains(s, "-") {
-		return 0, fmt.Errorf("duration must be positive")
+	// Reject explicit signs so runtime validation matches the unsigned CRD
+	// duration patterns, and mixed expressions cannot bypass validation.
+	if strings.ContainsAny(s, "-+") {
+		return 0, fmt.Errorf("duration must be unsigned")
 	}
 	if !strings.ContainsAny(s, "dwy") {
 		return time.ParseDuration(s)

@@ -13,7 +13,7 @@ Breakglass system operators need:
 
 Before this PR, `BreakglassSessionStatus` had no activity tracking or idle timeout fields. The webhook handler performs a single RBAC check across all granted groups; per-session attribution is achieved by re-checking each session individually after the combined check (see the NOTE at [pkg/webhook/controller.go lines 756–758](../../pkg/webhook/controller.go#L756-L758)). This PR adds `idleTimeout` to spec and `lastActivity`/`activityCount` to status.
 
-> **Note:** Duration strings in this project use `api/v1alpha1.ParseDuration` (which supports day units like `"1d12h"`) rather than `time.ParseDuration`. All references below use the shared helper.
+> **Note:** Duration strings in this project use `api/v1alpha1.ParseDuration` (which supports day units like `"1d12h"` and requires unsigned values) rather than `time.ParseDuration`. All references below use the shared helper.
 
 ## 2. Prior Art in the Codebase
 
