@@ -9,6 +9,8 @@ root=$(cd -- "$(dirname -- "$0")/.." && pwd)
 . "$(cd -- "$root/../../.." && pwd)/hack/docker-image-ownership.sh"
 # shellcheck disable=SC1091
 . "$(cd -- "$root/../../.." && pwd)/hack/docker-resource-ownership.sh"
+# shellcheck disable=SC1091
+. "$root/tests/bounded-container-cleanup.sh"
 image=diagnostic-artifact-collector:test
 test_dir=$(mktemp -d /tmp/diagnostic-artifact-test.XXXXXX)
 root_volume=
@@ -700,7 +702,11 @@ expect_bounded_collector_failure() {
 		--env BREAKGLASS_ARTIFACT_REDACTION_PROFILE=credential-text.v1 \
 		--env BREAKGLASS_ARTIFACT_REDACTION_VERSION=1 \
 		--volume "$output:/output" $docker_opts "$image" "$@" >/dev/null
-	bounded_container_id=$(docker_capture_resource_id docker container "$bounded_container") || exit 1
+	bounded_container_id=$(docker_capture_resource_id docker container "$bounded_container") || {
+		cleanup_bounded_container_name docker "$bounded_container"
+		bounded_container=
+		exit 1
+	}
 	deadline=$(( $(date +%s) + deadline_seconds ))
 	while [ "$(docker inspect -f '{{.State.Running}}' "$bounded_container_id")" = true ]; do
 		if [ "$(date +%s)" -ge "$deadline" ]; then
