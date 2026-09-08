@@ -22,34 +22,9 @@ package debug
 
 import (
 	"fmt"
-	"regexp"
-	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
-
-var (
-	recordingAuthorizationPattern = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*)(?:[^\s,;]+\s+)?[^\s,;]+`)
-	recordingBearerPattern        = regexp.MustCompile(`(?i)(\bbearer\s+)[^\s,;]+`)
-	recordingSecretPattern        = regexp.MustCompile(`(?i)((?:access[_-]?token|token|password|passwd|secret)(?:[=:]\s*|\s+))[^\s,;]+`)
-)
-
-// safeRecordingFailure keeps controller status useful while preventing an
-// image pull error, webhook response, or sidecar message from becoming a
-// credential exfiltration channel. Callers should still prefer static errors.
-func safeRecordingFailure(reason string) string {
-	reason = strings.TrimSpace(reason)
-	if reason == "" {
-		return "terminal recording failed"
-	}
-	reason = recordingAuthorizationPattern.ReplaceAllString(reason, "$1[REDACTED]")
-	reason = recordingBearerPattern.ReplaceAllString(reason, "$1[REDACTED]")
-	reason = recordingSecretPattern.ReplaceAllString(reason, "$1[REDACTED]")
-	if len(reason) > 512 {
-		reason = reason[:512] + "..."
-	}
-	return reason
-}
 
 // rejectUnsupportedTerminalRecording rejects recording requests until the
 // terminal-byte transport is configured.
