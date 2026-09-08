@@ -17,7 +17,7 @@ vi.mock("@/services/logger", () => ({
   error: vi.fn(),
 }));
 
-import { mount, VueWrapper } from "@vue/test-utils";
+import { mount, type VueWrapper } from "@vue/test-utils";
 import AutoLogoutWarning from "@/components/AutoLogoutWarning.vue";
 import AuthService from "@/services/auth";
 import { AuthKey } from "@/keys";

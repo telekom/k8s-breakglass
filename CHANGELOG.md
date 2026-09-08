@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Keep refresh tokens stripped when browser storage fails, redact approval-page HTTP errors, and cap mock dataset scaling.
 
-- Disable automatic silent renewal and iframe-based session extension for frontend OIDC sessions. Production always uses session storage and purges legacy persistent OIDC artifacts; development-only persistent local storage remains an explicit opt-in.
+- Disable automatic silent renewal and iframe-based session extension for frontend OIDC sessions. Production uses session storage or an in-memory fallback when browser storage is unavailable, resets stale persistent preferences, and makes a best-effort purge of legacy persistent OIDC artifacts; development-only persistent local storage remains an explicit opt-in.
 
 - Avoid duplicate approval-page error logging and preserve one contextual toast for unexpected approval failures.
 
