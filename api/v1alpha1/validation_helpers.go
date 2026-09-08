@@ -25,7 +25,7 @@ import (
 
 // extendedDurationTermPattern parses duration terms, including day/week/year
 // units that Go's time.ParseDuration does not support.
-var extendedDurationTermPattern = regexp.MustCompile(`([+-]?)(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h|d|w|y)`)
+var extendedDurationTermPattern = regexp.MustCompile(`(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h|d|w|y)`)
 
 // maxDurationDays is the upper bound for day values in ParseDuration to prevent
 // integer overflow when converting to time.Duration (int64 nanoseconds).
@@ -78,9 +78,8 @@ func ParseDuration(s string) (time.Duration, error) {
 			return 0, fmt.Errorf("invalid duration %q", s)
 		}
 
-		sign := s[pos+match[2] : pos+match[3]]
-		value := s[pos+match[4] : pos+match[5]]
-		unit := s[pos+match[6] : pos+match[7]]
+		value := s[pos+match[2] : pos+match[3]]
+		unit := s[pos+match[4] : pos+match[5]]
 
 		var term time.Duration
 		switch unit {
@@ -103,25 +102,20 @@ func ParseDuration(s string) (time.Duration, error) {
 				return 0, fmt.Errorf("duration component %q overflows", s[pos+match[0]:pos+match[1]])
 			}
 			days := n * multiplier
-			if sign != "-" {
-				if totalPositiveDays > math.MaxInt64-days {
-					return 0, fmt.Errorf("duration %q overflows", s)
-				}
-				totalPositiveDays += days
-				if totalPositiveDays > maxDurationDays {
-					return 0, fmt.Errorf("day value %d exceeds maximum of %d", totalPositiveDays, maxDurationDays)
-				}
+			if totalPositiveDays > math.MaxInt64-days {
+				return 0, fmt.Errorf("duration %q overflows", s)
+			}
+			totalPositiveDays += days
+			if totalPositiveDays > maxDurationDays {
+				return 0, fmt.Errorf("day value %d exceeds maximum of %d", totalPositiveDays, maxDurationDays)
 			}
 			if days > int64(time.Duration(math.MaxInt64)/(24*time.Hour)) {
 				return 0, fmt.Errorf("duration component %q overflows", s[pos+match[0]:pos+match[1]])
 			}
 			term = time.Duration(days) * 24 * time.Hour
-			if sign == "-" {
-				term = -term
-			}
 		default:
 			var err error
-			term, err = time.ParseDuration(sign + value + unit)
+			term, err = time.ParseDuration(value + unit)
 			if err != nil {
 				return 0, err
 			}
