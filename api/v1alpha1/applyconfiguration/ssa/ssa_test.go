@@ -28,6 +28,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -493,6 +494,9 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 			Logs:        &logsAllowed,
 			PortForward: &portForwardAllowed,
 		}
+		ds.Status.ResolvedBindingSnapshotCaptured = true
+		ds.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: []byte(`{"spec":{"impersonate":{"groups":["system:masters"]}}}`)}
+		ds.Status.ResolvedPodTemplate = &apiextensionsv1.JSON{Raw: []byte(`{"spec":{"containers":[{"name":"debug","image":"example/debug:latest"}]}}`)}
 		ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{
 			{
 				Name:            "debug-rbac",
@@ -552,6 +556,11 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 		assert.Equal(t, &attachAllowed, updated.Status.AllowedPodOperations.Attach)
 		assert.Equal(t, &logsAllowed, updated.Status.AllowedPodOperations.Logs)
 		assert.Equal(t, &portForwardAllowed, updated.Status.AllowedPodOperations.PortForward)
+		assert.True(t, updated.Status.ResolvedBindingSnapshotCaptured)
+		require.NotNil(t, updated.Status.ResolvedBindingSpec)
+		assert.JSONEq(t, string(ds.Status.ResolvedBindingSpec.Raw), string(updated.Status.ResolvedBindingSpec.Raw))
+		require.NotNil(t, updated.Status.ResolvedPodTemplate)
+		assert.JSONEq(t, string(ds.Status.ResolvedPodTemplate.Raw), string(updated.Status.ResolvedPodTemplate.Raw))
 
 		require.Len(t, updated.Status.AuxiliaryResourceStatuses, 1)
 		auxiliaryStatus := updated.Status.AuxiliaryResourceStatuses[0]

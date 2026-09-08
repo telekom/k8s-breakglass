@@ -302,7 +302,7 @@ authorizers:
 On older Kubernetes versions, use legacy webhook mode with the webhook
 kubeconfig and set `--authorization-webhook-cache-authorized-ttl=0s` and
 `--authorization-webhook-cache-unauthorized-ttl=0s`; do not use a positive
-authorized cache TTL.
+authorized cache TTL in legacy mode.
 
 ```yaml
 # /etc/kubernetes/breakglass-webhook.kubeconfig

@@ -115,12 +115,14 @@ jobs:
       - name: Forward hub API
         run: |
           set -Eeuo pipefail
-          for api_port in $(shuf -i 18080-18180 -n 20); do
-            if ! (echo >"/dev/tcp/127.0.0.1/${api_port}") 2>/dev/null; then
+          api_port=""
+          for candidate_port in $(shuf -i 18080-18180 -n 20); do
+            if ! (echo >"/dev/tcp/127.0.0.1/${candidate_port}") 2>/dev/null; then
+              api_port="$candidate_port"
               break
             fi
           done
-          test -n "${api_port:-}"
+          test -n "$api_port"
           # The focused expiry proof deliberately rolls the controller
           # Deployment while pausing cleanup. A one-shot port-forward exits
           # when that rollout replaces the selected Pod, making later tests

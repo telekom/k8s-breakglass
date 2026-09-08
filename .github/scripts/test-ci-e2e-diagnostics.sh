@@ -31,6 +31,7 @@ printf '%s\n' \
   'user=operator@example.com' \
   'status=healthy component=controller latency=12ms' \
   'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJvcGVyYXRvciJ9.qwertyuiopasdfghjklzxcvbnm123456' \
+  'short-jwt e30.e30.x' \
   | ci_write_bounded_redacted_file "$redacted_output" 20 4096
 
 test -z "$(grep -E 'visible|operator@example.com|eyJhbGci' "$redacted_output" || true)"
@@ -42,6 +43,7 @@ test -z "$(grep -E 'visible|operator@example.com|eyJhbGci' "$redacted_output" ||
 grep -Fq -- '-----BEGIN PRIVATE KEY----- [REDACTED]' "$redacted_output"
 grep -Fq 'user=[REDACTED-EMAIL]' "$redacted_output"
 grep -Fq '[REDACTED-JWT]' "$redacted_output"
+grep -Fq 'short-jwt [REDACTED-JWT]' "$redacted_output"
 grep -Fq '"status":"useful"' "$redacted_output"
 grep -Fq 'status=healthy component=controller latency=12ms' "$redacted_output"
 # Inline token-bearing lines retain their non-secret diagnostic context.

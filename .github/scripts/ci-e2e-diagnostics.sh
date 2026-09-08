@@ -109,7 +109,7 @@ ci_redact_diagnostic_stream() {
     s~("(?:access[_-]?token|refresh[_-]?token|id[_-]?token|subject[_-]?token|actor[_-]?token|auth[_-]?token|bearer[_-]?token|session[_-]?token|token|secret|client[_-]?secret|api[_-]?key|password|passwd|private[_-]?key|credential|credentials|cookie)"\s*:\s*)"(?:\\.|[^"\\])*"~$1"[REDACTED]"~ig;
     s~^([[:space:]]*(?:access[_-]?token|refresh[_-]?token|id[_-]?token|subject[_-]?token|actor[_-]?token|auth[_-]?token|bearer[_-]?token|session[_-]?token|token|secret|client[_-]?secret|api[_-]?key|password|passwd|private[_-]?key|credential|credentials|cookie)[[:space:]]*:[[:space:]]*)(?:"(?:\\.|[^"\\])*"|\047(?:\\.|[^\047\\])*\047|[^#\r\n]*?)([[:space:]]*(?:#.*)?\r?\n?)$~$1[REDACTED]$2~ig;
     s~((?:access[_-]?token|refresh[_-]?token|id[_-]?token|subject[_-]?token|actor[_-]?token|auth[_-]?token|bearer[_-]?token|session[_-]?token|token|secret|client[_-]?secret|api[_-]?key|password|passwd|private[_-]?key|credential|credentials|cookie)\s*=\s*)(?:"(?:\\.|[^"\\])*"|\047(?:\\.|[^\047\\])*\047|[^\s,;]+)~$1[REDACTED]~ig;
-    s~[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}~[REDACTED-JWT]~g;
+    s~[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+~[REDACTED-JWT]~g;
     s~[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}~[REDACTED-EMAIL]~g;
   '
 }

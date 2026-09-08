@@ -148,6 +148,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer keeps ClusterConfig deletion blocked.
 - **Failed-session cleanup completion**: Fully deleted auxiliary history no
   longer causes a Failed DebugSession to requeue forever.
+- **Hard-expiry CI diagnostics**: Diagnostic redaction now covers compact JWTs
+  with short segments, and the hard-expiry port-forward lane records only a
+  candidate proven to be available. SSA coverage also verifies immutable debug
+  authorization snapshots.
 - **DebugSession API mutation identity matching**: Mutating kubectl-debug
   operations now authorize requester and participant identities using the same
   provider-aware username/email matching used by read authorization, preventing

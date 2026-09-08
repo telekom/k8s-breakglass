@@ -375,7 +375,7 @@ On older Kubernetes versions, configure legacy webhook mode with
 `--authorization-mode=Node,RBAC,Webhook`, the webhook kubeconfig, and
 `--authorization-webhook-cache-authorized-ttl=0s` plus
 `--authorization-webhook-cache-unauthorized-ttl=0s`; do not enable positive
-webhook authorization caching.
+webhook authorization caching in legacy mode.
 
 ### 9c. Update API Server
 

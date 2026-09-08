@@ -115,8 +115,10 @@ disable both decision caches:
 --authorization-webhook-cache-unauthorized-ttl=0s
 ```
 
-The structured `cacheAuthorizedRequests` field is not available there; never
-use a positive authorized cache TTL for session-derived access.
+The structured `cacheAuthorizedRequests` field is not available there, so set
+the legacy authorized cache TTL flag to `0s`. In structured configuration,
+`cacheAuthorizedRequests: false` is the invariant; `authorizedTTL` is inactive
+while that cache is disabled.
 
 > **Important:** The last matchCondition excludes the breakglass manager's OIDC identity from webhook processing. This is critical for multi-cluster setups using OIDC authentication. See [Preventing Recursive Webhook Calls](#preventing-recursive-webhook-calls) for details.
 

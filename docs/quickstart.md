@@ -220,8 +220,8 @@ For older Kubernetes versions, use legacy webhook mode with
 `--authorization-mode=Node,RBAC,Webhook`, configure the webhook kubeconfig,
 and set both `--authorization-webhook-cache-authorized-ttl=0s` and
 `--authorization-webhook-cache-unauthorized-ttl=0s` instead of structured
-authorization configuration. A positive authorized cache TTL can outlive a
-session and is not supported.
+authorization configuration. In legacy mode, a positive authorized cache TTL
+can outlive a session and is not supported.
 
 Restart kube-apiserver:
 

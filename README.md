@@ -265,7 +265,9 @@ decision caches:
 --authorization-webhook-cache-unauthorized-ttl=0s
 ```
 
-Do not use a positive authorized cache TTL for session-derived access.
+For structured configuration, keep `cacheAuthorizedRequests: false` for
+session-derived access; `authorizedTTL` is inactive while that cache is
+disabled. In legacy mode, set the authorized cache TTL flag to `0s`.
 
 ## 📖 Custom Resources
 
