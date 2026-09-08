@@ -40,9 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   normalization is not part of the production build path.
 - Helm chart provenance reruns fail closed unless the pulled remote package is
   byte-identical to the package whose SBOM is being attested.
-- Terminal recording requests fail closed before approval or session-mode
-  selection, including kubectl-debug, while the terminal-byte transport
-  remains unavailable.
+- Terminal recording requests fail closed before approval or mode selection,
+  including kubectl-debug, while the terminal-byte transport remains unavailable.
+- Renewing a Job-backed DebugSession now extends the tracked Job deadline before
+  recording the renewed session expiry.
 
 ### Security
 

@@ -1066,7 +1066,9 @@ POST /api/debugSessions/:name/renew
 
 Extends the session duration. Subject to template constraints (`maxDuration`,
 `maxRenewals`); the renewed expiration cannot exceed
-`status.startsAt + maxDuration`. Only the requester or an active `owner` or
+`status.startsAt + maxDuration`. For a Job-backed workload, the tracked Job's
+`activeDeadlineSeconds` is extended before the renewed expiration is recorded;
+the endpoint fails closed if that update cannot be made. Only the requester or an active `owner` or
 `participant` status entry can renew; `viewer` entries and participants with
 `leftAt` set cannot renew sessions.
 
