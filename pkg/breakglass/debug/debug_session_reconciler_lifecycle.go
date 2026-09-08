@@ -563,9 +563,6 @@ func mergeCleanupInventory[T any](baseline, desired, current []T, key func(T) st
 	for _, item := range current {
 		itemKey := key(item)
 		if _, wasTracked := baselineKeys[itemKey]; wasTracked {
-			if _, stillDesired := desiredKeys[itemKey]; !stillDesired {
-				continue
-			}
 			continue
 		}
 		if _, alreadyDesired := desiredKeys[itemKey]; !alreadyDesired {
