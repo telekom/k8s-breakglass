@@ -119,10 +119,8 @@ func safeRecordingFailure(reason string) string {
 	return reason
 }
 
-// injectTerminalRecording adds the sidecar contract and a private shared
-// volume. It does not copy template headers, Secret values, or bearer tokens
-// into the pod. A sidecar image must implement the contract documented in
-// docs/terminal-recording.md.
+// rejectUnsupportedTerminalRecording rejects recording requests until the
+// terminal-byte transport is configured.
 func rejectUnsupportedTerminalRecording(template *breakglassv1alpha1.DebugSessionTemplate) error {
 	if template != nil && template.Spec.Audit != nil && template.Spec.Audit.EnableTerminalRecording {
 		return fmt.Errorf("terminal recording is unavailable: terminal-byte transport is not configured")
