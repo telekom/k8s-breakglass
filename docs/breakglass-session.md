@@ -175,7 +175,7 @@ grantedGroup: "view-only"         # Read-only access
 
 #### maxValidFor
 
-Maximum time the session will be active after approval. Supports Go `time.ParseDuration` syntax with an additional day unit (`d`). Decimal sub-day units such as `1.5h` are accepted; day values must be whole numbers, must not exceed 365, and the duration must be positive. If omitted, admission and runtime behavior use the default `1h`.
+Maximum time the session will be active after approval. Supports Go `time.ParseDuration` syntax with an additional day unit (`d`). Decimal sub-day units such as `1.5h` are accepted; day values must be whole numbers, must not exceed 365, and the duration must be positive and unsigned (for example, `1h`, not `+1h`). If omitted, admission and runtime behavior use the default `1h`.
 
 ```yaml
 maxValidFor: "1h"   # 1 hour (default)
