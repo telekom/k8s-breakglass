@@ -70,7 +70,7 @@ SPDX-License-Identifier = "CC-BY-4.0"
 # Standalone validator MOTD
 [[annotations]]
 precedence = "aggregate"
-path = ["motd/**"]
+path = ["utils/cluster-validator/MOTD"]
 SPDX-FileCopyrightText = "2026 Deutsche Telekom AG"
 SPDX-License-Identifier = "CC-BY-4.0"
 

@@ -47,22 +47,30 @@ helm lint "${script_dir}/../charts/debug-session-catalogue" --strict --values "$
 helm template release-proof "${script_dir}/../charts/debug-session-catalogue" --values "${render_values}" >/dev/null
 "${script_dir}/extract-catalogue-image-refs.sh" "${render_values}" "${refs_output}"
 [ "$(wc -l <"${refs_output}" | tr -d ' ')" -eq 5 ] || { echo "unexpected public utility image count" >&2; exit 1; }
-if rg -q 'example\.invalid|:0\.1\.0$' "${refs_output}"; then
+if grep -Eq 'example\.invalid|:0\.1\.0$' "${refs_output}"; then
   echo "non-public placeholder or mutable image leaked into supply-chain refs" >&2
   exit 1
 fi
 
-printf '%s\n' 'workload|ghcr.io/telekom/k8s-breakglass/workload-debug|not-a-digest' >"${test_dir}/refs/workload.ref"
-if "${script_dir}/generate-release-values.sh" "${test_dir}/refs" "${output}" >/dev/null 2>&1; then
+printf '%s\n' 'workload|ghcr.io/telekom/k8s-breakglass/utils/workload-debug|not-a-digest' >"${test_dir}/refs/workload.ref"
+if invalid_digest_output=$("${script_dir}/generate-release-values.sh" "${test_dir}/refs" "${output}" 2>&1); then
   echo "invalid utility digest was accepted" >&2
   exit 1
 fi
+grep -Fq 'Invalid utility digest for workload' <<<"${invalid_digest_output}" || {
+  echo "invalid utility digest failed for the wrong reason" >&2
+  exit 1
+}
 
-printf '%s\n' "workload|ghcr.io/telekom/k8s-breakglass/workload-debug|${digest}|missing|verified|verified" >"${test_dir}/refs/workload.ref"
-if "${script_dir}/generate-release-values.sh" "${test_dir}/refs" "${output}" >/dev/null 2>&1; then
+printf '%s\n' "workload|ghcr.io/telekom/k8s-breakglass/utils/workload-debug|${digest}|missing|verified|verified" >"${test_dir}/refs/workload.ref"
+if missing_evidence_output=$("${script_dir}/generate-release-values.sh" "${test_dir}/refs" "${output}" 2>&1); then
   echo "missing utility signature evidence was accepted" >&2
   exit 1
 fi
+grep -Fq 'Missing verified signature, SBOM, or provenance evidence for workload' <<<"${missing_evidence_output}" || {
+  echo "missing utility signature evidence failed for the wrong reason" >&2
+  exit 1
+}
 
 zero_digest=sha256:0000000000000000000000000000000000000000000000000000000000000000
 printf '%s\n' "workload|ghcr.io/telekom/k8s-breakglass/utils/workload-debug|${zero_digest}|verified|verified|verified" >"${test_dir}/refs/workload.ref"
