@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The debug-session-catalogue Helm chart provides administrator-authored,
+  restricted DebugSession profiles for workload, network, storage, dump-access,
+  and cluster-validation diagnostics.
+
 ### Fixed
 
 - OCI attestation verification now rejects unsupported or duplicate image

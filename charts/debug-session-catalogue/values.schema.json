@@ -28,8 +28,8 @@
       "minItems": 1,
       "items": { "$ref": "#/definitions/profile" }
     },
-    "nameOverride": { "type": "string", "maxLength": 63 },
-    "fullnameOverride": { "type": "string", "maxLength": 63 }
+    "nameOverride": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "minLength": 1, "maxLength": 63 },
+    "fullnameOverride": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "minLength": 1, "maxLength": 63 }
   },
   "required": ["requesters", "approvers", "targets", "profiles"],
   "definitions": {

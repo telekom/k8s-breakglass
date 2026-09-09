@@ -108,6 +108,8 @@ validate_rendered all "${all_rendered}"
 # schema or the template's security contract.
 expect_rejected "duplicate profile names" helm template debug-catalogue "${chart_dir}" --values "${chart_dir}/ci/duplicate-profile-values.yaml"
 expect_rejected "invalid profile names" helm template debug-catalogue "${chart_dir}" --values "${chart_dir}/ci/invalid-profile-values.yaml"
+expect_rejected "invalid fullnameOverride" helm template debug-catalogue "${chart_dir}" \
+  --values "${chart_dir}/ci/test-values.yaml" --set fullnameOverride=Invalid_Name
 expect_rejected "legacy map-shaped profiles" helm template debug-catalogue "${chart_dir}" --values "${chart_dir}/ci/map-profile-values.yaml"
 expect_rejected "missing image references" helm template debug-catalogue "${chart_dir}" --values "${chart_dir}/ci/missing-image-values.yaml"
 expect_rejected "required-elevation profile without opt-in" helm template debug-catalogue "${chart_dir}" --values "${chart_dir}/ci/elevated-required-values.yaml"
