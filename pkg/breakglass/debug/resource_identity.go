@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/google/uuid"
@@ -270,9 +271,12 @@ func stampCreateOperation(obj client.Object, session *breakglassv1alpha1.DebugSe
 	if annotations == nil {
 		annotations = make(map[string]string)
 	}
-	operationID := persistedCreateOperationID(obj, session)
-	if operationID == "" {
-		operationID = uuid.NewString()
+	operationID, err := deterministicCreateOperationID(obj, session)
+	if err != nil {
+		return "", err
+	}
+	if persisted := persistedCreateOperationID(obj, session); persisted == operationID {
+		operationID = persisted
 	}
 	if session.UID != "" {
 		annotations[sourceSessionUIDAnnotation] = string(session.UID)
@@ -280,6 +284,27 @@ func stampCreateOperation(obj client.Object, session *breakglassv1alpha1.DebugSe
 	annotations[createOperationIDAnnotation] = operationID
 	obj.SetAnnotations(annotations)
 	return operationID, nil
+}
+
+func deterministicCreateOperationID(obj client.Object, session *breakglassv1alpha1.DebugSession) (string, error) {
+	if session == nil {
+		return "", fmt.Errorf("cannot stamp create operation without a session")
+	}
+	desired := obj.DeepCopyObject().(client.Object)
+	annotations := desired.GetAnnotations()
+	if annotations != nil {
+		annotations = maps.Clone(annotations)
+		delete(annotations, createOperationIDAnnotation)
+		desired.SetAnnotations(annotations)
+	}
+	desired.SetUID("")
+	desired.SetResourceVersion("")
+	desired.SetManagedFields(nil)
+	serialized, err := json.Marshal(desired)
+	if err != nil {
+		return "", fmt.Errorf("serialize create operation intent: %w", err)
+	}
+	return uuid.NewSHA1(uuid.Nil, append([]byte(string(session.UID)+"\x00"), serialized...)).String(), nil
 }
 
 func persistedCreateOperationID(obj client.Object, session *breakglassv1alpha1.DebugSession) string {

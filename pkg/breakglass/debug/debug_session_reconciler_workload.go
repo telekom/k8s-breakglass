@@ -689,7 +689,6 @@ func (c *DebugSessionController) deployPodTemplateResource(
 	if err != nil {
 		return err
 	}
-	obj.SetAnnotations(annotations)
 
 	// Persist an intent before the target write so a crash cannot hide a
 	// resource that must be recovered or cleaned up.

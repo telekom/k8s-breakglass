@@ -402,22 +402,22 @@ func TestCreateOrRecoverTargetObjectRequiresExactOperationIdentity(t *testing.T)
 }
 
 func TestStampCreateOperationReusesPersistedIntentAfterRestart(t *testing.T) {
-	session := &breakglassv1alpha1.DebugSession{
-		ObjectMeta: metav1.ObjectMeta{UID: "session-uid"},
-		Status: breakglassv1alpha1.DebugSessionStatus{DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{
-			APIVersion: "v1", Kind: "ConfigMap", Name: "tracked", Namespace: "ns", CreateOperationID: "op-persisted",
-		}}},
-	}
 	obj := &unstructured.Unstructured{}
 	obj.SetAPIVersion("v1")
 	obj.SetKind("ConfigMap")
 	obj.SetName("tracked")
 	obj.SetNamespace("ns")
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	persistedID, err := deterministicCreateOperationID(obj, session)
+	require.NoError(t, err)
+	session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{{
+		APIVersion: "v1", Kind: "ConfigMap", Name: "tracked", Namespace: "ns", CreateOperationID: persistedID,
+	}}
 
 	operationID, err := stampCreateOperation(obj, session)
 	require.NoError(t, err)
-	require.Equal(t, "op-persisted", operationID)
-	require.Equal(t, "op-persisted", obj.GetAnnotations()[createOperationIDAnnotation])
+	require.Equal(t, persistedID, operationID)
+	require.Equal(t, persistedID, obj.GetAnnotations()[createOperationIDAnnotation])
 }
 
 func TestWorkloadTemplateAllowsConfiguredDefaultTolerations(t *testing.T) {
