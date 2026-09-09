@@ -46,8 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   byte-identical to the package whose SBOM is being attested.
 - Terminal recording requests fail closed before approval or mode selection,
   including kubectl-debug, while the terminal-byte transport remains unavailable.
-- Renewing a Job-backed DebugSession now extends the tracked Job deadline before
-  recording the renewed session expiry.
+- Renewing a Job-backed DebugSession now extends only its tracked batch/v1
+  debug workload Job deadline before recording the renewed session expiry.
 
 ### Security
 
