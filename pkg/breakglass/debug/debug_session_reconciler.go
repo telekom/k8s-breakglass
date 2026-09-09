@@ -721,11 +721,13 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 
 	// Add the requesting user as owner participant
 	ds.Status.Participants = []breakglassv1alpha1.DebugSessionParticipant{{
-		User:        ds.Spec.RequestedBy,
-		Email:       ds.Spec.RequestedByEmail,
-		DisplayName: ds.Spec.RequestedByDisplayName,
-		Role:        breakglassv1alpha1.ParticipantRoleOwner,
-		JoinedAt:    activationStartedAt,
+		User:                   ds.Spec.RequestedBy,
+		Email:                  ds.Spec.RequestedByEmail,
+		DisplayName:            ds.Spec.RequestedByDisplayName,
+		IdentityProviderName:   ds.Spec.IdentityProviderName,
+		IdentityProviderIssuer: ds.Spec.IdentityProviderIssuer,
+		Role:                   breakglassv1alpha1.ParticipantRoleOwner,
+		JoinedAt:               activationStartedAt,
 	}}
 
 	// Setup terminal sharing if enabled

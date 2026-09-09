@@ -158,6 +158,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   namespace and session cluster label with bounded pagination while retaining
   the live expiry, participant, and Pod UID fences before allowing pod
   operations.
+- **DebugSession participant identity**: Active owner participants now retain
+  the requesting session's identity-provider name and issuer so webhook pod
+  authorization preserves issuer provenance in multi-provider deployments.
 - **Hard-expiry CI diagnostics**: Diagnostic redaction now covers compact JWTs
   with short segments, and the hard-expiry port-forward lane records only a
   candidate proven to be available. SSA coverage also verifies immutable debug

@@ -127,6 +127,8 @@ func TestActivateSessionEstablishesLeaseBeforeDeployment(t *testing.T) {
 	c, ds, template, target := newDeploymentFenceFixture(t)
 	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
 	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{Required: false}
+	ds.Spec.IdentityProviderName = "e2e-idp"
+	ds.Spec.IdentityProviderIssuer = "https://issuer.example/realms/e2e"
 	// The fake client does not assign UIDs to newly created objects. Seed the
 	// same-session workload so the production UID capture path exercises the
 	// exact identity returned by the API rather than a name-only fallback.
@@ -139,6 +141,9 @@ func TestActivateSessionEstablishesLeaseBeforeDeployment(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, ds.Status.State)
 	require.NotNil(t, ds.Status.ExpiresAt)
+	require.Len(t, ds.Status.Participants, 1)
+	require.Equal(t, ds.Spec.IdentityProviderName, ds.Status.Participants[0].IdentityProviderName)
+	require.Equal(t, ds.Spec.IdentityProviderIssuer, ds.Status.Participants[0].IdentityProviderIssuer)
 
 	deployment := &appsv1.Deployment{}
 	require.NoError(t, target.Get(context.Background(), client.ObjectKey{Namespace: "breakglass-debug", Name: ds.Name}, deployment))
