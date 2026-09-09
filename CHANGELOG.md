@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copy limits are enforced on a single opened source descriptor, including
   growth after validation, and reference fixtures use run-scoped names and
   cleanup labels that cannot remove pre-existing resources.
+- Catalogue publication verification now requires exactly one linux/amd64 and
+  one linux/arm64 utility manifest after excluding attestation descriptors.
 - Unsupported terminal recording errors identify the requested
   `spec.audit.enableTerminalRecording` field and the unavailable transport.
 - Cluster-validator report publication now refuses to replace an existing
