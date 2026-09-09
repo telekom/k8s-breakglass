@@ -210,6 +210,70 @@ func TestActiveBreakglassGroupsDoesNotInferEmailFromUsername(t *testing.T) {
 	assert.Empty(t, groups, "the API must require an exact authenticated username or email claim")
 }
 
+func TestActiveBreakglassGroupsUsesCachedIndexWhenFreshReaderIsConfigured(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "indexed"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:                "tenant-a",
+			User:                   "alice",
+			GrantedGroup:           "breakglass:debug",
+			IdentityProviderIssuer: "https://idp-a.example",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: future,
+		},
+	}
+	base := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).WithIndex(
+		&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		},
+	).Build()
+	cached := &debugSessionRecordingListClient{Client: base}
+	controller := &DebugSessionAPIController{client: cached}
+
+	groups, err := controller.activeBreakglassGroups(context.Background(), base, "tenant-a", "alice", "", "https://idp-a.example")
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"breakglass:debug"}, groups)
+	assert.Equal(t, []string{"tenant-a"}, debugSessionRecordedFieldValues(cached.calls, "spec.cluster"))
+}
+
+func TestActiveBreakglassGroupsRefreshesFreshReaderWhenCacheHasNoGrant(t *testing.T) {
+	cachedSession := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "approval"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:                "tenant-a",
+			User:                   "alice",
+			GrantedGroup:           "breakglass:debug",
+			IdentityProviderIssuer: "https://idp-a.example",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(time.Now().Add(-time.Minute)),
+		},
+	}
+	freshSession := cachedSession.DeepCopy()
+	freshSession.Status.ExpiresAt = metav1.NewTime(time.Now().Add(time.Hour))
+	cachedBase := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(cachedSession).WithIndex(
+		&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		},
+	).Build()
+	freshBase := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(freshSession).Build()
+	cached := &debugSessionRecordingListClient{Client: cachedBase}
+	fresh := &debugSessionRecordingListClient{Client: freshBase}
+	controller := &DebugSessionAPIController{client: cached, apiReader: fresh}
+
+	groups, err := controller.activeBreakglassGroups(context.Background(), fresh, "tenant-a", "alice", "", "https://idp-a.example")
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"breakglass:debug"}, groups)
+	assert.Equal(t, []string{"tenant-a"}, debugSessionRecordedFieldValues(cached.calls, "spec.cluster"))
+	assert.Empty(t, debugSessionRecordedFieldValues(fresh.calls, "spec.cluster"), "fresh fallback must use a full live read")
+}
+
 func debugSessionAPITestRouter(t *testing.T, ctrl *DebugSessionAPIController, username, email string, groups []string) *gin.Engine {
 	t.Helper()
 	router := gin.New()

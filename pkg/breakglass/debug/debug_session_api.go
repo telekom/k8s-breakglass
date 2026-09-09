@@ -1388,8 +1388,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 }
 
 func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, reader ctrlclient.Reader, cluster, username, email, issuer string) ([]string, error) {
+	indexedReader := reader
+	if c.client != nil {
+		indexedReader = c.client
+	}
 	var sessions breakglassv1alpha1.BreakglassSessionList
-	if err := reader.List(ctx, &sessions, ctrlclient.MatchingFields{"spec.cluster": cluster}); err != nil {
+	if err := indexedReader.List(ctx, &sessions, ctrlclient.MatchingFields{"spec.cluster": cluster}); err != nil {
 		if !breakglass.IsFieldIndexError(err) {
 			return nil, err
 		}
@@ -1405,20 +1409,37 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		}
 	}
 	now := time.Now()
-	groups := make([]string, 0, len(sessions.Items))
-	seen := make(map[string]struct{}, len(sessions.Items))
-	for _, session := range sessions.Items {
-		if !breakglass.IsSessionAuthorizationEligible(session, now) ||
-			(session.Spec.User != username && session.Spec.User != email) ||
-			(issuer != "" && !session.Spec.AllowIDPMismatch &&
-				strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") != strings.TrimRight(issuer, "/")) {
-			continue
+	collectGroups := func(items []breakglassv1alpha1.BreakglassSession) []string {
+		groups := make([]string, 0, len(items))
+		seen := make(map[string]struct{}, len(items))
+		for _, session := range items {
+			if !breakglass.IsSessionAuthorizationEligible(session, now) ||
+				(session.Spec.User != username && session.Spec.User != email) ||
+				(issuer != "" && !session.Spec.AllowIDPMismatch &&
+					strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") != strings.TrimRight(issuer, "/")) {
+				continue
+			}
+			if _, ok := seen[session.Spec.GrantedGroup]; ok {
+				continue
+			}
+			seen[session.Spec.GrantedGroup] = struct{}{}
+			groups = append(groups, session.Spec.GrantedGroup)
 		}
-		if _, ok := seen[session.Spec.GrantedGroup]; ok {
-			continue
+		return groups
+	}
+	groups := collectGroups(sessions.Items)
+	if c.client != nil && c.apiReader != nil && len(groups) == 0 {
+		var fresh breakglassv1alpha1.BreakglassSessionList
+		if err := reader.List(ctx, &fresh); err != nil {
+			return nil, err
 		}
-		seen[session.Spec.GrantedGroup] = struct{}{}
-		groups = append(groups, session.Spec.GrantedGroup)
+		filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(fresh.Items))
+		for _, session := range fresh.Items {
+			if session.Spec.Cluster == cluster {
+				filtered = append(filtered, session)
+			}
+		}
+		groups = collectGroups(filtered)
 	}
 	return groups, nil
 }
