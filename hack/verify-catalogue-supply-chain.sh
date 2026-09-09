@@ -93,9 +93,11 @@ verify_multiarch() {
   raw="$(docker buildx imagetools inspect --raw "$subject")" || \
     die "could not inspect image manifest: $subject"
   jq -e '
-    (.manifests | type == "array" and length >= 2) and
-    ([.manifests[]?.platform | "\(.os)/\(.architecture)"] | index("linux/amd64")) and
-    ([.manifests[]?.platform | "\(.os)/\(.architecture)"] | index("linux/arm64"))
+    (.manifests | type == "array") and
+    ([.manifests[]?
+      | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest")
+      | .platform
+      | "\(.os)/\(.architecture)"] | sort == ["linux/amd64", "linux/arm64"])
   ' <<<"$raw" >/dev/null || die "image is not a linux amd64/arm64 multi-arch manifest: $subject"
 }
 

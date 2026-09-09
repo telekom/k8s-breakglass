@@ -18,9 +18,25 @@ printf '%s\n' \
 
 cat >"${TEST_DIR}/bin/docker" <<'EOF'
 #!/usr/bin/env bash
-cat <<'JSON'
-{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"arm64"}}]}
-JSON
+case "${TEST_MANIFEST_VARIANT:-valid}" in
+  valid)
+    manifests='{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"arm64"}}'
+    ;;
+  attestation)
+    manifests='{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"arm64"}},{"annotations":{"vnd.docker.reference.type":"attestation-manifest"}}'
+    ;;
+  duplicate)
+    manifests='{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"arm64"}}'
+    ;;
+  extra)
+    manifests='{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"arm64"}},{"platform":{"os":"linux","architecture":"s390x"}}'
+    ;;
+  *)
+    echo "unknown manifest variant" >&2
+    exit 1
+    ;;
+esac
+printf '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[%s]}\n' "$manifests"
 EOF
 cat >"${TEST_DIR}/bin/cosign" <<'EOF'
 #!/usr/bin/env bash
@@ -40,6 +56,23 @@ if grep -F -- '--certificate-identity-regexp' "${TEST_DIR}/cosign-args" >/dev/nu
 fi
 
 SUPPLY_CHAIN_RELEASE_TAG=v1.2.3-rc-1 PATH="${TEST_DIR}/bin:${PATH}" "${SCRIPT_DIR}/verify-catalogue-supply-chain.sh" \
+  --images-file "${TEST_DIR}/images" \
+  --chart 'ghcr.io/example/catalogue@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
+  >/dev/null
+
+for variant in duplicate extra; do
+  if TEST_MANIFEST_VARIANT="$variant" SUPPLY_CHAIN_RELEASE_TAG=v1.2.3 PATH="${TEST_DIR}/bin:${PATH}" \
+    "${SCRIPT_DIR}/verify-catalogue-supply-chain.sh" \
+    --images-file "${TEST_DIR}/images" \
+    --chart 'ghcr.io/example/catalogue@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
+    >/dev/null 2>&1; then
+    echo "${variant} image manifest was accepted" >&2
+    exit 1
+  fi
+done
+
+TEST_MANIFEST_VARIANT=attestation SUPPLY_CHAIN_RELEASE_TAG=v1.2.3 PATH="${TEST_DIR}/bin:${PATH}" \
+  "${SCRIPT_DIR}/verify-catalogue-supply-chain.sh" \
   --images-file "${TEST_DIR}/images" \
   --chart 'ghcr.io/example/catalogue@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
   >/dev/null
