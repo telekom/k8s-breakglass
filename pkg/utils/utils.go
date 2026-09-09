@@ -39,23 +39,12 @@ func CreateScheme() (*runtime.Scheme, error) {
 // Stacktraces are only added for DPanic level and above to reduce log noise
 // during normal error handling (transient network errors, etc.).
 func SetupLogger(debug bool) (*zap.Logger, error) {
-	var logger *zap.Logger
-	var err error
+	cfg := zap.NewProductionConfig()
 	if debug {
-		// Development config with stacktraces only for DPanic+
-		cfg := zap.NewDevelopmentConfig()
-		cfg.EncoderConfig.StacktraceKey = "" // Disable stacktrace field entirely
-		logger, err = cfg.Build(
-			zap.AddStacktrace(zap.DPanicLevel), // Only add stacktraces for DPanic+
-		)
-	} else {
-		// Production config with stacktraces only for DPanic+
-		cfg := zap.NewProductionConfig()
-		cfg.EncoderConfig.StacktraceKey = "" // Disable stacktrace field entirely
-		logger, err = cfg.Build(
-			zap.AddStacktrace(zap.DPanicLevel), // Only add stacktraces for DPanic+
-		)
+		cfg = zap.NewDevelopmentConfig()
 	}
+	cfg.EncoderConfig.StacktraceKey = "" // Disable stacktrace field entirely
+	logger, err := cfg.Build(zap.AddStacktrace(zap.DPanicLevel))
 	if err != nil {
 		return nil, fmt.Errorf("unable to create logger (debug: %t): %w", debug, err)
 	}

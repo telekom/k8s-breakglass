@@ -33,11 +33,7 @@ func GlobMatch(pattern, value string) (bool, error) {
 	// If pattern contains wildcards, use path.Match (not filepath.Match) for
 	// cross-platform consistency since these are logical identifiers, not file paths.
 	if strings.ContainsAny(pattern, "*?[") {
-		matched, err := path.Match(pattern, value)
-		if err != nil {
-			return false, err
-		}
-		return matched, nil
+		return path.Match(pattern, value)
 	}
 
 	// No wildcards - exact match

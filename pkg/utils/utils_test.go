@@ -1,30 +1,39 @@
 package utils
 
 import (
+	"errors"
+	"path"
 	"testing"
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	corev1 "k8s.io/api/core/v1"
 )
 
-func TestSetupLogger_DebugMode(t *testing.T) {
-	// debug true should return a non-nil logger
-	logger, _ := SetupLogger(true)
-	if logger == nil {
-		t.Fatalf("expected non-nil logger for debug mode")
+func TestSetupLoggerLevels(t *testing.T) {
+	for _, debug := range []bool{false, true} {
+		name := "production"
+		if debug {
+			name = "development"
+		}
+		t.Run(name, func(t *testing.T) {
+			logger, err := SetupLogger(debug)
+			if err != nil {
+				t.Fatalf("SetupLogger(%t): %v", debug, err)
+			}
+			t.Cleanup(func() { _ = logger.Sync() }) // Standard streams may not support Sync.
+			if logger.Core().Enabled(zap.DebugLevel) != debug {
+				t.Fatal("development/production debug-level defaults changed")
+			}
+			for _, level := range []zapcore.Level{zap.InfoLevel, zap.WarnLevel, zap.ErrorLevel} {
+				if !logger.Core().Enabled(level) {
+					t.Fatalf("expected %s to be enabled", level.String())
+				}
+			}
+		})
 	}
-	// best-effort flush
-	_ = logger.Sync()
-}
-
-func TestSetupLogger_ProductionMode(t *testing.T) {
-	// debug false should return a non-nil logger
-	logger, _ := SetupLogger(false)
-	if logger == nil {
-		t.Fatalf("expected non-nil logger for production mode")
-	}
-	_ = logger.Sync()
 }
 
 func TestCreateScheme(t *testing.T) {
@@ -133,5 +142,73 @@ func TestParseDuration(t *testing.T) {
 				t.Errorf("ParseDuration(%q) = %v, want %v", tt.input, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestNamespaceSelectorBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		op     breakglassv1alpha1.NamespaceSelectorOperator
+		values []string
+		labels map[string]string
+		want   bool
+	}{
+		{"in missing", breakglassv1alpha1.NamespaceSelectorOpIn, []string{""}, nil, false},
+		{"in empty value", breakglassv1alpha1.NamespaceSelectorOpIn, []string{""}, map[string]string{"env": ""}, true},
+		{"in nil values", breakglassv1alpha1.NamespaceSelectorOpIn, nil, map[string]string{"env": "prod"}, false},
+		{"star is literal", breakglassv1alpha1.NamespaceSelectorOpIn, []string{"*"}, map[string]string{"env": "prod"}, false},
+		{"literal star matches", breakglassv1alpha1.NamespaceSelectorOpIn, []string{"*"}, map[string]string{"env": "*"}, true},
+		{"not in missing", breakglassv1alpha1.NamespaceSelectorOpNotIn, []string{""}, nil, true},
+		{"not in empty value", breakglassv1alpha1.NamespaceSelectorOpNotIn, []string{""}, map[string]string{"env": ""}, false},
+		{"not in nil values", breakglassv1alpha1.NamespaceSelectorOpNotIn, nil, map[string]string{"env": "prod"}, true},
+		{"exists missing", breakglassv1alpha1.NamespaceSelectorOpExists, nil, nil, false},
+		{"exists empty value", breakglassv1alpha1.NamespaceSelectorOpExists, nil, map[string]string{"env": ""}, true},
+		{"does not exist", breakglassv1alpha1.NamespaceSelectorOpDoesNotExist, nil, nil, true},
+		{"unknown fails closed", "Unknown", nil, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			matcher := NewNamespaceMatcher(&breakglassv1alpha1.NamespaceFilter{
+				SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{{
+					MatchExpressions: []breakglassv1alpha1.NamespaceSelectorRequirement{{Key: "env", Operator: tc.op, Values: tc.values}},
+				}},
+			})
+			if got := matcher.MatchesWithLabels("app", tc.labels); got != tc.want {
+				t.Fatalf("MatchesWithLabels = %t, want %t", got, tc.want)
+			}
+			if matcher.Matches("app") {
+				t.Fatal("name-only matching must not evaluate label selectors")
+			}
+			if tc.labels == nil && matcher.MatchesWithLabels("app", map[string]string{}) != tc.want {
+				t.Fatal("nil and empty label maps must have the same semantics")
+			}
+		})
+	}
+}
+
+func TestGlobMatchBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		pattern string
+		value   string
+		want    bool
+		bad     bool
+	}{
+		{"*", "team/admin", true, false},
+		{"team/*", "team/admin", true, false},
+		{"team/*", "team/admin/nested", false, false},
+		{"a*[", "different", false, true},
+		{`a\b`, `a\b`, true, false},
+	} {
+		t.Run(tc.pattern+":"+tc.value, func(t *testing.T) {
+			got, err := GlobMatch(tc.pattern, tc.value)
+			if got != tc.want || errors.Is(err, path.ErrBadPattern) != tc.bad {
+				t.Fatalf("GlobMatch(%q, %q) = (%t, %v); want (%t, badPattern=%t)", tc.pattern, tc.value, got, err, tc.want, tc.bad)
+			}
+		})
+	}
+}
+
+func TestGlobMatchGroupsSkipsInvalidPatterns(t *testing.T) {
+	if !GlobMatchGroups([]string{"[", "ops-*"}, []string{"dev", "ops-admin"}) {
+		t.Fatal("group matching must skip invalid patterns and find a later match")
 	}
 }

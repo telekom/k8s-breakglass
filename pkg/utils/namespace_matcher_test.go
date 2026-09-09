@@ -566,8 +566,8 @@ func TestMatchesWithLabels_InOperatorMissingKey(t *testing.T) {
 	assert.False(t, got)
 }
 
-// TestContainsHelper tests the contains helper function directly
-func TestContainsHelper(t *testing.T) {
+// TestNamespaceSelectorMembershipRefactor exercises exact membership through selector evaluation.
+func TestNamespaceSelectorMembershipRefactor(t *testing.T) {
 	tests := []struct {
 		name   string
 		slice  []string
@@ -608,7 +608,12 @@ func TestContainsHelper(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := contains(tt.slice, tt.value)
+			expr := breakglassv1alpha1.NamespaceSelectorRequirement{
+				Key:      "value",
+				Operator: breakglassv1alpha1.NamespaceSelectorOpIn,
+				Values:   tt.slice,
+			}
+			got := NewNamespaceMatcher(nil).expressionMatches(expr, map[string]string{"value": tt.value})
 			assert.Equal(t, tt.expect, got)
 		})
 	}

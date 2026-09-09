@@ -161,11 +161,11 @@ export default class BreakglassService {
       // Backend now returns sessions with approvalReason populated from session.spec.approvalReasonConfig
       // For backward compatibility with older sessions that don't have the config stored,
       // fall back to enriching from escalations if approvalReason is missing
-      const sessionsNeedingEnrichment = data.filter(
+      const needsEnrichment = data.some(
         (p: SessionCR) => !(p as unknown as Record<string, unknown>).approvalReason && !p.spec?.approvalReasonConfig,
       );
 
-      if (sessionsNeedingEnrichment.length === 0) {
+      if (!needsEnrichment) {
         // All sessions have approvalReason from backend, no enrichment needed
         return data.map((p: SessionCR) => {
           // Normalize: if approvalReason is at top level (backend enriched), use it
@@ -272,22 +272,6 @@ export default class BreakglassService {
     }
   }
 
-  public async validateBreakglassRequest(token: string): Promise<AxiosResponse> {
-    // RESTful: GET /breakglassSessions?token=...
-    try {
-      debug("BreakglassService.validateBreakglassRequest", "Validating breakglass request", { token: !!token });
-      const response = await this.client.get("/breakglassSessions", { params: { token } });
-      debug("BreakglassService.validateBreakglassRequest", "Validation complete", { status: response.status });
-      return response;
-    } catch (e) {
-      handleAxiosError("BreakglassService.validateBreakglassRequest", e, "Failed to validate breakglass request");
-      debug("BreakglassService.validateBreakglassRequest", "Validation failed", {
-        errorMessage: (e as Error)?.message,
-      });
-      throw e;
-    }
-  }
-
   // Approve a pending breakglass session by session name (metadata.name)
   public async approveBreakglass(sessionName: string, reason?: string): Promise<AxiosResponse> {
     // RESTful: POST /api/breakglassSessions/:sessionName/approve
@@ -318,19 +302,6 @@ export default class BreakglassService {
     } catch (e) {
       handleAxiosError("BreakglassService.rejectBreakglass", e, "Failed to reject breakglass");
       debug("BreakglassService.rejectBreakglass", "Rejection failed", { errorMessage: (e as Error)?.message });
-      throw e;
-    }
-  }
-
-  public async testButton(user_name: string, cluster_name: string): Promise<AxiosResponse> {
-    try {
-      debug("BreakglassService.testButton", "Triggering test button", { user: user_name, cluster: cluster_name });
-      const response = await this.client.post("/test", { user: user_name, cluster: cluster_name });
-      debug("BreakglassService.testButton", "Test button response", { status: response.status });
-      return response;
-    } catch (e) {
-      handleAxiosError("BreakglassService.testButton", e, "Test call failed");
-      debug("BreakglassService.testButton", "Test button failed", { errorMessage: (e as Error)?.message });
       throw e;
     }
   }
@@ -408,8 +379,8 @@ export default class BreakglassService {
       const timedOut = normalizeList<SessionCR>(timedOutResp.data);
 
       // Normalize entries to ActiveBreakglass shape
-      const approvedNormalized = approved.map((ses: unknown) => this.normalizeSessionRecord(ses as SessionCR));
-      const timedOutNormalized = timedOut.map((ses: unknown) => this.normalizeSessionRecord(ses as SessionCR));
+      const approvedNormalized = approved.map((ses) => this.normalizeSessionRecord(ses));
+      const timedOutNormalized = timedOut.map((ses) => this.normalizeSessionRecord(ses));
 
       // Merge all session sources (approved + timed-out + historical) and dedupe by session name
       const combined = [...approvedNormalized, ...timedOutNormalized, ...historical];
@@ -437,7 +408,7 @@ export default class BreakglassService {
       });
       const data = normalizeList<SessionCR>(response.data);
 
-      const combined = data.map((ses: unknown) => this.normalizeSessionRecord(ses as SessionCR));
+      const combined = data.map((ses) => this.normalizeSessionRecord(ses));
       const seen = new Map<string, ActiveBreakglass>();
       for (const s of combined) {
         const key = s?.name || `${s.group}-${s.cluster}-${s.expiry}`;
@@ -495,7 +466,7 @@ export default class BreakglassService {
           spec: { grantedGroup: p.spec?.grantedGroup || p.group, cluster: p.spec?.cluster || p.cluster },
           status: {
             expiresAt: p.status?.expiresAt || String(p.expiry),
-            state: p.status?.state || (p.status?.state as string),
+            state: p.status?.state,
           },
         };
       }
@@ -505,8 +476,8 @@ export default class BreakglassService {
         expiry: match ? match.expiry : 0,
         cluster: av.cluster,
         state: match ? "Active" : pendingMatch ? "Pending" : historyMatch ? historyMatch.state : "Available",
-        sessionPending: sessionPending,
-        sessionActive: sessionActive,
+        sessionPending,
+        sessionActive,
       } as Breakglass;
     });
     debug("BreakglassService.getBreakglasses", "Aggregated breakglasses", { count: result.length });

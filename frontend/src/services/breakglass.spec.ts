@@ -439,15 +439,6 @@ describe("BreakglassService", () => {
     await expect(service.searchSessions({ mine: true })).rejects.toThrow("normalized search failure");
   });
 
-  it("validates requests by passing the token and rethrowing failures", async () => {
-    mockClient.get.mockResolvedValueOnce({ status: 200 });
-    await service.validateBreakglassRequest("abc");
-    expect(mockClient.get).toHaveBeenCalledWith("/breakglassSessions", { params: { token: "abc" } });
-
-    mockClient.get.mockRejectedValueOnce(new Error("bad token"));
-    await expect(service.validateBreakglassRequest("abc")).rejects.toThrow("bad token");
-  });
-
   it("drops breakglass sessions using the active session metadata", async () => {
     mockClient.post.mockResolvedValueOnce({ status: 200 });
     const bg = {
@@ -556,9 +547,10 @@ describe("BreakglassService", () => {
     expect(pushError).not.toHaveBeenCalled();
   });
 
-  it("sends payloads via testButton helper", async () => {
-    mockClient.post.mockResolvedValueOnce({ status: 200 });
-    await service.testButton("user", "cluster");
-    expect(mockClient.post).toHaveBeenCalledWith("/test", { user: "user", cluster: "cluster" });
+  it("rethrows failures when rejecting a session", async () => {
+    const error = new Error("rejection failed");
+    mockClient.post.mockRejectedValueOnce(error);
+    await expect(service.rejectBreakglass("session")).rejects.toBe(error);
+    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/session/reject", {});
   });
 });
