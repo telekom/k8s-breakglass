@@ -150,7 +150,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer causes a Failed DebugSession to requeue forever.
 - **Allowed pod identity tracking**: DebugSession status now records each
   allowed Pod UID so webhook authorization remains bound to the original Pod
-  after same-name replacement.
+  after same-name replacement; refreshes accept a new UID only for a Pod
+  proven to belong to the session's recorded workload.
 - **Hard-expiry CI diagnostics**: Diagnostic redaction now covers compact JWTs
   with short segments, and the hard-expiry port-forward lane records only a
   candidate proven to be available. SSA coverage also verifies immutable debug

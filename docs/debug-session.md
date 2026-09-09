@@ -548,7 +548,7 @@ This maintains backward compatibility with existing debug session templates.
 - The webhook enforces operation restrictions by checking the pod subresource (`exec`, `attach`, `log`, `portforward`) against the session's `AllowedPodOperations`.
 - `kubectl cp` uses the exec subresource internally (it runs tar in the container). Therefore, `kubectl cp` requires `exec: true` to function. If exec is disabled, all `kubectl cp` operations will be blocked.
 - The webhook operates at the subresource level and cannot distinguish between different commands executed via exec.
-- For pod operations, the webhook re-reads the named Pod and requires its UID to match the UID recorded in `status.allowedPods`; deleting and recreating a Pod with the same name is therefore denied.
+- For pod operations, the webhook re-reads the named Pod and requires its UID to match the UID recorded in `status.allowedPods`; deleting and recreating a directly managed Pod with the same name is therefore denied. Pods recreated by the recorded DaemonSet or Deployment workload are admitted only after their owner and Pod template lineage is verified.
 
 ### Viewing Allowed Operations
 

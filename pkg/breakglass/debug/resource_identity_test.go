@@ -147,6 +147,43 @@ func TestTrackedWorkloadPodMembership(t *testing.T) {
 	}
 }
 
+func TestAllowedPodRefreshRejectsReplacementUnlessWorkloadOwnsIt(t *testing.T) {
+	controller := true
+	template := corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "debug", Image: "debug:v1"}}}}
+	daemon := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "daemon", Namespace: "ns", UID: "daemon-uid"},
+		Spec:       appsv1.DaemonSetSpec{Template: template},
+	}
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(daemon).Build()
+
+	newPod := func(uid string, owner *metav1.OwnerReference) *corev1.Pod {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns", UID: types.UID(uid)},
+			Spec:       *template.Spec.DeepCopy(),
+		}
+		if owner != nil {
+			pod.OwnerReferences = []metav1.OwnerReference{*owner}
+		}
+		return pod
+	}
+
+	session := &breakglassv1alpha1.DebugSession{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AllowedPods: []breakglassv1alpha1.AllowedPodRef{{Name: "pod", Namespace: "ns", UID: "original"}},
+			DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{
+				APIVersion: "apps/v1", Kind: "DaemonSet", Name: "daemon", Namespace: "ns", UID: "daemon-uid", Source: "debug-pod",
+			}},
+		},
+	}
+
+	replacement := newPod("replacement", nil)
+	require.False(t, (&DebugSessionController{}).allowedPodForRefresh(context.Background(), target, session, replacement))
+
+	owner := metav1.OwnerReference{APIVersion: "apps/v1", Kind: "DaemonSet", Name: "daemon", UID: "daemon-uid", Controller: &controller}
+	lineageReplacement := newPod("replacement", &owner)
+	require.True(t, (&DebugSessionController{}).allowedPodForRefresh(context.Background(), target, session, lineageReplacement))
+}
+
 func TestPodTemplateIdentityComesFromCreateResponse(t *testing.T) {
 	target := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
 		Create: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.CreateOption) error {
