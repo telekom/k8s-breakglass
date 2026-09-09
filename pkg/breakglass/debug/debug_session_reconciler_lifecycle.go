@@ -818,7 +818,10 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("refusing to delete pod template resource %s %s/%s: ownership precondition failed", status.Kind, status.Namespace, status.ResourceName))
 			continue
 		}
-		expectedUID := existing.GetUID()
+		expectedUID := types.UID(status.UID)
+		if expectedUID == "" {
+			expectedUID = existing.GetUID()
+		}
 
 		if err := deleteTrackedResource(ctx, targetClient, ds, obj); err != nil {
 			if apierrors.IsNotFound(err) {
