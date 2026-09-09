@@ -296,6 +296,25 @@ namespace: "{{ .target.namespace }}"`)
 	assert.Contains(t, string(result), `name: ""`)
 }
 
+func TestRenderTemplate_RejectsUnquotedDynamicOutput(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+	ctx := breakglassv1alpha1.AuxiliaryResourceContext{Vars: map[string]string{"value": "worker-1, hostPID: true"}}
+
+	_, err := mgr.renderTemplate([]byte("spec:\n  nodeName: {{ .vars.value }}"), ctx)
+	require.ErrorContains(t, err, "template output validation failed")
+}
+
+func TestRenderTemplate_YAMLQuotePreservesRawValue(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
+		Vars: map[string]string{"value": "worker-1, hostPID: true"},
+	}
+
+	result, err := mgr.renderTemplate([]byte("value: {{ .vars.value | yamlQuote }}"), ctx)
+	require.NoError(t, err)
+	assert.Contains(t, string(result), `value: "worker-1, hostPID: true"`)
+}
+
 func TestDeployAuxiliaryResources_NilTemplate(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 
@@ -1143,6 +1162,8 @@ stringData:
 	assert.Equal(t, "ConfigMap", status.AdditionalResources[0].Kind)
 	assert.Equal(t, "config-2", status.AdditionalResources[0].ResourceName)
 	assert.Equal(t, "debug-ns", status.AdditionalResources[0].Namespace)
+	assert.NotEmpty(t, status.CreateOperationID)
+	assert.NotEmpty(t, status.AdditionalResources[0].CreateOperationID)
 
 	// Third document
 	assert.Equal(t, "Secret", status.AdditionalResources[1].Kind)
@@ -1174,8 +1195,9 @@ func TestCleanupAuxiliaryResources_WithAdditionalResources(t *testing.T) {
 			Namespace: "debug-ns",
 			UID:       types.UID("fixture-config-2"),
 			Annotations: map[string]string{
-				"breakglass.t-caas.telekom.com/source-session":     "breakglass-system/test-session",
-				"breakglass.t-caas.telekom.com/source-session-uid": "session-uid",
+				"breakglass.t-caas.telekom.com/source-session":      "breakglass-system/test-session",
+				"breakglass.t-caas.telekom.com/source-session-uid":  "session-uid",
+				"breakglass.t-caas.telekom.com/create-operation-id": "config-2-operation",
 			},
 		},
 	}
@@ -1210,11 +1232,11 @@ func TestCleanupAuxiliaryResources_WithAdditionalResources(t *testing.T) {
 					Namespace:    "debug-ns",
 					AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
 						{
-							Kind:         "ConfigMap",
-							APIVersion:   "v1",
-							ResourceName: "config-2",
-							UID:          "fixture-config-2",
-							Namespace:    "debug-ns",
+							Kind:              "ConfigMap",
+							APIVersion:        "v1",
+							ResourceName:      "config-2",
+							CreateOperationID: "config-2-operation",
+							Namespace:         "debug-ns",
 						},
 					},
 				},

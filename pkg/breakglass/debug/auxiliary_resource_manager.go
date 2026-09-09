@@ -254,13 +254,14 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 			}
 
 			addlStatus := breakglassv1alpha1.AuxiliaryResourceStatus{
-				Name:         status.Name,
-				Category:     status.Category,
-				Kind:         addlRes.Kind,
-				APIVersion:   addlRes.APIVersion,
-				ResourceName: addlRes.ResourceName,
-				Namespace:    addlRes.Namespace,
-				UID:          addlRes.UID,
+				Name:              status.Name,
+				Category:          status.Category,
+				Kind:              addlRes.Kind,
+				APIVersion:        addlRes.APIVersion,
+				ResourceName:      addlRes.ResourceName,
+				Namespace:         addlRes.Namespace,
+				UID:               addlRes.UID,
+				CreateOperationID: addlRes.CreateOperationID,
 			}
 
 			err := m.deleteResource(ctx, targetClient, addlStatus, session)
@@ -790,6 +791,9 @@ func (m *AuxiliaryResourceManager) renderTemplate(templateBytes []byte, ctx brea
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse template: %w", err)
 	}
+	if err := breakglassv1alpha1.ValidateTemplateOutput(tmpl); err != nil {
+		return nil, fmt.Errorf("template output validation failed: %w", err)
+	}
 
 	// Execute template
 	var buf bytes.Buffer
@@ -845,7 +849,9 @@ func (m *AuxiliaryResourceManager) deleteResource(
 		if string(live.GetUID()) != status.UID {
 			return nil
 		}
-	} else if session == nil || session.UID == "" || live.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
+	} else if session == nil || session.UID == "" || status.CreateOperationID == "" ||
+		live.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) ||
+		live.GetAnnotations()[createOperationIDAnnotation] != status.CreateOperationID {
 		return fmt.Errorf("refusing to delete %s/%s: ownership identity is unavailable or changed", status.Kind, status.ResourceName)
 	}
 

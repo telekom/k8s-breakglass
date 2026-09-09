@@ -132,6 +132,43 @@ func TestLifecycleCleanupPathsPreserveReplacement(t *testing.T) {
 	}
 }
 
+func TestAuxiliaryCleanupRequiresOperationIdentityWithoutUID(t *testing.T) {
+	for _, tc := range []struct {
+		name, recordedOperation, liveOperation string
+		wantDeleted, wantError                 bool
+	}{
+		{name: "matching operation", recordedOperation: "op-1", liveOperation: "op-1", wantDeleted: true},
+		{name: "missing recorded operation", liveOperation: "op-1", wantError: true},
+		{name: "different operation", recordedOperation: "op-1", liveOperation: "op-2", wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+				Name: "pod", Namespace: "ns", UID: "live-uid",
+				Annotations: map[string]string{
+					sourceSessionUIDAnnotation:  "session-uid",
+					createOperationIDAnnotation: tc.liveOperation,
+				},
+			}}
+			target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(pod).Build()
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+			status := breakglassv1alpha1.AuxiliaryResourceStatus{
+				APIVersion: "v1", Kind: "Pod", Namespace: "ns", ResourceName: "pod",
+				CreateOperationID: tc.recordedOperation,
+			}
+			err := (&AuxiliaryResourceManager{log: zap.NewNop().Sugar()}).deleteResource(ctx, target, status, session)
+			if tc.wantError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			var remaining corev1.Pod
+			getErr := target.Get(ctx, client.ObjectKeyFromObject(pod), &remaining)
+			require.Equal(t, !tc.wantDeleted, !apierrors.IsNotFound(getErr))
+		})
+	}
+}
+
 func TestTrackedWorkloadPodMembership(t *testing.T) {
 	controller := true
 	template := corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "debug", Image: "debug:v1"}}}}

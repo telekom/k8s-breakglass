@@ -1041,10 +1041,11 @@ func TestDeployedResourceRefFrom(t *testing.T) {
 
 	t.Run("converts full resource ref", func(t *testing.T) {
 		ref := &breakglassv1alpha1.DeployedResourceRef{
-			APIVersion: "apps/v1",
-			Kind:       "Deployment",
-			Name:       "debug-pod",
-			Namespace:  "debug-ns",
+			APIVersion:        "apps/v1",
+			Kind:              "Deployment",
+			Name:              "debug-pod",
+			Namespace:         "debug-ns",
+			CreateOperationID: "operation-1",
 		}
 
 		result := DeployedResourceRefFrom(ref)
@@ -1054,6 +1055,7 @@ func TestDeployedResourceRefFrom(t *testing.T) {
 		assert.Equal(t, "Deployment", *result.Kind)
 		assert.Equal(t, "debug-pod", *result.Name)
 		assert.Equal(t, "debug-ns", *result.Namespace)
+		assert.Equal(t, "operation-1", *result.CreateOperationID)
 	})
 }
 

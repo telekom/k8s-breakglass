@@ -576,6 +576,9 @@ func DeployedResourceRefFrom(r *breakglassv1alpha1.DeployedResourceRef) *ac.Depl
 		WithKind(r.Kind).
 		WithName(r.Name)
 
+	if r.CreateOperationID != "" {
+		result.WithCreateOperationID(r.CreateOperationID)
+	}
 	if r.Namespace != "" {
 		result.WithNamespace(r.Namespace)
 	}
@@ -646,6 +649,9 @@ func AuxiliaryResourceStatusFrom(s *breakglassv1alpha1.AuxiliaryResourceStatus) 
 		WithCreated(s.Created).
 		WithReady(s.Ready).
 		WithDeleted(s.Deleted)
+	if s.CreateOperationID != "" {
+		result.WithCreateOperationID(s.CreateOperationID)
+	}
 	if s.UID != "" {
 		result.WithUID(s.UID)
 	}
@@ -696,6 +702,9 @@ func AdditionalResourceRefFrom(r *breakglassv1alpha1.AdditionalResourceRef) *ac.
 		WithResourceName(r.ResourceName).
 		WithReady(r.Ready).
 		WithDeleted(r.Deleted)
+	if r.CreateOperationID != "" {
+		result.WithCreateOperationID(r.CreateOperationID)
+	}
 	if r.UID != "" {
 		result.WithUID(r.UID)
 	}
@@ -719,6 +728,9 @@ func PodTemplateResourceStatusFrom(s *breakglassv1alpha1.PodTemplateResourceStat
 		WithCreated(s.Created).
 		WithReady(s.Ready).
 		WithDeleted(s.Deleted)
+	if s.CreateOperationID != "" {
+		result.WithCreateOperationID(s.CreateOperationID)
+	}
 	if s.UID != "" {
 		result.WithUID(s.UID)
 	}
