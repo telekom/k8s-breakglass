@@ -52,9 +52,9 @@ func TestBuildPodSpecRejectsUnsupportedTerminalRecording(t *testing.T) {
 	}
 }
 
-func TestRejectUnsupportedTerminalRecordingFailsClosed(t *testing.T) {
-	_, template := recordingFixture(true)
-	if err := rejectUnsupportedTerminalRecording(template); err == nil {
-		t.Fatal("expected terminal recording to fail closed")
+func TestRejectUnsupportedTerminalRecordingAllowsDisabled(t *testing.T) {
+	_, template := recordingFixture(false)
+	if err := rejectUnsupportedTerminalRecording(template); err != nil {
+		t.Fatalf("disabled terminal recording should remain supported: %v", err)
 	}
 }
