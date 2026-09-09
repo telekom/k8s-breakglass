@@ -89,11 +89,29 @@ require_commands() {
 }
 
 validate_inputs() {
-  local value name
-  for name in NAMESPACE TENANT DEBUG_NAMESPACE CATALOGUE_RELEASE REFERENCE_REQUESTER_GROUP REFERENCE_ESCALATED_GROUP; do
+  local value name i ch
+  for name in NAMESPACE TENANT DEBUG_NAMESPACE CATALOGUE_RELEASE; do
     value="${!name}"
     if [[ ! "${value}" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || (( ${#value} > 63 )); then
       die "${name} must be a DNS-safe Kubernetes name (max 63 characters)"
+    fi
+  done
+  for name in REFERENCE_REQUESTER_GROUP REFERENCE_ESCALATED_GROUP; do
+    value="${!name}"
+    if [[ -z "${value}" ]] || (( ${#value} > 253 )); then
+      die "${name} must be a valid Breakglass identifier (1-253 chars; allowed: letters, digits, . _ - @ : / * ? [ ] ( ) + | ^ $ \\)"
+    fi
+    for ((i = 0; i < ${#value}; i++)); do
+      ch="${value:i:1}"
+      case "${ch}" in
+        [A-Za-z0-9._:@/-] | "*" | "?" | "[" | "]" | "(" | ")" | "+" | "|" | "^" | "$" | "\\") ;;
+        *)
+          die "${name} must be a valid Breakglass identifier (1-253 chars; allowed: letters, digits, . _ - @ : / * ? [ ] ( ) + | ^ $ \\)"
+          ;;
+      esac
+    done
+    if [[ "${value}" == *[[:space:][:cntrl:]]* ]]; then
+      die "${name} must be a valid Breakglass identifier (1-253 chars; allowed: letters, digits, . _ - @ : / * ? [ ] ( ) + | ^ $ \\)"
     fi
   done
   [[ "${RUN_ELEVATED}" == true || "${RUN_ELEVATED}" == false ]] || \
@@ -228,16 +246,16 @@ install_stack() {
   CATALOGUE_VALUES_FILE="$(mktemp)"
   cat >"${CATALOGUE_VALUES_FILE}" <<YAML
 requesters:
-  groups: [${REFERENCE_REQUESTER_GROUP}]
+  groups: ['${REFERENCE_REQUESTER_GROUP}']
   users: []
 approvers:
   groups: []
-  users: [${APPROVER_EMAIL}]
+  users: ['${APPROVER_EMAIL}']
 targets:
-  clusters: [${TENANT}]
+  clusters: ['${TENANT}']
   clusterSelector: {}
-targetNamespace: ${DEBUG_NAMESPACE}
-fullnameOverride: ${CATALOGUE_RELEASE}
+targetNamespace: '${DEBUG_NAMESPACE}'
+fullnameOverride: '${CATALOGUE_RELEASE}'
 profiles:
   - name: workload-diagnostics
     intent: workload-diagnostics
@@ -344,12 +362,12 @@ configure_reference() {
 apiVersion: authorization.t-caas.telekom.com/v1alpha1
 kind: RoleDefinition
 metadata:
-  name: ${REFERENCE_ROLE_NAME}
+  name: '${REFERENCE_ROLE_NAME}'
   labels:
     ${LABEL}: "${LABEL_VALUE}"
 spec:
   targetRole: ClusterRole
-  targetName: ${REFERENCE_CLUSTER_ROLE_NAME}
+  targetName: '${REFERENCE_CLUSTER_ROLE_NAME}'
   scopeNamespaced: false
   restrictedResources:
     - name: secrets
@@ -362,17 +380,17 @@ spec:
 apiVersion: authorization.t-caas.telekom.com/v1alpha1
 kind: BindDefinition
 metadata:
-  name: ${REFERENCE_BIND_NAME}
+  name: '${REFERENCE_BIND_NAME}'
   labels:
     ${LABEL}: "${LABEL_VALUE}"
 spec:
-  targetName: ${REFERENCE_BIND_NAME}
+  targetName: '${REFERENCE_BIND_NAME}'
   subjects:
     - apiGroup: rbac.authorization.k8s.io
       kind: Group
-      name: ${REFERENCE_REQUESTER_GROUP}
+      name: '${REFERENCE_REQUESTER_GROUP}'
   clusterRoleBindings:
-    clusterRoleRefs: [${REFERENCE_CLUSTER_ROLE_NAME}]
+    clusterRoleRefs: ['${REFERENCE_CLUSTER_ROLE_NAME}']
 YAML
   for _ in $(seq 1 60); do
     kubectl get clusterrole "${REFERENCE_CLUSTER_ROLE_NAME}" >/dev/null 2>&1 && break
@@ -386,7 +404,7 @@ YAML
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: AuditConfig
 metadata:
-  name: ${REFERENCE_AUDIT_CONFIG_NAME}
+  name: '${REFERENCE_AUDIT_CONFIG_NAME}'
   labels:
     ${LABEL}: "${LABEL_VALUE}"
 spec:
@@ -405,20 +423,20 @@ YAML
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
 metadata:
-  name: ${ESCALATION_NAME}
-  namespace: ${NAMESPACE}
+  name: '${ESCALATION_NAME}'
+  namespace: '${NAMESPACE}'
   labels:
     ${LABEL}: "${LABEL_VALUE}"
 spec:
   allowed:
-    clusters: [${TENANT}]
-    groups: [${REFERENCE_REQUESTER_GROUP}]
-  escalatedGroup: ${REFERENCE_ESCALATED_GROUP}
+    clusters: ['${TENANT}']
+    groups: ['${REFERENCE_REQUESTER_GROUP}']
+  escalatedGroup: '${REFERENCE_ESCALATED_GROUP}'
   maxValidFor: 10m
   approvalTimeout: 5m
   blockSelfApproval: true
   approvers:
-    users: [${APPROVER_EMAIL}]
+    users: ['${APPROVER_EMAIL}']
   requestReason:
     mandatory: true
     description: "Reference test reason"
