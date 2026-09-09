@@ -24,6 +24,7 @@ requeue; they are not returned through the reconciler error path, and there is
 no `CleanupFailed` condition. A missing
 `ClusterConfig`, REST configuration, or target client is a retryable outage,
 not proof that cleanup completed. A `NotFound` response is treated as
-successful cleanup. The delete request is UID-preconditioned, but once the API
-accepts it the inventory entry is retired; Kubernetes finalizers may therefore
-keep the object terminating after the controller's delete request succeeds.
+successful cleanup. The delete request is UID-preconditioned and followed by a
+read to verify that the tracked UID is gone. If finalizers keep that UID present,
+or verification fails, the inventory is retained and cleanup is retried. A
+different UID at the same name is left untouched and retires the old inventory.
