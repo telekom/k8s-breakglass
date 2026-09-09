@@ -281,7 +281,7 @@ func (c *DebugSessionAPIController) extendTrackedJobDeadlines(ctx context.Contex
 	var targetClient ctrlclient.Client
 	seen := make(map[ctrlclient.ObjectKey]struct{})
 	for _, ref := range session.Status.DeployedResources {
-		if ref.Kind != "Job" || ref.Name == "" {
+		if ref.APIVersion != "batch/v1" || ref.Kind != "Job" || ref.Source != "debug-pod" || ref.Name == "" {
 			continue
 		}
 		key := ctrlclient.ObjectKey{Name: ref.Name, Namespace: ref.Namespace}
