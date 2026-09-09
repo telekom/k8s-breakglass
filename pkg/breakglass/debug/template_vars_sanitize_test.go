@@ -5,7 +5,6 @@ package debug
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -14,10 +13,7 @@ import (
 
 func TestTemplateVarsPreservedBeforeSerialization(t *testing.T) {
 	for _, value := range []string{"registry/image:v1", "alice@example.com", "a,b", "worker-1\nhostNetwork: true", "---\nfoo", "a\u2028b"} {
-		want := strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\u0085", " ", "\u2028", " ", "\u2029", " ").Replace(value)
-		if strings.HasPrefix(want, "---") || strings.HasPrefix(want, "...") {
-			want = " " + want
-		}
+		want := value
 		raw, err := json.Marshal(value)
 		if err != nil {
 			t.Fatal(err)
@@ -27,7 +23,7 @@ func TestTemplateVarsPreservedBeforeSerialization(t *testing.T) {
 		pod := (&DebugSessionController{}).buildVarsFromSession(session, spec)
 		auxiliary := (&AuxiliaryResourceManager{}).buildVarsFromSession(session, spec)
 		if pod["value"] != want || auxiliary["value"] != want {
-			t.Fatalf("input not sanitized: pod=%q auxiliary=%q want=%q", pod["value"], auxiliary["value"], want)
+			t.Fatalf("input not preserved: pod=%q auxiliary=%q want=%q", pod["value"], auxiliary["value"], want)
 		}
 		session.Spec.ExtraDeployValues = nil
 		spec.ExtraDeployVariables = []breakglassv1alpha1.ExtraDeployVariable{{Name: "value", Default: &apiextensionsv1.JSON{Raw: raw}}}

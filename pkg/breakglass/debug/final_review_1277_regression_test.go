@@ -41,6 +41,10 @@ func TestFinalReviewCaptureExactUID(t *testing.T) {
 	if err != nil || got != "original" {
 		t.Fatalf("captured %q instead of original UID, err=%v", got, err)
 	}
+	original.UID = ""
+	if _, err := captureResourceUID(context.Background(), cl, original); err == nil {
+		t.Fatal("UID-less mutation response adopted a same-name replacement")
+	}
 }
 func TestFinalReviewMutationIssuerFence(t *testing.T) {
 	s := runtime.NewScheme()

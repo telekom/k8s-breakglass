@@ -13,6 +13,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -144,7 +145,7 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 			if !found {
 				// Find it in the old allowedPods to preserve its state
 				for _, oldAP := range ds.Status.AllowedPods {
-					if oldAP.Namespace == ec.Namespace && oldAP.Name == ec.PodName {
+					if oldAP.Namespace == ec.Namespace && oldAP.Name == ec.PodName && ec.PodUID != "" && oldAP.UID == ec.PodUID {
 						allowedPods = append(allowedPods, oldAP)
 						break
 					}
@@ -241,51 +242,66 @@ func (c *DebugSessionController) podBelongsToTrackedWorkload(ctx context.Context
 		return false
 	}
 	for _, ref := range ds.Status.DeployedResources {
-		if ref.Source != "debug-pod" || ref.Namespace != pod.Namespace || ref.UID == "" {
+		if ref.UID == "" || ref.Namespace != pod.Namespace || ref.Source != "debug-pod" {
 			continue
 		}
 		if ref.Kind == "Pod" && ref.Name == pod.Name && ref.UID == string(pod.UID) {
 			return true
 		}
-		if ref.Kind == "DaemonSet" {
+		owner := metav1.GetControllerOf(pod)
+		if owner == nil {
+			continue
+		}
+		switch ref.Kind {
+		case "DaemonSet":
+			if owner.Kind != "DaemonSet" || owner.Name != ref.Name || string(owner.UID) != ref.UID {
+				continue
+			}
 			workload := &appsv1.DaemonSet{}
 			if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, workload); err != nil || string(workload.UID) != ref.UID {
 				continue
 			}
-			owner := metav1.GetControllerOf(pod)
-			if owner != nil && owner.Kind == "DaemonSet" && owner.Name == workload.Name && owner.UID == workload.UID && podMatchesAdmittedWorkloadTemplate(ctx, targetClient, pod, &workload.Spec.Template, true) {
+			if podMatchesAdmittedWorkloadTemplate(ctx, targetClient, pod, &workload.Spec.Template, true) {
 				return true
 			}
-		}
-		if ref.Kind == "Deployment" {
+		case "Deployment":
+			if owner.Kind != "ReplicaSet" || owner.APIVersion != "apps/v1" {
+				continue
+			}
+			rs := &appsv1.ReplicaSet{}
+			if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: pod.Namespace, Name: owner.Name}, rs); err != nil || rs.UID != owner.UID {
+				continue
+			}
+			rsOwner := metav1.GetControllerOf(rs)
+			if rsOwner == nil || rsOwner.Kind != "Deployment" || rsOwner.Name != ref.Name || string(rsOwner.UID) != ref.UID {
+				continue
+			}
 			workload := &appsv1.Deployment{}
 			if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, workload); err != nil || string(workload.UID) != ref.UID {
 				continue
 			}
-			owner := metav1.GetControllerOf(pod)
-			if owner == nil || owner.Kind != "ReplicaSet" {
+			if !podMatchesWorkloadTemplate(&corev1.Pod{Spec: rs.Spec.Template.Spec}, &workload.Spec.Template, false) {
 				continue
 			}
-			replicaSet := &appsv1.ReplicaSet{}
-			if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: owner.Name}, replicaSet); err != nil {
+			// Only the live Pod from the API list receives admission defaults;
+			// the ReplicaSet-to-Deployment template comparison above stays strict.
+			if podMatchesAdmittedWorkloadTemplate(ctx, targetClient, pod, &rs.Spec.Template, false) {
+				return true
+			}
+		case "Job":
+			if owner.Kind != "Job" || owner.APIVersion != "batch/v1" || owner.Name != ref.Name || string(owner.UID) != ref.UID {
 				continue
 			}
-			replicaOwner := metav1.GetControllerOf(replicaSet)
-			if replicaOwner != nil && replicaOwner.Kind == "Deployment" && replicaOwner.Name == workload.Name && replicaOwner.UID == workload.UID && owner.UID == replicaSet.UID && workloadSchedulingIdentityEqual(&workload.Spec.Template, &replicaSet.Spec.Template) && podMatchesAdmittedWorkloadTemplate(ctx, targetClient, pod, &workload.Spec.Template, false) {
+			job := &batchv1.Job{}
+			if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, job); err != nil || string(job.UID) != ref.UID {
+				continue
+			}
+			if podMatchesAdmittedWorkloadTemplate(ctx, targetClient, pod, &job.Spec.Template, false) {
 				return true
 			}
 		}
 	}
 	return false
-}
-
-func workloadSchedulingIdentityEqual(deploymentTemplate, replicaSetTemplate *corev1.PodTemplateSpec) bool {
-	if deploymentTemplate == nil || replicaSetTemplate == nil {
-		return false
-	}
-	return deploymentTemplate.Spec.PriorityClassName == replicaSetTemplate.Spec.PriorityClassName &&
-		(deploymentTemplate.Spec.Priority == nil) == (replicaSetTemplate.Spec.Priority == nil) &&
-		(deploymentTemplate.Spec.PreemptionPolicy == nil) == (replicaSetTemplate.Spec.PreemptionPolicy == nil)
 }
 
 // monitorPodHealth checks pod status and emits audit events for failures/restarts
@@ -470,17 +486,10 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	kubectlHandler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
 	var cleanupErrors []error
 	if err := kubectlHandler.CleanupKubectlDebugResources(ctx, ds); err != nil {
-		// Check if the error is due to missing ClusterConfig - if so, treat as cleanup complete
+		// An unavailable cluster cannot prove that tracked resources are gone.
 		if errors.Is(err, cluster.ErrClusterConfigNotFound) {
-			log.Warnw("ClusterConfig no longer exists, treating cleanup as complete (orphaned session)",
-				"cluster", ds.Spec.Cluster)
-			// Clear deployed resources since we can't clean them up anyway
-			ds.Status.DeployedResources = nil
-			ds.Status.AllowedPods = nil
-			ds.Status.KubectlDebugStatus = nil
-			ds.Status.AuxiliaryResourceStatuses = nil
-			ds.Status.PodTemplateResourceStatuses = nil
-			return c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline)
+			log.Warnw("ClusterConfig no longer exists; retaining cleanup inventory for retry", "cluster", ds.Spec.Cluster)
+			return fmt.Errorf("cleanup blocked by missing ClusterConfig: %w", err)
 		}
 		log.Errorw("Failed to cleanup kubectl-debug resources", "error", err)
 		cleanupErrors = append(cleanupErrors, err)
@@ -867,25 +876,10 @@ func deleteOwnedResource(ctx context.Context, targetClient ctrlclient.Client, ob
 	return targetClient.Delete(ctx, live)
 }
 
-func captureResourceUID(ctx context.Context, targetClient ctrlclient.Client, obj ctrlclient.Object) (string, error) {
-	// Create/recover mutates obj with the exact object identity returned by the
-	// API server. Never perform a name-only GET here: a delete/recreate between
-	// the mutation and that GET would attribute a replacement to this session.
+func captureResourceUID(_ context.Context, _ ctrlclient.Client, obj ctrlclient.Object) (string, error) {
+	// Use only the mutation response; a name lookup could observe a replacement.
 	if obj.GetUID() == "" {
-		// Some test/fake clients do not populate Create responses. Keep this
-		// narrow compatibility path fail-closed: require a live UID and the
-		// immutable session marker to match before accepting the fallback.
-		live := obj.DeepCopyObject().(ctrlclient.Object)
-		if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(obj), live); err != nil {
-			return "", err
-		}
-		if live.GetUID() == "" {
-			return "", fmt.Errorf("resource %s/%s has no UID after mutation", obj.GetNamespace(), obj.GetName())
-		}
-		if expected, actual := obj.GetAnnotations()[sourceSessionUIDAnnotation], live.GetAnnotations()[sourceSessionUIDAnnotation]; expected != "" && expected != actual {
-			return "", fmt.Errorf("resource %s/%s ownership changed during UID capture", obj.GetNamespace(), obj.GetName())
-		}
-		return string(live.GetUID()), nil
+		return "", fmt.Errorf("resource %s/%s has no UID after mutation", obj.GetNamespace(), obj.GetName())
 	}
 	return string(obj.GetUID()), nil
 }

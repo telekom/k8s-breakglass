@@ -3087,7 +3087,7 @@ func TestDebugSessionController_FindBindingForSession_EdgeCases(t *testing.T) {
 		assert.Equal(t, "hybrid-binding", result2.Name)
 	})
 
-	t.Run("does not match cluster without ClusterConfig when using clusterSelector", func(t *testing.T) {
+	t.Run("fails closed without ClusterConfig when using clusterSelector", func(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-template",
@@ -3115,7 +3115,7 @@ func TestDebugSessionController_FindBindingForSession_EdgeCases(t *testing.T) {
 		ctrl := &DebugSessionController{log: logger, client: fakeClient}
 
 		result, err := ctrl.findBindingForSession(ctx, template, "unknown-cluster")
-		require.NoError(t, err)
+		require.ErrorContains(t, err, "cluster config required")
 		assert.Nil(t, result) // Can't match via selector without ClusterConfig
 	})
 }
@@ -5086,7 +5086,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		assert.Nil(t, current.Status.KubectlDebugStatus)
 	})
 
-	t.Run("missing_cluster_config_clears_kubectl_debug_status", func(t *testing.T) {
+	t.Run("missing_cluster_config_retains_all_cleanup_inventory", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-missing-cluster-kubectl", "test-template", "missing-cluster", "user@example.com")
 		session.Generation = 3
 		session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{
@@ -5124,18 +5124,14 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 			ccProvider: cluster.NewClientProvider(fakeClient, zap.NewNop().Sugar()),
 		}
 
+		before := session.Status.DeepCopy()
 		err := controller.cleanupResources(context.Background(), session)
-		require.NoError(t, err)
+		require.ErrorIs(t, err, cluster.ErrClusterConfigNotFound)
 
 		var updated breakglassv1alpha1.DebugSession
 		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
 		require.NoError(t, err)
-		assert.Empty(t, updated.Status.DeployedResources)
-		assert.Empty(t, updated.Status.AllowedPods)
-		assert.Nil(t, updated.Status.KubectlDebugStatus)
-		assert.Empty(t, updated.Status.AuxiliaryResourceStatuses)
-		assert.Empty(t, updated.Status.PodTemplateResourceStatuses)
-		assert.Equal(t, session.Generation, updated.Status.ObservedGeneration)
+		assert.Equal(t, *before, updated.Status)
 	})
 
 	t.Run("missing_rest_config_retains_deployed_tracking", func(t *testing.T) {

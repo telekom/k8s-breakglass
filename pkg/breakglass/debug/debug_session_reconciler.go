@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -1117,15 +1119,21 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 	var clusterConfig *breakglassv1alpha1.ClusterConfig
 	clusterConfigList := &breakglassv1alpha1.ClusterConfigList{}
 	if err := c.approvalReader().List(ctx, clusterConfigList); err != nil {
-		return nil, fmt.Errorf("failed to list cluster configs: %w", err)
+		return nil, fmt.Errorf("list cluster configs for binding quota resolution: %w", err)
 	}
 	for i := range clusterConfigList.Items {
 		if clusterConfigList.Items[i].Name == clusterName {
+			if clusterConfig != nil {
+				return nil, fmt.Errorf("ambiguous cluster config for binding quota resolution")
+			}
 			clusterConfig = &clusterConfigList.Items[i]
-			break
 		}
 	}
 
+	sort.Slice(bindingList.Items, func(i, j int) bool {
+		a, b := bindingList.Items[i], bindingList.Items[j]
+		return a.Namespace+"/"+a.Name < b.Namespace+"/"+b.Name
+	})
 	for i := range bindingList.Items {
 		binding := &bindingList.Items[i]
 		if !breakglass.IsBindingActive(binding) {
@@ -1136,20 +1144,9 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 		if !c.bindingMatchesTemplate(binding, template) {
 			continue
 		}
-		if binding.Spec.ClusterSelector != nil && clusterConfig == nil {
-			explicitMatch := false
-			for _, configuredCluster := range binding.Spec.Clusters {
-				if configuredCluster == clusterName {
-					explicitMatch = true
-					break
-				}
-			}
-			if !explicitMatch {
-				if c.quotaEnabled {
-					return nil, fmt.Errorf("cluster config required for selector matching")
-				}
-				continue
-			}
+
+		if binding.Spec.ClusterSelector != nil && clusterConfig == nil && !slices.Contains(binding.Spec.Clusters, clusterName) {
+			return nil, fmt.Errorf("cluster config required to resolve binding selector")
 		}
 
 		// Check if binding matches this cluster

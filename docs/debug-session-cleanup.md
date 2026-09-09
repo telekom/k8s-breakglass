@@ -32,3 +32,6 @@ different UID at the same name is left untouched and retires the old inventory.
 A copied session annotation on a live resource does not recover a missing original
 UID. Legacy inventory without an immutable UID requires the explicit operator
 recovery mechanism; mutable ownership markers alone never authorize deletion.
+
+If kubectl-debug cleanup encounters a missing ClusterConfig, it retains all
+resource inventories and operation evidence and returns a retryable error.
