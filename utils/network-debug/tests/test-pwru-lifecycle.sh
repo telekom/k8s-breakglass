@@ -160,7 +160,7 @@ KILL' ;;
 		PWRU_FAKE_KILL_ATTEMPTED="$fixture/kill-attempted" PWRU_FAKE_WAIT_LOG="$wait_log" \
 		PWRU_FAKE_DETACH_PENDING="$detach_pending" PWRU_FAKE_INSPECT_COUNT="$inspect_count" \
 		PWRU_DISABLE_TIMEOUT="${PWRU_DISABLE_TIMEOUT:-false}" \
-		PWRU_FAKE_CONTAINER=pwru-proof PATH="$fixture:/usr/bin:/bin" \
+		PWRU_FAKE_CONTAINER=pwru-proof PWRU_CONTAINER_ID=pwru-proof PATH="$fixture:/usr/bin:/bin" \
 		bash -c '
 			set -u
 			. "$1/pwru-lifecycle.sh"
@@ -201,7 +201,7 @@ PWRU_STOP_SETTLE_SECONDS=1 run_case stubborn 'pwru started without a packet tupl
 # closed when the daemon cannot be queried.
 printf '%s\n%s\n' running 0 >"$fixture/owner-state"
 if PWRU_FAKE_MODE=graceful PWRU_FAKE_STATE="$fixture/owner-state" \
-	PWRU_FAKE_CONTAINER=pwru-proof PWRU_FAKE_OWNER=other PWRU_FAKE_LOG="$fixture/pwru.log" \
+	PWRU_FAKE_CONTAINER=pwru-proof PWRU_CONTAINER_ID=pwru-proof PWRU_FAKE_OWNER=other PWRU_FAKE_LOG="$fixture/pwru.log" \
 	PWRU_FAKE_SIGNALS="$fixture/signals" PWRU_OWNER_LABEL=owner PWRU_OWNER_VALUE=expected \
 	PATH="$fixture:/usr/bin:/bin" bash -c '. "$1/pwru-lifecycle.sh"; ! pwru_force_remove pwru-proof 1' bash "$root"; then
 	:
@@ -210,7 +210,7 @@ else
 	exit 1
 fi
 if PWRU_FAKE_MODE=daemon-fail PWRU_FAKE_STATE="$fixture/owner-state" \
-	PWRU_FAKE_CONTAINER=pwru-proof PWRU_FAKE_LOG="$fixture/pwru.log" \
+	PWRU_FAKE_CONTAINER=pwru-proof PWRU_CONTAINER_ID=pwru-proof PWRU_FAKE_LOG="$fixture/pwru.log" \
 	PWRU_FAKE_SIGNALS="$fixture/signals" PATH="$fixture:/usr/bin:/bin" \
 	bash -c '. "$1/pwru-lifecycle.sh"; ! pwru_force_remove pwru-proof 1' bash "$root"; then
 	:
@@ -220,7 +220,7 @@ else
 fi
 
 if PWRU_FAKE_MODE=inspect-fail-listed PWRU_FAKE_STATE="$fixture/owner-state" \
-	PWRU_FAKE_CONTAINER=pwru-proof PWRU_FAKE_LOG="$fixture/pwru.log" \
+	PWRU_FAKE_CONTAINER=pwru-proof PWRU_CONTAINER_ID=pwru-proof PWRU_FAKE_LOG="$fixture/pwru.log" \
 	PWRU_FAKE_SIGNALS="$fixture/signals" PATH="$fixture:/usr/bin:/bin" \
 	bash -c '. "$1/pwru-lifecycle.sh"; ! pwru_force_remove pwru-proof 1' bash "$root"; then
 	:
@@ -229,12 +229,12 @@ else
 	exit 1
 fi
 if PWRU_FAKE_MODE=inspect-fail-absent PWRU_FAKE_STATE="$fixture/owner-state" \
-	PWRU_FAKE_CONTAINER=pwru-proof PWRU_FAKE_LOG="$fixture/pwru.log" \
+	PWRU_FAKE_CONTAINER=pwru-proof PWRU_CONTAINER_ID=pwru-proof PWRU_FAKE_LOG="$fixture/pwru.log" \
 	PWRU_FAKE_SIGNALS="$fixture/signals" PATH="$fixture:/usr/bin:/bin" \
-	bash -c '. "$1/pwru-lifecycle.sh"; pwru_force_remove pwru-proof 1' bash "$root"; then
+	bash -c '. "$1/pwru-lifecycle.sh"; ! pwru_force_remove pwru-proof 1' bash "$root"; then
 	:
 else
-	printf '%s\n' 'empty list after inspect failure was not accepted as absence' >&2
+	printf '%s\n' 'inspect failure was incorrectly treated as absence' >&2
 	exit 1
 fi
 

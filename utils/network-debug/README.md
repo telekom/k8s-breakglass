@@ -21,6 +21,13 @@ the proofs. We deliberately do not reinstall or independently pin those
 packages. The upstream netshoot package set is part of the digest-pinned base;
 the additions are listed in [`IMAGE-METADATA.yaml`](./IMAGE-METADATA.yaml).
 
+The following netshoot utilities are deliberately not part of this intent:
+`calicoctl` is platform/CNI-specific; `ctop` is a Docker-host UI; `fortio` and
+`grpcurl` are workload/application diagnostics; and `termshark` is an
+interactive pcap UI outside the bounded contract. Teams needing them must use
+a separately approved image/profile with its own digest, capabilities, and
+behavioral proof. This image does not claim full netshoot compatibility.
+
 ## Included capabilities
 
 - Connectivity: `curl`, `nc`, `ping`, `tracepath`, `traceroute`, `mtr`, DNS
@@ -100,13 +107,13 @@ Kubernetes distributions and admission policies.
 
 The netshoot runtime and Go build image are pinned by immutable OCI manifest
 digests. The netshoot v0.16 release is the source of the inherited runtime
-packages; `pwru` is downloaded for each architecture with a checksum.
-The build stage temporarily installs `ca-certificates` and `curl` from the
-pinned builder's configured APT repositories to perform that download, then
-removes them; they are not copied into the runtime image or included in the
-lock record. Their revisions intentionally follow the current repository
-indexes rather than a rotating snapshot. The checksum-verified `pwru` archive
-is the only build-stage payload copied into runtime.
+packages, which are refreshed from the matching Alpine 3.24 repositories for
+security fixes. `pwru` is built from its immutable Go module sum with the
+pinned toolchain, so the resulting binary receives current standard-library
+fixes instead of inheriting the release asset's older compiler. Optional
+inherited binaries that are outside this image's supported intent contract are
+removed so stale upstream tools cannot be shipped or scanned as part of the
+utility.
 `versions.env` is the
 human-readable lock record and the image carries OCI version, revision,
 creation, source, license, and base-digest labels. The multi-architecture Make

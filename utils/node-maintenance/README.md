@@ -17,6 +17,11 @@ targeted incident interfaces:
 * `kexec-recovery-validate` validates fixed provider-owned recovery files and
   digests. It never loads or executes a kernel.
 
+The `node-recovery` preflight invokes `ethtool` against the exact controller-
+selected interface and records its result as `ethtool.txt`; the integration
+proof exercises this against a real loopback interface. The image does not
+advertise an operation that its behavioral proof does not execute.
+
 Broad neighbor flushing is not supported. Neighbor replacement requires one
 exact IP/MAC/interface tuple. FDB replacement requires one exact
 bridge/port/MAC/VLAN tuple and verifies bridge membership and VLAN presence

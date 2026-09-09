@@ -67,6 +67,13 @@ exercised in separate behavioral scenarios; the suite does not claim to model
 power loss at every filesystem instruction between candidate creation and its
 atomic rename.
 
+The Kind host-network integration target (`make -C utils/node-maintenance
+kind-host-network`) exercises the deployed advanced shape as well: an
+exact-node, host-networked recovery pod and a separate allowlisted repair pod
+with only `NET_ADMIN`, a read-only root, RuntimeDefault seccomp, and privilege
+escalation disabled. Both pods publish evidence before their disposable
+resources are removed.
+
 The controller remains responsible for pinning the image by digest, enforcing
 one active workload per node, expiring approvals independently, bounding pod
 and evidence-volume lifetimes, and recording cleanup. An actual kexec executor

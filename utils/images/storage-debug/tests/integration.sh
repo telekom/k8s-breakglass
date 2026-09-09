@@ -8,6 +8,7 @@ root=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
 image=${STORAGE_DEBUG_IMAGE:-storage-debug-integration-$RANDOM}
 platform=${IMAGE_PLATFORM:-linux/amd64}
 remove_image=false
+image_owned_id=
 work=$(mktemp -d "${TMPDIR:-/tmp}/storage-debug-integration.XXXXXX")
 storage="$work/storage"
 reports="$work/reports"
@@ -44,7 +45,7 @@ cleanup() {
             status=1
         fi
     done
-    [ "$remove_image" = true ] && docker image rm "$image" >/dev/null 2>&1
+    [ "$remove_image" = true ] && docker_remove_image_if_id docker "$image" "$image_owned_id" >/dev/null 2>&1 || true
     rm -rf "$work"
     exit "$status"
 }
@@ -59,6 +60,8 @@ container_exists() {
 }
 
 trap cleanup EXIT HUP INT TERM
+# shellcheck disable=SC1091
+. "$(cd -- "$(dirname -- "$0")/../../../.." && pwd)/hack/docker-image-ownership.sh"
 
 for command_name in docker kind kubectl jq timeout; do
     command -v "$command_name" >/dev/null 2>&1 || fail "$command_name is required; integration never silently skips"
@@ -103,6 +106,7 @@ if ! docker image inspect "$image" >/dev/null 2>&1; then
         --build-arg BUILD_DATE=2026-01-02T03:04:05Z \
         --tag "$image" "$root"
     remove_image=true
+    image_owned_id=$(docker image inspect "$image" --format '{{.Id}}') || fail 'could not capture built image ID'
 fi
 
 [ "$(docker image inspect "$image" --format '{{.Config.User}}')" = '65532:65532' ] || \

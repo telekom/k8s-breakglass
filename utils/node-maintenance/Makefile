@@ -11,14 +11,33 @@ VCS_REF ?= $(shell git rev-parse --short HEAD 2>/dev/null || printf unknown)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 OCI_ARCHIVE ?= node-maintenance.oci.tar
 
-.PHONY: test integration build build-multiarch sbom sign
+.PHONY: test integration immutable-container-capture-contract-test volume-attachment-contract-test kind-host-network kind-load-contract-test evidence-bundle-contract-test build build-multiarch sbom sign
 
 test:
 	./tests/test-helpers.sh
+	./tests/test-kind-image-load-contract.sh
+	./tests/test-evidence-bundle-contract.sh
+	./tests/test-immutable-container-capture-contract.sh
+	./tests/test-volume-attachment-contract.sh
 	GOCACHE=$${NODE_MAINTENANCE_GOCACHE:-$${TMPDIR:-/tmp}/node-maintenance-go-cache} go test ./cmd/network-action
 
 integration:
 	./tests/integration.sh
+
+kind-host-network:
+	./tests/kind-host-network.sh
+
+kind-load-contract-test:
+	./tests/test-kind-image-load-contract.sh
+
+evidence-bundle-contract-test:
+	./tests/test-evidence-bundle-contract.sh
+
+immutable-container-capture-contract-test:
+	./tests/test-immutable-container-capture-contract.sh
+
+volume-attachment-contract-test:
+	./tests/test-volume-attachment-contract.sh
 
 build:
 	docker build --pull=false \

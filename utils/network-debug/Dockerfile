@@ -3,50 +3,40 @@
 
 # netshoot v0.16 supplies the overlapping network troubleshooting tools. Keep
 # the release tag and immutable multi-architecture manifest digest together.
-# The upstream package set is inherited as a unit; only pwru and the
-# contract/docs below are added here.
+# The upstream package set is inherited as a unit and refreshed from the
+# pinned Alpine 3.24 repositories before adding pwru and the contract/docs.
 FROM ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70 AS runtime
 
 ARG VERSION=0.1.0
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 
-# pwru is fetched from an immutable release in the tool stage. The transient
-# download packages come from the pinned builder's configured repositories and
-# are removed before the checksum-verified binary is copied into runtime.
-# Storage tooling is intentionally excluded; kubestr belongs to storage-debug.
-FROM golang:1.27@sha256:c5b07c17f54c5f22230c4b4da6e90249165cf55368e01a52808cb92064e18836 AS tools
+# pwru is built from its immutable Go module version with the pinned builder.
+# The compiler and build dependencies never enter the runtime image. Storage
+# tooling is intentionally excluded; kubestr belongs to storage-debug.
+FROM golang:1.27@sha256:4013ae0f9e7994f8535c58c811f8f863fbed38b72e0d51e6592156f758d66146 AS tools
 ARG TARGETARCH
 ARG PWRU_VERSION=v1.0.12
-ARG PWRU_SHA256_AMD64=1ccaea22d97c283b09d2e2f0329789727c4f1b19aa99723e32b2e12d3a5e6dba
-ARG PWRU_SHA256_ARM64=997516721a58b4f8ffe3504994cada472c9bcd78f1e819862bf61f1081684378
+ARG PWRU_MODULE_SUM=h1:a8oQXdTJHznh4vCI3GLf31IDqGYIUmDJzjSaXHYpQPg=
+ARG PWRU_COMMIT=f1d6cf8898953ac1560401e181f3ac5f0e33b486
 
-ENV CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} GOPROXY=https://proxy.golang.org
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-# The build-only package revisions follow the builder's current repositories;
-# pinning them would couple rebuilds to rotating APT snapshots.
-# hadolint ignore=DL3008
+WORKDIR /src/pwru
+
 RUN set -eux; \
+	export DEBIAN_FRONTEND=noninteractive; \
 	apt-get update; \
-	apt-get install --no-install-recommends --yes ca-certificates curl; \
-	curl --fail --silent --show-error --location \
-		"https://github.com/cilium/pwru/releases/download/${PWRU_VERSION}/pwru-linux-${TARGETARCH:-amd64}.tar.gz" \
-		--output "/tmp/pwru-linux-${TARGETARCH:-amd64}.tar.gz"; \
-	curl --fail --silent --show-error --location \
-		"https://github.com/cilium/pwru/releases/download/${PWRU_VERSION}/pwru-linux-${TARGETARCH:-amd64}.tar.gz.sha256sum" \
-		--output /tmp/pwru.sha256sum; \
-	sed -i 's#^[0-9a-fA-F]*[[:space:]]\+#&/tmp/#' /tmp/pwru.sha256sum; \
-	sha256sum -c /tmp/pwru.sha256sum; \
-	case "${TARGETARCH:-amd64}" in \
-		amd64) expected="${PWRU_SHA256_AMD64}" ;; \
-		arm64) expected="${PWRU_SHA256_ARM64}" ;; \
-		*) echo "unsupported target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
-	esac; \
-	test "$(sha256sum "/tmp/pwru-linux-${TARGETARCH:-amd64}.tar.gz" | cut -d' ' -f1)" = "${expected}"; \
-	tar -xzf "/tmp/pwru-linux-${TARGETARCH:-amd64}.tar.gz" -C /go/bin; \
-	apt-get purge --auto-remove --yes ca-certificates curl; \
-	rm -rf /var/lib/apt/lists/* "/tmp/pwru-linux-${TARGETARCH:-amd64}.tar.gz" /tmp/pwru.sha256sum; \
-	test -x /go/bin/pwru
+	apt-get install --no-install-recommends --yes \
+		clang=1:19.0-63 llvm=1:19.0-63 flex=2.6.4-8.2+b4 bison=2:3.8.2+dfsg-1+b2; \
+	rm -rf /var/lib/apt/lists/*; \
+	module_json="$(go mod download -json "github.com/cilium/pwru@${PWRU_VERSION}")"; \
+	case "${module_json}" in *'"Sum": "'"${PWRU_MODULE_SUM}"'"'*) ;; *) exit 1 ;; esac; \
+	case "${module_json}" in *'"Hash": "'"${PWRU_COMMIT}"'"'*) ;; *) exit 1 ;; esac; \
+	mkdir -p /src/pwru /out; \
+	cp -a "$(go env GOPATH)/pkg/mod/github.com/cilium/pwru@${PWRU_VERSION}/." /src/pwru/; \
+	test "$(awk '$1 == "go" { print $2 }' /src/pwru/go.mod)" = "1.25.0"; \
+	chmod +x /src/pwru/libpcap/configure; \
+	make VERSION="${PWRU_VERSION}" TARGET_GOARCH="${TARGETARCH:-amd64}" GOARCH="${TARGETARCH:-amd64}" pwru; \
+	install -m 0755 pwru /out/pwru
 
 FROM runtime
 
@@ -54,6 +44,24 @@ ARG VERSION=0.1.0
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 ARG PWRU_VERSION=v1.0.12
+ARG NETSHOOT_ALPINE_VERSION=3.24.1
+
+# The pinned netshoot image owns the runtime package set. Refresh it from the
+# matching Alpine 3.24 repositories to consume security fixes, then prove the
+# expected Alpine runtime before removing optional inherited binaries.
+RUN set -eux; \
+	sed -i '/\/alpine\/edge\//d' /etc/apk/repositories; \
+	printf '%s\n' \
+		'https://dl-cdn.alpinelinux.org/alpine/v3.24/main' \
+		'https://dl-cdn.alpinelinux.org/alpine/v3.24/community' \
+		>> /etc/apk/repositories; \
+	apk update; \
+	apk upgrade; \
+		rm -rf /var/cache/apk/*; \
+		test "$(cat /etc/alpine-release)" = "${NETSHOOT_ALPINE_VERSION}"; \
+	test -x /usr/bin/tcpdump; \
+	rm -f /usr/local/bin/calicoctl /usr/local/bin/ctop /usr/local/bin/fortio \
+	/usr/local/bin/grpcurl /usr/local/bin/termshark
 
 LABEL org.opencontainers.image.title="Network Debug Utility" \
 	org.opencontainers.image.description="Standalone, multi-architecture Kubernetes network troubleshooting toolbox" \
@@ -71,7 +79,7 @@ LABEL org.opencontainers.image.title="Network Debug Utility" \
 	io.telekom.breakglass.image.role="debug-network" \
 	io.telekom.breakglass.security.capabilities="NET_RAW,NET_ADMIN,BPF,PERFMON,SYS_RESOURCE,SYS_PTRACE"
 
-COPY --from=tools /go/bin/pwru /usr/local/bin/pwru
+COPY --from=tools /out/pwru /usr/local/bin/pwru
 COPY scripts/net-debug /usr/local/bin/net-debug
 COPY scripts/net-report /usr/local/bin/net-report
 COPY scripts/network-debug-profile.sh /etc/profile.d/network-debug.sh

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
@@ -6,22 +6,77 @@ set -eu
 
 root=$(cd -- "$(dirname -- "$0")/.." && pwd)
 image=diagnostic-artifact-collector:kind-test
-cluster=diagnostic-artifact-collector
+requested_image=${KIND_IMAGE_NAME:-$image}
+requested_cluster=${KIND_CLUSTER_NAME:-diagnostic-artifact-collector}
+cluster=$requested_cluster
 pod=diagnostic-artifact-collector
 KIND_NODE_IMAGE=${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}
+KIND_BIN=${KIND_BIN:-kind}
+DOCKER_BIN=${DOCKER_BIN:-docker}
+KUBECONFIG="$(mktemp "${TMPDIR:-/tmp}/diagnostic-artifact-collector-kubeconfig.XXXXXX")"
+export KIND_CLUSTER_NAME="$cluster" KUBECONFIG_FILE="$KUBECONFIG" KIND_CLUSTER_CREATED=false KIND_CLUSTER_OWNER_IDS=''
+# shellcheck source=../../../../hack/kind-ownership.sh
+# shellcheck disable=SC1091
+script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
+# shellcheck disable=SC1091
+. "${script_dir}/../../../../hack/kind-ownership.sh"
+# shellcheck disable=SC1091
+. "${script_dir}/../../../../hack/docker-image-ownership.sh"
+image_owned=false
+image_owned_id=
 cleanup() {
-	kind delete cluster --name "$cluster" >/dev/null 2>&1 || true
-	docker image rm "$image" >/dev/null 2>&1 || true
+	kind_cleanup_owned_cluster >/dev/null 2>&1 || true
+	if [ "$image_owned" = true ]; then
+		docker_remove_image_if_id "$DOCKER_BIN" "$image" "$image_owned_id" || true
+	fi
+	rm -f "$KUBECONFIG"
 }
 trap cleanup EXIT HUP INT TERM
 
-command -v docker >/dev/null 2>&1 || { echo 'Docker is required for Kind fsGroup proof' >&2; exit 1; }
-command -v kind >/dev/null 2>&1 || { echo 'Kind is required for fsGroup proof' >&2; exit 1; }
+command -v "$DOCKER_BIN" >/dev/null 2>&1 || { echo 'Docker is required for Kind fsGroup proof' >&2; exit 1; }
+command -v "$KIND_BIN" >/dev/null 2>&1 || { echo 'Kind is required for fsGroup proof' >&2; exit 1; }
 command -v kubectl >/dev/null 2>&1 || { echo 'kubectl is required for fsGroup proof' >&2; exit 1; }
 
-docker build --tag "$image" "$root"
-kind create cluster --name "$cluster" --image "$KIND_NODE_IMAGE" --wait 90s
-kind load docker-image "$image" --name "$cluster"
+case "$requested_image" in
+	*@sha256:*)
+		echo 'KIND_IMAGE_NAME must be a local tag, not a digest reference' >&2
+		exit 1
+		;;
+esac
+
+if "$DOCKER_BIN" image inspect "$requested_image" >/dev/null 2>&1; then
+	# Do not parse arbitrary Docker references here: digest references and
+	# registries with ports make tag suffix manipulation ambiguous. Use a
+	# validated local repository for the owned build instead.
+	image="diagnostic-artifact-collector:kind-owned-$$-$(date +%s)"
+else
+	image=$requested_image
+fi
+"$DOCKER_BIN" build --tag "$image" "$root"
+image_owned=true
+image_owned_id=$("$DOCKER_BIN" image inspect --format '{{.Id}}' "$image") || {
+		echo 'could not capture immutable ID of built image' >&2
+	exit 1
+}
+if ! existing_clusters=$("$KIND_BIN" get clusters 2>/dev/null); then
+	echo 'could not list Kind clusters before creating the disposable cluster' >&2
+	exit 1
+fi
+while IFS= read -r existing_cluster; do
+	if [ "$existing_cluster" = "$requested_cluster" ]; then
+		cluster="${requested_cluster}-$$-$(date +%s)"
+		break
+	fi
+done <<EOF
+$existing_clusters
+EOF
+export KIND_CLUSTER_NAME="$cluster"
+if ! kind_create_owned_cluster; then
+	echo 'could not create disposable Kind cluster' >&2
+	exit 1
+fi
+export KUBECONFIG
+"$KIND_BIN" load docker-image "$image" --name "$cluster"
 # shellcheck disable=SC2154
 kubectl apply -f - <<EOF
 apiVersion: v1

@@ -1,17 +1,29 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-set -eu
+set -Eeuo pipefail
 
 root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+# shellcheck disable=SC1091
+. "$(cd -- "$root/../../.." && pwd)/hack/docker-image-ownership.sh"
+# shellcheck disable=SC1091
+. "$(cd -- "$root/../../.." && pwd)/hack/docker-resource-ownership.sh"
+# shellcheck disable=SC1091
+. "$root/tests/bounded-container-cleanup.sh"
 image=diagnostic-artifact-collector:test
 test_dir=$(mktemp -d /tmp/diagnostic-artifact-test.XXXXXX)
-root_volume=diagnostic-artifact-test-${test_dir##*/}
-upload_volume=diagnostic-artifact-upload-${test_dir##*/}
+root_volume=
+root_volume_owner=diagnostic-artifact-root-owner-${test_dir##*/}
+root_volume_owner_id=
+upload_volume=
+upload_volume_owner=diagnostic-artifact-upload-owner-${test_dir##*/}
+upload_volume_owner_id=
 https_pid=
 proxy_pid=
 bounded_container=
+bounded_container_id=
+bounded_container_cidfile=
 cleanup() {
 	if [ -n "$https_pid" ]; then
 		kill "$https_pid" >/dev/null 2>&1 || true
@@ -20,11 +32,11 @@ cleanup() {
 		kill "$proxy_pid" >/dev/null 2>&1 || true
 	fi
 	if [ -n "$bounded_container" ]; then
-		docker rm -f "$bounded_container" >/dev/null 2>&1 || true
+		if [ -n "$bounded_container_id" ]; then docker_remove_resource_id docker container "$bounded_container_id" >/dev/null 2>&1 || true; fi
 	fi
+	if [ -n "$root_volume_owner_id" ]; then docker_remove_resource_with_volumes docker container "$root_volume_owner_id" >/dev/null 2>&1 || true; fi
+	if [ -n "$upload_volume_owner_id" ]; then docker_remove_resource_with_volumes docker container "$upload_volume_owner_id" >/dev/null 2>&1 || true; fi
 	rm -rf "$test_dir"
-	docker volume rm "$root_volume" "$upload_volume" >/dev/null 2>&1 || true
-	docker image rm "$image" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -41,6 +53,33 @@ command -v openssl >/dev/null 2>&1 || {
 	exit 1
 }
 docker build --tag "$image" "$root"
+
+create_owned_volume() {
+	owner_name=$1
+	owner_id_var=$2
+	volume_var=$3
+	owner_id=$(docker_run_detached_with_id docker "$owner_name" --user 0 --network none --read-only --cap-drop=ALL \
+		--security-opt no-new-privileges --mount type=volume,destination=/owned \
+		--entrypoint /bin/sh "$image" -c 'while :; do sleep 60; done') || return 1
+	volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/owned"}}{{.Name}}{{end}}{{end}}' "$owner_id") || {
+		docker_remove_resource_with_volumes docker container "$owner_id" >/dev/null 2>&1 || true
+		return 1
+	}
+	[ -n "$volume" ] || {
+		docker_remove_resource_with_volumes docker container "$owner_id" >/dev/null 2>&1 || true
+		return 1
+	}
+	case "$owner_id_var" in
+		root_volume_owner_id) root_volume_owner_id=$owner_id ;;
+		upload_volume_owner_id) upload_volume_owner_id=$owner_id ;;
+		*) docker_remove_resource_with_volumes docker container "$owner_id" >/dev/null 2>&1 || true; return 1 ;;
+	esac
+	case "$volume_var" in
+		root_volume) root_volume=$volume ;;
+		upload_volume) upload_volume=$volume ;;
+		*) docker_remove_resource_with_volumes docker container "$owner_id" >/dev/null 2>&1 || true; return 1 ;;
+	esac
+}
 
 run_image() {
 	output=$1
@@ -328,7 +367,7 @@ fi
 	exit 1
 }
 
-docker volume create "$root_volume" >/dev/null
+create_owned_volume "$root_volume_owner" root_volume_owner_id root_volume
 # The image creates /output as 65532-owned mode 0755. With CAP_DAC_OVERRIDE
 # dropped, root cannot write that directory unless its owner first grants the
 # shared-volume write bit; this setup mirrors a writable emptyDir mount without
@@ -375,7 +414,7 @@ fi
 # replacement) against a disposable, certificate-verified HTTPS fixture. The
 # fixture captures the request bytes so the test proves the uploaded payload
 # is exactly the archive produced by the collector.
-docker volume create "$upload_volume" >/dev/null
+create_owned_volume "$upload_volume_owner" upload_volume_owner_id upload_volume
 docker run --rm --read-only --cap-drop=ALL --network none \
 	--env BREAKGLASS_ARTIFACT_ID=dsa-0123456789abcdef01234567 \
 	--env BREAKGLASS_ARTIFACT_SESSION_NAMESPACE=breakglass-test \
@@ -648,10 +687,11 @@ expect_bounded_collector_failure() {
 	done
 	shift
 	bounded_container="diagnostic-artifact-bounded-${test_dir##*/}-${deadline_seconds}"
+	bounded_container_cidfile="$test_dir/$bounded_container.cid"
 	# The test paths contain no spaces; options are deliberately limited to the
 	# fixed Docker flags and temporary fixture mounts below.
 	# shellcheck disable=SC2086
-	docker run -d --name "$bounded_container" --read-only --cap-drop=ALL --network none \
+	docker run -d --name "$bounded_container" --cidfile "$bounded_container_cidfile" --read-only --cap-drop=ALL --network none \
 		--user 65532:65532 \
 		--env BREAKGLASS_ARTIFACT_ID=dsa-0123456789abcdef01234567 \
 		--env BREAKGLASS_ARTIFACT_SESSION_NAMESPACE=breakglass-test \
@@ -660,17 +700,22 @@ expect_bounded_collector_failure() {
 		--env BREAKGLASS_ARTIFACT_REDACTION_PROFILE=credential-text.v1 \
 		--env BREAKGLASS_ARTIFACT_REDACTION_VERSION=1 \
 		--volume "$output:/output" $docker_opts "$image" "$@" >/dev/null
+	bounded_container_id=$(docker_capture_resource_id_from_cidfile "$bounded_container_cidfile") || {
+		bounded_container=
+		exit 1
+	}
+	rm -f "$bounded_container_cidfile"
 	deadline=$(( $(date +%s) + deadline_seconds ))
-	while [ "$(docker inspect -f '{{.State.Running}}' "$bounded_container")" = true ]; do
+	while [ "$(docker inspect -f '{{.State.Running}}' "$bounded_container_id")" = true ]; do
 		if [ "$(date +%s)" -ge "$deadline" ]; then
-			docker stop --time 1 "$bounded_container" >/dev/null 2>&1 || true
+			docker stop --time 1 "$bounded_container_id" >/dev/null 2>&1 || true
 			echo "collector did not terminate within ${deadline_seconds}s for: $expected_diagnostic" >&2
 			exit 1
 		fi
 		sleep 1
 	done
-	exit_code=$(docker inspect -f '{{.State.ExitCode}}' "$bounded_container")
-	result=$(docker logs "$bounded_container" 2>&1 || true)
+	exit_code=$(docker inspect -f '{{.State.ExitCode}}' "$bounded_container_id")
+	result=$(docker logs "$bounded_container_id" 2>&1 || true)
 	[ "$exit_code" = 2 ] || {
 		echo "unexpected collector exit code for $expected_diagnostic: $exit_code ($result)" >&2
 		exit 1
@@ -686,8 +731,9 @@ expect_bounded_collector_failure() {
 		echo "collector left a staging directory after $expected_diagnostic" >&2
 		exit 1
 	fi
-	docker rm "$bounded_container" >/dev/null
+	docker_remove_resource_id docker container "$bounded_container_id" >/dev/null || exit 1
 	bounded_container=
+	bounded_container_id=
 }
 
 expect_preserved_collision() {
