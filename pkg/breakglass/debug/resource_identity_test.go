@@ -557,6 +557,75 @@ func TestCreateRecoveryDoesNotReadAfterDeterministicCreateFailure(t *testing.T) 
 	require.ErrorContains(t, err, "create tracked resource")
 }
 
+func TestCreateRecoveryRejectsUnstampedDesiredResource(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	desired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "tracked", Namespace: "ns"}}
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(_ context.Context, _ client.WithWatch, _ client.Object, _ ...client.CreateOption) error {
+			return apierrors.NewTimeoutError("create timed out", 1)
+		},
+		Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+			t.Fatal("unstamped creates must fail closed before recovery reads")
+			return nil
+		},
+	}).Build()
+
+	err := applyOwnedTrackedResource(context.Background(), target, desired, session)
+	require.ErrorContains(t, err, "different operation identity")
+}
+
+func TestCreateRecoveryAllowsServerDefaultsAndStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		desired client.Object
+		server  func(client.Object)
+	}{
+		{
+			name: "deployment defaults",
+			desired: &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{
+				Name: "tracked", Namespace: "ns", Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"},
+			}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "debug", Image: "example/debug"}},
+			}}}},
+			server: func(obj client.Object) {
+				deployment := obj.(*appsv1.Deployment)
+				deployment.Spec.Replicas = ptr.To(int32(1))
+				deployment.Status.Replicas = 1
+			},
+		},
+		{
+			name: "pod defaults",
+			desired: &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+				Name: "tracked", Namespace: "ns", Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"},
+			}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "debug", Image: "example/debug"}}}},
+			server: func(obj client.Object) {
+				pod := obj.(*corev1.Pod)
+				pod.Spec.ServiceAccountName = "default"
+				pod.Status.Phase = corev1.PodRunning
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+			_, err := stampCreateOperation(tc.desired, session)
+			require.NoError(t, err)
+			target := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					created := obj.DeepCopyObject().(client.Object)
+					tc.server(created)
+					created.SetUID("created")
+					if err := cl.Create(ctx, created, opts...); err != nil {
+						return err
+					}
+					return apierrors.NewServerTimeout(schema.GroupResource{Group: "", Resource: "objects"}, "create", 1)
+				},
+			}).Build()
+			require.NoError(t, applyOwnedTrackedResource(context.Background(), target, tc.desired, session))
+			require.Equal(t, types.UID("created"), tc.desired.GetUID())
+		})
+	}
+}
+
 func TestStampCreateOperationReusesPersistedIntentAfterRestart(t *testing.T) {
 	obj := &unstructured.Unstructured{}
 	obj.SetAPIVersion("v1")

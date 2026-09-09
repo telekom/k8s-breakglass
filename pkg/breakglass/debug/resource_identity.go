@@ -284,11 +284,11 @@ func recoverTrackedCreateResult(ctx context.Context, target client.Client, obj c
 	if existingAnnotations[createOperationIDAnnotation] != desiredOperationID {
 		return fmt.Errorf("target resource %s/%s already exists with a different operation identity: %w", obj.GetNamespace(), obj.GetName(), createErr)
 	}
-	existingOperationID, err := deterministicCreateOperationID(existing, session)
+	contentMatches, err := recoveredCreateContentMatches(obj, existing)
 	if err != nil {
-		return fmt.Errorf("validate recovered resource %s/%s identity: %w", obj.GetNamespace(), obj.GetName(), err)
+		return fmt.Errorf("validate recovered resource %s/%s content: %w", obj.GetNamespace(), obj.GetName(), err)
 	}
-	if existingOperationID != desiredOperationID {
+	if !contentMatches {
 		return fmt.Errorf("target resource %s/%s already exists with different desired content: %w", obj.GetNamespace(), obj.GetName(), createErr)
 	}
 	obj.SetUID(existing.GetUID())
@@ -328,6 +328,7 @@ func deterministicCreateOperationID(obj client.Object, session *breakglassv1alph
 	if annotations != nil {
 		annotations = maps.Clone(annotations)
 		delete(annotations, createOperationIDAnnotation)
+		delete(annotations, sourceSessionUIDAnnotation)
 		desired.SetAnnotations(annotations)
 	}
 	desired.SetUID("")
@@ -343,6 +344,66 @@ func deterministicCreateOperationID(obj client.Object, session *breakglassv1alph
 		return "", fmt.Errorf("serialize create operation intent: %w", err)
 	}
 	return uuid.NewSHA1(uuid.Nil, append([]byte(string(session.UID)+"\x00"), serialized...)).String(), nil
+}
+
+func recoveredCreateContentMatches(desired, existing client.Object) (bool, error) {
+	desiredMap, err := normalizedCreateObjectMap(desired)
+	if err != nil {
+		return false, fmt.Errorf("serialize desired object: %w", err)
+	}
+	existingMap, err := normalizedCreateObjectMap(existing)
+	if err != nil {
+		return false, fmt.Errorf("serialize recovered object: %w", err)
+	}
+	return jsonSubset(desiredMap, existingMap), nil
+}
+
+func normalizedCreateObjectMap(obj client.Object) (map[string]interface{}, error) {
+	serialized, err := json.Marshal(obj)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(serialized, &result); err != nil {
+		return nil, err
+	}
+	delete(result, "status")
+	if metadata, ok := result["metadata"].(map[string]interface{}); ok {
+		for _, key := range []string{"uid", "resourceVersion", "generation", "creationTimestamp", "deletionTimestamp", "deletionGracePeriodSeconds", "managedFields", "selfLink"} {
+			delete(metadata, key)
+		}
+	}
+	return result, nil
+}
+
+func jsonSubset(expected, actual interface{}) bool {
+	switch expectedValue := expected.(type) {
+	case map[string]interface{}:
+		actualValue, ok := actual.(map[string]interface{})
+		if !ok {
+			return false
+		}
+		for key, value := range expectedValue {
+			actualField, ok := actualValue[key]
+			if !ok || !jsonSubset(value, actualField) {
+				return false
+			}
+		}
+		return true
+	case []interface{}:
+		actualValue, ok := actual.([]interface{})
+		if !ok || len(expectedValue) != len(actualValue) {
+			return false
+		}
+		for i := range expectedValue {
+			if !jsonSubset(expectedValue[i], actualValue[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return equality.Semantic.DeepEqual(expected, actual)
+	}
 }
 
 func persistedCreateOperationID(obj client.Object, session *breakglassv1alpha1.DebugSession) string {
