@@ -1,4 +1,18 @@
 # ==========================================
+# ValidatingAdmissionPolicy Configuration
+# ==========================================
+# ValidatingAdmissionPolicy resources are cluster-scoped and require Kubernetes
+# 1.30 or newer. Keep this disabled unless the policies should be installed
+# once for the whole cluster.
+validatingAdmissionPolicy:
+  enabled: false
+  # validationActions controls how the API server handles policy violations.
+  # Warn/Audit is the safe phase-1 default alongside the existing webhooks.
+  validationActions:
+    - Warn
+    - Audit
+
+# ==========================================
 # NetworkPolicy Configuration
 # ==========================================
 # Controls ingress traffic to the breakglass controller pods.

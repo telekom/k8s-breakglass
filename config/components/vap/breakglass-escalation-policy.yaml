@@ -29,14 +29,18 @@ spec:
   validations:
     # At least one approver group or user must be specified
     - expression: >-
-        !has(object.spec.approvers) ||
-        (has(object.spec.approvers.groups) && object.spec.approvers.groups.size() > 0) ||
-        (has(object.spec.approvers.users) && object.spec.approvers.users.size() > 0)
+        has(object.spec.approvers) &&
+        (
+          (has(object.spec.approvers.groups) && object.spec.approvers.groups.size() > 0) ||
+          (has(object.spec.approvers.users) && object.spec.approvers.users.size() > 0)
+        )
       message: "at least one approver group or user must be specified"
       reason: Invalid
 
     # escalatedGroup must use identifier format
     - expression: >-
+        has(object.spec.escalatedGroup) &&
+        object.spec.escalatedGroup.size() > 0 &&
         object.spec.escalatedGroup.matches('^[a-zA-Z0-9._:-]+$')
       message: "spec.escalatedGroup must match identifier format [a-zA-Z0-9._:-]+"
       reason: Invalid
@@ -61,7 +65,7 @@ spec:
     - expression: >-
         !has(object.spec.allowed) ||
         !has(object.spec.allowed.groups) ||
-        object.spec.allowed.groups.size() == object.spec.allowed.groups.toSet().size()
+        object.spec.allowed.groups.all(g, object.spec.allowed.groups.exists_one(x, x == g))
       message: "spec.allowed.groups must not contain duplicates"
       reason: Invalid
 
@@ -69,7 +73,7 @@ spec:
     - expression: >-
         !has(object.spec.allowed) ||
         !has(object.spec.allowed.clusters) ||
-        object.spec.allowed.clusters.size() == object.spec.allowed.clusters.toSet().size()
+        object.spec.allowed.clusters.all(c, object.spec.allowed.clusters.exists_one(x, x == c))
       message: "spec.allowed.clusters must not contain duplicates"
       reason: Invalid
 
@@ -81,4 +85,9 @@ spec:
         (!has(object.spec.allowedIdentityProvidersForRequests) || object.spec.allowedIdentityProvidersForRequests.size() == 0) &&
         (!has(object.spec.allowedIdentityProvidersForApprovers) || object.spec.allowedIdentityProvidersForApprovers.size() == 0)
       message: "allowedIdentityProviders cannot be used together with allowedIdentityProvidersForRequests or allowedIdentityProvidersForApprovers"
+      reason: Invalid
+    - expression: >-
+        (!has(object.spec.allowedIdentityProvidersForRequests) || object.spec.allowedIdentityProvidersForRequests.size() == 0) ==
+        (!has(object.spec.allowedIdentityProvidersForApprovers) || object.spec.allowedIdentityProvidersForApprovers.size() == 0)
+      message: "allowedIdentityProvidersForRequests and allowedIdentityProvidersForApprovers must both be set or both be empty"
       reason: Invalid
