@@ -787,7 +787,7 @@ func (c *DebugSessionController) cleanupDeployedResources(
 			obj.SetUID(types.UID(ref.UID))
 		}
 
-		if err := deleteOwnedResource(ctx, targetClient, obj, ref.UID, ds); err != nil {
+		if err := deleteTrackedResource(ctx, targetClient, ds, obj); err != nil {
 			if apierrors.IsNotFound(err) {
 				log.Debugw("Debug resource already deleted", "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace)
 				continue
@@ -1010,7 +1010,7 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 		obj.SetName(status.ResourceName)
 		obj.SetNamespace(status.Namespace)
 
-		if err := deleteOwnedResource(ctx, targetClient, obj, status.UID, ds); err != nil {
+		if err := deleteTrackedResource(ctx, targetClient, ds, obj); err != nil {
 			if apierrors.IsNotFound(err) {
 				log.Debugw("Pod template resource already deleted",
 					"kind", status.Kind,
