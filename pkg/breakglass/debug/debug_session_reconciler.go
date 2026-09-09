@@ -223,6 +223,9 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		log.Errorw("Failed to get DebugSessionTemplate", "template", ds.Spec.TemplateRef, "error", err)
 		return c.failSession(ctx, ds, fmt.Sprintf("template not found: %s", ds.Spec.TemplateRef))
 	}
+	if err := rejectUnsupportedTerminalRecording(template); err != nil {
+		return c.failSession(ctx, ds, err.Error())
+	}
 
 	// Find binding early so we can check its approvers for the approval decision
 	// This ensures bindings with approvers properly trigger approval workflow.
@@ -538,6 +541,9 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 
 	if err := c.admitDebugSession(ctx, ds); err != nil {
 		return ctrl.Result{}, err
+	}
+	if err := rejectUnsupportedTerminalRecording(template); err != nil {
+		return c.failSession(ctx, ds, err.Error())
 	}
 	// Only deploy workloads for workload or hybrid mode
 	mode := template.Spec.Mode

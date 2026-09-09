@@ -1223,8 +1223,9 @@ spec:
                     type: boolean
                   enableTerminalRecording:
                     default: false
-                    description: enableTerminalRecording enables recording of terminal
-                      sessions.
+                    description: |-
+                      enableTerminalRecording requests terminal-byte recording. Rendering fails
+                      closed while the transport is unavailable.
                     type: boolean
                   enabled:
                     default: true
