@@ -2765,6 +2765,11 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 					{Value: "platform", AllowedGroups: []string{"platform-admins"}},
 				},
 			},
+			{
+				Name: "disabledField", InputType: breakglassv1alpha1.InputTypeText,
+				Disabled: true, Required: true,
+				Default: &apiextensionsv1.JSON{Raw: []byte(`"disabled-default"`)},
+			},
 		}
 
 		buildRouter := func(username, email string, groups interface{}) *gin.Engine {
@@ -2814,6 +2819,21 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 		assert.Equal(t, "targetPool", response.Templates[0].ExtraDeployVariables[1].Name)
 		require.Len(t, response.Templates[0].ExtraDeployVariables[1].Options, 1)
 		assert.Equal(t, "tenant", response.Templates[0].ExtraDeployVariables[1].Options[0].Value)
+
+		detailRequest := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates/"+userTemplate.Name, nil)
+		detailResponse := httptest.NewRecorder()
+		buildRouter("alice-id", "alice@example.com", []string{"platform-admins"}).ServeHTTP(detailResponse, detailRequest)
+		require.Equal(t, http.StatusOK, detailResponse.Code, detailResponse.Body.String())
+		var detail DebugSessionTemplateResponse
+		require.NoError(t, json.Unmarshal(detailResponse.Body.Bytes(), &detail))
+		var visibleNames []string
+		for _, variable := range detail.ExtraDeployVariables {
+			visibleNames = append(visibleNames, variable.Name)
+		}
+		require.Equal(t, []string{"logLevel", "privilegedMode", "targetPool"}, visibleNames)
+		require.Len(t, userTemplate.Spec.ExtraDeployVariables, 4)
+		require.True(t, userTemplate.Spec.ExtraDeployVariables[3].Disabled)
+		require.Equal(t, `"disabled-default"`, string(userTemplate.Spec.ExtraDeployVariables[3].Default.Raw))
 
 		req = httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
 		w = httptest.NewRecorder()

@@ -289,7 +289,7 @@ func filterExtraDeployVariablesForRequester(vars []breakglassv1alpha1.ExtraDeplo
 
 	filtered := make([]breakglassv1alpha1.ExtraDeployVariable, 0, len(vars))
 	for _, variable := range vars {
-		if !userHasAnyExactGroup(requester.groups, variable.AllowedGroups) {
+		if variable.Disabled || !userHasAnyExactGroup(requester.groups, variable.AllowedGroups) {
 			continue
 		}
 
