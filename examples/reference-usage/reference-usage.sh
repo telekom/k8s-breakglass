@@ -42,8 +42,15 @@ REFERENCE_TOKEN_HELPER="${REFERENCE_TOKEN_HELPER:-}"
 REFERENCE_ENV_FILE="${REFERENCE_ENV_FILE:-}"
 REFERENCE_REQUESTER_GROUP="${REFERENCE_REQUESTER_GROUP:-reference-requesters}"
 REFERENCE_ESCALATED_GROUP="${REFERENCE_ESCALATED_GROUP:-reference-restricted}"
-REFERENCE_AUDIT_CONFIG_NAME="${REFERENCE_AUDIT_CONFIG_NAME:-reference-audit-config}"
 REFERENCE_AUDIT_WEBHOOK_URL="${REFERENCE_AUDIT_WEBHOOK_URL:-}"
+REFERENCE_RUN_ID="${REFERENCE_RUN_ID:-${RANDOM}}"
+LABEL="reference-usage.example.com/run"
+LABEL_VALUE="run-${REFERENCE_RUN_ID}"
+REFERENCE_AUDIT_CONFIG_NAME="${REFERENCE_AUDIT_CONFIG_NAME:-reference-audit-config-${REFERENCE_RUN_ID}}"
+REFERENCE_ROLE_NAME="reference-restricted-role-${REFERENCE_RUN_ID}"
+REFERENCE_BIND_NAME="reference-requester-${REFERENCE_RUN_ID}"
+REFERENCE_CLUSTER_ROLE_NAME="${REFERENCE_ROLE_NAME}"
+AUDIT_CONFIG_CREATED=false
 
 REQUESTER_USERNAME="${REFERENCE_REQUESTER_USERNAME:-reference-requester}"
 REQUESTER_PASSWORD="${REFERENCE_REQUESTER_PASSWORD:-reference-requester-password}"
@@ -51,7 +58,6 @@ REQUESTER_EMAIL="${REFERENCE_REQUESTER_EMAIL:-reference-requester@example.com}"
 APPROVER_USERNAME="${REFERENCE_APPROVER_USERNAME:-reference-approver}"
 APPROVER_PASSWORD="${REFERENCE_APPROVER_PASSWORD:-reference-approver-password}"
 APPROVER_EMAIL="${REFERENCE_APPROVER_EMAIL:-reference-approver@example.com}"
-LABEL="reference-usage.example.com/run"
 RUN_ELEVATED="${REFERENCE_RUN_ELEVATED:-false}"
 VERIFY_SUPPLY_CHAIN="${REFERENCE_VERIFY_SUPPLY_CHAIN:-true}"
 VERIFY_GH_ATTESTATION="${REFERENCE_VERIFY_GH_ATTESTATION:-false}"
@@ -66,7 +72,7 @@ SESSION_NAME=""
 REJECTED_SESSION_NAME=""
 DEBUG_SESSION_NAME=""
 ELEVATED_DEBUG_SESSION_NAME=""
-ESCALATION_NAME="reference-restricted-${RANDOM}"
+ESCALATION_NAME="reference-restricted-${REFERENCE_RUN_ID}"
 
 die() { printf 'reference-usage: %s\n' "$*" >&2; exit 1; }
 log() { printf 'reference-usage: %s\n' "$*"; }
@@ -106,8 +112,12 @@ cleanup() {
   [[ -n "${CATALOGUE_VALUES_FILE}" ]] && rm -f "${CATALOGUE_VALUES_FILE}"
   [[ -d "${STATE_DIR}" ]] && rm -rf "${STATE_DIR}"
   if [[ -n "${KUBECONFIG_FILE}" ]]; then
-    KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete auditconfig "${REFERENCE_AUDIT_CONFIG_NAME}" \
-      --ignore-not-found >/dev/null 2>&1
+    if [[ "${AUDIT_CONFIG_CREATED}" == true ]]; then
+      KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete auditconfig "${REFERENCE_AUDIT_CONFIG_NAME}" \
+        --ignore-not-found >/dev/null 2>&1
+    fi
+    KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete roledefinition,binddefinition -A \
+      -l "${LABEL}=${LABEL_VALUE}" --ignore-not-found --wait >/dev/null 2>&1
     KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete breakglassescalation "${ESCALATION_NAME}" \
       -n "${NAMESPACE}" --ignore-not-found >/dev/null 2>&1
     [[ -n "${SESSION_NAME}" ]] && KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete breakglasssession "${SESSION_NAME}" \
@@ -333,12 +343,12 @@ configure_reference() {
 apiVersion: authorization.t-caas.telekom.com/v1alpha1
 kind: RoleDefinition
 metadata:
-  name: reference-restricted-role
+  name: ${REFERENCE_ROLE_NAME}
   labels:
-    ${LABEL}: "true"
+    ${LABEL}: "${LABEL_VALUE}"
 spec:
   targetRole: ClusterRole
-  targetName: reference-restricted-role
+  targetName: ${REFERENCE_CLUSTER_ROLE_NAME}
   scopeNamespaced: false
   restrictedResources:
     - name: secrets
@@ -351,30 +361,33 @@ spec:
 apiVersion: authorization.t-caas.telekom.com/v1alpha1
 kind: BindDefinition
 metadata:
-  name: reference-requester
+  name: ${REFERENCE_BIND_NAME}
   labels:
-    ${LABEL}: "true"
+    ${LABEL}: "${LABEL_VALUE}"
 spec:
-  targetName: reference-requester
+  targetName: ${REFERENCE_BIND_NAME}
   subjects:
     - apiGroup: rbac.authorization.k8s.io
       kind: Group
       name: ${REFERENCE_REQUESTER_GROUP}
   clusterRoleBindings:
-    clusterRoleRefs: [reference-restricted-role]
+    clusterRoleRefs: [${REFERENCE_CLUSTER_ROLE_NAME}]
 YAML
   for _ in $(seq 1 60); do
-    kubectl get clusterrole reference-restricted-role >/dev/null 2>&1 && break
+    kubectl get clusterrole "${REFERENCE_CLUSTER_ROLE_NAME}" >/dev/null 2>&1 && break
     sleep 2
   done
-  kubectl get clusterrole reference-restricted-role >/dev/null || die "auth-operator did not generate reference-restricted-role"
+  kubectl get clusterrole "${REFERENCE_CLUSTER_ROLE_NAME}" >/dev/null || die "auth-operator did not generate ${REFERENCE_CLUSTER_ROLE_NAME}"
+  if kubectl get auditconfig "${REFERENCE_AUDIT_CONFIG_NAME}" >/dev/null 2>&1; then
+    die "refusing to replace existing AuditConfig ${REFERENCE_AUDIT_CONFIG_NAME}"
+  fi
   kubectl apply -f - <<YAML
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: AuditConfig
 metadata:
   name: ${REFERENCE_AUDIT_CONFIG_NAME}
   labels:
-    ${LABEL}: "true"
+    ${LABEL}: "${LABEL_VALUE}"
 spec:
   enabled: true
   sinks:
@@ -386,6 +399,7 @@ spec:
           Content-Type: application/json
         timeoutSeconds: 10
 YAML
+  AUDIT_CONFIG_CREATED=true
   kubectl apply -f - <<YAML
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
@@ -393,7 +407,7 @@ metadata:
   name: ${ESCALATION_NAME}
   namespace: ${NAMESPACE}
   labels:
-    ${LABEL}: "true"
+    ${LABEL}: "${LABEL_VALUE}"
 spec:
   allowed:
     clusters: [${TENANT}]
@@ -623,13 +637,15 @@ debug_session_flow() {
 }
 
 assert_zero_residual() {
-  kubectl delete auditconfig "${REFERENCE_AUDIT_CONFIG_NAME}" --ignore-not-found >/dev/null
-  kubectl delete roledefinition,binddefinition -A -l "${LABEL}=true" --ignore-not-found --wait >/dev/null
+  if [[ "${AUDIT_CONFIG_CREATED}" == true ]]; then
+    kubectl delete auditconfig "${REFERENCE_AUDIT_CONFIG_NAME}" --ignore-not-found >/dev/null
+  fi
+  kubectl delete roledefinition,binddefinition -A -l "${LABEL}=${LABEL_VALUE}" --ignore-not-found --wait >/dev/null
   for session in "${SESSION_NAME}" "${REJECTED_SESSION_NAME}"; do
     [[ -n "${session}" ]] && kubectl delete breakglasssession "${session}" -n "${NAMESPACE}" \
       --ignore-not-found --wait >/dev/null
   done
-  kubectl delete breakglassescalation -A -l "${LABEL}=true" --ignore-not-found --wait >/dev/null
+  kubectl delete breakglassescalation -A -l "${LABEL}=${LABEL_VALUE}" --ignore-not-found --wait >/dev/null
   [[ -n "${DEBUG_SESSION_NAME}" ]] && kubectl delete debugsession "${DEBUG_SESSION_NAME}" -n "${NAMESPACE}" --ignore-not-found --wait >/dev/null
   [[ -n "${ELEVATED_DEBUG_SESSION_NAME}" ]] && kubectl delete debugsession "${ELEVATED_DEBUG_SESSION_NAME}" -n "${NAMESPACE}" --ignore-not-found --wait >/dev/null
   for session in "${SESSION_NAME}" "${REJECTED_SESSION_NAME}"; do
@@ -638,10 +654,10 @@ assert_zero_residual() {
       die "reference session ${session} remains"
     fi
   done
-  kubectl get breakglassescalation -A -l "${LABEL}=true" -o name | grep -q . && die "reference escalations remain"
-  kubectl get roledefinition,binddefinition -A -l "${LABEL}=true" -o name | grep -q . && die "auth-operator reference objects remain"
-  kubectl wait --for=delete clusterrole/reference-restricted-role --timeout=60s >/dev/null 2>&1 || \
-    die "generated reference role remains"
+  kubectl get breakglassescalation -A -l "${LABEL}=${LABEL_VALUE}" -o name | grep -q . && die "reference escalations remain"
+  kubectl get roledefinition,binddefinition -A -l "${LABEL}=${LABEL_VALUE}" -o name | grep -q . && die "auth-operator reference objects remain"
+  kubectl wait --for=delete "clusterrole/${REFERENCE_CLUSTER_ROLE_NAME}" --timeout=60s >/dev/null 2>&1 || \
+    die "generated reference role ${REFERENCE_CLUSTER_ROLE_NAME} remains"
   for session in "${DEBUG_SESSION_NAME}" "${ELEVATED_DEBUG_SESSION_NAME}"; do
     if [[ -n "${session}" ]] && kubectl get debugsession "${session}" -n "${NAMESPACE}" \
       -o name 2>/dev/null | grep -q .; then
