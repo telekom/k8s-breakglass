@@ -50,6 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including kubectl-debug, while the terminal-byte transport remains unavailable.
 - Renewing a Job-backed DebugSession now extends only its tracked batch/v1
   debug workload Job deadline before recording the renewed session expiry.
+- Reference usage cleanup bounds every waited Kubernetes delete, and the API
+  reference now lists `Job` among the allowed `workloadType` values.
 
 ### Security
 
