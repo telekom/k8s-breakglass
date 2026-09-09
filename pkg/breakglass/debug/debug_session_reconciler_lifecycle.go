@@ -1009,6 +1009,9 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 		obj.SetGroupVersionKind(gvk)
 		obj.SetName(status.ResourceName)
 		obj.SetNamespace(status.Namespace)
+		if status.UID != "" {
+			obj.SetUID(types.UID(status.UID))
+		}
 
 		if err := deleteTrackedResource(ctx, targetClient, ds, obj); err != nil {
 			if apierrors.IsNotFound(err) {
