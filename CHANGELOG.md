@@ -152,6 +152,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   allowed Pod UID so webhook authorization remains bound to the original Pod
   after same-name replacement; refreshes accept a new UID only for a Pod
   proven to belong to the session's recorded workload.
+- **DebugSession authorization discovery**: Webhook authorization now retries
+  live DebugSession discovery when the informer cache has not observed a newly
+  active session, while retaining the live expiry, participant, and Pod UID
+  fences before allowing pod operations.
 - **Hard-expiry CI diagnostics**: Diagnostic redaction now covers compact JWTs
   with short segments, and the hard-expiry port-forward lane records only a
   candidate proven to be available. SSA coverage also verifies immutable debug

@@ -320,7 +320,11 @@ func (wc *WebhookController) findDebugSessionAccessForIssuer(ctx context.Context
 		return nil, ""
 	}
 
-	// List active debug sessions for this cluster using indexed fields
+	// List active debug sessions for this cluster using indexed fields. The
+	// cache can briefly lag a status transition (the API caller waits on the
+	// live object), so an empty cached result must not make an already-active
+	// session invisible to the authorization path. Fall back to a live list and
+	// apply the same filters before the per-candidate live fence below.
 	debugSessionList := &breakglassv1alpha1.DebugSessionList{}
 	fieldSelector := client.MatchingFields{
 		"spec.cluster":             clusterName,
@@ -330,6 +334,28 @@ func (wc *WebhookController) findDebugSessionAccessForIssuer(ctx context.Context
 	if err := wc.escalManager.List(ctx, debugSessionList, fieldSelector); err != nil {
 		reqLog.Warnw("Failed to list debug sessions for pod operation check", "error", err)
 		return nil, ""
+	}
+	if len(debugSessionList.Items) == 0 && wc.sesManager != nil {
+		liveList := &breakglassv1alpha1.DebugSessionList{}
+		if err := wc.sesManager.Reader().List(ctx, liveList); err != nil {
+			reqLog.Warnw("Failed to list debug sessions through live reader for pod operation check", "error", err)
+			return nil, ""
+		}
+		for i := range liveList.Items {
+			ds := &liveList.Items[i]
+			if ds.Spec.Cluster != clusterName || ds.Status.State != breakglassv1alpha1.DebugSessionStateActive {
+				continue
+			}
+			for _, participant := range ds.Status.Participants {
+				if participant.User == username {
+					debugSessionList.Items = append(debugSessionList.Items, *ds.DeepCopy())
+					break
+				}
+			}
+		}
+		if len(debugSessionList.Items) > 0 {
+			reqLog.Debugw("Using live debug session discovery after empty cache result", "count", len(debugSessionList.Items))
+		}
 	}
 
 	// Reuse one live snapshot only within this authorization decision.
