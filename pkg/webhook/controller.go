@@ -277,6 +277,11 @@ type WebhookController struct {
 	activityTracker         *ActivityTracker                                                      // optional buffered session activity tracker (#314)
 }
 
+const (
+	debugSessionClusterLabelKey                  = "breakglass.telekom.com/debug-cluster"
+	maxLiveDebugSessionDiscoveryCandidates int64 = 128
+)
+
 // checkDebugSessionAccessForIssuer checks if a pod operation is allowed by an active debug session.
 // Returns (allowed, sessionName, reason) where allowed is true if the user can perform
 // the requested operation on the pod via a debug session they are participating in.
@@ -337,7 +342,14 @@ func (wc *WebhookController) findDebugSessionAccessForIssuer(ctx context.Context
 	}
 	if len(debugSessionList.Items) == 0 && wc.sesManager != nil {
 		liveList := &breakglassv1alpha1.DebugSessionList{}
-		if err := wc.sesManager.Reader().List(ctx, liveList); err != nil {
+		liveListOptions := []client.ListOption{
+			client.MatchingLabels{debugSessionClusterLabelKey: clusterName},
+			client.Limit(maxLiveDebugSessionDiscoveryCandidates),
+		}
+		if namespace := wc.sesManager.QuotaNamespace(); namespace != "" {
+			liveListOptions = append(liveListOptions, client.InNamespace(namespace))
+		}
+		if err := wc.sesManager.Reader().List(ctx, liveList, liveListOptions...); err != nil {
 			reqLog.Warnw("Failed to list debug sessions through live reader for pod operation check", "error", err)
 			return nil, ""
 		}

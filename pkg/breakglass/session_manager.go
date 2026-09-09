@@ -131,6 +131,13 @@ func (c *SessionManager) Reader() client.Reader {
 	return c.Client
 }
 
+// QuotaNamespace returns the controller namespace configured for durable
+// admission. DebugSessions are created in this namespace, so callers that
+// need a bounded live discovery can scope reads there.
+func (c *SessionManager) QuotaNamespace() string {
+	return c.quotaNamespace
+}
+
 func (c *SessionManager) list(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	if c.reader != nil {
 		return c.reader.List(ctx, list, opts...)

@@ -17,14 +17,31 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+type recordingDebugSessionReader struct {
+	client.Reader
+	listOptions client.ListOptions
+}
+
+func (r *recordingDebugSessionReader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	r.listOptions = client.ListOptions{}
+	for _, opt := range opts {
+		opt.ApplyToList(&r.listOptions)
+	}
+	return r.Reader.List(ctx, list, opts...)
+}
 
 func TestDebugSessionAccessFallsBackToLiveDiscoveryAndKeepsPodUIDFence(t *testing.T) {
 	expiresAt := metav1.NewTime(time.Now().Add(time.Hour))
 	session := &breakglassv1alpha1.DebugSession{
-		ObjectMeta: metav1.ObjectMeta{Name: "debug", Namespace: "breakglass-system", UID: types.UID("session-uid")},
-		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "debug", Namespace: "breakglass-system", UID: types.UID("session-uid"),
+			Labels: map[string]string{debugSessionClusterLabelKey: "spoke"},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke"},
 		Status: breakglassv1alpha1.DebugSessionStatus{
 			State:       breakglassv1alpha1.DebugSessionStateActive,
 			ExpiresAt:   &expiresAt,
@@ -43,11 +60,12 @@ func TestDebugSessionAccessFallsBackToLiveDiscoveryAndKeepsPodUIDFence(t *testin
 	}
 	cached := cachedBuilder.Build()
 	live := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(session).Build()
+	liveReader := &recordingDebugSessionReader{Reader: live}
 
 	var livePodUID types.UID = "pod-uid"
 	wc := &WebhookController{
 		escalManager: &escalation.EscalationManager{Client: cached},
-		sesManager:   breakglass.NewSessionManagerWithClientAndReader(cached, live),
+		sesManager:   breakglass.NewSessionManagerWithClientAndReader(cached, liveReader, breakglass.WithQuotaNamespace("breakglass-system")),
 		podFetchFn: func(context.Context, string, string, string) (*corev1.Pod, error) {
 			return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: livePodUID}}, nil
 		},
@@ -57,6 +75,9 @@ func TestDebugSessionAccessFallsBackToLiveDiscoveryAndKeepsPodUIDFence(t *testin
 
 	allowed, _, _ := wc.checkDebugSessionAccessForIssuer(context.Background(), "user", "spoke", "https://issuer.example", ra, wc.log)
 	require.True(t, allowed, "live active session must be found when cache discovery is empty")
+	require.Equal(t, "breakglass-system", liveReader.listOptions.Namespace)
+	require.Equal(t, maxLiveDebugSessionDiscoveryCandidates, liveReader.listOptions.Limit)
+	require.Equal(t, debugSessionClusterLabelKey+"=spoke", liveReader.listOptions.LabelSelector.String())
 
 	livePodUID = "replacement-uid"
 	allowed, _, _ = wc.checkDebugSessionAccessForIssuer(context.Background(), "user", "spoke", "https://issuer.example", ra, wc.log)
