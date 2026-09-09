@@ -186,3 +186,8 @@ Consumers should be able to:
     --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
     | jq -r '.payload' | base64 -d | jq
   ```
+
+Changes to dump-reader, the shared utility integration tests, or their Makefile
+trigger the catalogue utility runtime gate on pull requests and on main and
+deployment-testing pushes. Other utility images also retain their dedicated
+workflows.

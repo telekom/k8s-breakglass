@@ -14,8 +14,10 @@ on:
       - "hack/cluster-validator-**"
       - "Dockerfile.validator"
       - "utils/cluster-validator/**"
-      # Utility image changes are covered by the per-utility workflows. Keep
-      # this consolidated gate for catalogue and cluster-validator changes.
+      # Dump-reader has no dedicated workflow; retain its shared runtime gate.
+      - "utils/images/dump-reader/**"
+      - "utils/images/tests/**"
+      - "utils/images/Makefile"
       - ".github/workflows/catalogue-utility-integration.yml"
   push:
     branches: [main, deployment-testing]
@@ -26,8 +28,10 @@ on:
       - "hack/cluster-validator-**"
       - "Dockerfile.validator"
       - "utils/cluster-validator/**"
-      # Utility image changes are covered by the per-utility workflows. Keep
-      # this consolidated gate for catalogue and cluster-validator changes.
+      # Dump-reader has no dedicated workflow; retain its shared runtime gate.
+      - "utils/images/dump-reader/**"
+      - "utils/images/tests/**"
+      - "utils/images/Makefile"
       - ".github/workflows/catalogue-utility-integration.yml"
 
 permissions:
