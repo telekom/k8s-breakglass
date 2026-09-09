@@ -82,5 +82,10 @@ If `REFERENCE_DEBUG_NAMESPACE` already exists, the script reuses it and
 preserves it during cleanup. Only a namespace created by this invocation is
 deleted.
 
+Reference fixtures use a run-scoped AuditConfig, RoleDefinition, BindDefinition,
+and generated ClusterRole name. An existing AuditConfig with the selected name
+is never replaced, and the cleanup trap removes only resources carrying the
+current run's label, including when setup exits early.
+
 This README intentionally points to the executable flow rather than copying
 its Kubernetes YAML, so examples cannot drift from the tested path.
