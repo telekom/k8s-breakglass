@@ -57,6 +57,9 @@ func TestSessionUserAliasMatches(t *testing.T) {
 		{"different local part", "other", "platform-requester@example.test", false},
 		{"session is not email", "platform-requester", "platform-requester", false},
 		{"empty username", "", "platform-requester@example.test", false},
+		{"multiple at signs", "alice@corp", "alice@corp@domain", false},
+		{"email requester is exact only", "alice@corp", "alice@corp", false},
+		{"empty domain", "alice", "alice@", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -4205,4 +4208,18 @@ func TestAuditTargetFromSARSkipsNamespaceLabelsForNonResource(t *testing.T) {
 	assert.Equal(t, "get", verb)
 	assert.Empty(t, subresource)
 	assert.Empty(t, apiGroup)
+}
+
+func TestEmailRequesterSkipsIdentityAliasList(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	for name, fn := range sessionIndexFnsWebhook {
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, name, fn)
+	}
+	counted := &countingListClient{Client: builder.Build()}
+	controller := &WebhookController{sesManager: breakglass.NewSessionManagerWithClient(counted)}
+	sessions, mismatches, err := controller.getSessionsWithIDPMismatchInfo(context.Background(), "alice@corp", "cluster", "https://issuer")
+	assert.NoError(t, err)
+	assert.Empty(t, sessions)
+	assert.Empty(t, mismatches)
+	assert.Equal(t, 1, counted.listCalls, "only the indexed exact identity lookup is needed")
 }

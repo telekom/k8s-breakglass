@@ -1222,7 +1222,7 @@ func (wc *WebhookController) getSessionsWithIDPMismatchInfo(ctx context.Context,
 	}
 	now := time.Now()
 	out, idpMismatches := filterSessionsForAuthorization(all, issuer, now)
-	if len(out) == 0 && username != "" {
+	if len(out) == 0 && username != "" && !strings.ContainsRune(username, '@') {
 		clusterSessions, listErr := wc.sesManager.GetClusterBreakglassSessions(ctx, clustername)
 		if listErr != nil {
 			return nil, nil, listErr
@@ -1243,11 +1243,11 @@ func (wc *WebhookController) getSessionsWithIDPMismatchInfo(ctx context.Context,
 }
 
 func sessionUserAliasMatches(username, sessionUser string) bool {
-	if username == "" || sessionUser == "" {
+	if username == "" || strings.ContainsRune(username, '@') || strings.Count(sessionUser, "@") != 1 {
 		return false
 	}
 	at := strings.LastIndexByte(sessionUser, '@')
-	return at > 0 && strings.EqualFold(username, sessionUser[:at])
+	return at > 0 && at < len(sessionUser)-1 && strings.EqualFold(username, sessionUser[:at])
 }
 
 func canonicalIssuer(issuer string) string {
