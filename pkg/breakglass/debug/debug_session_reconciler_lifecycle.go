@@ -122,14 +122,7 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 		// Build container status for detailed information
 		containerStatus := buildContainerStatus(&pod)
 
-		allowedPods = append(allowedPods, breakglassv1alpha1.AllowedPodRef{
-			Namespace:       pod.Namespace,
-			Name:            pod.Name,
-			NodeName:        pod.Spec.NodeName,
-			Ready:           ready,
-			Phase:           string(pod.Status.Phase),
-			ContainerStatus: containerStatus,
-		})
+		allowedPods = append(allowedPods, allowedPodRefFromPod(&pod, ready, containerStatus))
 	}
 
 	// Preserve allowed pods for ephemeral containers injected into existing pods
@@ -164,6 +157,18 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 		return c.patchDebugSessionAllowedPodsAndAuxiliaryStatuses(ctx, ds, allowedPods, ds.Status.AuxiliaryResourceStatuses)
 	}
 	return c.patchDebugSessionAllowedPods(ctx, ds, allowedPods)
+}
+
+func allowedPodRefFromPod(pod *corev1.Pod, ready bool, containerStatus *breakglassv1alpha1.PodContainerStatus) breakglassv1alpha1.AllowedPodRef {
+	return breakglassv1alpha1.AllowedPodRef{
+		Namespace:       pod.Namespace,
+		Name:            pod.Name,
+		UID:             string(pod.UID),
+		NodeName:        pod.Spec.NodeName,
+		Ready:           ready,
+		Phase:           string(pod.Status.Phase),
+		ContainerStatus: containerStatus,
+	}
 }
 
 func (c *DebugSessionController) updateAuxiliaryResourceReadiness(

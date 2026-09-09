@@ -883,6 +883,23 @@ func TestDebugSessionReconciler_AllowedPodsTracking(t *testing.T) {
 	})
 }
 
+func TestAllowedPodRefFromPodPreservesUID(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Namespace: "breakglass-debug",
+		Name:      "debug-pod",
+		UID:       types.UID("debug-pod-uid"),
+	}}
+
+	ref := allowedPodRefFromPod(pod, true, nil)
+
+	require.Equal(t, breakglassv1alpha1.AllowedPodRef{
+		Namespace: "breakglass-debug",
+		Name:      "debug-pod",
+		UID:       "debug-pod-uid",
+		Ready:     true,
+	}, ref)
+}
+
 func TestDebugSessionReconciler_UpdateAllowedPodsDoesNotOverwriteRenewalOrParticipants(t *testing.T) {
 	scheme := testScheme()
 

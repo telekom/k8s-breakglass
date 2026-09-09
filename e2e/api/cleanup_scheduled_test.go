@@ -262,7 +262,7 @@ func TestDebugSessionCleanupFlow(t *testing.T) {
 		require.NoError(t, cli.Create(ctx, template))
 		tc := helpers.NewTestContext(t, ctx).WithClient(cli, namespace)
 		ds, err := tc.ClientForUser(helpers.TestUsers.SchedulingTestRequester).CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
-			TemplateRef: template.Name, Cluster: clusterName, Namespace: namespace,
+			TemplateRef: template.Name, Cluster: clusterName,
 			RequestedDuration: "15s", Reason: "Testing natural debug-session cleanup",
 		})
 		require.NoError(t, err)
