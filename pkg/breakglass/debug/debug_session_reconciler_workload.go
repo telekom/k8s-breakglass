@@ -800,7 +800,9 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 		if err != nil {
 			return nil, fmt.Errorf("failed to render podOverridesTemplate: %w", err)
 		}
-		c.applyPodOverridesStruct(spec, overrides)
+		if err := c.applyPodOverridesStruct(spec, overrides); err != nil {
+			return nil, fmt.Errorf("apply podOverridesTemplate: %w", err)
+		}
 	}
 
 	// Apply static overrides from session template (legacy support)
