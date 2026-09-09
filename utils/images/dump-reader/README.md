@@ -19,7 +19,9 @@ small:
   opened file, so path changes and growth after validation cannot bypass the
   limit.
 
-It rejects missing files, directories, unreadable files, and symbolic links.
+It rejects missing files, directories, unreadable files, symbolic links, and
+filenames containing control characters so metadata output cannot inject
+additional report fields.
 The resolved source must remain beneath `DUMP_INPUT_DIR` (default `/input`),
 which also prevents `..` and symlink-directory escape paths. Copy-out uses a
 private temporary file and an exclusive hard-link, so a pre-existing or

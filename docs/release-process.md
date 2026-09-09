@@ -48,7 +48,7 @@ ordinary controller CI suite.
    - Published catalogue charts are keylessly Cosign-signed and carry SPDX
      SBOM plus SLSA provenance attestations on the OCI manifest digest.
    - Chart `.tgz` packages are attached to the GitHub Release assets and included in release checksums.
-   - Every release tag that changes a packaged chart `appVersion` must use a unique chart `version` in that chart's `Chart.yaml`. Release reruns may skip an already-published chart only when the remote chart `appVersion` matches the release tag.
+   - Every release tag that changes a packaged chart `appVersion` must use a unique chart `version` in that chart's `Chart.yaml`. Release reruns may skip an already-published chart only when the remote chart `appVersion` matches the release tag and the pulled remote package is byte-identical to the local package.
 
 ## Multi-Architecture Builds
 

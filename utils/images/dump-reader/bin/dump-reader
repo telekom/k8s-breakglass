@@ -117,7 +117,16 @@ basename_safe() {
     source=$1
     name=${source##*/}
     [ -n "$name" ] || fail "FILE must have a basename"
+    validate_report_field "FILE basename" "$name"
     printf '%s\n' "$name"
+}
+
+validate_report_field() {
+    field=$1
+    value=$2
+    case "$value" in
+        *[![:print:]]*) fail "$field contains control characters" ;;
+    esac
 }
 
 stat_field() {
@@ -183,6 +192,7 @@ copy_out() {
     case "$name" in
         ''|.|..|*/*) fail "OUTPUT_NAME must be a basename" ;;
     esac
+    validate_report_field "OUTPUT_NAME" "$name"
     destination=$output_dir/$name
     if [ -e "$destination" ] || [ -L "$destination" ]; then
         fail "refusing to overwrite existing output: $destination"

@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `spec.audit.enableTerminalRecording` field and the unavailable transport.
 - Cluster-validator report publication now refuses to replace an existing
   report, including when the destination appears concurrently.
+- Dump-reader rejects control characters in reported filenames, preventing
+  metadata output from injecting additional report fields.
 
 - Static pod overrides now serialize explicitly empty command and argument
   lists through server-side apply, so an administrator can clear a previous

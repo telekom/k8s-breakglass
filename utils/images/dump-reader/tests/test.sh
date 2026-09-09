@@ -16,6 +16,9 @@ ln -s "$test_dir/output" "$test_dir/output/nested/path-link"
 printf '%s\n' 'existing artifact' >"$test_dir/source.dump"
 printf '%s\n' 'outside artifact' >"$outside_dir/outside.dump"
 
+newline_name=$(printf '%s\n%s' "$test_dir/evidence" 'forged_field=yes')
+printf '%s\n' 'newline filename' >"$newline_name"
+
 inspect=$(DUMP_INPUT_DIR="$test_dir" $reader inspect "$test_dir/source.dump")
 printf '%s\n' "$inspect" | grep -F 'schema_version=dump-reader/v1' >/dev/null
 printf '%s\n' "$inspect" | grep -F 'name=source.dump' >/dev/null
@@ -57,6 +60,15 @@ fi
 ln -s source.dump "$test_dir/link.dump"
 if DUMP_INPUT_DIR="$test_dir" $reader inspect "$test_dir/link.dump" >/dev/null 2>&1; then
     echo "symbolic link unexpectedly accepted" >&2
+    exit 1
+fi
+newline_report="$test_dir/newline-report.txt"
+if DUMP_INPUT_DIR="$test_dir" $reader inspect "$newline_name" >"$newline_report" 2>&1; then
+    echo "control-character filename unexpectedly accepted" >&2
+    exit 1
+fi
+if grep -Fq 'forged_field=yes' "$newline_report"; then
+    echo "control-character filename escaped into a separate report field" >&2
     exit 1
 fi
 if DUMP_INPUT_DIR="$test_dir" DUMP_OUTPUT_DIR="$test_dir/output" $reader copy "$test_dir/source.dump" >/dev/null 2>&1; then
