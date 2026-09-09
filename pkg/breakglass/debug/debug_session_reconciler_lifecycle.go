@@ -753,6 +753,10 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("refusing to delete pod template resource %s %s/%s: ownership precondition failed", status.Kind, status.Namespace, status.ResourceName))
 			continue
 		}
+		expectedUID := types.UID(status.UID)
+		if expectedUID == "" {
+			expectedUID = existing.GetUID()
+		}
 
 		if err := deleteTrackedResource(ctx, targetClient, ds, obj); err != nil {
 			if apierrors.IsNotFound(err) {
@@ -770,6 +774,28 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 				continue
 			}
 		} else {
+			// DELETE can be accepted while a finalizer keeps the object live.
+			// Keep the specialized status and deployed-resource inventory until a
+			// later reconcile confirms that the recorded instance is gone. This
+			// prevents the generic cleanup pass from issuing a second delete with
+			// incomplete legacy identity data.
+			remaining := &unstructured.Unstructured{}
+			remaining.SetGroupVersionKind(gvk)
+			remaining.SetName(status.ResourceName)
+			remaining.SetNamespace(status.Namespace)
+			if getErr := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(remaining), remaining); getErr == nil {
+				if remaining.GetUID() == expectedUID {
+					status.Error = "delete accepted but resource remains pending finalizers"
+					remainingStatuses = append(remainingStatuses, *status)
+					cleanupErrors = append(cleanupErrors, fmt.Errorf("delete pod template resource %s %s/%s is pending finalizers", status.Kind, status.Namespace, status.ResourceName))
+					continue
+				}
+			} else if !apierrors.IsNotFound(getErr) {
+				status.Error = fmt.Sprintf("verify deletion failed: %v", getErr)
+				remainingStatuses = append(remainingStatuses, *status)
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("verify deletion of pod template resource %s %s/%s: %w", status.Kind, status.Namespace, status.ResourceName, getErr))
+				continue
+			}
 			log.Infow("Deleted pod template resource",
 				"kind", status.Kind,
 				"name", status.ResourceName,
