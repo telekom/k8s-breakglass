@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reference usage cleanup bounds every waited Kubernetes delete and makes EXIT
   cleanup explicitly nonblocking; the API reference now lists `Job` among the
   allowed `workloadType` values.
+- Release-values verification no longer depends on ripgrep and its negative
+  fixtures now assert the intended digest and evidence validation failures.
 
 ### Security
 
