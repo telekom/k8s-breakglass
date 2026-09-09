@@ -1964,3 +1964,8 @@ The following test categories are implemented:
 
 The workload-debug image pins its Alpine packages in `utils/workload-debug/deps.lock`, `Dockerfile`, and `IMAGE-METADATA.yaml`. Refresh all three together when Alpine replaces package revisions; the image behavior workflow verifies the resulting build.
 The node-maintenance image similarly keeps its Alpine flock pin aligned in its Dockerfile and dependency inventory.
+
+Pod-template cleanup keeps the recorded resource UID and cleanup status after
+an accepted deletion until the original resource is absent. Finalizers and
+failed verification reads keep cleanup pending; a same-name replacement is
+left untouched.

@@ -250,7 +250,6 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to renew debug workload")
 		return
 	}
-
 	// Re-read immediately before the status patch. The status mutation path and
 	// admission webhook both repeat the strict time check at the API boundary.
 	live := &breakglassv1alpha1.DebugSession{}

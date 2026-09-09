@@ -44,7 +44,7 @@ PATH="${test_dir}/bin:${PATH}" "${script_dir}/resolve-release-refs.sh" \
   "${test_dir}/values.yaml" "${test_dir}/refs" v0.1.0
 [ "$(find "${test_dir}/refs" -name '*.ref' | wc -l | tr -d ' ')" -eq 5 ]
 while IFS= read -r ref; do
-  IFS='|' read -r name repository digest sbom provenance signature <"${ref}"
+  IFS='|' read -r name repository digest signature sbom provenance <"${ref}"
   [[ "${name}" =~ ^[a-z][a-z-]*$ ]]
   [[ "${repository}" =~ ^ghcr\.io/telekom/k8s-breakglass/utils/(workload-debug|network-debug|storage-debug|node-maintenance|diagnostic-artifact-collector)$ ]]
   [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]]

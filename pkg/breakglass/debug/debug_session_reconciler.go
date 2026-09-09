@@ -50,6 +50,11 @@ import (
 const (
 	// DebugSessionLabelKey is used to identify debug pods
 	DebugSessionLabelKey = "breakglass.telekom.com/debug-session"
+	// DebugSessionUIDLabelKey identifies the concrete DebugSession instance.
+	DebugSessionUIDLabelKey = "breakglass.telekom.com/debug-session-uid"
+	// DebugSessionUIDAnnotationKey identifies the concrete DebugSession instance
+	// on session-owned auxiliary resources.
+	DebugSessionUIDAnnotationKey = "breakglass.telekom.com/debug-session-uid"
 	// DebugTemplateLabelKey identifies the template used
 	DebugTemplateLabelKey = "breakglass.telekom.com/debug-template"
 	// DebugClusterLabelKey identifies the target cluster
@@ -60,6 +65,16 @@ const (
 	// ExpiredSessionRequeue is requeue for cleanup
 	ExpiredSessionRequeue = 5 * time.Second
 )
+
+func debugSessionIdentity(ds *breakglassv1alpha1.DebugSession) string {
+	if ds != nil && ds.UID != "" {
+		return string(ds.UID)
+	}
+	if ds == nil {
+		return "unknown"
+	}
+	return ds.Name
+}
 
 // DebugSessionController manages DebugSession lifecycle
 type DebugSessionController struct {
@@ -257,6 +272,9 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	if err != nil {
 		log.Errorw("Failed to get DebugSessionTemplate", "template", ds.Spec.TemplateRef, "error", err)
 		return c.failSession(ctx, ds, fmt.Sprintf("template not found: %s", ds.Spec.TemplateRef))
+	}
+	if err := rejectUnsupportedTerminalRecording(template); err != nil {
+		return c.failSession(ctx, ds, err.Error())
 	}
 
 	// Find binding early so we can check its approvers for the approval decision
@@ -693,7 +711,9 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
 	}
-
+	if err := rejectUnsupportedTerminalRecording(template); err != nil {
+		return c.failSession(ctx, ds, err.Error())
+	}
 	// Only deploy workloads for workload or hybrid mode
 	mode := template.Spec.Mode
 	if mode == "" {

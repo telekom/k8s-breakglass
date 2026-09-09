@@ -794,12 +794,26 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 	}
 
 	spec := &renderResult.PodSpec
+	restrictedCatalogue, catalogueIntent, err := restrictedCatalogueProfile(template, podTemplate)
+	if err != nil {
+		return nil, err
+	}
+	if restrictedCatalogue {
+		if err := validateRestrictedCatalogueResources(renderResult.AdditionalResources); err != nil {
+			return nil, err
+		}
+	}
 
 	// Apply podOverridesTemplate if specified (Go template producing overrides YAML)
 	if template.Spec.PodOverridesTemplate != "" {
 		overrides, err := c.renderPodOverridesTemplate(template.Spec.PodOverridesTemplate, renderCtx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to render podOverridesTemplate: %w", err)
+		}
+		if restrictedCatalogue {
+			if err := validateRestrictedCatalogueOverrides(overrides); err != nil {
+				return nil, err
+			}
 		}
 		if err := c.applyPodOverridesStruct(spec, overrides); err != nil {
 			return nil, fmt.Errorf("apply podOverridesTemplate: %w", err)
@@ -894,7 +908,338 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 		}
 	}
 
+	if err := rejectUnsupportedTerminalRecording(template); err != nil {
+		return nil, fmt.Errorf("reject terminal recording: %w", err)
+	}
+	if restrictedCatalogue {
+		if err := validateRestrictedCataloguePodSpec(spec, catalogueIntent); err != nil {
+			return nil, err
+		}
+	}
+
 	return renderResult, nil
+}
+
+const (
+	catalogueProfileLabel  = "breakglass.t-caas.telekom.com/catalogue-profile"
+	catalogueIntentLabel   = "breakglass.t-caas.telekom.com/catalogue-intent"
+	catalogueElevatedLabel = "breakglass.t-caas.telekom.com/elevated"
+)
+
+func restrictedCatalogueProfile(template *breakglassv1alpha1.DebugSessionTemplate, podTemplate *breakglassv1alpha1.DebugPodTemplate) (bool, string, error) {
+	templateProfile := template.Labels[catalogueProfileLabel]
+	podProfile := ""
+	if podTemplate != nil {
+		podProfile = podTemplate.Labels[catalogueProfileLabel]
+	}
+	if templateProfile == "" && podProfile == "" {
+		return false, "", nil
+	}
+	if templateProfile == "" || podProfile == "" || templateProfile != podProfile {
+		return false, "", fmt.Errorf("catalogue profile identity must match across session and pod templates")
+	}
+	templateIntent := template.Labels[catalogueIntentLabel]
+	podIntent := podTemplate.Labels[catalogueIntentLabel]
+	if templateIntent == "" || templateIntent != podIntent {
+		return false, "", fmt.Errorf("catalogue intent identity must match across session and pod templates")
+	}
+	templateElevated := template.Labels[catalogueElevatedLabel]
+	podElevated := podTemplate.Labels[catalogueElevatedLabel]
+	if templateElevated != podElevated || (templateElevated != "true" && templateElevated != "false") {
+		return false, "", fmt.Errorf("catalogue elevation identity must be explicit and match across session and pod templates")
+	}
+	return templateElevated == "false", templateIntent, nil
+}
+
+func validateRestrictedCatalogueOverrides(overrides *breakglassv1alpha1.DebugPodSpecOverrides) error {
+	if overrides == nil {
+		return nil
+	}
+	if (overrides.HostNetwork != nil && *overrides.HostNetwork) ||
+		(overrides.HostPID != nil && *overrides.HostPID) ||
+		(overrides.HostIPC != nil && *overrides.HostIPC) {
+		return fmt.Errorf("restricted catalogue profiles cannot enable host namespaces through pod overrides")
+	}
+	for _, container := range overrides.Containers {
+		if container.SecurityContext != nil || container.Resources != nil || len(container.Env) > 0 {
+			return fmt.Errorf("restricted catalogue profile container %q may override only command and args", container.Name)
+		}
+	}
+	return nil
+}
+
+func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) error {
+	if spec.HostNetwork || spec.HostPID || spec.HostIPC {
+		return fmt.Errorf("restricted catalogue profiles cannot use host namespaces")
+	}
+	if spec.SecurityContext == nil || spec.SecurityContext.RunAsNonRoot == nil || !*spec.SecurityContext.RunAsNonRoot {
+		return fmt.Errorf("restricted catalogue profiles must run as non-root")
+	}
+	if spec.SecurityContext.RunAsUser != nil && *spec.SecurityContext.RunAsUser == 0 {
+		return fmt.Errorf("restricted catalogue profiles cannot override the pod user to root")
+	}
+	if spec.SecurityContext.RunAsGroup != nil && *spec.SecurityContext.RunAsGroup == 0 {
+		return fmt.Errorf("restricted catalogue profiles cannot override the pod group to root")
+	}
+	if err := validateRestrictedAppArmor(spec.SecurityContext.AppArmorProfile); err != nil {
+		return err
+	}
+	if err := validateRestrictedSELinux(spec.SecurityContext.SELinuxOptions); err != nil {
+		return err
+	}
+	if err := validateRestrictedSysctls(spec.SecurityContext.Sysctls); err != nil {
+		return err
+	}
+	if spec.SecurityContext.WindowsOptions != nil && spec.SecurityContext.WindowsOptions.HostProcess != nil && *spec.SecurityContext.WindowsOptions.HostProcess {
+		return fmt.Errorf("restricted catalogue profiles cannot use a Windows host process")
+	}
+	podSeccompValid := false
+	if spec.SecurityContext.SeccompProfile != nil {
+		if err := validateRestrictedSeccomp(spec.SecurityContext.SeccompProfile); err != nil {
+			return err
+		}
+		podSeccompValid = true
+	}
+	if intent == "cluster-validation" {
+		if spec.ServiceAccountName == "" || spec.ServiceAccountName == "default" || spec.AutomountServiceAccountToken == nil || !*spec.AutomountServiceAccountToken {
+			return fmt.Errorf("cluster-validation requires its explicit dedicated service account identity")
+		}
+	} else if spec.ServiceAccountName != "" || spec.AutomountServiceAccountToken == nil || *spec.AutomountServiceAccountToken {
+		return fmt.Errorf("restricted catalogue profiles cannot receive a Kubernetes service account identity")
+	}
+	for _, volume := range spec.Volumes {
+		source := volume.VolumeSource
+		if source.EmptyDir == nil && source.ConfigMap == nil && source.DownwardAPI == nil {
+			return fmt.Errorf("restricted catalogue profile volume %q uses a disallowed source", volume.Name)
+		}
+	}
+	containers := make([]corev1.Container, 0, len(spec.InitContainers)+len(spec.Containers))
+	containers = append(containers, spec.InitContainers...)
+	containers = append(containers, spec.Containers...)
+	for _, container := range containers {
+		if err := validateRestrictedContainerSurface(container.Name, container.SecurityContext, container.Ports, container.LivenessProbe, container.ReadinessProbe, container.StartupProbe, container.Lifecycle); err != nil {
+			return err
+		}
+		security := container.SecurityContext
+		if security == nil || security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem ||
+			(security.Privileged != nil && *security.Privileged) ||
+			security.AllowPrivilegeEscalation == nil || *security.AllowPrivilegeEscalation ||
+			security.Capabilities == nil || len(security.Capabilities.Add) > 0 || !dropsAllCapabilities(security.Capabilities.Drop) {
+			return fmt.Errorf("restricted catalogue profile container %q violates its security boundary", container.Name)
+		}
+		if security.RunAsNonRoot != nil && !*security.RunAsNonRoot {
+			return fmt.Errorf("restricted catalogue profile container %q cannot disable non-root execution", container.Name)
+		}
+		if security.RunAsUser != nil && *security.RunAsUser == 0 {
+			return fmt.Errorf("restricted catalogue profile container %q cannot run as root", container.Name)
+		}
+		if security.RunAsGroup != nil && *security.RunAsGroup == 0 {
+			return fmt.Errorf("restricted catalogue profile container %q cannot use root group", container.Name)
+		}
+		if security.ProcMount != nil && *security.ProcMount != corev1.DefaultProcMount {
+			return fmt.Errorf("restricted catalogue profile container %q cannot use an unmasked proc mount", container.Name)
+		}
+		if security.WindowsOptions != nil && security.WindowsOptions.HostProcess != nil && *security.WindowsOptions.HostProcess {
+			return fmt.Errorf("restricted catalogue profile container %q cannot use a host process", container.Name)
+		}
+		if security.SeccompProfile != nil {
+			if err := validateRestrictedSeccomp(security.SeccompProfile); err != nil {
+				return fmt.Errorf("restricted catalogue profile container %q: %w", container.Name, err)
+			}
+		} else if !podSeccompValid {
+			return fmt.Errorf("restricted catalogue profile container %q requires a confined seccomp profile", container.Name)
+		}
+		for _, env := range container.Env {
+			if env.ValueFrom != nil {
+				return fmt.Errorf("restricted catalogue profile container %q cannot source environment variable %q", container.Name, env.Name)
+			}
+		}
+		if len(container.EnvFrom) > 0 {
+			return fmt.Errorf("restricted catalogue profile container %q cannot use envFrom", container.Name)
+		}
+	}
+	for _, container := range spec.EphemeralContainers {
+		if err := validateRestrictedContainerSurface(container.Name, container.SecurityContext, container.Ports, nil, nil, nil, nil); err != nil {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q: %w", container.Name, err)
+		}
+		security := container.SecurityContext
+		if security == nil || security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem ||
+			(security.Privileged != nil && *security.Privileged) ||
+			security.AllowPrivilegeEscalation == nil || *security.AllowPrivilegeEscalation ||
+			security.Capabilities == nil || len(security.Capabilities.Add) > 0 || !dropsAllCapabilities(security.Capabilities.Drop) {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q violates its security boundary", container.Name)
+		}
+		if security.RunAsNonRoot != nil && !*security.RunAsNonRoot {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q cannot disable non-root execution", container.Name)
+		}
+		if security.RunAsUser != nil && *security.RunAsUser == 0 {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q cannot run as root", container.Name)
+		}
+		if security.RunAsGroup != nil && *security.RunAsGroup == 0 {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q cannot use root group", container.Name)
+		}
+		if security.SeccompProfile != nil {
+			if err := validateRestrictedSeccomp(security.SeccompProfile); err != nil {
+				return fmt.Errorf("restricted catalogue profile ephemeral container %q: %w", container.Name, err)
+			}
+		} else if !podSeccompValid {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q requires a confined seccomp profile", container.Name)
+		}
+		if len(container.Env) > 0 || len(container.EnvFrom) > 0 {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q cannot source environment variables", container.Name)
+		}
+	}
+	return nil
+}
+
+func validateRestrictedContainerSurface(name string, security *corev1.SecurityContext, ports []corev1.ContainerPort, liveness, readiness, startup *corev1.Probe, lifecycle *corev1.Lifecycle) error {
+	if security == nil {
+		return nil
+	}
+	if err := validateRestrictedAppArmor(security.AppArmorProfile); err != nil {
+		return fmt.Errorf("restricted catalogue profile container %q: %w", name, err)
+	}
+	if err := validateRestrictedSELinux(security.SELinuxOptions); err != nil {
+		return fmt.Errorf("restricted catalogue profile container %q: %w", name, err)
+	}
+	for _, port := range ports {
+		if port.HostPort != 0 {
+			return fmt.Errorf("restricted catalogue profile container %q cannot use hostPort", name)
+		}
+	}
+	for probeName, probe := range map[string]*corev1.Probe{"liveness": liveness, "readiness": readiness, "startup": startup} {
+		if probe != nil && probe.HTTPGet != nil && probe.HTTPGet.Host != "" {
+			return fmt.Errorf("restricted catalogue profile container %q cannot use a host in %s probe", name, probeName)
+		}
+	}
+	if lifecycle != nil {
+		for hookName, hook := range map[string]*corev1.LifecycleHandler{"postStart": lifecycle.PostStart, "preStop": lifecycle.PreStop} {
+			if hook != nil && hook.HTTPGet != nil && hook.HTTPGet.Host != "" {
+				return fmt.Errorf("restricted catalogue profile container %q cannot use a host in %s lifecycle hook", name, hookName)
+			}
+		}
+	}
+	return nil
+}
+
+func validateRestrictedAppArmor(profile *corev1.AppArmorProfile) error {
+	if profile == nil {
+		return nil
+	}
+	switch profile.Type {
+	case corev1.AppArmorProfileTypeRuntimeDefault:
+		if profile.LocalhostProfile != nil {
+			return fmt.Errorf("restricted catalogue profiles cannot set a localhost AppArmor name with RuntimeDefault")
+		}
+	case corev1.AppArmorProfileTypeLocalhost:
+		if profile.LocalhostProfile == nil || strings.TrimSpace(*profile.LocalhostProfile) == "" {
+			return fmt.Errorf("restricted catalogue profiles require a localhost AppArmor profile name")
+		}
+	case corev1.AppArmorProfileTypeUnconfined:
+		return fmt.Errorf("restricted catalogue profiles cannot use an unconfined AppArmor profile")
+	default:
+		return fmt.Errorf("restricted catalogue profiles require RuntimeDefault or named Localhost AppArmor")
+	}
+	return nil
+}
+
+func validateRestrictedSELinux(options *corev1.SELinuxOptions) error {
+	if options == nil {
+		return nil
+	}
+	if options.User != "" || options.Role != "" {
+		return fmt.Errorf("restricted catalogue profiles cannot set SELinux user or role")
+	}
+	if options.Type != "" {
+		switch options.Type {
+		case "container_t", "container_init_t", "container_kvm_t", "container_engine_t":
+		default:
+			return fmt.Errorf("restricted catalogue profiles cannot use SELinux type %q", options.Type)
+		}
+	}
+	return nil
+}
+
+func validateRestrictedSysctls(sysctls []corev1.Sysctl) error {
+	allowed := map[string]struct{}{
+		"kernel.shm_rmid_forced":              {},
+		"net.ipv4.ip_local_port_range":        {},
+		"net.ipv4.ip_unprivileged_port_start": {},
+		"net.ipv4.tcp_syncookies":             {},
+		"net.ipv4.ping_group_range":           {},
+		"net.ipv4.ip_local_reserved_ports":    {},
+		"net.ipv4.tcp_keepalive_time":         {},
+		"net.ipv4.tcp_fin_timeout":            {},
+		"net.ipv4.tcp_keepalive_intvl":        {},
+		"net.ipv4.tcp_keepalive_probes":       {},
+	}
+	for _, sysctl := range sysctls {
+		if _, ok := allowed[sysctl.Name]; !ok {
+			return fmt.Errorf("restricted catalogue profiles cannot use unsafe sysctl %q", sysctl.Name)
+		}
+	}
+	return nil
+}
+
+func validateRestrictedCatalogueAnnotations(annotations map[string]string) error {
+	for key := range annotations {
+		if strings.HasPrefix(key, "container.apparmor.security.beta.kubernetes.io/") {
+			return fmt.Errorf("restricted catalogue profiles cannot use legacy AppArmor annotations")
+		}
+	}
+	return nil
+}
+
+func dropsAllCapabilities(drop []corev1.Capability) bool {
+	for _, capability := range drop {
+		if capability == "ALL" {
+			return true
+		}
+	}
+	return false
+}
+
+func validateRestrictedSeccomp(profile *corev1.SeccompProfile) error {
+	if profile == nil {
+		return fmt.Errorf("restricted catalogue profiles require a confined seccomp profile")
+	}
+	switch profile.Type {
+	case corev1.SeccompProfileTypeRuntimeDefault:
+		return nil
+	case corev1.SeccompProfileTypeLocalhost:
+		if profile.LocalhostProfile == nil || strings.TrimSpace(*profile.LocalhostProfile) == "" {
+			return fmt.Errorf("restricted catalogue profiles require a localhost seccomp profile name")
+		}
+		return nil
+	default:
+		return fmt.Errorf("restricted catalogue profiles require RuntimeDefault or named Localhost seccomp")
+	}
+}
+
+// validateRestrictedCatalogueResources is intentionally a small allowlist. A
+// restricted catalogue item may carry a namespaced ConfigMap for deterministic
+// input data, but cannot create a resource with its own controller, identity,
+// network, storage, or cluster scope. Namespaces are omitted so deployment
+// always assigns the session target namespace.
+func validateRestrictedCatalogueResources(resources []*unstructured.Unstructured) error {
+	for _, resource := range resources {
+		if resource == nil {
+			return fmt.Errorf("restricted catalogue profiles cannot contain empty additional resources")
+		}
+		if resource.GetAPIVersion() != "v1" || resource.GetKind() != "ConfigMap" {
+			return fmt.Errorf("restricted catalogue profiles may only carry core/v1 ConfigMap additional resources")
+		}
+		if resource.GetNamespace() != "" {
+			return fmt.Errorf("restricted catalogue ConfigMap %q must omit namespace so it stays in the session target namespace", resource.GetName())
+		}
+		if resource.GetName() == "" || resource.GetGenerateName() != "" {
+			return fmt.Errorf("restricted catalogue ConfigMaps require a fixed name")
+		}
+		if len(resource.GetFinalizers()) > 0 || len(resource.GetOwnerReferences()) > 0 {
+			return fmt.Errorf("restricted catalogue ConfigMap %q cannot define finalizers or owner references", resource.GetName())
+		}
+	}
+	return nil
 }
 
 // buildPodRenderContext creates the render context for pod templates.
