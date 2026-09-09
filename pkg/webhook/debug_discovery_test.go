@@ -43,7 +43,11 @@ func TestDebugSessionAccessFallsBackToLiveDiscoveryAndKeepsPodUIDFence(t *testin
 			Name: "debug", Namespace: "requested-cluster", UID: types.UID("session-uid"),
 			Labels: map[string]string{debugSessionClusterLabelKey: "spoke"},
 		},
-		Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:                "spoke",
+			IdentityProviderName:   "e2e-idp",
+			IdentityProviderIssuer: "https://issuer.example",
+		},
 		Status: breakglassv1alpha1.DebugSessionStatus{
 			State:       breakglassv1alpha1.DebugSessionStateActive,
 			ExpiresAt:   &expiresAt,
@@ -60,7 +64,10 @@ func TestDebugSessionAccessFallsBackToLiveDiscoveryAndKeepsPodUIDFence(t *testin
 	for field, fn := range debugSessionIndexFnsWebhook {
 		cachedBuilder = cachedBuilder.WithIndex(&breakglassv1alpha1.DebugSession{}, field, fn)
 	}
-	cached := cachedBuilder.Build()
+	cached := cachedBuilder.WithObjects(
+		&breakglassv1alpha1.IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: "e2e-idp"}, Spec: breakglassv1alpha1.IdentityProviderSpec{Issuer: "https://issuer.example"}},
+		&breakglassv1alpha1.IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: "other-idp"}, Spec: breakglassv1alpha1.IdentityProviderSpec{Issuer: "https://other.example"}},
+	).Build()
 	live := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(session).Build()
 	liveReader := &recordingDebugSessionReader{Reader: live}
 
@@ -98,4 +105,71 @@ func TestDebugSessionAccessFallsBackToLiveDiscoveryAndKeepsPodUIDFence(t *testin
 	require.Nil(t, first)
 	require.Nil(t, second)
 	require.Equal(t, 1, liveReader.listCalls, "empty live discovery must be memoized per authorization request")
+}
+
+func TestEarlyDebugSessionAuthorizationUsesPersistedOwnerIssuer(t *testing.T) {
+	expiresAt := metav1.NewTime(time.Now().Add(time.Hour))
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "debug", Namespace: "requested-cluster", UID: types.UID("session-uid"),
+			Labels: map[string]string{debugSessionClusterLabelKey: "spoke"},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:                "spoke",
+			IdentityProviderName:   "e2e-idp",
+			IdentityProviderIssuer: "https://issuer.example",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:       breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt:   &expiresAt,
+			AllowedPods: []breakglassv1alpha1.AllowedPodRef{{Name: "pod", Namespace: "workloads", UID: "pod-uid"}},
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{{
+				User:                   "user",
+				IdentityProviderName:   "e2e-idp",
+				IdentityProviderIssuer: "https://issuer.example",
+				Role:                   breakglassv1alpha1.ParticipantRoleOwner,
+			}},
+		},
+	}
+
+	cachedBuilder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	for field, fn := range debugSessionIndexFnsWebhook {
+		cachedBuilder = cachedBuilder.WithIndex(&breakglassv1alpha1.DebugSession{}, field, fn)
+	}
+	cached := cachedBuilder.WithObjects(
+		&breakglassv1alpha1.IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: "e2e-idp"}, Spec: breakglassv1alpha1.IdentityProviderSpec{Issuer: "https://issuer.example"}},
+		&breakglassv1alpha1.IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: "other-idp"}, Spec: breakglassv1alpha1.IdentityProviderSpec{Issuer: "https://other.example"}},
+	).Build()
+	live := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(session).Build()
+	wc := &WebhookController{
+		escalManager: &escalation.EscalationManager{Client: cached},
+		sesManager:   breakglass.NewSessionManagerWithClientAndReader(cached, live, breakglass.WithQuotaNamespace("controller")),
+		podFetchFn: func(context.Context, string, string, string) (*corev1.Pod, error) {
+			return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: types.UID("pod-uid")}}, nil
+		},
+		log: zap.NewNop().Sugar(),
+	}
+	ra := &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "workloads", Name: "pod"}
+
+	for _, tc := range []struct {
+		name   string
+		issuer string
+		allow  bool
+	}{
+		{name: "matching issuer", issuer: "https://issuer.example", allow: true},
+		{name: "wrong issuer", issuer: "https://other.example"},
+		{name: "missing issuer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := &authorizeState{
+				ctx: context.Background(), clusterName: "spoke", issuer: tc.issuer,
+				reqLog: wc.log, phases: NewSARPhaseTracker("spoke", wc.log),
+				sar: authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
+					User: "user", ResourceAttributes: ra,
+				}},
+				clusterCfg: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Namespace: "requested-cluster"}},
+			}
+			require.Equal(t, tc.allow, wc.checkEarlyDebugSession(nil, state), "issuer fence result")
+		})
+	}
 }

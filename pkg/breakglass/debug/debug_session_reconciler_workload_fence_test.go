@@ -144,6 +144,11 @@ func TestActivateSessionEstablishesLeaseBeforeDeployment(t *testing.T) {
 	require.Len(t, ds.Status.Participants, 1)
 	require.Equal(t, ds.Spec.IdentityProviderName, ds.Status.Participants[0].IdentityProviderName)
 	require.Equal(t, ds.Spec.IdentityProviderIssuer, ds.Status.Participants[0].IdentityProviderIssuer)
+	persisted := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, c.client.Get(context.Background(), client.ObjectKeyFromObject(ds), persisted))
+	require.Len(t, persisted.Status.Participants, 1)
+	require.Equal(t, ds.Spec.IdentityProviderName, persisted.Status.Participants[0].IdentityProviderName)
+	require.Equal(t, ds.Spec.IdentityProviderIssuer, persisted.Status.Participants[0].IdentityProviderIssuer)
 
 	deployment := &appsv1.Deployment{}
 	require.NoError(t, target.Get(context.Background(), client.ObjectKey{Namespace: "breakglass-debug", Name: ds.Name}, deployment))
