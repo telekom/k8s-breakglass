@@ -203,7 +203,10 @@ The `templateString` supports session context variables (`.session`, `.target`,
 and `.vars` values) using Sprig template functions. Declared `.vars` values are
 validated against `extraDeployVariables`; additional request keys may also be
 carried into `.vars`, so templates must not use undeclared keys for sensitive
-interpolation.
+interpolation. Disabled variables are omitted from requester-facing template
+list and detail responses, so the UI does not offer fields the API rejects.
+Submitting a disabled variable remains forbidden, even when it has a default
+or is marked required.
 Keep security-sensitive values such as images, commands, mounts, capabilities,
 and host namespaces literal in the administrator-owned template. See [Template
 Context Variables](#template-context-variables) for the full list.
