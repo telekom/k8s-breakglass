@@ -420,6 +420,27 @@ func TestStampCreateOperationReusesPersistedIntentAfterRestart(t *testing.T) {
 	require.Equal(t, persistedID, obj.GetAnnotations()[createOperationIDAnnotation])
 }
 
+func TestStampCreateOperationSeparatesConflictingDesiredContent(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	first := &unstructured.Unstructured{}
+	first.SetAPIVersion("v1")
+	first.SetKind("ConfigMap")
+	first.SetName("tracked")
+	first.SetNamespace("ns")
+	first.Object["data"] = map[string]interface{}{"value": "first"}
+	firstID, err := stampCreateOperation(first, session)
+	require.NoError(t, err)
+	session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{{
+		APIVersion: "v1", Kind: "ConfigMap", Name: "tracked", Namespace: "ns", CreateOperationID: firstID,
+	}}
+	second := first.DeepCopy()
+	second.Object["data"] = map[string]interface{}{"value": "second"}
+	secondID, err := stampCreateOperation(second, session)
+	require.NoError(t, err)
+	require.NotEqual(t, firstID, secondID)
+	require.NotEqual(t, firstID, second.GetAnnotations()[createOperationIDAnnotation])
+}
+
 func TestWorkloadTemplateAllowsConfiguredDefaultTolerations(t *testing.T) {
 	template := &corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "debug", Image: "debug:v1"}}}}
 	for _, tc := range []struct {

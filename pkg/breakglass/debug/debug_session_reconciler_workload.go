@@ -685,6 +685,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		annotations = make(map[string]string)
 	}
 	annotations["breakglass.t-caas.telekom.com/source-session"] = fmt.Sprintf("%s/%s", ds.Namespace, ds.Name)
+	obj.SetAnnotations(annotations)
 	operationID, err := stampCreateOperation(obj, ds)
 	if err != nil {
 		return err
