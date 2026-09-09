@@ -43,6 +43,7 @@ REFERENCE_ENV_FILE="${REFERENCE_ENV_FILE:-}"
 REFERENCE_REQUESTER_GROUP="${REFERENCE_REQUESTER_GROUP:-reference-requesters}"
 REFERENCE_ESCALATED_GROUP="${REFERENCE_ESCALATED_GROUP:-reference-restricted}"
 REFERENCE_AUDIT_WEBHOOK_URL="${REFERENCE_AUDIT_WEBHOOK_URL:-}"
+REFERENCE_CLEANUP_TIMEOUT="${REFERENCE_CLEANUP_TIMEOUT:-60s}"
 REFERENCE_RUN_ID="${REFERENCE_RUN_ID:-${RANDOM}}"
 LABEL="reference-usage.example.com/run"
 LABEL_VALUE="run-${REFERENCE_RUN_ID}"
@@ -117,7 +118,7 @@ cleanup() {
         --ignore-not-found >/dev/null 2>&1
     fi
     KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete roledefinition,binddefinition -A \
-      -l "${LABEL}=${LABEL_VALUE}" --ignore-not-found --wait >/dev/null 2>&1
+      -l "${LABEL}=${LABEL_VALUE}" --ignore-not-found --wait --timeout "${REFERENCE_CLEANUP_TIMEOUT}" >/dev/null 2>&1
     KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete breakglassescalation "${ESCALATION_NAME}" \
       -n "${NAMESPACE}" --ignore-not-found >/dev/null 2>&1
     [[ -n "${SESSION_NAME}" ]] && KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete breakglasssession "${SESSION_NAME}" \
@@ -640,14 +641,14 @@ assert_zero_residual() {
   if [[ "${AUDIT_CONFIG_CREATED}" == true ]]; then
     kubectl delete auditconfig "${REFERENCE_AUDIT_CONFIG_NAME}" --ignore-not-found >/dev/null
   fi
-  kubectl delete roledefinition,binddefinition -A -l "${LABEL}=${LABEL_VALUE}" --ignore-not-found --wait >/dev/null
+  kubectl delete roledefinition,binddefinition -A -l "${LABEL}=${LABEL_VALUE}" --ignore-not-found --wait --timeout "${REFERENCE_CLEANUP_TIMEOUT}" >/dev/null
   for session in "${SESSION_NAME}" "${REJECTED_SESSION_NAME}"; do
     [[ -n "${session}" ]] && kubectl delete breakglasssession "${session}" -n "${NAMESPACE}" \
-      --ignore-not-found --wait >/dev/null
+      --ignore-not-found --wait --timeout "${REFERENCE_CLEANUP_TIMEOUT}" >/dev/null
   done
-  kubectl delete breakglassescalation -A -l "${LABEL}=${LABEL_VALUE}" --ignore-not-found --wait >/dev/null
-  [[ -n "${DEBUG_SESSION_NAME}" ]] && kubectl delete debugsession "${DEBUG_SESSION_NAME}" -n "${NAMESPACE}" --ignore-not-found --wait >/dev/null
-  [[ -n "${ELEVATED_DEBUG_SESSION_NAME}" ]] && kubectl delete debugsession "${ELEVATED_DEBUG_SESSION_NAME}" -n "${NAMESPACE}" --ignore-not-found --wait >/dev/null
+  kubectl delete breakglassescalation -A -l "${LABEL}=${LABEL_VALUE}" --ignore-not-found --wait --timeout "${REFERENCE_CLEANUP_TIMEOUT}" >/dev/null
+  [[ -n "${DEBUG_SESSION_NAME}" ]] && kubectl delete debugsession "${DEBUG_SESSION_NAME}" -n "${NAMESPACE}" --ignore-not-found --wait --timeout "${REFERENCE_CLEANUP_TIMEOUT}" >/dev/null
+  [[ -n "${ELEVATED_DEBUG_SESSION_NAME}" ]] && kubectl delete debugsession "${ELEVATED_DEBUG_SESSION_NAME}" -n "${NAMESPACE}" --ignore-not-found --wait --timeout "${REFERENCE_CLEANUP_TIMEOUT}" >/dev/null
   for session in "${SESSION_NAME}" "${REJECTED_SESSION_NAME}"; do
     if [[ -n "${session}" ]] && kubectl get breakglasssession "${session}" -n "${NAMESPACE}" \
       -o name 2>/dev/null | grep -q .; then
@@ -669,7 +670,7 @@ assert_zero_residual() {
   kubectl get clusterrole,clusterrolebinding -l "breakglass.t-caas.telekom.com/session" \
     -o name 2>/dev/null | grep -q . && die "debug cluster policy resources remain"
   if [[ "${DEBUG_NAMESPACE_CREATED}" == true ]]; then
-    kubectl delete namespace "${DEBUG_NAMESPACE}" --ignore-not-found --wait >/dev/null
+    kubectl delete namespace "${DEBUG_NAMESPACE}" --ignore-not-found --wait --timeout "${REFERENCE_CLEANUP_TIMEOUT}" >/dev/null
   fi
   log "Reference resources have zero residual objects"
 }
