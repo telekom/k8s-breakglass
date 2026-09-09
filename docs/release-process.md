@@ -3,10 +3,10 @@
 This document defines the release requirements for k8s-breakglass. It is intended to meet OpenSSF Best Practices and Scorecard expectations for signed, verifiable releases.
 
 The separate `Catalogue utility integration` workflow is the required
-real-tool proof for the `network-debug` and `node-maintenance` images. It is a
-matrix job, builds both `linux/amd64` and `linux/arm64` OCI artifacts, and
-executes each image's command on the real runtime; it is not duplicated in the
-ordinary controller CI suite.
+real-tool proof for the `network-debug` and `node-maintenance` images. It uses
+separate intent jobs, builds both `linux/amd64` and `linux/arm64` OCI artifacts,
+and executes each image's command on the real runtime; it is not duplicated in
+the ordinary controller CI suite.
 
 ## Goals
 

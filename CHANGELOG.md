@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cleanup labels that cannot remove pre-existing resources.
 - Catalogue publication verification now requires exactly one linux/amd64 and
   one linux/arm64 utility manifest after excluding attestation descriptors.
+- Cluster-validator node and namespace readiness checks now follow Kubernetes
+  continuation tokens instead of inspecting only the first list page.
 - Unsupported terminal recording errors identify the requested
   `spec.audit.enableTerminalRecording` field and the unavailable transport.
 - Cluster-validator report publication now refuses to replace an existing
