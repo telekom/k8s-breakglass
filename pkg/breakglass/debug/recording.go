@@ -14,11 +14,7 @@ import (
 // terminal-byte transport is configured.
 func rejectUnsupportedTerminalRecording(template *breakglassv1alpha1.DebugSessionTemplate) error {
 	if template != nil && template.Spec.Audit != nil && template.Spec.Audit.EnableTerminalRecording {
-		return fmt.Errorf("terminal recording is unavailable: terminal-byte transport is not configured")
+		return fmt.Errorf("terminal recording requested by spec.audit.enableTerminalRecording is unavailable: terminal-byte transport is not configured")
 	}
 	return nil
-}
-
-func injectTerminalRecording(template *breakglassv1alpha1.DebugSessionTemplate) error {
-	return rejectUnsupportedTerminalRecording(template)
 }

@@ -937,7 +937,7 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 		}
 	}
 
-	if err := injectTerminalRecording(template); err != nil {
+	if err := rejectUnsupportedTerminalRecording(template); err != nil {
 		return nil, fmt.Errorf("inject terminal recording: %w", err)
 	}
 	if restrictedCatalogue {
