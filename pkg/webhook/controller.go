@@ -278,8 +278,9 @@ type WebhookController struct {
 }
 
 const (
-	debugSessionClusterLabelKey                  = "breakglass.telekom.com/debug-cluster"
-	maxLiveDebugSessionDiscoveryCandidates int64 = 128
+	debugSessionClusterLabelKey             = "breakglass.telekom.com/debug-cluster"
+	liveDebugSessionDiscoveryPageSize int64 = 128
+	maxLiveDebugSessionDiscoveryPages       = 8
 )
 
 // checkDebugSessionAccessForIssuer checks if a pod operation is allowed by an active debug session.
@@ -311,6 +312,10 @@ func (wc *WebhookController) findDebugSessionAccess(ctx context.Context, usernam
 }
 
 func (wc *WebhookController) findDebugSessionAccessForIssuer(ctx context.Context, username, clusterName, issuer string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (*breakglassv1alpha1.DebugSession, string) {
+	return wc.findDebugSessionAccessForIssuerInNamespace(ctx, username, clusterName, issuer, "", ra, reqLog)
+}
+
+func (wc *WebhookController) findDebugSessionAccessForIssuerInNamespace(ctx context.Context, username, clusterName, issuer, sessionNamespace string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (*breakglassv1alpha1.DebugSession, string) {
 	// Only check for pods with supported subresources
 	if ra == nil || ra.Resource != "pods" || !isDebugSessionSubresource(ra.Subresource) {
 		return nil, ""
@@ -341,30 +346,15 @@ func (wc *WebhookController) findDebugSessionAccessForIssuer(ctx context.Context
 		return nil, ""
 	}
 	if len(debugSessionList.Items) == 0 && wc.sesManager != nil {
-		liveList := &breakglassv1alpha1.DebugSessionList{}
-		liveListOptions := []client.ListOption{
-			client.MatchingLabels{debugSessionClusterLabelKey: clusterName},
-			client.Limit(maxLiveDebugSessionDiscoveryCandidates),
+		if sessionNamespace == "" {
+			sessionNamespace = wc.sesManager.QuotaNamespace()
 		}
-		if namespace := wc.sesManager.QuotaNamespace(); namespace != "" {
-			liveListOptions = append(liveListOptions, client.InNamespace(namespace))
-		}
-		if err := wc.sesManager.Reader().List(ctx, liveList, liveListOptions...); err != nil {
+		liveSessions, err := wc.listLiveDebugSessionsForAuthorization(ctx, username, clusterName, sessionNamespace)
+		if err != nil {
 			reqLog.Warnw("Failed to list debug sessions through live reader for pod operation check", "error", err)
 			return nil, ""
 		}
-		for i := range liveList.Items {
-			ds := &liveList.Items[i]
-			if ds.Spec.Cluster != clusterName || ds.Status.State != breakglassv1alpha1.DebugSessionStateActive {
-				continue
-			}
-			for _, participant := range ds.Status.Participants {
-				if participant.User == username {
-					debugSessionList.Items = append(debugSessionList.Items, *ds.DeepCopy())
-					break
-				}
-			}
-		}
+		debugSessionList.Items = append(debugSessionList.Items, liveSessions...)
 		if len(debugSessionList.Items) > 0 {
 			reqLog.Debugw("Using live debug session discovery after empty cache result", "count", len(debugSessionList.Items))
 		}
@@ -467,6 +457,49 @@ func (wc *WebhookController) findDebugSessionAccessForIssuer(ctx context.Context
 	}
 
 	return nil, ""
+}
+
+func (wc *WebhookController) listLiveDebugSessionsForAuthorization(ctx context.Context, username, clusterName, sessionNamespace string) ([]breakglassv1alpha1.DebugSession, error) {
+	if wc.sesManager == nil {
+		return nil, nil
+	}
+
+	reader := wc.sesManager.Reader()
+	var sessions []breakglassv1alpha1.DebugSession
+	continueToken := ""
+	for page := 0; page < maxLiveDebugSessionDiscoveryPages; page++ {
+		liveList := &breakglassv1alpha1.DebugSessionList{}
+		listOptions := []client.ListOption{
+			client.MatchingLabels{debugSessionClusterLabelKey: clusterName},
+			client.Limit(liveDebugSessionDiscoveryPageSize),
+		}
+		if sessionNamespace != "" {
+			listOptions = append(listOptions, client.InNamespace(sessionNamespace))
+		}
+		if continueToken != "" {
+			listOptions = append(listOptions, client.Continue(continueToken))
+		}
+		if err := reader.List(ctx, liveList, listOptions...); err != nil {
+			return nil, err
+		}
+		for i := range liveList.Items {
+			ds := &liveList.Items[i]
+			if ds.Status.State != breakglassv1alpha1.DebugSessionStateActive {
+				continue
+			}
+			for _, participant := range ds.Status.Participants {
+				if participant.User == username && participant.LeftAt == nil {
+					sessions = append(sessions, *ds.DeepCopy())
+					break
+				}
+			}
+		}
+		if liveList.Continue == "" {
+			return sessions, nil
+		}
+		continueToken = liveList.Continue
+	}
+	return nil, fmt.Errorf("live debug session discovery exceeded %d pages", maxLiveDebugSessionDiscoveryPages)
 }
 
 // liveDebugSessionAccess is the final authorization fence for a debug-session

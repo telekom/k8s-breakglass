@@ -79,16 +79,19 @@ type authorizeState struct {
 	impersonationWarnedLegacy bool
 
 	// Decision state (filled progressively)
-	allowed               bool
-	allowSource           string // "rbac" | "session" | "debug-session"
-	allowDetail           string
-	debugSessionNamespace string
-	debugSessionName      string
-	debugSessionUID       string
-	allowedSession        *sessionAuthorizationCandidate
-	allowedSessions       []sessionAuthorizationCandidate
-	sessionDerivedRBAC    bool
-	auditTarget           audit.Target
+	allowed                bool
+	allowSource            string // "rbac" | "session" | "debug-session"
+	allowDetail            string
+	debugSessionNamespace  string
+	debugSessionName       string
+	debugSessionUID        string
+	debugSessionLookupDone bool
+	debugSessionCandidate  *breakglassv1alpha1.DebugSession
+	debugSessionReason     string
+	allowedSession         *sessionAuthorizationCandidate
+	allowedSessions        []sessionAuthorizationCandidate
+	sessionDerivedRBAC     bool
+	auditTarget            audit.Target
 	// sessionActivity fields are populated during authorization but recorded only
 	// after the final live authorization fence has passed.
 	sessionActivityName  string
@@ -331,8 +334,7 @@ func (wc *WebhookController) checkEarlyDebugSession(c *gin.Context, s *authorize
 	if s.sar.Spec.ResourceAttributes != nil {
 		ra := s.sar.Spec.ResourceAttributes
 		if ra.Resource == "pods" && isDebugSessionSubresource(ra.Subresource) && ra.Name != "" {
-			if debugSession, debugReason := wc.findDebugSessionAccessForIssuer(
-				s.ctx, s.sar.Spec.User, s.clusterName, s.issuer, ra, s.reqLog); debugSession != nil {
+			if debugSession, debugReason := wc.findDebugSessionAccessForAuthorizeState(s, ra); debugSession != nil {
 				s.allowed = true
 				s.allowSource = "debug-session"
 				s.allowDetail = fmt.Sprintf("session=%s", debugSession.Name)
@@ -351,6 +353,20 @@ func (wc *WebhookController) checkEarlyDebugSession(c *gin.Context, s *authorize
 	}
 	s.phases.EndPhase(PhaseDebugSession) // End debug_session phase (even if no early return)
 	return false
+}
+
+func (wc *WebhookController) findDebugSessionAccessForAuthorizeState(s *authorizeState, ra *authorizationv1.ResourceAttributes) (*breakglassv1alpha1.DebugSession, string) {
+	if s.debugSessionLookupDone {
+		return s.debugSessionCandidate, s.debugSessionReason
+	}
+	s.debugSessionLookupDone = true
+	namespace := ""
+	if s.clusterCfg != nil {
+		namespace = s.clusterCfg.Namespace
+	}
+	s.debugSessionCandidate, s.debugSessionReason = wc.findDebugSessionAccessForIssuerInNamespace(
+		s.ctx, s.sar.Spec.User, s.clusterName, s.issuer, namespace, ra, s.reqLog)
+	return s.debugSessionCandidate, s.debugSessionReason
 }
 
 // evaluateDenyPolicies runs global and per-session deny-policy evaluation.
@@ -713,8 +729,7 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 	// Debug session pod exec check: allow exec into debug pods if user is a session participant
 	if !s.allowed && s.sar.Spec.ResourceAttributes != nil {
 		ra := s.sar.Spec.ResourceAttributes
-		if debugSession, debugReason := wc.findDebugSessionAccessForIssuer(
-			s.ctx, username, s.clusterName, s.issuer, ra, s.reqLog); debugSession != nil {
+		if debugSession, debugReason := wc.findDebugSessionAccessForAuthorizeState(s, ra); debugSession != nil {
 			s.allowed = true
 			s.allowSource = "debug-session"
 			s.allowDetail = fmt.Sprintf("session=%s", debugSession.Name)

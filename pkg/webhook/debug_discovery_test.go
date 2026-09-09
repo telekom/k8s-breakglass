@@ -24,9 +24,11 @@ import (
 type recordingDebugSessionReader struct {
 	client.Reader
 	listOptions client.ListOptions
+	listCalls   int
 }
 
 func (r *recordingDebugSessionReader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	r.listCalls++
 	r.listOptions = client.ListOptions{}
 	for _, opt := range opts {
 		opt.ApplyToList(&r.listOptions)
@@ -38,7 +40,7 @@ func TestDebugSessionAccessFallsBackToLiveDiscoveryAndKeepsPodUIDFence(t *testin
 	expiresAt := metav1.NewTime(time.Now().Add(time.Hour))
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "debug", Namespace: "breakglass-system", UID: types.UID("session-uid"),
+			Name: "debug", Namespace: "requested-cluster", UID: types.UID("session-uid"),
 			Labels: map[string]string{debugSessionClusterLabelKey: "spoke"},
 		},
 		Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke"},
@@ -65,7 +67,7 @@ func TestDebugSessionAccessFallsBackToLiveDiscoveryAndKeepsPodUIDFence(t *testin
 	var livePodUID types.UID = "pod-uid"
 	wc := &WebhookController{
 		escalManager: &escalation.EscalationManager{Client: cached},
-		sesManager:   breakglass.NewSessionManagerWithClientAndReader(cached, liveReader, breakglass.WithQuotaNamespace("breakglass-system")),
+		sesManager:   breakglass.NewSessionManagerWithClientAndReader(cached, liveReader, breakglass.WithQuotaNamespace("controller")),
 		podFetchFn: func(context.Context, string, string, string) (*corev1.Pod, error) {
 			return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: livePodUID}}, nil
 		},
@@ -73,13 +75,27 @@ func TestDebugSessionAccessFallsBackToLiveDiscoveryAndKeepsPodUIDFence(t *testin
 	}
 	ra := &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "workloads", Name: "pod"}
 
-	allowed, _, _ := wc.checkDebugSessionAccessForIssuer(context.Background(), "user", "spoke", "https://issuer.example", ra, wc.log)
+	allowedSession, _ := wc.findDebugSessionAccessForIssuerInNamespace(context.Background(), "user", "spoke", "https://issuer.example", "requested-cluster", ra, wc.log)
+	allowed := allowedSession != nil
 	require.True(t, allowed, "live active session must be found when cache discovery is empty")
-	require.Equal(t, "breakglass-system", liveReader.listOptions.Namespace)
-	require.Equal(t, maxLiveDebugSessionDiscoveryCandidates, liveReader.listOptions.Limit)
+	require.Equal(t, "requested-cluster", liveReader.listOptions.Namespace)
+	require.Equal(t, liveDebugSessionDiscoveryPageSize, liveReader.listOptions.Limit)
 	require.Equal(t, debugSessionClusterLabelKey+"=spoke", liveReader.listOptions.LabelSelector.String())
 
 	livePodUID = "replacement-uid"
-	allowed, _, _ = wc.checkDebugSessionAccessForIssuer(context.Background(), "user", "spoke", "https://issuer.example", ra, wc.log)
+	replacementSession, _ := wc.findDebugSessionAccessForIssuerInNamespace(context.Background(), "user", "spoke", "https://issuer.example", "requested-cluster", ra, wc.log)
+	allowed = replacementSession != nil
 	require.False(t, allowed, "live replacement must remain denied by the Pod UID fence")
+
+	liveReader.listCalls = 0
+	state := &authorizeState{
+		ctx: context.Background(), clusterName: "spoke", reqLog: wc.log,
+		sar:        authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: "missing-user"}},
+		clusterCfg: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Namespace: "requested-cluster"}},
+	}
+	first, _ := wc.findDebugSessionAccessForAuthorizeState(state, ra)
+	second, _ := wc.findDebugSessionAccessForAuthorizeState(state, ra)
+	require.Nil(t, first)
+	require.Nil(t, second)
+	require.Equal(t, 1, liveReader.listCalls, "empty live discovery must be memoized per authorization request")
 }
