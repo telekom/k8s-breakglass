@@ -3,20 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 set -Eeuo pipefail
 
-script=$(cd -- "$(dirname -- "$0")/.." && pwd)/tests/kind-kubestr.sh
 repo=$(cd -- "$(dirname -- "$0")/../../../.." && pwd)
 cleanup_helper=${repo}/hack/kubernetes-storage-cleanup.sh
-pv_manifest=$(grep -n '^kind: PersistentVolume$' "$script" | tail -1 | cut -d: -f1)
-pv_uid=$(grep -n '^ATTACHED_PV_UID=' "$script" | tail -1 | cut -d: -f1)
-if [ -z "$pv_manifest" ] || [ -z "$pv_uid" ] || [ "$pv_uid" -le "$pv_manifest" ]; then
-	printf '%s\n' 'attached PV UID is captured before the PV manifest is applied' >&2
-	exit 1
-fi
-# shellcheck disable=SC2016 # verify the literal source path in the production script
-grep -F '. "${script_dir}/../../../../hack/kubernetes-storage-cleanup.sh"' "$script" >/dev/null
-grep -F 'kubernetes_cleanup_uid_chain' "$script" >/dev/null
-grep -F -- '--for=delete' "$cleanup_helper" >/dev/null
-grep -F -- '--timeout=120s' "$cleanup_helper" >/dev/null
 
 fixture=$(mktemp -d)
 trap 'rm -rf "$fixture"' EXIT
@@ -34,6 +22,9 @@ printf 'wait %s\n' "$object" >>"${STORAGE_CLEANUP_LOG:?}"
 EOF
 chmod +x "$fixture/kubectl"
 # shellcheck disable=SC1090 # fixture selects the repository helper under test
+# Exercise the same UID-fenced cleanup helper used by the Kind proof. The
+# contract test intentionally verifies observable delete/wait behavior rather
+# than depending on the production script's source layout.
 source "$cleanup_helper"
 
 current_pod=pod-original

@@ -699,6 +699,8 @@ jobs:
           format: spdx-json
           output-file: ${{ matrix.chart }}.spdx.json
           upload-release-assets: false
+      - name: Install SPDX schema validator
+        run: sudo apt-get update && sudo apt-get install -y python3-jsonschema
       - name: Bind and validate SBOM subject
         run: |
           set -euo pipefail
@@ -723,6 +725,7 @@ jobs:
       id-token: write
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Download chart artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -756,6 +759,8 @@ jobs:
           set -euo pipefail
           hack/publish-helm-charts.sh chart-dist "${CHART_REPO}" "${{ github.ref_name }}"
 
+      - name: Install SPDX schema validator
+        run: sudo apt-get update && sudo apt-get install -y python3-jsonschema
       - name: Sign and verify immutable chart contracts
         env:
           CHART_REPO: oci://ghcr.io/${{ github.repository }}/charts

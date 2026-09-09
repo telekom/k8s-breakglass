@@ -22,8 +22,29 @@ else
 fi
 package_name="$(basename -- "${package}")"
 
+# Validate the vendored upstream schema before checking our chart binding.
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+python3 - "${script_dir}/schemas/spdx-2.3.schema.json" "${sbom}" <<'PYTHON'
+import json
+import sys
+from jsonschema import Draft7Validator
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    schema = json.load(source)
+with open(sys.argv[2], encoding="utf-8") as source:
+    document = json.load(source)
+errors = sorted(Draft7Validator(schema).iter_errors(document), key=lambda error: str(error.path))
+if errors:
+    for error in errors:
+        print(f"Invalid SPDX document at {error.json_path}: {error.message}", file=sys.stderr)
+    sys.exit(1)
+PYTHON
+
 jq -e --arg package "${package_name}" --arg digest "${digest}" '
-  (.spdxVersion | type == "string") and
+  (.spdxVersion == "SPDX-2.3") and
+  (.SPDXID == "SPDXRef-DOCUMENT") and
+  (.dataLicense == "CC0-1.0") and
+  (.documentNamespace | type == "string" and length > 0) and
   (.creationInfo | type == "object") and
   (
     any((.packages // [])[]?;

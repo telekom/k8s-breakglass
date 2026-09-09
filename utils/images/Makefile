@@ -31,7 +31,7 @@ multiarch:
 	archives=; \
 	cleanup() { for archive in $$archives; do rm -f "$$archive"; done; }; \
 	trap cleanup EXIT HUP INT TERM; \
-	for image in storage-debug dump-reader; do \
+	for image in storage-debug dump-reader diagnostic-artifact-collector; do \
 		archive=$$(mktemp "$${TMPDIR:-/tmp}/$${image}.XXXXXX.oci.tar"); \
 		archives="$$archives $$archive"; \
 		docker buildx build --platform linux/amd64,linux/arm64 \

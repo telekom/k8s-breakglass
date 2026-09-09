@@ -191,3 +191,14 @@ Changes to dump-reader, the shared utility integration tests, or their Makefile
 trigger the catalogue utility runtime gate on pull requests and on main and
 deployment-testing pushes. Other utility images also retain their dedicated
 workflows.
+
+Chart SBOM verification requires Python 3 with `jsonschema` (Ubuntu package
+`python3-jsonschema`). It validates the complete document against the vendored
+[upstream SPDX 2.3 JSON schema](https://github.com/spdx/spdx-spec/blob/v2.3/schemas/spdx-schema.json)
+before checking the exact chart filename and SHA-256 binding. The schema is
+unmodified and attributed to the SPDX contributors under CC-BY-3.0. Run
+`make test-release-security` to exercise malformed-document and subject-binding
+rejections; validation performs no schema downloads.
+
+`make -C utils/images multiarch` builds and verifies both supported platforms
+for storage-debug, dump-reader, and diagnostic-artifact-collector.
