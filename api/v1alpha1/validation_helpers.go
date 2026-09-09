@@ -50,6 +50,10 @@ func ParseDuration(s string) (time.Duration, error) {
 	if s == "" {
 		return 0, nil
 	}
+	// Standard Go durations may be negative; extended day durations are not.
+	if strings.HasPrefix(s, "-") && strings.Contains(s, "d") {
+		return 0, fmt.Errorf("duration must be positive")
+	}
 
 	// Check if the duration contains day units
 	if matches := dayPattern.FindStringSubmatch(s); matches != nil {

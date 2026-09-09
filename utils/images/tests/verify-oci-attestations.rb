@@ -1,0 +1,171 @@
+#!/usr/bin/env ruby
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+# Inspect a local OCI archive produced by BuildKit.  An archive can be
+# structurally valid while silently omitting attestations, so this follows the
+# descriptors into their blobs and validates the in-toto predicates as well.
+
+require "digest"
+require "json"
+require "open3"
+require "stringio"
+require "zlib"
+
+def fail_archive(message)
+  warn "OCI attestation inspection: #{message}"
+  exit 1
+end
+
+archive = ARGV.fetch(0) { fail_archive("archive path is required") }
+if archive == "--help"
+  puts "Usage: verify-oci-attestations.rb ARCHIVE"
+  exit 0
+end
+fail_archive("archive does not exist: #{archive}") unless File.file?(archive)
+
+def read_entry(archive, entry)
+  output, error, status = Open3.capture3("tar", "-xOf", archive, entry)
+  fail_archive("cannot read #{entry}: #{error.strip}") unless status.success?
+  output
+end
+
+def descriptor_digest(descriptor, label)
+  digest = descriptor["digest"].to_s
+  fail_archive("#{label} has no sha256 digest") unless digest.match?(/\Asha256:[0-9a-f]{64}\z/)
+  digest
+end
+
+def read_blob(archive, descriptor, label)
+  digest = descriptor_digest(descriptor, label)
+  payload = read_entry(archive, "blobs/sha256/#{digest.delete_prefix('sha256:')}")
+  fail_archive("#{label} digest does not match its blob") unless Digest::SHA256.hexdigest(payload) == digest.delete_prefix("sha256:")
+  if payload.start_with?("\x1f\x8b") || descriptor["mediaType"].to_s.include?("+gzip") || descriptor["mediaType"].to_s.include?("compression=gzip")
+    begin
+      payload = Zlib::GzipReader.new(StringIO.new(payload)).read
+    rescue Zlib::Error => e
+      fail_archive("#{label} is not valid gzip: #{e.message}")
+    end
+  end
+  payload
+end
+
+index = JSON.parse(read_entry(archive, "index.json"))
+fail_archive("index is not an OCI image index") unless index["schemaVersion"] == 2 && index["mediaType"] == "application/vnd.oci.image.index.v1+json"
+layout = JSON.parse(read_entry(archive, "oci-layout"))
+fail_archive("unsupported OCI layout") unless layout["imageLayoutVersion"] == "1.0.0"
+
+def flatten_index(archive, descriptor, flattened, visited)
+  media_type = descriptor["mediaType"].to_s
+  unless media_type == "application/vnd.oci.image.index.v1+json"
+    flattened << descriptor
+    return
+  end
+
+  digest = descriptor_digest(descriptor, "nested image index")
+  return if visited.include?(digest)
+  visited << digest
+  nested = JSON.parse(read_blob(archive, descriptor, "nested image index"))
+  fail_archive("nested image index has no manifest descriptors") unless nested["manifests"].is_a?(Array) && !nested["manifests"].empty?
+  nested["manifests"].each { |child| flatten_index(archive, child, flattened, visited) }
+end
+
+root_descriptors = index["manifests"]
+fail_archive("index has no manifest descriptors") unless root_descriptors.is_a?(Array) && !root_descriptors.empty?
+descriptors = []
+visited_indexes = []
+root_descriptors.each { |descriptor| flatten_index(archive, descriptor, descriptors, visited_indexes) }
+
+images = descriptors.reject do |descriptor|
+  descriptor.dig("annotations", "vnd.docker.reference.type") == "attestation-manifest"
+end
+fail_archive("archive has no image manifests") if images.empty?
+images.each do |descriptor|
+  platform = descriptor["platform"] || {}
+  unless platform["os"] == "linux" && %w[amd64 arm64].include?(platform["architecture"])
+    fail_archive("unsupported image platform #{platform.inspect}")
+  end
+end
+platforms = images.map { |descriptor| "#{descriptor.dig('platform', 'os')}/#{descriptor.dig('platform', 'architecture')}" }.uniq
+fail_archive("archive must contain exactly one linux/amd64 and one linux/arm64 image manifest") unless platforms.sort == %w[linux/amd64 linux/arm64] && images.length == platforms.length
+
+image_digests = images.map { |descriptor| descriptor_digest(descriptor, "image manifest") }
+image_attestations = {}
+images.each do |descriptor|
+  fail_archive("image manifest descriptor has unexpected media type") unless descriptor["mediaType"] == "application/vnd.oci.image.manifest.v1+json"
+  manifest = JSON.parse(read_blob(archive, descriptor, "image manifest"))
+  fail_archive("image manifest has an invalid schema version") unless manifest["schemaVersion"] == 2
+  fail_archive("image manifest has an unexpected media type") unless manifest["mediaType"] == "application/vnd.oci.image.manifest.v1+json"
+  config = manifest["config"]
+  fail_archive("image manifest has no valid config descriptor") unless config.is_a?(Hash) && config["mediaType"] == "application/vnd.oci.image.config.v1+json"
+  config_payload = JSON.parse(read_blob(archive, config, "image config"))
+  platform = descriptor.fetch("platform", {})
+  fail_archive("image config platform does not match its manifest descriptor") unless config_payload["os"] == platform["os"] && config_payload["architecture"] == platform["architecture"]
+  layers = manifest["layers"]
+  fail_archive("image manifest has no valid layers list") unless layers.is_a?(Array)
+  layers.each { |layer| read_blob(archive, layer, "image layer") }
+  digest = descriptor_digest(descriptor, "image manifest")
+  image_attestations[digest] = { "platform" => "#{descriptor.dig('platform', 'os')}/#{descriptor.dig('platform', 'architecture')}", "sbom" => false, "provenance" => false }
+end
+attestations = descriptors.select do |descriptor|
+  descriptor.dig("annotations", "vnd.docker.reference.type") == "attestation-manifest"
+end
+fail_archive("BuildKit emitted no attestation manifests") if attestations.empty?
+
+attestations.each do |descriptor|
+  fail_archive("attestation descriptor has an unexpected media type") unless descriptor["mediaType"] == "application/vnd.oci.image.manifest.v1+json"
+  reference_digest = descriptor.dig("annotations", "vnd.docker.reference.digest").to_s
+  fail_archive("attestation has no image subject reference") if reference_digest.empty?
+  fail_archive("attestation image subject reference is malformed") unless reference_digest.match?(/\Asha256:[0-9a-f]{64}\z/)
+  fail_archive("attestation image subject reference does not match any image manifest digest") unless image_digests.include?(reference_digest)
+  manifest = JSON.parse(read_blob(archive, descriptor, "attestation manifest"))
+  fail_archive("attestation manifest has an invalid schema version") unless manifest["schemaVersion"] == 2
+  fail_archive("attestation manifest has an unexpected media type") unless manifest["mediaType"] == "application/vnd.oci.image.manifest.v1+json"
+  config = manifest["config"]
+  fail_archive("attestation manifest has no valid config descriptor") unless config.is_a?(Hash) && config["mediaType"] == "application/vnd.oci.image.config.v1+json"
+  JSON.parse(read_blob(archive, config, "attestation config"))
+  layers = manifest["layers"]
+  fail_archive("attestation manifest has no layers") unless layers.is_a?(Array) && !layers.empty?
+
+  layers.each do |layer|
+    media_type = layer["mediaType"].to_s
+    next unless media_type == "application/vnd.in-toto+json"
+
+    statement = JSON.parse(read_blob(archive, layer, "in-toto attestation"))
+    fail_archive("in-toto statement type is missing or unsupported") unless %w[https://in-toto.io/Statement/v0.1 https://in-toto.io/Statement/v1].include?(statement["_type"])
+    subjects = statement["subject"]
+    fail_archive("in-toto statement has no subjects") unless subjects.is_a?(Array) && !subjects.empty?
+    subject_matches = subjects.any? do |subject|
+      digest = subject.is_a?(Hash) ? subject["digest"] : nil
+      digest.is_a?(Hash) && digest["sha256"] == reference_digest.delete_prefix("sha256:")
+    end
+    fail_archive("in-toto statement subject does not match its image") unless subject_matches
+    predicate_type = statement["predicateType"].to_s
+    predicate = statement["predicate"]
+    if predicate_type == "https://spdx.dev/Document"
+      fail_archive("SPDX predicate is empty or malformed") unless predicate.is_a?(Hash) && predicate["spdxVersion"].to_s.match?(/\ASPDX-\S+/) && predicate["packages"].is_a?(Array) && !predicate["packages"].empty?
+      image_attestations.fetch(reference_digest)["sbom"] = true
+    elsif %w[https://slsa.dev/provenance/v0.2 https://slsa.dev/provenance/v1].include?(predicate_type)
+      valid_slsa = if predicate_type.end_with?("/v0.2")
+                     predicate.is_a?(Hash) && predicate.dig("builder", "id").is_a?(String) && !predicate.dig("builder", "id").empty? && predicate["buildType"].is_a?(String) && !predicate["buildType"].empty?
+                   else
+                     build_definition = predicate.is_a?(Hash) ? predicate["buildDefinition"] : nil
+                     run_details = predicate.is_a?(Hash) ? predicate["runDetails"] : nil
+                     # BuildKit may omit an explicit builder-id in SLSA v1;
+                     # the build type and bound statement subject remain the
+                     # required provenance identity checks.
+                     build_definition.is_a?(Hash) && build_definition["buildType"].is_a?(String) && !build_definition["buildType"].empty? && run_details.is_a?(Hash) && run_details.dig("builder", "id").is_a?(String)
+                   end
+      fail_archive("SLSA predicate is empty or malformed") unless valid_slsa
+      image_attestations.fetch(reference_digest)["provenance"] = true
+    else
+      fail_archive("unsupported attestation predicate type: #{predicate_type.inspect}")
+    end
+  end
+end
+
+image_attestations.each_value do |attestation|
+  fail_archive("SPDX SBOM attestation is missing for #{attestation['platform']}") unless attestation["sbom"]
+  fail_archive("SLSA provenance attestation is missing for #{attestation['platform']}") unless attestation["provenance"]
+end
+puts "validated OCI archive #{archive} (#{platforms.sort.join(', ')}, SBOM, provenance)"

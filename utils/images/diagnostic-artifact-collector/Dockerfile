@@ -13,11 +13,20 @@ RUN GO111MODULE=off CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH:-amd64} g
 
 FROM busybox:1.37@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
 
+ARG VERSION=0.1.0
+ARG VCS_REF=unknown
+ARG BUILD_DATE=unknown
+
 LABEL org.opencontainers.image.title="Diagnostic artifact collector" \
       org.opencontainers.image.description="Immutable bounded diagnostic recipes with archive handoff" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.licenses="Apache-2.0 AND GPL-2.0-only" \
       org.opencontainers.image.source="https://github.com/telekom/k8s-breakglass" \
-      org.opencontainers.image.documentation="https://github.com/telekom/k8s-breakglass/tree/main/utils/images/diagnostic-artifact-collector"
+      org.opencontainers.image.documentation="https://github.com/telekom/k8s-breakglass/tree/main/utils/images/diagnostic-artifact-collector" \
+      org.opencontainers.image.base.name="busybox:1.37" \
+      org.opencontainers.image.base.digest="sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0"
 
 RUN install -d -o 65532 -g 65532 /output /host-coredumps /etc/ssl/certs && \
     install -d -o 0 -g 0 -m 0555 \

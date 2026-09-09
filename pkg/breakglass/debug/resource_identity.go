@@ -68,6 +68,18 @@ func deleteTrackedResource(ctx context.Context, target client.Client, session *b
 	if err := target.Delete(ctx, live, client.Preconditions{UID: &uid}); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete tracked resource with UID %s: %w", uid, err)
 	}
+	// An accepted DELETE may leave the original instance pending finalizers.
+	// Callers must retain its inventory until this UID is actually gone.
+	remaining := obj.DeepCopyObject().(client.Object)
+	if err := target.Get(ctx, client.ObjectKeyFromObject(obj), remaining); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("verify tracked resource deletion: %w", err)
+	}
+	if remaining.GetUID() == uid {
+		return fmt.Errorf("delete tracked resource with UID %s is pending finalizers", uid)
+	}
 	return nil
 }
 

@@ -45,7 +45,9 @@ cleanup() {
             status=1
         fi
     done
-    [ "$remove_image" = true ] && docker_remove_image_if_id docker "$image" "$image_owned_id" >/dev/null 2>&1 || true
+    if [ "$remove_image" = true ]; then
+        docker_remove_image_if_id docker "$image" "$image_owned_id" >/dev/null 2>&1 || true
+    fi
     rm -rf "$work"
     exit "$status"
 }

@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+profiles:
+  - name: missing-image
+    intent: workload-diagnostics
+    displayName: Missing image test
+    description: Profile references an image key that is not configured.
+    enabled: false
+    elevated: false
+    imageKey: does-not-exist
+    command: ["sh"]
+    args: []

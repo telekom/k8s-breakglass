@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+profiles:
+  - name: elevated-check
+    intent: node-recovery
+    displayName: Elevated check
+    description: Required elevation validation profile.
+    enabled: true
+    elevated: false
+    requiredElevation: true
+    imageKey: workload
+    command: ["sh"]
+    args: []

@@ -14,6 +14,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
@@ -97,7 +98,7 @@ func TestLifecycleCleanupPathsPreserveReplacement(t *testing.T) {
 				require.Empty(t, ds.Status.DeployedResources)
 			case "pod-template":
 				ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{{APIVersion: "v1", Kind: "Pod", Namespace: "ns", ResourceName: "pod", UID: "original", Created: true}}
-				require.NoError(t, ctrl.cleanupPodTemplateResources(ctx, ds, target))
+				require.Error(t, ctrl.cleanupPodTemplateResources(ctx, ds, target))
 			case "auxiliary":
 				m := NewAuxiliaryResourceManager(zap.NewNop().Sugar(), target)
 				require.NoError(t, m.deleteResource(ctx, target, breakglassv1alpha1.AuxiliaryResourceStatus{APIVersion: "v1", Kind: "Pod", Namespace: "ns", ResourceName: "pod", UID: "original"}, ds))
@@ -145,15 +146,31 @@ func TestTrackedWorkloadPodMembership(t *testing.T) {
 			require.Equal(t, tc.want, (&DebugSessionController{}).podBelongsToTrackedWorkload(context.Background(), target, ds, pod))
 		})
 	}
+
+	t.Run("job controller and UID are required", func(t *testing.T) {
+		jobTemplate := corev1.PodTemplateSpec{Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, Containers: []corev1.Container{{Name: "debug", Image: "debug:v1"}}}}
+		job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", Namespace: "ns", UID: "job-uid"}, Spec: batchv1.JobSpec{Template: jobTemplate}}
+		target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(job).Build()
+		pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "job-pod", Namespace: "ns", UID: "pod-uid", OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID, Controller: ptr.To(true)}}}, Spec: *jobTemplate.Spec.DeepCopy()}
+		session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name, Namespace: job.Namespace, UID: string(job.UID), Source: "debug-pod"}}}}
+		require.True(t, (&DebugSessionController{}).podBelongsToTrackedWorkload(context.Background(), target, session, pod))
+		pod.OwnerReferences[0].UID = "replacement-uid"
+		require.False(t, (&DebugSessionController{}).podBelongsToTrackedWorkload(context.Background(), target, session, pod))
+	})
 }
 
 func TestPodTemplateIdentityComesFromApplyResponse(t *testing.T) {
+	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session-uid"}}
+	gets := 0
 	target := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
 		Apply: func(_ context.Context, _ client.WithWatch, cfg runtime.ApplyConfiguration, _ ...client.ApplyOption) error {
 			return json.Unmarshal([]byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"config","namespace":"ns","uid":"applied-uid"}}`), cfg)
 		},
-		Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
-			t.Fatal("a second lookup could bind replacement UID")
+		Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
+			gets++
+			obj.SetUID("existing-uid")
+			obj.SetLabels(map[string]string{"breakglass.t-caas.telekom.com/session": ds.Name, DebugSessionUIDLabelKey: string(ds.UID)})
+			obj.SetAnnotations(map[string]string{"breakglass.t-caas.telekom.com/source-session": ds.Namespace + "/" + ds.Name, DebugSessionUIDAnnotationKey: string(ds.UID)})
 			return nil
 		},
 	}).Build()
@@ -161,8 +178,8 @@ func TestPodTemplateIdentityComesFromApplyResponse(t *testing.T) {
 	obj.SetAPIVersion("v1")
 	obj.SetKind("ConfigMap")
 	obj.SetName("config")
-	ds := &breakglassv1alpha1.DebugSession{}
 	require.NoError(t, (&DebugSessionController{log: zap.NewNop().Sugar()}).deployPodTemplateResource(context.Background(), target, ds, obj, "ns"))
+	require.Equal(t, 1, gets, "apply response must supply identity without a second lookup")
 	require.Equal(t, "applied-uid", ds.Status.PodTemplateResourceStatuses[0].UID)
 	require.Equal(t, "applied-uid", ds.Status.DeployedResources[0].UID)
 }
@@ -433,4 +450,64 @@ func TestTrackedWorkloadAdmittedPodMembership(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestDeleteTrackedResourceVerifiesCompletion(t *testing.T) {
+	for _, mode := range []string{"finalizer", "deleted", "replacement", "read failure"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns", UID: "original"}}
+			if mode == "finalizer" {
+				pod.Finalizers = []string{"test.example/hold"}
+			}
+			reads := 0
+			readErr := fmt.Errorf("verification unavailable")
+			target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(pod).WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					reads++
+					if mode == "read failure" && reads == 2 {
+						return readErr
+					}
+					return c.Get(ctx, key, obj, opts...)
+				},
+				Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					if err := c.Delete(ctx, obj, opts...); err != nil {
+						return err
+					}
+					if mode == "replacement" {
+						return c.Create(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns", UID: "replacement"}})
+					}
+					return nil
+				},
+			}).Build()
+			err := deleteTrackedResource(ctx, target, nil, pod.DeepCopy())
+			switch mode {
+			case "finalizer":
+				require.ErrorContains(t, err, "pending finalizers")
+			case "read failure":
+				require.ErrorIs(t, err, readErr)
+			default:
+				require.NoError(t, err)
+			}
+			if mode == "replacement" {
+				var live corev1.Pod
+				require.NoError(t, target.Get(ctx, client.ObjectKeyFromObject(pod), &live))
+				require.Equal(t, types.UID("replacement"), live.UID)
+			}
+		})
+	}
+}
+
+func TestCleanupDeployedResourcesRetainsPendingUID(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns", UID: "original", Finalizers: []string{"test.example/hold"}}}
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(pod).Build()
+	session := &breakglassv1alpha1.DebugSession{}
+	session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "v1", Kind: "Pod", Namespace: "ns", Name: "pod", UID: "original", Source: "workload"}}
+	session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{{Namespace: "ns", Name: "pod", UID: "original"}}
+	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+	err := controller.cleanupDeployedResources(context.Background(), session, target, false, false)
+	require.ErrorContains(t, err, "pending finalizers")
+	require.Len(t, session.Status.DeployedResources, 1)
+	require.Equal(t, "original", session.Status.DeployedResources[0].UID)
+	require.Len(t, session.Status.AllowedPods, 1)
 }
