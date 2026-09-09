@@ -103,4 +103,10 @@ make -s -C "$images_root" multiarch
 [ "$(wc -l <"$test_root/docker.calls" | tr -d ' ')" -eq 3 ] || { echo "multiarch target did not invoke all three image exports" >&2; exit 1; }
 [ "$(wc -l <"$test_root/verifier.calls" | tr -d ' ')" -eq 3 ] || { echo "multiarch target did not strictly verify all three archives" >&2; exit 1; }
 awk '/--output type=oci,oci-artifact=false,name=breakglass-local\/[^ ]*:validation,dest=/{count++} END { exit count == 3 ? 0 : 1 }' "$test_root/docker.calls" || { echo "multiarch export did not use the named non-artifact contract" >&2; exit 1; }
+for image in storage-debug dump-reader diagnostic-artifact-collector; do
+  awk -v image="$image" '$NF == image && index($0, "name=breakglass-local/" image ":validation,dest=") { count++ } END { exit count == 1 ? 0 : 1 }' "$test_root/docker.calls" || {
+    echo "multiarch target did not export exactly one $image context with its matching image name" >&2
+    exit 1
+  }
+done
 echo "multiarch output contract passed for storage-debug, dump-reader, and diagnostic-artifact-collector"
