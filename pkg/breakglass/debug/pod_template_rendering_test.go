@@ -27,6 +27,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -1519,10 +1520,10 @@ spec:
           image: busybox
 `
 
-	_, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported manifest kind")
-	assert.Contains(t, err.Error(), "Job")
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, breakglassv1alpha1.AuxiliaryResourceContext{})
+	require.NoError(t, err)
+	_, ok := result.Workload.(*batchv1.Job)
+	assert.True(t, ok, "expected *batchv1.Job")
 }
 
 func TestRenderPodTemplateStringMultiDoc_EmptyContainersError(t *testing.T) {
@@ -3593,10 +3594,10 @@ spec:
           image: busybox:latest
 `
 	ctx := newTestRenderContext()
-	_, err := controller.renderPodTemplateStringMultiDoc(templateStr, ctx)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported manifest kind")
-	assert.Contains(t, err.Error(), "Job")
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, ctx)
+	require.NoError(t, err)
+	_, ok := result.Workload.(*batchv1.Job)
+	assert.True(t, ok, "expected *batchv1.Job")
 }
 
 func TestRenderPodTemplateStringMultiDoc_AdditionalResourceInvalidYAML(t *testing.T) {

@@ -5352,10 +5352,8 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
 		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, false, false)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), `unsupported deployed resource kind "Job"`)
-		require.Len(t, session.Status.DeployedResources, 1)
-		assert.Equal(t, "unsupported-job", session.Status.DeployedResources[0].Name)
+		require.NoError(t, err)
+		require.Empty(t, session.Status.DeployedResources)
 	})
 }
 
