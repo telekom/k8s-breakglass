@@ -5138,7 +5138,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		assert.Equal(t, session.Generation, updated.Status.ObservedGeneration)
 	})
 
-	t.Run("missing_rest_config_clears_deployed_tracking", func(t *testing.T) {
+	t.Run("missing_rest_config_retains_deployed_tracking", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-missing-cluster-rest", "test-template", "missing-cluster", "user@example.com")
 		session.Generation = 5
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
@@ -5186,7 +5186,7 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 	t.Run("deletes node debug pod and clears tracking", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-node-pod", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "node-debug-uid"},
 		}
 		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
 			{Name: "node-debug-pod", Namespace: "default"},

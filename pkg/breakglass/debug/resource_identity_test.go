@@ -42,7 +42,8 @@ func TestDeleteTrackedResourceIdentityAndLegacyRecovery(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns", UID: types.UID(tc.live)}}
+			// A replacement can copy mutable session markers; they cannot recover its original UID.
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns", UID: types.UID(tc.live), Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}}}
 			builder := fake.NewClientBuilder().WithScheme(testScheme())
 			if tc.live != "" {
 				builder.WithObjects(pod)
@@ -50,7 +51,7 @@ func TestDeleteTrackedResourceIdentityAndLegacyRecovery(t *testing.T) {
 			target := builder.Build()
 			ref := pod.DeepCopy()
 			ref.UID = types.UID(tc.recorded)
-			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{LegacyCleanupUIDsAnnotation: tc.recovery}}}
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid", Annotations: map[string]string{LegacyCleanupUIDsAnnotation: tc.recovery}}}
 			err := deleteTrackedResource(ctx, target, session, ref)
 			if tc.wantError {
 				require.ErrorContains(t, err, "operator")

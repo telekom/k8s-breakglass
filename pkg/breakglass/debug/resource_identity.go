@@ -51,13 +51,6 @@ func deleteTrackedResource(ctx context.Context, target client.Client, session *b
 		return fmt.Errorf("read tracked resource before cleanup: %w", err)
 	}
 	if uid == "" {
-		if session != nil {
-			if marker, ok := live.GetAnnotations()[sourceSessionUIDAnnotation]; ok && marker == string(session.UID) {
-				uid = live.GetUID()
-			}
-		}
-	}
-	if uid == "" {
 		var err error
 		uid, err = legacyCleanupUID(session, gvk, obj.GetNamespace(), obj.GetName())
 		if err != nil {
