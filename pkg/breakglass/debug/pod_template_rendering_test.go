@@ -553,6 +553,25 @@ func TestApplyPodOverridesStruct(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "duplicate container")
 	})
+
+	t.Run("preserves matching node selector override", func(t *testing.T) {
+		spec := corev1.PodSpec{NodeSelector: map[string]string{"pool": "debug"}}
+		err := controller.applyPodOverridesStruct(&spec, &breakglassv1alpha1.DebugPodSpecOverrides{
+			NodeSelector: map[string]string{"pool": "debug", "zone": "east"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, map[string]string{"pool": "debug", "zone": "east"}, spec.NodeSelector)
+	})
+
+	t.Run("rejects conflicting node selector override", func(t *testing.T) {
+		spec := corev1.PodSpec{NodeSelector: map[string]string{"pool": "mandatory"}}
+		err := controller.applyPodOverridesStruct(&spec, &breakglassv1alpha1.DebugPodSpecOverrides{
+			NodeSelector: map[string]string{"pool": "requested"},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `nodeSelector "pool"="requested" conflicts with existing value "mandatory"`)
+		assert.Equal(t, map[string]string{"pool": "mandatory"}, spec.NodeSelector)
+	})
 }
 
 func TestBuildPodSpec_WithTemplateString(t *testing.T) {

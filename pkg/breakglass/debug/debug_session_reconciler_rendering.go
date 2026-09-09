@@ -234,6 +234,11 @@ func (c *DebugSessionController) applyPodOverridesStruct(spec *corev1.PodSpec, o
 		return nil
 	}
 	if len(overrides.NodeSelector) > 0 {
+		for key, value := range overrides.NodeSelector {
+			if existing, ok := spec.NodeSelector[key]; ok && existing != value {
+				return fmt.Errorf("pod override nodeSelector %q=%q conflicts with existing value %q", key, value, existing)
+			}
+		}
 		if spec.NodeSelector == nil {
 			spec.NodeSelector = make(map[string]string)
 		}
