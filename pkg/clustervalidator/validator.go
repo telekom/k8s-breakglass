@@ -127,6 +127,44 @@ func (c readOnlyClient) ListPods(ctx context.Context, opts metav1.ListOptions) (
 	return c.client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, opts)
 }
 
+func (c validatorClient) ListNodes(ctx context.Context, opts metav1.ListOptions) (*corev1.NodeList, error) {
+	if opts.Limit == 0 || opts.Limit > resourceListPageSize {
+		opts.Limit = resourceListPageSize
+	}
+	result := &corev1.NodeList{}
+	for {
+		nodes, err := c.readOnlyClient.ListNodes(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		result.ResourceVersion = nodes.ResourceVersion
+		result.Items = append(result.Items, nodes.Items...)
+		if nodes.Continue == "" {
+			return result, nil
+		}
+		opts.Continue = nodes.Continue
+	}
+}
+
+func (c validatorClient) ListNamespaces(ctx context.Context, opts metav1.ListOptions) (*corev1.NamespaceList, error) {
+	if opts.Limit == 0 || opts.Limit > resourceListPageSize {
+		opts.Limit = resourceListPageSize
+	}
+	result := &corev1.NamespaceList{}
+	for {
+		namespaces, err := c.readOnlyClient.ListNamespaces(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		result.ResourceVersion = namespaces.ResourceVersion
+		result.Items = append(result.Items, namespaces.Items...)
+		if namespaces.Continue == "" {
+			return result, nil
+		}
+		opts.Continue = namespaces.Continue
+	}
+}
+
 func (c validatorClient) ListPods(ctx context.Context, opts metav1.ListOptions) (*corev1.PodList, error) {
 	if opts.Limit == 0 || opts.Limit > podListPageSize {
 		opts.Limit = podListPageSize
@@ -169,7 +207,9 @@ func (c validatorClient) ListPodsPage(ctx context.Context, opts metav1.ListOptio
 	return filtered, nil
 }
 
-const podListPageSize int64 = 100
+const resourceListPageSize int64 = 100
+
+const podListPageSize = resourceListPageSize
 
 // Validator executes checks serially, then sorts results by name. Serial
 // execution keeps API load predictable and deterministic across runs.
