@@ -740,6 +740,10 @@ the SAR issuer; an eligible exact match takes precedence, expired or
 issuer-ineligible exact matches do not suppress a valid alias, and aliases from
 multiple issuers are rejected when the SAR does not provide an issuer.
 
+Webhook local-part compatibility accepts only a nonempty local part and domain
+separated by one `@`. Requesters already expressed as email addresses use exact
+identity matching and do not trigger the local-part alias lookup.
+
 Use `userIdentifierClaim` to specify which OIDC claim the spoke cluster uses:
 
 ```yaml
