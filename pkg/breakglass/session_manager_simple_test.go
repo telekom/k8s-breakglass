@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
@@ -86,6 +87,20 @@ func TestSessionManager_LiveFallbackSelectorsAndErrors(t *testing.T) {
 		assert.False(t, refreshed)
 		assert.Equal(t, 1, calls)
 	})
+}
+
+func TestSessionManager_GetClusterBreakglassSessionsIncludesClusterOnListError(t *testing.T) {
+	listErr := fmt.Errorf("forbidden")
+	cli := fake.NewClientBuilder().WithScheme(Scheme).WithInterceptorFuncs(interceptor.Funcs{
+		List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+			return listErr
+		},
+	}).Build()
+
+	_, err := (&SessionManager{Client: cli}).GetClusterBreakglassSessions(context.Background(), "tenant-a")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, `failed to list BreakglassSessions for cluster "tenant-a"`)
+	assert.ErrorIs(t, err, listErr)
 }
 
 func TestSessionManager_Simple(t *testing.T) {
