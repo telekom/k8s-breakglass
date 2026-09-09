@@ -1389,19 +1389,35 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 
 func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, reader ctrlclient.Reader, cluster, username, email, issuer string) ([]string, error) {
 	var sessions breakglassv1alpha1.BreakglassSessionList
-	if err := reader.List(ctx, &sessions); err != nil {
-		return nil, err
+	if err := reader.List(ctx, &sessions, ctrlclient.MatchingFields{"spec.cluster": cluster}); err != nil {
+		if !breakglass.IsFieldIndexError(err) {
+			return nil, err
+		}
+		var all breakglassv1alpha1.BreakglassSessionList
+		if err := reader.List(ctx, &all); err != nil {
+			return nil, err
+		}
+		sessions.Items = make([]breakglassv1alpha1.BreakglassSession, 0, len(all.Items))
+		for _, session := range all.Items {
+			if session.Spec.Cluster == cluster {
+				sessions.Items = append(sessions.Items, session)
+			}
+		}
 	}
 	now := time.Now()
-	groups := make([]string, 0)
+	groups := make([]string, 0, len(sessions.Items))
+	seen := make(map[string]struct{}, len(sessions.Items))
 	for _, session := range sessions.Items {
-		if session.Spec.Cluster != cluster ||
-			!breakglass.IsSessionAuthorizationEligible(session, now) ||
+		if !breakglass.IsSessionAuthorizationEligible(session, now) ||
 			(session.Spec.User != username && session.Spec.User != email) ||
 			(issuer != "" && !session.Spec.AllowIDPMismatch &&
 				strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") != strings.TrimRight(issuer, "/")) {
 			continue
 		}
+		if _, ok := seen[session.Spec.GrantedGroup]; ok {
+			continue
+		}
+		seen[session.Spec.GrantedGroup] = struct{}{}
 		groups = append(groups, session.Spec.GrantedGroup)
 	}
 	return groups, nil

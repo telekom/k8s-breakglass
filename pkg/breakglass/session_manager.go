@@ -434,7 +434,7 @@ func (c *SessionManager) GetClusterBreakglassSessions(ctx context.Context,
 	bsl := breakglassv1alpha1.BreakglassSessionList{}
 	if err := c.Client.List(ctx, &bsl, client.MatchingFields{"spec.cluster": cluster}); err != nil {
 		if !IsFieldIndexError(err) {
-			return nil, fmt.Errorf("failed to list BreakglassSessions for cluster: %w", err)
+			return nil, fmt.Errorf("failed to list BreakglassSessions for cluster %q: %w", cluster, err)
 		}
 		all, err := c.GetAllBreakglassSessions(ctx)
 		if err != nil {

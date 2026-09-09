@@ -80,6 +80,19 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 			},
 		},
 		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "username-match-duplicate"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:                "tenant-a",
+				User:                   "platform-requester",
+				GrantedGroup:           "breakglass:platform:debugsession",
+				IdentityProviderIssuer: "https://idp-a.example",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: future,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "expired"},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
 				Cluster:                "tenant-a",

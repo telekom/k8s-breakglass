@@ -939,6 +939,7 @@ func (wc *WebhookController) getUserGroupsAndSessionsWithIDPInfo(ctx context.Con
 // If issuer is empty, returns all sessions (single-IDP or backward compatibility mode)
 // Also returns a list of sessions that were filtered out due to IDP issuer mismatch
 func (wc *WebhookController) getSessionsWithIDPMismatchInfo(ctx context.Context, username, clustername, issuer string) ([]breakglassv1alpha1.BreakglassSession, []breakglassv1alpha1.BreakglassSession, error) {
+	issuer = canonicalIssuer(issuer)
 	all, err := wc.sesManager.GetClusterUserBreakglassSessions(ctx, clustername, username)
 	if err != nil {
 		return nil, nil, err
@@ -962,7 +963,12 @@ func sessionUserAliasMatches(username, sessionUser string) bool {
 	return at > 0 && strings.EqualFold(username, sessionUser[:at])
 }
 
+func canonicalIssuer(issuer string) string {
+	return strings.TrimRight(issuer, "/")
+}
+
 func sessionsMatchingIdentityAlias(sessions []breakglassv1alpha1.BreakglassSession, username, issuer string) []breakglassv1alpha1.BreakglassSession {
+	issuer = canonicalIssuer(issuer)
 	matches := make([]breakglassv1alpha1.BreakglassSession, 0)
 	issuers := map[string]struct{}{}
 	for _, session := range sessions {
@@ -970,11 +976,11 @@ func sessionsMatchingIdentityAlias(sessions []breakglassv1alpha1.BreakglassSessi
 			session.Spec.IdentityProviderIssuer == "" {
 			continue
 		}
-		if issuer != "" && session.Spec.IdentityProviderIssuer != issuer {
+		if issuer != "" && canonicalIssuer(session.Spec.IdentityProviderIssuer) != issuer {
 			continue
 		}
 		matches = append(matches, session)
-		issuers[session.Spec.IdentityProviderIssuer] = struct{}{}
+		issuers[canonicalIssuer(session.Spec.IdentityProviderIssuer)] = struct{}{}
 	}
 	if issuer == "" && len(issuers) != 1 {
 		return nil
@@ -994,13 +1000,14 @@ func filterSessionsForAuthorization(sessions []breakglassv1alpha1.BreakglassSess
 	issuer string,
 	now time.Time,
 ) ([]breakglassv1alpha1.BreakglassSession, []breakglassv1alpha1.BreakglassSession) {
+	issuer = canonicalIssuer(issuer)
 	out := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessions))
 	idpMismatches := make([]breakglassv1alpha1.BreakglassSession, 0)
 	for _, session := range sessions {
 		if !breakglass.IsSessionAuthorizationEligible(session, now) {
 			continue
 		}
-		if issuer != "" && !session.Spec.AllowIDPMismatch && session.Spec.IdentityProviderIssuer != issuer {
+		if issuer != "" && !session.Spec.AllowIDPMismatch && canonicalIssuer(session.Spec.IdentityProviderIssuer) != issuer {
 			idpMismatches = append(idpMismatches, session)
 			continue
 		}

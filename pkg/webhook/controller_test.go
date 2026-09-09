@@ -74,9 +74,24 @@ func TestSessionsMatchingIdentityAlias(t *testing.T) {
 		}},
 	}
 	assert.Len(t, sessionsMatchingIdentityAlias(sessions[:1], "platform-requester", "https://idp-a.example"), 1)
+	assert.Len(t, sessionsMatchingIdentityAlias(sessions[:1], "platform-requester", "https://idp-a.example/"), 1)
 	assert.Len(t, sessionsMatchingIdentityAlias(sessions, "platform-requester", "https://idp-a.example"), 1)
 	assert.Empty(t, sessionsMatchingIdentityAlias(sessions, "platform-requester", ""))
 	assert.Empty(t, sessionsMatchingIdentityAlias(sessions[:1], "platform-requester", "https://other.example"))
+}
+
+func TestFilterSessionsForAuthorizationCanonicalizesIssuer(t *testing.T) {
+	session := breakglassv1alpha1.BreakglassSession{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{IdentityProviderIssuer: "https://idp-a.example/"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		},
+	}
+
+	out, mismatches := filterSessionsForAuthorization([]breakglassv1alpha1.BreakglassSession{session}, "https://idp-a.example", time.Now())
+	assert.Len(t, out, 1)
+	assert.Empty(t, mismatches)
 }
 
 var debugSessionIndexFnsWebhook = map[string]client.IndexerFunc{
