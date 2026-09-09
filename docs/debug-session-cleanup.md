@@ -19,7 +19,7 @@ as a delete precondition. This prevents a later object with the same name from
 being removed. The copied-pod and node-debug paths use the same inventory.
 
 If a spoke API call fails, the controller retains the residual identities and
-requeues the terminal session. Cleanup errors are logged and cause that
+requeues DebugSession reconciliation. Cleanup errors are logged and cause that
 requeue; they are not returned through the reconciler error path, and there is
 no `CleanupFailed` condition. A missing
 `ClusterConfig`, REST configuration, or target client is a retryable outage,
