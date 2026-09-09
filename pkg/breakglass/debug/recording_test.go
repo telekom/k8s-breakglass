@@ -25,9 +25,9 @@ func recordingFixture(enabled bool) (*breakglassv1alpha1.DebugSession, *breakgla
 	}
 }
 
-func TestInjectTerminalRecordingContract(t *testing.T) {
+func TestRejectUnsupportedTerminalRecordingContract(t *testing.T) {
 	_, template := recordingFixture(true)
-	if err := injectTerminalRecording(template); err == nil || !strings.Contains(err.Error(), "terminal-byte transport") {
+	if err := rejectUnsupportedTerminalRecording(template); err == nil || !strings.Contains(err.Error(), "spec.audit.enableTerminalRecording") || !strings.Contains(err.Error(), "terminal-byte transport") {
 		t.Fatalf("expected unavailable transport to fail closed, got %v", err)
 	}
 }
@@ -52,9 +52,9 @@ func TestBuildPodSpecInjectsTerminalRecording(t *testing.T) {
 	}
 }
 
-func TestInjectTerminalRecordingFailsClosed(t *testing.T) {
+func TestRejectUnsupportedTerminalRecordingFailsClosed(t *testing.T) {
 	_, template := recordingFixture(true)
-	if err := injectTerminalRecording(template); err == nil {
+	if err := rejectUnsupportedTerminalRecording(template); err == nil {
 		t.Fatal("expected terminal recording to fail closed")
 	}
 }
