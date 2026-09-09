@@ -23,6 +23,8 @@ All notable changes to the standalone workload-debug image are documented here.
 - Make the Kind integration harness fail closed on name collisions and verify
   the created or partially created cluster can be removed without touching
   caller-owned clusters; verify exact image tags and IDs are removed too.
+- Give the delayed token-secrecy probe enough timeout margin for Kind service
+  routing and exec overhead while retaining a bounded request.
 
 ## 2026-08-26
 
