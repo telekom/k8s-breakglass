@@ -32,7 +32,7 @@ func TestRejectUnsupportedTerminalRecordingContract(t *testing.T) {
 	}
 }
 
-func TestBuildPodSpecInjectsTerminalRecording(t *testing.T) {
+func TestBuildPodSpecRejectsUnsupportedTerminalRecording(t *testing.T) {
 	ds, template := recordingFixture(true)
 	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
 		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
