@@ -1414,6 +1414,30 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		}
 	}
 	now := time.Now()
+	if c.client != nil && c.apiReader != nil {
+		freshCandidates := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessions.Items))
+		for i := range sessions.Items {
+			candidate := sessions.Items[i]
+			if !breakglass.IsSessionAuthorizationEligible(candidate, now) ||
+				(candidate.Spec.User != username && candidate.Spec.User != email) ||
+				(issuer != "" && !candidate.Spec.AllowIDPMismatch &&
+					strings.TrimRight(candidate.Spec.IdentityProviderIssuer, "/") != strings.TrimRight(issuer, "/")) {
+				continue
+			}
+			fresh := &breakglassv1alpha1.BreakglassSession{}
+			if err := reader.Get(ctx, ctrlclient.ObjectKeyFromObject(&candidate), fresh); err != nil {
+				if apierrors.IsNotFound(err) {
+					continue
+				}
+				return nil, err
+			}
+			if candidate.UID != "" && fresh.UID != candidate.UID {
+				continue
+			}
+			freshCandidates = append(freshCandidates, *fresh)
+		}
+		sessions.Items = freshCandidates
+	}
 	collectGroups := func(items []breakglassv1alpha1.BreakglassSession) []string {
 		groups := make([]string, 0, len(items))
 		seen := make(map[string]struct{}, len(items))

@@ -1229,6 +1229,12 @@ func (wc *WebhookController) getSessionsWithIDPMismatchInfo(ctx context.Context,
 		}
 		aliasSessions := sessionsMatchingIdentityAlias(clusterSessions, username, issuer)
 		aliasOut, _ := filterSessionsForAuthorization(aliasSessions, issuer, now)
+		if len(aliasOut) == 0 {
+			if liveSessions, refreshed := wc.sesManager.RefreshClusterBreakglassSessions(ctx, clustername); refreshed {
+				aliasSessions = sessionsMatchingIdentityAlias(liveSessions, username, issuer)
+				aliasOut, _ = filterSessionsForAuthorization(aliasSessions, issuer, now)
+			}
+		}
 		if len(aliasOut) > 0 {
 			out = aliasOut
 		}

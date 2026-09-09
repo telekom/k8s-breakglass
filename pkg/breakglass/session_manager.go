@@ -463,11 +463,22 @@ func (c *SessionManager) GetClusterBreakglassSessions(ctx context.Context,
 		}
 
 		result := mergeSessionResults(bsl.Items, fallback)
-		c.getLogger().Infow("Fetched BreakglassSessions from live reader after cluster cache lookup found no eligible session",
+		c.getLogger().Infow("Fetched BreakglassSessions from live reader after cluster cache lookup",
 			"count", len(result), "cluster", cluster)
 		return result, nil
 	}
 	return bsl.Items, nil
+}
+
+// RefreshClusterBreakglassSessions refreshes the live cluster list when an
+// alias lookup found no eligible cached session.
+func (c *SessionManager) RefreshClusterBreakglassSessions(ctx context.Context,
+	cluster string,
+) ([]breakglassv1alpha1.BreakglassSession, bool) {
+	if c.liveReader == nil {
+		return nil, false
+	}
+	return c.fetchLiveClusterBreakglassSessions(ctx, cluster, "\x00cluster\x00"+cluster, c.getLogger())
 }
 
 // RefreshClusterUserBreakglassSessions refreshes a cached cluster/user lookup

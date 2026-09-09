@@ -220,6 +220,39 @@ func TestGetSessionsWithIDPMismatchInfoFailsClosedOnDirectListError(t *testing.T
 	assert.Error(t, err)
 }
 
+func TestGetSessionsWithIDPMismatchInfoRefreshesAliasWhenOtherCachedGrantIsEligible(t *testing.T) {
+	now := time.Now()
+	newSession := func(name, user string) *breakglassv1alpha1.BreakglassSession {
+		return &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:                "test-cluster",
+				User:                   user,
+				GrantedGroup:           name,
+				IdentityProviderIssuer: "https://idp-a.example",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: metav1.NewTime(now.Add(time.Hour)),
+			},
+		}
+	}
+	bob := newSession("bob", "bob")
+	aliceAlias := newSession("alice-alias", "alice@example.com")
+	cached := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(bob)
+	for name, fn := range sessionIndexFnsWebhook {
+		cached = cached.WithIndex(&breakglassv1alpha1.BreakglassSession{}, name, fn)
+	}
+	manager := breakglass.NewSessionManagerWithClientAndReader(cached.Build(), fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(bob, aliceAlias).Build())
+	controller := &WebhookController{sesManager: manager}
+
+	groups, mismatches, err := controller.getSessionsWithIDPMismatchInfo(context.Background(), "alice", "test-cluster", "https://idp-a.example")
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"alice-alias"}, grantedGroupsFromSessions(groups))
+	assert.Empty(t, mismatches)
+}
+
 var debugSessionIndexFnsWebhook = map[string]client.IndexerFunc{
 	"spec.cluster": func(o client.Object) []string {
 		ds := o.(*breakglassv1alpha1.DebugSession)
