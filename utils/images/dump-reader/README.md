@@ -25,7 +25,8 @@ additional report fields.
 The resolved source must remain beneath `DUMP_INPUT_DIR` (default `/input`),
 which also prevents `..` and symlink-directory escape paths. Copy-out uses a
 private temporary file and an exclusive hard-link, so a pre-existing or
-concurrently-created destination is never replaced.
+concurrently-created destination is never replaced. The temporary file is removed
+when copying is interrupted or fails.
 There is no dump generator, debugger, host mount, or privileged capability in
 the image. The process runs as UID/GID 65532.
 

@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   report, including when the destination appears concurrently.
 - Dump-reader rejects control characters in reported filenames, preventing
   metadata output from injecting additional report fields.
+- Dump-reader removes its private temporary output when a copy is interrupted,
+  preventing partial artifacts from remaining in the output volume.
 
 - Static pod overrides now serialize explicitly empty command and argument
   lists through server-side apply, so an administrator can clear a previous

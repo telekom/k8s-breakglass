@@ -199,6 +199,19 @@ copy_out() {
     fi
     umask 077
     temporary=$(mktemp "$output_dir/.dump-reader.XXXXXX") || fail "cannot create temporary output in: $output_dir"
+    cleanup_temporary() {
+        rm -f -- "${temporary:-}"
+    }
+    abort_copy_signal() {
+        status=$1
+        cleanup_temporary
+        trap - EXIT HUP INT TERM
+        exit "$status"
+    }
+    trap cleanup_temporary EXIT
+    trap 'abort_copy_signal 129' HUP
+    trap 'abort_copy_signal 130' INT
+    trap 'abort_copy_signal 143' TERM
     # Incident artifacts remain private to the image UID and an explicitly
     # authorized collector.
     chmod 0600 "$temporary" || fail "cannot set output permissions: $temporary"

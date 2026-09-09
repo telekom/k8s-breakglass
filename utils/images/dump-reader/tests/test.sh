@@ -116,4 +116,28 @@ if DUMP_INPUT_DIR="$test_dir" DUMP_OUTPUT_DIR="$test_dir/output" DUMP_MAX_COPY_B
     exit 1
 fi
 
+mkdir "$test_dir/bin"
+cat >"$test_dir/bin/dd" <<'EOF'
+#!/bin/sh
+for argument do
+    case "$argument" in
+        of=*) output=${argument#of=} ;;
+    esac
+done
+printf '%s\n' interrupted >"$output"
+kill -TERM "$PPID"
+sleep 1
+EOF
+chmod +x "$test_dir/bin/dd"
+if PATH="$test_dir/bin:$PATH" DUMP_INPUT_DIR="$test_dir" \
+    DUMP_OUTPUT_DIR="$test_dir/output" "$reader" copy "$test_dir/source.dump" interrupted.dump \
+    >/dev/null 2>&1; then
+    echo "interrupted copy unexpectedly succeeded" >&2
+    exit 1
+fi
+if find "$test_dir/output" -maxdepth 1 -name '.dump-reader.*' -print -quit | grep -q .; then
+    echo "interrupted copy left a temporary output" >&2
+    exit 1
+fi
+
 echo "dump-reader tests passed"
