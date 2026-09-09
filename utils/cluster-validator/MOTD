@@ -1,8 +1,6 @@
-<!--
-SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
-
-SPDX-License-Identifier: CC-BY-4.0
--->
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: CC-BY-4.0
 
 KUBERNETES CLUSTER VALIDATOR (read-only)
 
