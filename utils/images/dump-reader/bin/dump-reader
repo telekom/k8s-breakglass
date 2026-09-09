@@ -93,6 +93,26 @@ validate_source() {
     esac
 }
 
+open_source() {
+    source=$1
+    validate_source "$source"
+    # Open once, then validate the descriptor's resolved target. If a path is
+    # replaced after validation, the descriptor remains pinned to the opened
+    # file and an escape through a swapped symlink is rejected.
+    exec 3<"$source" || fail "cannot open FILE: $source"
+    source_fd_path=/proc/self/fd/3
+    [ -e "$source_fd_path" ] || source_fd_path=/dev/fd/3
+    if [ "$source_fd_path" = /proc/self/fd/3 ]; then
+        input_real=$(realpath "$INPUT_DIR") || fail "cannot resolve DUMP_INPUT_DIR: $INPUT_DIR"
+        source_fd_real=$(realpath "$source_fd_path") || fail "cannot resolve opened FILE: $source"
+        case "$source_fd_real" in
+            "$input_real"/*) ;;
+            *) exec 3<&-; fail "opened FILE escaped DUMP_INPUT_DIR: $INPUT_DIR" ;;
+        esac
+    fi
+    [ -f "$source_fd_path" ] || { exec 3<&-; fail "opened FILE is not a regular file: $source"; }
+}
+
 basename_safe() {
     source=$1
     name=${source##*/}
@@ -116,32 +136,34 @@ stat_field() {
 
 inspect() {
     source=$1
-    validate_source "$source"
+    open_source "$source"
     name=$(basename_safe "$source")
     printf '%s\n' \
         "schema_version=dump-reader/v1" \
         "name=$name" \
-        "size_bytes=$(stat_field size "$source")" \
-        "mode=$(stat_field mode "$source")" \
-        "uid=$(stat_field uid "$source")" \
-        "gid=$(stat_field gid "$source")" \
-        "mtime_epoch=$(stat_field mtime "$source")"
+        "size_bytes=$(stat_field size "$source_fd_path")" \
+        "mode=$(stat_field mode "$source_fd_path")" \
+        "uid=$(stat_field uid "$source_fd_path")" \
+        "gid=$(stat_field gid "$source_fd_path")" \
+        "mtime_epoch=$(stat_field mtime "$source_fd_path")"
+    exec 3<&-
 }
 
 checksum() {
     source=$1
-    validate_source "$source"
+    open_source "$source"
     name=$(basename_safe "$source")
-    digest=$(sha256sum "$source" | awk '{print $1}')
+    digest=$(sha256sum "$source_fd_path" | awk '{print $1}')
     printf '%s\n' \
         "schema_version=dump-reader/v1" \
         "name=$name" \
         "sha256=$digest"
+    exec 3<&-
 }
 
 copy_out() {
     source=$1
-    validate_source "$source"
+    open_source "$source"
     output_dir=${DUMP_OUTPUT_DIR:-/output}
     case "$output_dir" in
         /*) ;;
@@ -161,8 +183,6 @@ copy_out() {
     case "$name" in
         ''|.|..|*/*) fail "OUTPUT_NAME must be a basename" ;;
     esac
-    source_size=$(stat_field size "$source")
-    [ "$source_size" -le "$MAX_COPY_BYTES" ] || fail "FILE exceeds DUMP_MAX_COPY_BYTES ($MAX_COPY_BYTES): $source"
     destination=$output_dir/$name
     if [ -e "$destination" ] || [ -L "$destination" ]; then
         fail "refusing to overwrite existing output: $destination"
@@ -172,15 +192,27 @@ copy_out() {
     # Incident artifacts remain private to the image UID and an explicitly
     # authorized collector.
     chmod 0600 "$temporary" || fail "cannot set output permissions: $temporary"
-    if ! cat "$source" >"$temporary"; then
+    # Read a bounded number of blocks from the already-open descriptor. The
+    # extra block catches growth after validation without reopening the path.
+    block_size=65536
+    block_count=$((MAX_COPY_BYTES / block_size + 1))
+    if ! dd if="$source_fd_path" of="$temporary" bs="$block_size" count="$block_count" 2>/dev/null; then
         rm -f "$temporary"
         fail "copy failed: $source"
     fi
+    copied_size=$(stat_field size "$temporary")
+    if [ "$copied_size" -gt "$MAX_COPY_BYTES" ]; then
+        rm -f "$temporary"
+        exec 3<&-
+        fail "FILE exceeds DUMP_MAX_COPY_BYTES ($MAX_COPY_BYTES): $source"
+    fi
     if ! ln "$temporary" "$destination"; then
         rm -f "$temporary"
+        exec 3<&-
         fail "refusing to overwrite existing output: $destination"
     fi
     rm -f "$temporary"
+    exec 3<&-
     printf '%s\n' \
         "schema_version=dump-reader/v1" \
         "name=$name" \

@@ -128,6 +128,7 @@ end
 
 amd64_image = descriptors.find { |descriptor| descriptor.dig("platform", "architecture") == "amd64" }
 arm64_image = descriptors.find { |descriptor| descriptor.dig("platform", "architecture") == "arm64" }
+extra_platform_descriptors = descriptors + [amd64_image.merge("platform" => { "os" => "linux", "architecture" => "s390x" }, "digest" => "sha256:" + ("e" * 64))]
 mismatched_reference_descriptors = descriptors.map do |descriptor|
   if descriptor.dig("annotations", "vnd.docker.reference.type") == "attestation-manifest" && descriptor.dig("annotations", "vnd.docker.reference.digest") == amd64_image["digest"]
     descriptor.merge("annotations" => descriptor["annotations"].merge("vnd.docker.reference.digest" => "sha256:#{"f" * 64}"))
@@ -198,6 +199,7 @@ mismatched_platform_descriptors = descriptors.map do |descriptor|
   end
 end
 write_index.call("mismatched-platform-index.json", mismatched_platform_descriptors)
+write_index.call("extra-platform-index.json", extra_platform_descriptors)
 malformed_image_payload = JSON.generate("schemaVersion" => 2, "mediaType" => "application/vnd.oci.image.manifest.v1+json")
 malformed_image_digest = Digest::SHA256.hexdigest(malformed_image_payload)
 File.write(File.join(blob_dir, malformed_image_digest), malformed_image_payload)
@@ -228,7 +230,7 @@ File.write(File.join(root, "oci-layout"), JSON.generate("imageLayoutVersion" => 
 RUBY
 
 (cd "$test_root" && tar -cf "$test_root/good.tar" index.json oci-layout blobs)
-for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type bad-attestation-media-type mismatched-platform malformed-image missing-image corrupt-image missing-config corrupt-config missing-attestation-config corrupt-attestation-config malformed-v02 unsupported-predicate mismatched-reference missing-reference malformed-reference; do
+for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type bad-attestation-media-type mismatched-platform extra-platform malformed-image missing-image corrupt-image missing-config corrupt-config missing-attestation-config corrupt-attestation-config malformed-v02 unsupported-predicate mismatched-reference missing-reference malformed-reference; do
     mkdir "$test_root/$variant"
     index_variant="$variant"
     if [ "$variant" = missing-image ] || [ "$variant" = corrupt-image ] || [ "$variant" = missing-config ] || [ "$variant" = corrupt-config ]; then
@@ -257,7 +259,7 @@ after_digest="$(sha256sum "$test_root/good.tar" | awk '{print $1}')"
     echo "descriptor-linked archive was rewritten" >&2
     exit 1
 }
-for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type bad-attestation-media-type mismatched-platform malformed-image missing-image corrupt-image missing-config corrupt-config missing-attestation-config corrupt-attestation-config malformed-v02 unsupported-predicate mismatched-reference missing-reference malformed-reference; do
+for variant in bad missing-sbom missing-provenance empty-provenance bad-image-media-type bad-attestation-media-type mismatched-platform extra-platform malformed-image missing-image corrupt-image missing-config corrupt-config missing-attestation-config corrupt-attestation-config malformed-v02 unsupported-predicate mismatched-reference missing-reference malformed-reference; do
     if ruby "$(dirname "$0")/verify-oci-attestations.rb" "$test_root/$variant.tar" >/dev/null 2>&1; then
         echo "invalid $variant archive was accepted" >&2
         exit 1

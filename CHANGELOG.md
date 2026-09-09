@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- OCI attestation verification now rejects unsupported or duplicate image
+  platforms instead of silently filtering unverified descriptors. Dump-reader
+  copy limits are enforced on a single opened source descriptor, including
+  growth after validation, and reference fixtures use run-scoped names and
+  cleanup labels that cannot remove pre-existing resources.
+- Unsupported terminal recording errors identify the requested
+  `spec.audit.enableTerminalRecording` field and the unavailable transport.
+
 - Static pod overrides now serialize explicitly empty command and argument
   lists through server-side apply, so an administrator can clear a previous
   override. Job workloads retain exact owner-chain cleanup and spoke workload

@@ -15,6 +15,9 @@ small:
 * `copy FILE [OUTPUT_NAME]` copies an existing regular file beneath
   `DUMP_OUTPUT_DIR`, refuses to overwrite, limits the source to
   `DUMP_MAX_COPY_BYTES` (1 GiB by default), and reports the copied checksum.
+  Copy opens the approved source once and applies the bound while reading that
+  opened file, so path changes and growth after validation cannot bypass the
+  limit.
 
 It rejects missing files, directories, unreadable files, and symbolic links.
 The resolved source must remain beneath `DUMP_INPUT_DIR` (default `/input`),

@@ -97,5 +97,11 @@ if DUMP_INPUT_DIR="$test_dir" DUMP_OUTPUT_DIR="$test_dir/output" DUMP_MAX_COPY_B
     echo "copy size bound was not enforced" >&2
     exit 1
 fi
+printf '%s\n' '123456789' >"$test_dir/growing.dump"
+if DUMP_INPUT_DIR="$test_dir" DUMP_OUTPUT_DIR="$test_dir/output" DUMP_MAX_COPY_BYTES=4 \
+    $reader copy "$test_dir/growing.dump" growing-too-large.dump >/dev/null 2>&1; then
+    echo "bounded copy accepted a source larger than the limit" >&2
+    exit 1
+fi
 
 echo "dump-reader tests passed"

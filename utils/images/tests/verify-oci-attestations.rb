@@ -76,13 +76,18 @@ descriptors = []
 visited_indexes = []
 root_descriptors.each { |descriptor| flatten_index(archive, descriptor, descriptors, visited_indexes) }
 
-images = descriptors.select do |descriptor|
+images = descriptors.reject do |descriptor|
+  descriptor.dig("annotations", "vnd.docker.reference.type") == "attestation-manifest"
+end
+fail_archive("archive has no image manifests") if images.empty?
+images.each do |descriptor|
   platform = descriptor["platform"] || {}
-  annotation = descriptor.dig("annotations", "vnd.docker.reference.type")
-  annotation != "attestation-manifest" && platform["os"] == "linux" && %w[amd64 arm64].include?(platform["architecture"])
+  unless platform["os"] == "linux" && %w[amd64 arm64].include?(platform["architecture"])
+    fail_archive("unsupported image platform #{platform.inspect}")
+  end
 end
 platforms = images.map { |descriptor| "#{descriptor.dig('platform', 'os')}/#{descriptor.dig('platform', 'architecture')}" }.uniq
-fail_archive("archive is missing linux/amd64 or linux/arm64 image manifests") unless platforms.sort == %w[linux/amd64 linux/arm64]
+fail_archive("archive must contain exactly one linux/amd64 and one linux/arm64 image manifest") unless platforms.sort == %w[linux/amd64 linux/arm64] && images.length == platforms.length
 
 image_digests = images.map { |descriptor| descriptor_digest(descriptor, "image manifest") }
 image_attestations = {}
