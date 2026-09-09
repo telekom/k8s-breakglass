@@ -107,6 +107,7 @@ securityContext:
 {{- end }}
 {{- $elevatedNode := and (default false $profile.elevated) (eq (default "restricted" $profile.preset) "elevated-node") -}}
 {{- $dumpAccess := eq (default "" $profile.intent) "dump-access" -}}
+{{- if and $profile.enabled $dumpAccess (ne (toJson (default (list) $profile.command)) "[\"/usr/local/bin/dump-reader\"]") }}{{ fail (printf "profiles[%s] enabled dump-access must use the reviewed /usr/local/bin/dump-reader command" $profile.name) }}{{ end }}
 {{- $dumpInputReadOnly := false -}}
 {{- $dumpInputMounts := 0 -}}
 {{- $dumpInputSource := false -}}

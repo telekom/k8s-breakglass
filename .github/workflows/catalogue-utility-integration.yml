@@ -14,7 +14,8 @@ on:
       - "hack/cluster-validator-**"
       - "Dockerfile.validator"
       - "utils/cluster-validator/**"
-      - "utils/**"
+      # Utility image changes are covered by the per-utility workflows. Keep
+      # this consolidated gate for catalogue and cluster-validator changes.
       - ".github/workflows/catalogue-utility-integration.yml"
   push:
     branches: [main, deployment-testing]
@@ -25,7 +26,8 @@ on:
       - "hack/cluster-validator-**"
       - "Dockerfile.validator"
       - "utils/cluster-validator/**"
-      - "utils/**"
+      # Utility image changes are covered by the per-utility workflows. Keep
+      # this consolidated gate for catalogue and cluster-validator changes.
       - ".github/workflows/catalogue-utility-integration.yml"
 
 permissions:
