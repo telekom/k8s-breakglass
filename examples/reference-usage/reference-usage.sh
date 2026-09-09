@@ -115,20 +115,20 @@ cleanup() {
   if [[ -n "${KUBECONFIG_FILE}" ]]; then
     if [[ "${AUDIT_CONFIG_CREATED}" == true ]]; then
       KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete auditconfig "${REFERENCE_AUDIT_CONFIG_NAME}" \
-        --ignore-not-found >/dev/null 2>&1
+        --ignore-not-found --wait=false >/dev/null 2>&1
     fi
     KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete roledefinition,binddefinition -A \
-      -l "${LABEL}=${LABEL_VALUE}" --ignore-not-found --wait --timeout "${REFERENCE_CLEANUP_TIMEOUT}" >/dev/null 2>&1
+      -l "${LABEL}=${LABEL_VALUE}" --ignore-not-found --wait=false >/dev/null 2>&1
     KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete breakglassescalation "${ESCALATION_NAME}" \
-      -n "${NAMESPACE}" --ignore-not-found >/dev/null 2>&1
+      -n "${NAMESPACE}" --ignore-not-found --wait=false >/dev/null 2>&1
     [[ -n "${SESSION_NAME}" ]] && KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete breakglasssession "${SESSION_NAME}" \
-      -n "${NAMESPACE}" --ignore-not-found >/dev/null 2>&1
+      -n "${NAMESPACE}" --ignore-not-found --wait=false >/dev/null 2>&1
     [[ -n "${REJECTED_SESSION_NAME}" ]] && KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete breakglasssession "${REJECTED_SESSION_NAME}" \
-      -n "${NAMESPACE}" --ignore-not-found >/dev/null 2>&1
+      -n "${NAMESPACE}" --ignore-not-found --wait=false >/dev/null 2>&1
     [[ -n "${DEBUG_SESSION_NAME}" ]] && KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete debugsession "${DEBUG_SESSION_NAME}" \
-      -n "${NAMESPACE}" --ignore-not-found >/dev/null 2>&1
+      -n "${NAMESPACE}" --ignore-not-found --wait=false >/dev/null 2>&1
     [[ -n "${ELEVATED_DEBUG_SESSION_NAME}" ]] && KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete debugsession "${ELEVATED_DEBUG_SESSION_NAME}" \
-      -n "${NAMESPACE}" --ignore-not-found >/dev/null 2>&1
+      -n "${NAMESPACE}" --ignore-not-found --wait=false >/dev/null 2>&1
   fi
   if [[ "${CLUSTER_OWNED}" == true ]] && command -v kind >/dev/null 2>&1; then
     kind delete cluster --name "${CLUSTER_NAME}" >/dev/null 2>&1
@@ -639,7 +639,7 @@ debug_session_flow() {
 
 assert_zero_residual() {
   if [[ "${AUDIT_CONFIG_CREATED}" == true ]]; then
-    kubectl delete auditconfig "${REFERENCE_AUDIT_CONFIG_NAME}" --ignore-not-found >/dev/null
+    kubectl delete auditconfig "${REFERENCE_AUDIT_CONFIG_NAME}" --ignore-not-found --wait --timeout "${REFERENCE_CLEANUP_TIMEOUT}" >/dev/null
   fi
   kubectl delete roledefinition,binddefinition -A -l "${LABEL}=${LABEL_VALUE}" --ignore-not-found --wait --timeout "${REFERENCE_CLEANUP_TIMEOUT}" >/dev/null
   for session in "${SESSION_NAME}" "${REJECTED_SESSION_NAME}"; do
