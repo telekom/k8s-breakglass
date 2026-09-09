@@ -199,3 +199,6 @@ before checking the exact chart filename and SHA-256 binding. The schema is
 unmodified and attributed to the SPDX contributors under CC-BY-3.0. Run
 `make test-release-security` to exercise malformed-document and subject-binding
 rejections; validation performs no schema downloads.
+
+`make -C utils/images multiarch` builds and verifies both supported platforms
+for storage-debug, dump-reader, and diagnostic-artifact-collector.
