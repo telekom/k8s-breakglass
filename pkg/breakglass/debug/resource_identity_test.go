@@ -148,7 +148,7 @@ func TestTrackedWorkloadPodMembership(t *testing.T) {
 }
 
 func TestAllowedPodRefreshRejectsReplacementUnlessWorkloadOwnsIt(t *testing.T) {
-	controller := true
+	isController := true
 	template := corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "debug", Image: "debug:v1"}}}}
 	daemon := &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "daemon", Namespace: "ns", UID: "daemon-uid"},
@@ -177,11 +177,25 @@ func TestAllowedPodRefreshRejectsReplacementUnlessWorkloadOwnsIt(t *testing.T) {
 	}
 
 	replacement := newPod("replacement", nil)
-	require.False(t, (&DebugSessionController{}).allowedPodForRefresh(context.Background(), target, session, replacement))
+	controller := &DebugSessionController{}
+	for refresh := 0; refresh < 3; refresh++ {
+		allowed, retained := controller.filterAllowedPodsForRefresh(context.Background(), target, session, []corev1.Pod{*replacement})
+		require.Empty(t, allowed, "refresh %d must reject the same-name replacement", refresh+1)
+		require.Equal(t, session.Status.AllowedPods, retained, "refresh %d must retain the old identity", refresh+1)
+		session.Status.AllowedPods = retained
+	}
 
-	owner := metav1.OwnerReference{APIVersion: "apps/v1", Kind: "DaemonSet", Name: "daemon", UID: "daemon-uid", Controller: &controller}
+	untracked := replacement.DeepCopy()
+	untracked.Name = "arbitrary-label-only-pod"
+	allowed, retained := controller.filterAllowedPodsForRefresh(context.Background(), target, session, []corev1.Pod{*untracked})
+	require.Empty(t, allowed, "an arbitrary new label-only Pod must not be admitted")
+	require.Empty(t, retained, "an arbitrary new name has no prior identity to retain")
+
+	owner := metav1.OwnerReference{APIVersion: "apps/v1", Kind: "DaemonSet", Name: "daemon", UID: "daemon-uid", Controller: &isController}
 	lineageReplacement := newPod("replacement", &owner)
-	require.True(t, (&DebugSessionController{}).allowedPodForRefresh(context.Background(), target, session, lineageReplacement))
+	allowed, retained = controller.filterAllowedPodsForRefresh(context.Background(), target, session, []corev1.Pod{*lineageReplacement})
+	require.Len(t, allowed, 1, "a replacement from the recorded workload should be admitted")
+	require.Empty(t, retained)
 }
 
 func TestPodTemplateIdentityComesFromCreateResponse(t *testing.T) {

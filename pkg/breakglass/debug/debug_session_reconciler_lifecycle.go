@@ -106,13 +106,12 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 		return err
 	}
 
-	allowedPods := make([]breakglassv1alpha1.AllowedPodRef, 0, len(podList.Items))
-	for _, pod := range podList.Items {
-		if !c.allowedPodForRefresh(ctx, targetClient, ds, &pod) {
-			log.Warnw("Skipping Pod whose identity changed without trusted workload lineage",
-				"pod", pod.Name, "podNamespace", pod.Namespace, "podUID", pod.UID)
-			continue
-		}
+	allowedPodCandidates, retainedAllowedPods := c.filterAllowedPodsForRefresh(ctx, targetClient, ds, podList.Items)
+	allowedPods := make([]breakglassv1alpha1.AllowedPodRef, 0, len(allowedPodCandidates)+len(retainedAllowedPods))
+	// Keep rejected same-name identities in status so later refreshes do not
+	// reinterpret the replacement as an untracked Pod.
+	allowedPods = append(allowedPods, retainedAllowedPods...)
+	for _, pod := range allowedPodCandidates {
 		ready := false
 		for _, cond := range pod.Status.Conditions {
 			if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
@@ -164,20 +163,43 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 	return c.patchDebugSessionAllowedPods(ctx, ds, allowedPods)
 }
 
-// allowedPodForRefresh keeps a previously authorized Pod bound to its immutable
-// UID. A same-name replacement may enter the label query after deletion and
-// recreation; only a Pod owned by the session's recorded workload can be
-// admitted as a legitimate replacement.
+func (c *DebugSessionController) filterAllowedPodsForRefresh(
+	ctx context.Context,
+	targetClient ctrlclient.Client,
+	ds *breakglassv1alpha1.DebugSession,
+	pods []corev1.Pod,
+) ([]corev1.Pod, []breakglassv1alpha1.AllowedPodRef) {
+	allowed := make([]corev1.Pod, 0, len(pods))
+	retained := make([]breakglassv1alpha1.AllowedPodRef, 0)
+	for _, pod := range pods {
+		if !c.allowedPodForRefresh(ctx, targetClient, ds, &pod) {
+			if existing, found := existingAllowedPodRef(ds, &pod); found {
+				retained = append(retained, existing)
+			}
+			continue
+		}
+		allowed = append(allowed, pod)
+	}
+	return allowed, retained
+}
+
+func existingAllowedPodRef(ds *breakglassv1alpha1.DebugSession, pod *corev1.Pod) (breakglassv1alpha1.AllowedPodRef, bool) {
+	for _, existing := range ds.Status.AllowedPods {
+		if existing.Namespace == pod.Namespace && existing.Name == pod.Name {
+			return existing, true
+		}
+	}
+	return breakglassv1alpha1.AllowedPodRef{}, false
+}
+
 func (c *DebugSessionController) allowedPodForRefresh(
 	ctx context.Context,
 	targetClient ctrlclient.Client,
 	ds *breakglassv1alpha1.DebugSession,
 	pod *corev1.Pod,
 ) bool {
-	for _, existing := range ds.Status.AllowedPods {
-		if existing.Namespace != pod.Namespace || existing.Name != pod.Name {
-			continue
-		}
+	existing, known := existingAllowedPodRef(ds, pod)
+	if known {
 		if existing.UID == string(pod.UID) && existing.UID != "" {
 			return true
 		}
@@ -186,7 +208,7 @@ func (c *DebugSessionController) allowedPodForRefresh(
 		}
 		return c.podBelongsToTrackedWorkload(ctx, targetClient, ds, pod)
 	}
-	return true
+	return c.podBelongsToTrackedWorkload(ctx, targetClient, ds, pod)
 }
 
 func allowedPodRefFromPod(pod *corev1.Pod, ready bool, containerStatus *breakglassv1alpha1.PodContainerStatus) breakglassv1alpha1.AllowedPodRef {
