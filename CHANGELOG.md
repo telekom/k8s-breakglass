@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Keep DebugSession creation grant matching exact to authenticated username/email claims; email local-part aliases remain limited to the issuer-scoped webhook compatibility path (PR #1326).
 
+- Allow the webhook's issuer-scoped email alias fallback when exact sessions are expired or issuer-ineligible, while preserving eligible exact-match precedence and issuer ambiguity rejection (PR #1326).
+
 - Disable trusted raw field output for a complete debug template set when Sprig
   mutation functions can modify requester-visible maps during rendering.
 

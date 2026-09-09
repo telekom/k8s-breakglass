@@ -94,6 +94,131 @@ func TestFilterSessionsForAuthorizationCanonicalizesIssuer(t *testing.T) {
 	assert.Empty(t, mismatches)
 }
 
+type countingListClient struct {
+	client.Client
+	listCalls int
+}
+
+func (c *countingListClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	c.listCalls++
+	return c.Client.List(ctx, list, opts...)
+}
+
+func TestGetSessionsWithIDPMismatchInfoUsesAliasOnlyWithoutEligibleDirectMatch(t *testing.T) {
+	now := time.Now()
+	newSession := func(name, user, issuer string, expiresAt time.Time) *breakglassv1alpha1.BreakglassSession {
+		return &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:                "test-cluster",
+				User:                   user,
+				GrantedGroup:           name,
+				IdentityProviderIssuer: issuer,
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: metav1.NewTime(expiresAt),
+			},
+		}
+	}
+
+	tests := []struct {
+		name           string
+		direct         *breakglassv1alpha1.BreakglassSession
+		aliases        []*breakglassv1alpha1.BreakglassSession
+		issuer         string
+		wantGroups     []string
+		wantMismatches int
+		wantListCalls  int
+	}{
+		{
+			name:   "expired direct match allows active alias",
+			direct: newSession("expired-direct", "alice", "https://idp-a.example", now.Add(-time.Minute)),
+			aliases: []*breakglassv1alpha1.BreakglassSession{
+				newSession("alice-alias", "alice@example.com", "https://idp-a.example", now.Add(time.Hour)),
+			},
+			issuer:        "https://idp-a.example",
+			wantGroups:    []string{"alice-alias"},
+			wantListCalls: 2,
+		},
+		{
+			name:   "wrong issuer direct match preserves mismatch and allows alias",
+			direct: newSession("wrong-issuer-direct", "alice", "https://idp-b.example", now.Add(time.Hour)),
+			aliases: []*breakglassv1alpha1.BreakglassSession{
+				newSession("alice-alias", "alice@example.com", "https://idp-a.example", now.Add(time.Hour)),
+			},
+			issuer:         "https://idp-a.example",
+			wantGroups:     []string{"alice-alias"},
+			wantMismatches: 1,
+			wantListCalls:  2,
+		},
+		{
+			name:   "eligible direct match suppresses alias scan",
+			direct: newSession("direct", "alice", "https://idp-a.example", now.Add(time.Hour)),
+			aliases: []*breakglassv1alpha1.BreakglassSession{
+				newSession("alice-alias", "alice@example.com", "https://idp-a.example", now.Add(time.Hour)),
+			},
+			issuer:        "https://idp-a.example",
+			wantGroups:    []string{"direct"},
+			wantListCalls: 1,
+		},
+		{
+			name: "wrong issuer alias is denied",
+			aliases: []*breakglassv1alpha1.BreakglassSession{
+				newSession("wrong-issuer-alias", "alice@example.com", "https://idp-b.example", now.Add(time.Hour)),
+			},
+			issuer:        "https://idp-a.example",
+			wantListCalls: 2,
+		},
+		{
+			name: "issuerless aliases from multiple issuers are ambiguous",
+			aliases: []*breakglassv1alpha1.BreakglassSession{
+				newSession("alias-a", "alice@example.com", "https://idp-a.example", now.Add(time.Hour)),
+				newSession("alias-b", "alice@example.com", "https://idp-b.example", now.Add(time.Hour)),
+			},
+			wantListCalls: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			objects := make([]client.Object, 0, 1+len(tt.aliases))
+			if tt.direct != nil {
+				objects = append(objects, tt.direct)
+			}
+			for _, alias := range tt.aliases {
+				objects = append(objects, alias)
+			}
+			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objects...)
+			for name, fn := range sessionIndexFnsWebhook {
+				builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, name, fn)
+			}
+			countingClient := &countingListClient{Client: builder.Build()}
+			manager := breakglass.NewSessionManagerWithClient(countingClient)
+			controller := &WebhookController{sesManager: manager}
+
+			groups, mismatches, err := controller.getSessionsWithIDPMismatchInfo(context.Background(), "alice", "test-cluster", tt.issuer)
+
+			if assert.NoError(t, err) {
+				assert.Len(t, groups, len(tt.wantGroups))
+				if len(tt.wantGroups) > 0 {
+					assert.Equal(t, tt.wantGroups, grantedGroupsFromSessions(groups))
+				}
+				assert.Len(t, mismatches, tt.wantMismatches)
+				assert.Equal(t, tt.wantListCalls, countingClient.listCalls)
+			}
+		})
+	}
+}
+
+func TestGetSessionsWithIDPMismatchInfoFailsClosedOnDirectListError(t *testing.T) {
+	controller := &WebhookController{sesManager: &breakglass.SessionManager{Client: &listErrorClient{}}}
+
+	_, _, err := controller.getSessionsWithIDPMismatchInfo(context.Background(), "alice", "test-cluster", "https://idp-a.example")
+
+	assert.Error(t, err)
+}
+
 var debugSessionIndexFnsWebhook = map[string]client.IndexerFunc{
 	"spec.cluster": func(o client.Object) []string {
 		ds := o.(*breakglassv1alpha1.DebugSession)

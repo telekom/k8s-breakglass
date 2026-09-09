@@ -944,14 +944,19 @@ func (wc *WebhookController) getSessionsWithIDPMismatchInfo(ctx context.Context,
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(all) == 0 && username != "" {
+	now := time.Now()
+	out, idpMismatches := filterSessionsForAuthorization(all, issuer, now)
+	if len(out) == 0 && username != "" {
 		clusterSessions, listErr := wc.sesManager.GetClusterBreakglassSessions(ctx, clustername)
 		if listErr != nil {
 			return nil, nil, listErr
 		}
-		all = sessionsMatchingIdentityAlias(clusterSessions, username, issuer)
+		aliasSessions := sessionsMatchingIdentityAlias(clusterSessions, username, issuer)
+		aliasOut, _ := filterSessionsForAuthorization(aliasSessions, issuer, now)
+		if len(aliasOut) > 0 {
+			out = aliasOut
+		}
 	}
-	out, idpMismatches := filterSessionsForAuthorization(all, issuer, time.Now())
 	return out, idpMismatches, nil
 }
 
