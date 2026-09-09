@@ -451,3 +451,63 @@ func TestTrackedWorkloadAdmittedPodMembership(t *testing.T) {
 		}
 	}
 }
+
+func TestDeleteTrackedResourceVerifiesCompletion(t *testing.T) {
+	for _, mode := range []string{"finalizer", "deleted", "replacement", "read failure"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns", UID: "original"}}
+			if mode == "finalizer" {
+				pod.Finalizers = []string{"test.example/hold"}
+			}
+			reads := 0
+			readErr := fmt.Errorf("verification unavailable")
+			target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(pod).WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					reads++
+					if mode == "read failure" && reads == 2 {
+						return readErr
+					}
+					return c.Get(ctx, key, obj, opts...)
+				},
+				Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					if err := c.Delete(ctx, obj, opts...); err != nil {
+						return err
+					}
+					if mode == "replacement" {
+						return c.Create(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns", UID: "replacement"}})
+					}
+					return nil
+				},
+			}).Build()
+			err := deleteTrackedResource(ctx, target, nil, pod.DeepCopy())
+			switch mode {
+			case "finalizer":
+				require.ErrorContains(t, err, "pending finalizers")
+			case "read failure":
+				require.ErrorIs(t, err, readErr)
+			default:
+				require.NoError(t, err)
+			}
+			if mode == "replacement" {
+				var live corev1.Pod
+				require.NoError(t, target.Get(ctx, client.ObjectKeyFromObject(pod), &live))
+				require.Equal(t, types.UID("replacement"), live.UID)
+			}
+		})
+	}
+}
+
+func TestCleanupDeployedResourcesRetainsPendingUID(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns", UID: "original", Finalizers: []string{"test.example/hold"}}}
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(pod).Build()
+	session := &breakglassv1alpha1.DebugSession{}
+	session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "v1", Kind: "Pod", Namespace: "ns", Name: "pod", UID: "original", Source: "workload"}}
+	session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{{Namespace: "ns", Name: "pod", UID: "original"}}
+	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+	err := controller.cleanupDeployedResources(context.Background(), session, target, false, false)
+	require.ErrorContains(t, err, "pending finalizers")
+	require.Len(t, session.Status.DeployedResources, 1)
+	require.Equal(t, "original", session.Status.DeployedResources[0].UID)
+	require.Len(t, session.Status.AllowedPods, 1)
+}

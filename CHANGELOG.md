@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Retain pod-template cleanup tracking while the original resource remains pending finalizers.
+- Retain tracked-resource cleanup inventory while the original resource remains pending finalizers.
 
 - OCI attestation verification now rejects unsupported or duplicate image
   platforms instead of silently filtering unverified descriptors. Dump-reader
