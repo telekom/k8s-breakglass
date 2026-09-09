@@ -58,6 +58,37 @@ func TestValidateIsStableAndSorted(t *testing.T) {
 	require.Equal(t, first, second)
 }
 
+func TestBuiltinChecksPaginateNodesAndNamespaces(t *testing.T) {
+	var nodeRequests, namespaceRequests []metav1.ListOptions
+	client := newPagedNodeNamespaceClient(
+		func(_ context.Context, options metav1.ListOptions) (*corev1.NodeList, error) {
+			nodeRequests = append(nodeRequests, options)
+			if options.Continue == "" {
+				return &corev1.NodeList{ListMeta: metav1.ListMeta{Continue: "nodes-2"}, Items: []corev1.Node{{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}}}, nil
+			}
+			return &corev1.NodeList{Items: []corev1.Node{{ObjectMeta: metav1.ObjectMeta{Name: "node-b"}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}}}}, nil
+		},
+		func(_ context.Context, options metav1.ListOptions) (*corev1.NamespaceList, error) {
+			namespaceRequests = append(namespaceRequests, options)
+			if options.Continue == "" {
+				return &corev1.NamespaceList{ListMeta: metav1.ListMeta{Continue: "namespaces-2"}, Items: []corev1.Namespace{{ObjectMeta: metav1.ObjectMeta{Name: "default"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}}}}, nil
+			}
+			return &corev1.NamespaceList{Items: []corev1.Namespace{{ObjectMeta: metav1.ObjectMeta{Name: "system"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}}}}, nil
+		},
+	)
+	report := NewValidator(nodesCheck{}, namespacesCheck{}).Validate(context.Background(), client, fakeDiscovery{FakeDiscovery: &discoveryfake.FakeDiscovery{}}, ModeOneTime, false)
+
+	require.Equal(t, StatusReady, report.Status)
+	require.Contains(t, report.Checks, CheckResult{Name: "nodes-ready", Status: StatusReady, Message: "2 node(s) Ready"})
+	require.Contains(t, report.Checks, CheckResult{Name: "namespaces-healthy", Status: StatusReady, Message: "2 namespace(s) active"})
+	require.Len(t, nodeRequests, 2)
+	require.Equal(t, resourceListPageSize, nodeRequests[0].Limit)
+	require.Equal(t, "nodes-2", nodeRequests[1].Continue)
+	require.Len(t, namespaceRequests, 2)
+	require.Equal(t, resourceListPageSize, namespaceRequests[0].Limit)
+	require.Equal(t, "namespaces-2", namespaceRequests[1].Continue)
+}
+
 func TestValidateReportsPostUpgradeAndFailure(t *testing.T) {
 	client, discoveryClient := readyClient()
 	err := client.CoreV1().Nodes().Delete(context.Background(), "node-a", metav1.DeleteOptions{})
@@ -270,6 +301,63 @@ func readyPodStatus() corev1.PodStatus {
 type pagedPodClient struct {
 	kubernetes.Interface
 	list func(context.Context, metav1.ListOptions) (*corev1.PodList, error)
+}
+
+type pagedNodeNamespaceClient struct {
+	kubernetes.Interface
+	listNodes      func(context.Context, metav1.ListOptions) (*corev1.NodeList, error)
+	listNamespaces func(context.Context, metav1.ListOptions) (*corev1.NamespaceList, error)
+}
+
+func newPagedNodeNamespaceClient(
+	listNodes func(context.Context, metav1.ListOptions) (*corev1.NodeList, error),
+	listNamespaces func(context.Context, metav1.ListOptions) (*corev1.NamespaceList, error),
+) kubernetes.Interface {
+	return pagedNodeNamespaceClient{
+		Interface:      k8sfake.NewSimpleClientset(),
+		listNodes:      listNodes,
+		listNamespaces: listNamespaces,
+	}
+}
+
+func (c pagedNodeNamespaceClient) CoreV1() coretyped.CoreV1Interface {
+	return pagedResourceCoreClient{
+		CoreV1Interface: c.Interface.CoreV1(),
+		listNodes:       c.listNodes,
+		listNamespaces:  c.listNamespaces,
+	}
+}
+
+type pagedResourceCoreClient struct {
+	coretyped.CoreV1Interface
+	listNodes      func(context.Context, metav1.ListOptions) (*corev1.NodeList, error)
+	listNamespaces func(context.Context, metav1.ListOptions) (*corev1.NamespaceList, error)
+}
+
+func (c pagedResourceCoreClient) Nodes() coretyped.NodeInterface {
+	return pagedNodes{NodeInterface: c.CoreV1Interface.Nodes(), list: c.listNodes}
+}
+
+func (c pagedResourceCoreClient) Namespaces() coretyped.NamespaceInterface {
+	return pagedNamespaces{NamespaceInterface: c.CoreV1Interface.Namespaces(), list: c.listNamespaces}
+}
+
+type pagedNodes struct {
+	coretyped.NodeInterface
+	list func(context.Context, metav1.ListOptions) (*corev1.NodeList, error)
+}
+
+func (p pagedNodes) List(ctx context.Context, options metav1.ListOptions) (*corev1.NodeList, error) {
+	return p.list(ctx, options)
+}
+
+type pagedNamespaces struct {
+	coretyped.NamespaceInterface
+	list func(context.Context, metav1.ListOptions) (*corev1.NamespaceList, error)
+}
+
+func (p pagedNamespaces) List(ctx context.Context, options metav1.ListOptions) (*corev1.NamespaceList, error) {
+	return p.list(ctx, options)
 }
 
 func newPagedPodClient(list func(context.Context, metav1.ListOptions) (*corev1.PodList, error)) kubernetes.Interface {
