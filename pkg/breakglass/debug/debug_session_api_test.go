@@ -230,6 +230,10 @@ func TestActiveBreakglassGroupsUsesCachedIndexWhenFreshReaderIsConfigured(t *tes
 		&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
 			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
 		},
+	).WithIndex(
+		&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+		},
 	).Build()
 	cached := &debugSessionRecordingListClient{Client: base}
 	controller := &DebugSessionAPIController{client: cached}
@@ -238,7 +242,63 @@ func TestActiveBreakglassGroupsUsesCachedIndexWhenFreshReaderIsConfigured(t *tes
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"breakglass:debug"}, groups)
+	require.Len(t, cached.calls, 1)
 	assert.Equal(t, []string{"tenant-a"}, debugSessionRecordedFieldValues(cached.calls, "spec.cluster"))
+	assert.Equal(t, []string{"alice"}, debugSessionRecordedFieldValues(cached.calls, "spec.user"))
+}
+
+func TestActiveBreakglassGroupsQueriesEachUniqueIdentityWithCompoundIndex(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	usernameSession := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "username-grant"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice", GrantedGroup: "breakglass:username", IdentityProviderIssuer: "https://idp.example"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: future},
+	}
+	emailSession := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "email-grant"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice@example.test", GrantedGroup: "breakglass:email", IdentityProviderIssuer: "https://idp.example"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: future},
+	}
+	base := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(usernameSession, emailSession).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		}).WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+		return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+	}).Build()
+	cached := &debugSessionRecordingListClient{Client: base}
+	controller := &DebugSessionAPIController{client: cached}
+
+	groups, err := controller.activeBreakglassGroups(context.Background(), base, "tenant-a", "alice", "alice@example.test", "https://idp.example")
+
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"breakglass:username", "breakglass:email"}, groups)
+	require.Len(t, cached.calls, 2)
+	assert.ElementsMatch(t, []string{"alice", "alice@example.test"}, debugSessionRecordedFieldValues(cached.calls, "spec.user"))
+	for _, call := range cached.calls {
+		value, found := call.FieldSelector.RequiresExactMatch("spec.cluster")
+		require.True(t, found)
+		assert.Equal(t, "tenant-a", value)
+	}
+}
+
+func TestActiveBreakglassGroupsFallsBackToOneFullListWhenIdentityIndexMissing(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "email-grant"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice@example.test", GrantedGroup: "breakglass:email", IdentityProviderIssuer: "https://idp.example"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: future},
+	}
+	base := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).Build()
+	missingIndex := &debugSessionMissingIndexClient{Client: base}
+	controller := &DebugSessionAPIController{client: missingIndex}
+
+	groups, err := controller.activeBreakglassGroups(context.Background(), base, "tenant-a", "alice", "alice@example.test", "https://idp.example")
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"breakglass:email"}, groups)
+	require.Len(t, missingIndex.calls, 1, "one failed indexed query must trigger one full-list fallback")
+	assert.Equal(t, []string{"tenant-a"}, debugSessionRecordedFieldValues(missingIndex.calls, "spec.cluster"))
+	assert.Equal(t, []string{"alice"}, debugSessionRecordedFieldValues(missingIndex.calls, "spec.user"))
 }
 
 func TestActiveBreakglassGroupsRefreshesFreshReaderWhenCacheHasNoGrant(t *testing.T) {
@@ -261,6 +321,10 @@ func TestActiveBreakglassGroupsRefreshesFreshReaderWhenCacheHasNoGrant(t *testin
 		&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
 			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
 		},
+	).WithIndex(
+		&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+		},
 	).Build()
 	freshBase := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(freshSession).Build()
 	cached := &debugSessionRecordingListClient{Client: cachedBase}
@@ -271,7 +335,9 @@ func TestActiveBreakglassGroupsRefreshesFreshReaderWhenCacheHasNoGrant(t *testin
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"breakglass:debug"}, groups)
+	require.Len(t, cached.calls, 1)
 	assert.Equal(t, []string{"tenant-a"}, debugSessionRecordedFieldValues(cached.calls, "spec.cluster"))
+	assert.Equal(t, []string{"alice"}, debugSessionRecordedFieldValues(cached.calls, "spec.user"))
 	assert.Empty(t, debugSessionRecordedFieldValues(fresh.calls, "spec.cluster"), "fresh fallback must use a full live read")
 }
 
@@ -315,6 +381,10 @@ func TestActiveBreakglassGroupsRejectsStaleCachedGrant(t *testing.T) {
 			cachedBase := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(cachedSession).WithIndex(
 				&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
 					return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+				},
+			).WithIndex(
+				&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+					return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
 				},
 			).Build()
 			fresh := &debugSessionRecordingGetClient{Client: tt.freshSetup(testScheme())}
