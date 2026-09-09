@@ -17,6 +17,7 @@ import (
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -255,20 +256,40 @@ func applyTrackedResource(ctx context.Context, target client.Client, obj client.
 func applyOwnedTrackedResource(ctx context.Context, target client.Client, obj client.Object, session *breakglassv1alpha1.DebugSession) error {
 	if err := target.Create(ctx, obj); err == nil {
 		return nil
-	} else if !apierrors.IsAlreadyExists(err) {
-		return fmt.Errorf("create tracked resource: %w", err)
+	} else {
+		return recoverTrackedCreateResult(ctx, target, obj, session, err)
 	}
+}
 
+func recoverTrackedCreateResult(ctx context.Context, target client.Client, obj client.Object, session *breakglassv1alpha1.DebugSession, createErr error) error {
+	if !apierrors.IsAlreadyExists(createErr) && !apierrors.IsTimeout(createErr) && !apierrors.IsServerTimeout(createErr) {
+		return fmt.Errorf("create tracked resource: %w", createErr)
+	}
+	if session == nil || session.UID == "" {
+		return fmt.Errorf("cannot recover tracked resource without a session UID: %w", createErr)
+	}
+	desiredAnnotations := obj.GetAnnotations()
+	desiredOperationID := desiredAnnotations[createOperationIDAnnotation]
+	if desiredOperationID == "" {
+		return fmt.Errorf("target resource %s/%s already exists with a different operation identity: %w", obj.GetNamespace(), obj.GetName(), createErr)
+	}
 	existing := obj.DeepCopyObject().(client.Object)
 	if err := target.Get(ctx, client.ObjectKeyFromObject(obj), existing); err != nil {
-		return fmt.Errorf("check tracked resource ownership: %w", err)
+		return fmt.Errorf("recover tracked resource after create error: %w; read existing resource: %w", createErr, err)
 	}
-	if session == nil || session.UID == "" || existing.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
-		return fmt.Errorf("target resource %s/%s already exists and is owned by another session", obj.GetNamespace(), obj.GetName())
+	existingAnnotations := existing.GetAnnotations()
+	if existingAnnotations[sourceSessionUIDAnnotation] != string(session.UID) {
+		return fmt.Errorf("target resource %s/%s already exists and is owned by another session: %w", obj.GetNamespace(), obj.GetName(), createErr)
 	}
-	createOpID := obj.GetAnnotations()[createOperationIDAnnotation]
-	if createOpID == "" || existing.GetAnnotations()[createOperationIDAnnotation] != createOpID {
-		return fmt.Errorf("target resource %s/%s already exists with a different operation identity", obj.GetNamespace(), obj.GetName())
+	if existingAnnotations[createOperationIDAnnotation] != desiredOperationID {
+		return fmt.Errorf("target resource %s/%s already exists with a different operation identity: %w", obj.GetNamespace(), obj.GetName(), createErr)
+	}
+	existingOperationID, err := deterministicCreateOperationID(existing, session)
+	if err != nil {
+		return fmt.Errorf("validate recovered resource %s/%s identity: %w", obj.GetNamespace(), obj.GetName(), err)
+	}
+	if existingOperationID != desiredOperationID {
+		return fmt.Errorf("target resource %s/%s already exists with different desired content: %w", obj.GetNamespace(), obj.GetName(), createErr)
 	}
 	obj.SetUID(existing.GetUID())
 	obj.SetResourceVersion(existing.GetResourceVersion())
@@ -312,6 +333,11 @@ func deterministicCreateOperationID(obj client.Object, session *breakglassv1alph
 	desired.SetUID("")
 	desired.SetResourceVersion("")
 	desired.SetManagedFields(nil)
+	desired.SetCreationTimestamp(metav1.Time{})
+	desired.SetGeneration(0)
+	desired.SetDeletionTimestamp(nil)
+	desired.SetDeletionGracePeriodSeconds(nil)
+	desired.SetSelfLink("")
 	serialized, err := json.Marshal(desired)
 	if err != nil {
 		return "", fmt.Errorf("serialize create operation intent: %w", err)

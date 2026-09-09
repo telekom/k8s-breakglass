@@ -379,25 +379,9 @@ func (c *DebugSessionController) persistAuxiliaryStatus(ctx context.Context, ds 
 func createOrRecoverTargetObject(ctx context.Context, targetClient ctrlclient.Client, obj ctrlclient.Object, session *breakglassv1alpha1.DebugSession) error {
 	if err := targetClient.Create(ctx, obj); err == nil {
 		return nil
-	} else if !apierrors.IsAlreadyExists(err) {
-		return err
+	} else {
+		return recoverTrackedCreateResult(ctx, targetClient, obj, session, err)
 	}
-
-	existing := obj.DeepCopyObject().(ctrlclient.Object)
-	if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(obj), existing); err != nil {
-		return err
-	}
-	annotations := existing.GetAnnotations()
-	createOpID := obj.GetAnnotations()[createOperationIDAnnotation]
-	if session == nil || session.UID == "" || annotations[sourceSessionUIDAnnotation] != string(session.UID) {
-		return fmt.Errorf("target resource %s/%s already exists and is owned by another session", obj.GetNamespace(), obj.GetName())
-	}
-	if createOpID == "" || annotations[createOperationIDAnnotation] != createOpID {
-		return fmt.Errorf("target resource %s/%s already exists with a different operation identity", obj.GetNamespace(), obj.GetName())
-	}
-	obj.SetUID(existing.GetUID())
-	obj.SetResourceVersion(existing.GetResourceVersion())
-	return nil
 }
 
 func effectiveNamespaceConstraints(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *breakglassv1alpha1.NamespaceConstraints {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
@@ -21,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -375,16 +377,13 @@ func TestApplyOwnedTrackedResourceCreatesWithoutAdoptingExistingResource(t *test
 }
 
 func TestApplyOwnedTrackedResourceReusesOwnedExistingResource(t *testing.T) {
-	obj := &unstructured.Unstructured{}
-	obj.SetAPIVersion("v1")
-	obj.SetKind("ConfigMap")
-	obj.SetName("tracked")
-	obj.SetNamespace("ns")
-	obj.SetAnnotations(map[string]string{
-		sourceSessionUIDAnnotation:  "session-uid",
-		createOperationIDAnnotation: "op-1",
-	})
 	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	obj := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
+		Name: "tracked", Namespace: "ns",
+		Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"},
+	}}
+	operationID, err := stampCreateOperation(obj, session)
+	require.NoError(t, err)
 	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(&corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "tracked",
@@ -392,7 +391,7 @@ func TestApplyOwnedTrackedResourceReusesOwnedExistingResource(t *testing.T) {
 			UID:       "owned",
 			Annotations: map[string]string{
 				sourceSessionUIDAnnotation:  "session-uid",
-				createOperationIDAnnotation: "op-1",
+				createOperationIDAnnotation: operationID,
 			},
 			ResourceVersion: "17",
 		},
@@ -454,6 +453,108 @@ func TestCreateOrRecoverTargetObjectRequiresExactOperationIdentity(t *testing.T)
 			require.ErrorContains(t, err, tc.wantErr)
 		})
 	}
+}
+
+func TestCreateRecoveryAfterAmbiguousCreate(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		createErr error
+		foreign   bool
+		wantErr   string
+		readError bool
+	}{
+		{name: "request timeout recovers", createErr: apierrors.NewTimeoutError("create timed out", 1)},
+		{name: "server timeout recovers", createErr: apierrors.NewServerTimeout(schema.GroupResource{Group: "", Resource: "configmaps"}, "create", 1)},
+		{name: "foreign operation is rejected", createErr: apierrors.NewTimeoutError("create timed out", 1), foreign: true, wantErr: "different operation identity"},
+		{name: "read failure is retained", createErr: apierrors.NewTimeoutError("create timed out", 1), readError: true, wantErr: "read existing resource"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+			desired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "tracked", Namespace: "ns", Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}}}
+			_, err := stampCreateOperation(desired, session)
+			require.NoError(t, err)
+			target := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if tc.foreign {
+						foreign := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
+							Name: "tracked", Namespace: "ns", UID: "foreign",
+							Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid", createOperationIDAnnotation: "foreign-op"},
+						}}
+						if err := cl.Create(ctx, foreign, opts...); err != nil {
+							return err
+						}
+					} else {
+						obj.SetUID("created")
+						if err := cl.Create(ctx, obj, opts...); err != nil {
+							return err
+						}
+					}
+					return tc.createErr
+				},
+				Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if tc.readError {
+						return apierrors.NewServiceUnavailable("read existing resource")
+					}
+					return cl.Get(ctx, key, obj, opts...)
+				},
+			}).Build()
+
+			call := applyOwnedTrackedResource
+			if tc.name == "server timeout recovers" {
+				call = func(ctx context.Context, target client.Client, obj client.Object, session *breakglassv1alpha1.DebugSession) error {
+					return createOrRecoverTargetObject(ctx, target, obj, session)
+				}
+			}
+			err = call(context.Background(), target, desired, session)
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, types.UID("created"), desired.UID)
+		})
+	}
+}
+
+func TestCreateRecoveryRejectsSameMarkerDifferentContent(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	desired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "tracked", Namespace: "ns", Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}}, Data: map[string]string{"value": "desired"}}
+	operationID, err := stampCreateOperation(desired, session)
+	require.NoError(t, err)
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(ctx context.Context, cl client.WithWatch, _ client.Object, opts ...client.CreateOption) error {
+			foreign := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
+				Name: "tracked", Namespace: "ns", UID: "foreign",
+				Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid", createOperationIDAnnotation: operationID},
+			}, Data: map[string]string{"value": "foreign"}}
+			if err := cl.Create(ctx, foreign, opts...); err != nil {
+				return err
+			}
+			return apierrors.NewTimeoutError("create timed out", 1)
+		},
+	}).Build()
+
+	err = applyOwnedTrackedResource(context.Background(), target, desired, session)
+	require.ErrorContains(t, err, "different desired content")
+}
+
+func TestCreateRecoveryDoesNotReadAfterDeterministicCreateFailure(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	desired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "tracked", Namespace: "ns", Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}}}
+	_, err := stampCreateOperation(desired, session)
+	require.NoError(t, err)
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(_ context.Context, _ client.WithWatch, _ client.Object, _ ...client.CreateOption) error {
+			return apierrors.NewForbidden(corev1.Resource("configmaps"), "tracked", assert.AnError)
+		},
+		Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+			t.Fatal("deterministic create failures must not trigger recovery reads")
+			return nil
+		},
+	}).Build()
+
+	err = applyOwnedTrackedResource(context.Background(), target, desired, session)
+	require.ErrorContains(t, err, "create tracked resource")
 }
 
 func TestStampCreateOperationReusesPersistedIntentAfterRestart(t *testing.T) {
