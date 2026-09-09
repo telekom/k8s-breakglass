@@ -8,10 +8,10 @@ repo=$(cd -- "$(dirname -- "$0")/../../../.." && pwd)
 cleanup_helper=${repo}/hack/kubernetes-storage-cleanup.sh
 pv_manifest=$(grep -n '^kind: PersistentVolume$' "$script" | tail -1 | cut -d: -f1)
 pv_uid=$(grep -n '^ATTACHED_PV_UID=' "$script" | tail -1 | cut -d: -f1)
-[ -n "$pv_manifest" ] && [ -n "$pv_uid" ] && [ "$pv_uid" -gt "$pv_manifest" ] || {
+if [ -z "$pv_manifest" ] || [ -z "$pv_uid" ] || [ "$pv_uid" -le "$pv_manifest" ]; then
 	printf '%s\n' 'attached PV UID is captured before the PV manifest is applied' >&2
 	exit 1
-}
+fi
 # shellcheck disable=SC2016 # verify the literal source path in the production script
 grep -F '. "${script_dir}/../../../../hack/kubernetes-storage-cleanup.sh"' "$script" >/dev/null
 grep -F 'kubernetes_cleanup_uid_chain' "$script" >/dev/null

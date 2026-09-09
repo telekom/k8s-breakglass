@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+requesters:
+  groups: [platform-debuggers]
+  users: [oncall@example.invalid]
+approvers:
+  groups: [platform-approvers]
+  users: [approver@example.invalid]
+targets:
+  clusters: [example-cluster]
+targetNamespace: debug-sessions

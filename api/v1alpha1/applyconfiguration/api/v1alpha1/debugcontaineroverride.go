@@ -19,6 +19,12 @@ import (
 type DebugContainerOverrideApplyConfiguration struct {
 	// name is the name of the container to override.
 	Name *string `json:"name,omitempty"`
+	// command replaces the container command when an administrator-authored
+	// podOverridesTemplate deliberately binds it to a session variable.
+	Command []string `json:"command,omitempty"`
+	// args replaces the container arguments when an administrator-authored
+	// podOverridesTemplate deliberately binds them to session variables.
+	Args []string `json:"args,omitempty"`
 	// securityContext overrides the container's security context.
 	SecurityContext *v1.SecurityContext `json:"securityContext,omitempty"`
 	// resources overrides the container's resource requirements.
@@ -38,6 +44,26 @@ func DebugContainerOverride() *DebugContainerOverrideApplyConfiguration {
 // If called multiple times, the Name field is set to the value of the last call.
 func (b *DebugContainerOverrideApplyConfiguration) WithName(value string) *DebugContainerOverrideApplyConfiguration {
 	b.Name = &value
+	return b
+}
+
+// WithCommand adds the given value to the Command field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Command field.
+func (b *DebugContainerOverrideApplyConfiguration) WithCommand(values ...string) *DebugContainerOverrideApplyConfiguration {
+	for i := range values {
+		b.Command = append(b.Command, values[i])
+	}
+	return b
+}
+
+// WithArgs adds the given value to the Args field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Args field.
+func (b *DebugContainerOverrideApplyConfiguration) WithArgs(values ...string) *DebugContainerOverrideApplyConfiguration {
+	for i := range values {
+		b.Args = append(b.Args, values[i])
+	}
 	return b
 }
 

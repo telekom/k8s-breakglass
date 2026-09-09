@@ -7,6 +7,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -55,6 +56,7 @@ func (c *DebugSessionController) renderPodTemplateString(templateStr string, ctx
 //   - A full Pod manifest (kind: Pod) — PodSpec is extracted from .spec
 //   - A full Deployment manifest (kind: Deployment) — PodSpec extracted from .spec.template.spec
 //   - A full DaemonSet manifest (kind: DaemonSet) — PodSpec extracted from .spec.template.spec
+//   - A full Job manifest (kind: Job) — PodSpec extracted from .spec.template.spec
 //
 // Subsequent documents can be any Kubernetes resource (ConfigMaps, Secrets, PVCs, etc.)
 // that will be deployed alongside the debug pod.
@@ -109,6 +111,16 @@ func (c *DebugSessionController) renderPodTemplateStringMultiDoc(templateStr str
 		result.PodAnnotations = daemonSet.Spec.Template.Annotations
 		result.Workload = &daemonSet
 
+	case kind == "Job" && apiVersion == "batch/v1":
+		var job batchv1.Job
+		if err := yaml.Unmarshal(documents[0], &job); err != nil {
+			return nil, fmt.Errorf("failed to parse Job manifest: %w", err)
+		}
+		result.PodSpec = job.Spec.Template.Spec
+		result.PodLabels = job.Spec.Template.Labels
+		result.PodAnnotations = job.Spec.Template.Annotations
+		result.Workload = &job
+
 	case kind != "" && apiVersion != "":
 		// Has apiVersion/kind but not a supported type — give specific error for known kinds with wrong apiVersion
 		switch kind {
@@ -118,8 +130,10 @@ func (c *DebugSessionController) renderPodTemplateStringMultiDoc(templateStr str
 			return nil, fmt.Errorf("unsupported apiVersion %q for kind Deployment: expected apps/v1", apiVersion)
 		case "DaemonSet":
 			return nil, fmt.Errorf("unsupported apiVersion %q for kind DaemonSet: expected apps/v1", apiVersion)
+		case "Job":
+			return nil, fmt.Errorf("unsupported apiVersion %q for kind Job: expected batch/v1", apiVersion)
 		default:
-			return nil, fmt.Errorf("unsupported manifest kind %q (apiVersion %q) in templateString: only bare PodSpec, Pod (v1), Deployment (apps/v1), and DaemonSet (apps/v1) are supported", kind, apiVersion)
+			return nil, fmt.Errorf("unsupported manifest kind %q (apiVersion %q) in templateString: only bare PodSpec, Pod (v1), Deployment (apps/v1), DaemonSet (apps/v1), and Job (batch/v1) are supported", kind, apiVersion)
 		}
 
 	default:
@@ -215,9 +229,17 @@ func (c *DebugSessionController) renderPodOverridesTemplate(templateStr string, 
 }
 
 // applyPodOverridesStruct applies rendered overrides to a pod spec.
-func (c *DebugSessionController) applyPodOverridesStruct(spec *corev1.PodSpec, overrides *breakglassv1alpha1.DebugPodSpecOverrides) {
+func (c *DebugSessionController) applyPodOverridesStruct(spec *corev1.PodSpec, overrides *breakglassv1alpha1.DebugPodSpecOverrides) error {
 	if overrides == nil {
-		return
+		return nil
+	}
+	if len(overrides.NodeSelector) > 0 {
+		if spec.NodeSelector == nil {
+			spec.NodeSelector = make(map[string]string)
+		}
+		for key, value := range overrides.NodeSelector {
+			spec.NodeSelector[key] = value
+		}
 	}
 	if overrides.HostNetwork != nil {
 		spec.HostNetwork = *overrides.HostNetwork
@@ -228,6 +250,40 @@ func (c *DebugSessionController) applyPodOverridesStruct(spec *corev1.PodSpec, o
 	if overrides.HostIPC != nil {
 		spec.HostIPC = *overrides.HostIPC
 	}
+	seen := make(map[string]struct{}, len(overrides.Containers))
+	for _, override := range overrides.Containers {
+		if _, ok := seen[override.Name]; ok {
+			return fmt.Errorf("pod override specifies duplicate container name %q", override.Name)
+		}
+		seen[override.Name] = struct{}{}
+		matched := false
+		for index := range spec.Containers {
+			container := &spec.Containers[index]
+			if container.Name != override.Name {
+				continue
+			}
+			matched = true
+			if override.Command != nil {
+				container.Command = append([]string(nil), override.Command...)
+			}
+			if override.Args != nil {
+				container.Args = append([]string(nil), override.Args...)
+			}
+			if override.SecurityContext != nil {
+				container.SecurityContext = override.SecurityContext
+			}
+			if override.Resources != nil {
+				container.Resources = *override.Resources
+			}
+			if override.Env != nil {
+				container.Env = append(container.Env, override.Env...)
+			}
+		}
+		if !matched {
+			return fmt.Errorf("pod override references unknown container %q", override.Name)
+		}
+	}
+	return nil
 }
 
 func mergeStringMaps(base map[string]string, maps ...map[string]string) map[string]string {

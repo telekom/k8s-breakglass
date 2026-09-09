@@ -15,7 +15,8 @@ spec:
     spec:
       containers:
         - name: debug
-          image: nicolaka/netshoot:latest
+          # Immutable reference; replace with an approved catalogue image in production.
+          image: ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70
           imagePullPolicy: IfNotPresent
           command: ["sleep", "infinity"]
           resources:
@@ -38,11 +39,17 @@ spec:
       automountServiceAccountToken: false
 ---
 # Sample DebugPodTemplate - Privileged debug container for node debugging
-# This template provides a privileged container for advanced debugging scenarios
+# DEPRECATED/QUARANTINED: this historical elevated example is retained only to
+# document the old CRD shape. Do not apply it. Use the disabled, explicitly
+# elevated `node-recovery` profile from charts/debug-session-catalogue instead.
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugPodTemplate
 metadata:
   name: privileged-debug
+  annotations:
+    breakglass.t-caas.telekom.com/deprecated: "true"
+    breakglass.t-caas.telekom.com/deprecation-message: "Do not apply: use the disabled node-recovery catalogue profile with explicit elevation and approved images."
+    breakglass.t-caas.telekom.com/replacement: "debug-session-catalogue/node-recovery"
 spec:
   displayName: "Privileged Debug Pod"
   description: "Privileged container for node-level debugging with host access"
@@ -57,7 +64,7 @@ spec:
       hostIPC: false
       containers:
         - name: debug
-          image: nicolaka/netshoot:latest
+          image: ghcr.io/nicolaka/netshoot:v0.16@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70
           imagePullPolicy: IfNotPresent
           command: ["sleep", "infinity"]
           resources:

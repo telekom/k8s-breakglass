@@ -1,0 +1,73 @@
+{
+  "apiVersion": "cluster-validator.telekom.com/v1alpha1",
+  "kind": "ClusterValidatorIntegrationContract",
+  "intent": "real-kind-read-only-readiness",
+  "image": {
+    "dockerfile": "utils/cluster-validator/Dockerfile",
+    "platform": "linux/amd64",
+    "entrypoint": "/cluster-validator"
+  },
+  "cluster": {
+    "provider": "kind",
+    "disposable": true,
+    "readOnlyServiceAccount": "validator-integration/cluster-validator"
+  },
+  "selfPodIdentity": {
+    "nameEnvironment": "VALIDATOR_POD_NAME",
+    "namespaceEnvironment": "VALIDATOR_POD_NAMESPACE",
+    "source": "Downward API metadata.name and metadata.namespace",
+    "incompleteIdentity": "exclude nothing"
+  },
+  "builtInChecks": [
+    "api-discovery",
+    "api-server",
+    "namespaces-healthy",
+    "nodes-ready",
+    "pods-ready"
+  ],
+  "extension": {
+    "name": "integration-extension",
+    "interface": "clustervalidator.Check",
+    "clientFacade": "clustervalidator.ReadOnlyClient",
+    "discoveryFacade": "clustervalidator.ReadOnlyDiscovery"
+  },
+  "cases": [
+    {
+      "name": "one-time",
+      "mode": "one-time",
+      "expectedExitCode": 0,
+      "deterministic": true
+    },
+    {
+      "name": "post-upgrade",
+      "mode": "post-upgrade",
+      "expectedExitCode": 0,
+      "deterministic": true
+    },
+    {
+      "name": "not-ready",
+      "mode": "one-time",
+      "expectedExitCode": 1,
+      "deterministic": false
+    },
+    {
+      "name": "invalid-mode",
+      "mode": "unsupported",
+      "expectedExitCode": 2,
+      "deterministic": false
+    }
+  ],
+  "negativeAssertions": [
+    "service-account-cannot-create-configmaps",
+    "service-account-cannot-read-secrets",
+    "reports-and-logs-contain-no-secret-marker-or-token",
+    "namespace-and-cluster-rbac-objects-are-removed"
+  ],
+  "requiredTools": [
+    "docker",
+    "kind",
+    "kubectl",
+    "jq",
+    "go"
+  ]
+}

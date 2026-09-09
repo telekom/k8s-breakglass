@@ -208,7 +208,7 @@ grantedGroup: "view-only"         # Read-only access
 
 #### maxValidFor
 
-Maximum time the session will be active after approval. Supports Go `time.ParseDuration` syntax with an additional day unit (`d`). Decimal sub-day units such as `1.5h` are accepted; day values must be whole numbers, must not exceed 365, and the duration must be positive. If omitted, admission and runtime behavior use the default `1h`.
+Maximum time the session will be active after approval. Supports Go `time.ParseDuration` syntax with additional day, week, and year units (`d`, `w`, and `y`). Decimal sub-day units such as `1.5h` are accepted; extended-unit values must be whole numbers, must not exceed 365 days, and the duration must be positive and unsigned (for example, `1h`, not `+1h`). If omitted, admission and runtime behavior use the default `1h`.
 
 ```yaml
 maxValidFor: "1h"   # 1 hour (default)
@@ -219,7 +219,7 @@ maxValidFor: "1.5h" # 1 hour and 30 minutes
 
 #### idleTimeout
 
-Maximum duration a session can remain idle (no authorized webhook requests) before being automatically expired to the `IdleExpired` state. If not set, the session remains active for its full `maxValidFor` window. Parsed via the project's `ParseDuration` (supports day units like `"1d12h"`). Must be at least `1m` and must not exceed `maxValidFor`; when `maxValidFor` is omitted, admission validates against the default `1h`.
+Maximum duration a session can remain idle (no authorized webhook requests) before being automatically expired to the `IdleExpired` state. If not set, the session remains active for its full `maxValidFor` window. Parsed via the project's `ParseDuration` (supports day, week, and year units such as `"1d12h"`, `"1w"`, and `"1y"`). Must be at least `1m` and must not exceed `maxValidFor`; when `maxValidFor` is omitted, admission validates against the default `1h`.
 
 Copied automatically from the matched `BreakglassEscalation` at approval time.
 

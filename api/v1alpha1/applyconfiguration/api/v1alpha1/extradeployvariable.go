@@ -47,6 +47,10 @@ type ExtraDeployVariableApplyConfiguration struct {
 	Advanced *bool `json:"advanced,omitempty"`
 	// group organizes variables into collapsible sections in the UI.
 	Group *string `json:"group,omitempty"`
+	// disabled prevents this variable from being requested through a binding.
+	// Template variables are enabled by default; bindings may only set this to
+	// true, never use it to re-enable a disabled variable.
+	Disabled *bool `json:"disabled,omitempty"`
 }
 
 // ExtraDeployVariableApplyConfiguration constructs a declarative configuration of the ExtraDeployVariable type for use with
@@ -147,5 +151,13 @@ func (b *ExtraDeployVariableApplyConfiguration) WithAdvanced(value bool) *ExtraD
 // If called multiple times, the Group field is set to the value of the last call.
 func (b *ExtraDeployVariableApplyConfiguration) WithGroup(value string) *ExtraDeployVariableApplyConfiguration {
 	b.Group = &value
+	return b
+}
+
+// WithDisabled sets the Disabled field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Disabled field is set to the value of the last call.
+func (b *ExtraDeployVariableApplyConfiguration) WithDisabled(value bool) *ExtraDeployVariableApplyConfiguration {
+	b.Disabled = &value
 	return b
 }

@@ -82,6 +82,8 @@ Every utility is published as an immutable,
 - **[BreakglassEscalation](./breakglass-escalation.md)** - Define privilege escalation policies
 - **[BreakglassSession](./breakglass-session.md)** - Active escalation sessions
 - **[Debug Session](./debug-session.md)** - Debug pod deployments and kubectl debug access
+- **[Terminal recording](./terminal-recording.md)** - Reserved fail-closed terminal-byte transport and retention validation
+- **[DebugSession cleanup recovery](./debug-session-cleanup.md)** - UID-fenced cleanup and legacy recovery behavior
 - **[OCI runbook bundles](./runbook-bundle-contract.md)** - Additive, digest-pinned documentation image volumes for debug templates
 - **[Debug Session Cluster Bindings](./debug-session-cluster-binding.md)** - Delegate template access to teams and clusters
 - **[Breakglass user-flow recording](./demos/breakglass-user-flow.md)** - Asciinema demo of denial, approval, API access, and DebugSession
@@ -114,6 +116,7 @@ Every utility is published as an immutable,
 - **[Package Structure](./package-structure.md)** - Sub-package layout of `pkg/breakglass/`
 - **[Release Process](./release-process.md)** - Release signing, provenance, and checklist
 - **[T-CaaS deployment-model E2E coverage audit](./e2e-tcaas-coverage-audit.md)** - Deployment-shape coverage, evidence, and remaining gaps
+- **[Node-maintenance image](./node-maintenance.md)** - Allowlisted node recovery preflight and network repair runbooks
 
 ## Contributing
 

@@ -17,7 +17,8 @@ type DebugSessionAuditConfigApplyConfiguration struct {
 	Enabled *bool `json:"enabled,omitempty"`
 	// destinations specifies where audit events are sent.
 	Destinations []AuditDestinationApplyConfiguration `json:"destinations,omitempty"`
-	// enableTerminalRecording enables recording of terminal sessions.
+	// enableTerminalRecording requests terminal-byte recording. Rendering fails
+	// closed while the transport is unavailable.
 	EnableTerminalRecording *bool `json:"enableTerminalRecording,omitempty"`
 	// recordingRetention specifies how long recordings are kept.
 	RecordingRetention *string `json:"recordingRetention,omitempty"`

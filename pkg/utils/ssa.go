@@ -6,12 +6,14 @@ import (
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
+	batchv1ac "k8s.io/client-go/applyconfigurations/batch/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	policyv1ac "k8s.io/client-go/applyconfigurations/policy/v1"
@@ -168,6 +170,8 @@ func ToApplyConfiguration(obj client.Object) (runtime.ApplyConfiguration, error)
 		return daemonSetToApplyConfig(o)
 	case *appsv1.Deployment:
 		return deploymentToApplyConfig(o)
+	case *batchv1.Job:
+		return jobToApplyConfig(o)
 	default:
 		return nil, fmt.Errorf("unsupported type for ApplyConfiguration: %T", obj)
 	}
@@ -422,6 +426,16 @@ func daemonSetToApplyConfig(o *appsv1.DaemonSet) (*appsv1ac.DaemonSetApplyConfig
 // deploymentToApplyConfig converts a Deployment to its ApplyConfiguration equivalent.
 func deploymentToApplyConfig(o *appsv1.Deployment) (*appsv1ac.DeploymentApplyConfiguration, error) {
 	cfg := appsv1ac.Deployment(o.Name, o.Namespace)
+	if err := jsonDecodeInto(o, cfg); err != nil {
+		return nil, err
+	}
+	cfg.Status = nil
+	return cfg, nil
+}
+
+// jobToApplyConfig converts a Job to its ApplyConfiguration equivalent.
+func jobToApplyConfig(o *batchv1.Job) (*batchv1ac.JobApplyConfiguration, error) {
+	cfg := batchv1ac.Job(o.Name, o.Namespace)
 	if err := jsonDecodeInto(o, cfg); err != nil {
 		return nil, err
 	}

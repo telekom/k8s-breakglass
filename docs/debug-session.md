@@ -43,14 +43,18 @@ Debug sessions support three operational modes:
 
 ### Workload Mode (default)
 
-Deploys debug pods as a DaemonSet or Deployment to the target cluster:
+Deploys debug workloads to the target cluster as a DaemonSet, Deployment, or bounded Job:
 
 ```yaml
 mode: workload
-workloadType: DaemonSet  # or Deployment
+workloadType: DaemonSet  # or Deployment/Job
 ```
 
 **Labels & annotations**: `spec.labels`/`spec.annotations` from the template (and binding overrides) are applied to created workloads, pod templates, and supporting resources (e.g., PDBs and ResourceQuotas). Session-level labels/annotations are also propagated.
+
+`workloadType: Job` is intended for one-shot diagnostics. The controller enforces a single completion (`completions: 1`, `parallelism: 1`, `backoffLimit: 0`) and an effective bounded deadline, while accepting the template's `restartPolicy` when it is `Never` or `OnFailure`. `OnFailure` permits container restarts within the pod; it does not enable additional Job retries. The completed Job is kept for inspection until normal debug-session cleanup removes it.
+
+Jobs are the supported one-shot workload type; the controller accepts `batch/v1` Job manifests (or a bare PodSpec rendered as a Job) and rejects other workload kinds in a workload template. Session constraints remain authoritative: caller-supplied retry/deadline settings are replaced with session-owned labels, one completion, `backoffLimit: 0`, and the effective bounded duration. Request selectors may add constraints only when they do not conflict with administrator-authored selectors; conflicting values are rejected. `activeDeadlineSeconds` is capped by the template or binding maximum; `ttlSecondsAfterFinished`, `suspend`, and caller-managed selectors are not retained.
 
 **Use cases:**
 - Node-level debugging requiring host namespaces
@@ -1327,6 +1331,9 @@ applicable binding for the target cluster, that binding's duration constraints
 override the template constraints for that session. Renewals extend the current
 expiration time, but the renewed expiration cannot move past
 `status.startsAt + maxDuration`.
+For a Job-backed workload, renewal also extends the tracked Job's
+`activeDeadlineSeconds` before the new expiry is written to session status;
+the API fails closed if that workload deadline cannot be updated.
 Only the requester or an active `owner`/`participant` status entry can renew a
 session; `viewer` entries and participants with `leftAt` set cannot renew.
 The active-session expiry, approval-timeout, expiring-soon message, cleanup

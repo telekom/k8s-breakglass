@@ -98,8 +98,9 @@ $ docker run --rm -it --net=container:app ghcr.io/telekom/k8s-breakglass/utils/n
 ```
 
 For a Kubernetes ephemeral container, use the image through the platform's
-normal debug-session controls and review the required `CAP_NET_RAW`,
-`CAP_NET_ADMIN`, and BPF permissions with the cluster security team. A minimal
+normal debug-session controls. Selected-pod capture requires only
+`CAP_NET_RAW`; host tracing separately requires `CAP_NET_ADMIN` and the BPF
+permissions listed above. A minimal
 pod example is deliberately omitted so this image remains portable across
 Kubernetes distributions and admission policies.
 

@@ -811,7 +811,7 @@ func ValidateDebugPodTemplate(template *DebugPodTemplate) *ValidationResult {
 				fmt.Sprintf("invalid Go template syntax: %v", err)))
 		}
 
-		// Validate the first-document format (must be bare PodSpec, Pod, Deployment, or DaemonSet)
+		// Validate the first-document format (must be bare PodSpec, Pod, Deployment, DaemonSet, or Job)
 		result.Errors = append(result.Errors, validateTemplateStringFormat(template.Spec.TemplateString, specPath.Child("templateString"))...)
 
 		return result
@@ -876,7 +876,7 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 				fmt.Sprintf("invalid Go template syntax: %v", err)))
 		}
 
-		// Validate the first-document format (must be bare PodSpec, Pod, Deployment, or DaemonSet)
+		// Validate the first-document format (must be bare PodSpec, Pod, Deployment, DaemonSet, or Job)
 		result.Errors = append(result.Errors, validateTemplateStringFormat(template.Spec.PodTemplateString, specPath.Child("podTemplateString"))...)
 
 		// Warn if workload kind doesn't match configured workloadType
@@ -900,12 +900,26 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 
 	// Validate constraints if specified
 	if template.Spec.Constraints != nil {
-		if template.Spec.Constraints.MaxDuration != "" {
-			result.Errors = append(result.Errors, validateDurationFormat(template.Spec.Constraints.MaxDuration, specPath.Child("constraints").Child("maxDuration"))...)
+		constraintsPath := specPath.Child("constraints")
+		constraintDurations := []struct {
+			name  string
+			value string
+		}{
+			{name: "maxDuration", value: template.Spec.Constraints.MaxDuration},
+			{name: "defaultDuration", value: template.Spec.Constraints.DefaultDuration},
 		}
-		if template.Spec.Constraints.DefaultDuration != "" {
-			result.Errors = append(result.Errors, validateDurationFormat(template.Spec.Constraints.DefaultDuration, specPath.Child("constraints").Child("defaultDuration"))...)
+		for _, item := range constraintDurations {
+			if item.value != "" {
+				result.Errors = append(result.Errors, validatePositiveDurationFormat(item.value, constraintsPath.Child(item.name))...)
+			}
 		}
+	}
+
+	if template.Spec.Audit != nil && template.Spec.Audit.RecordingRetention != "" {
+		result.Errors = append(result.Errors, validatePositiveDurationFormat(
+			template.Spec.Audit.RecordingRetention,
+			specPath.Child("audit").Child("recordingRetention"),
+		)...)
 	}
 
 	// Validate schedulingOptions if specified
@@ -959,6 +973,13 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 	// Validate gracePeriodBeforeExpiry is a valid duration
 	if template.Spec.GracePeriodBeforeExpiry != "" {
 		result.Errors = append(result.Errors, validateDurationFormat(template.Spec.GracePeriodBeforeExpiry, specPath.Child("gracePeriodBeforeExpiry"))...)
+	}
+
+	if template.Spec.Audit != nil && template.Spec.Audit.EnableTerminalRecording &&
+		template.Spec.Audit.RecordingRetention != "" {
+		result.Errors = append(result.Errors,
+			validatePositiveDurationFormat(template.Spec.Audit.RecordingRetention,
+				specPath.Child("audit").Child("recordingRetention"))...)
 	}
 
 	// Validate podCopy config if specified
@@ -1131,7 +1152,7 @@ func (b *cappedTemplateBuffer) Write(p []byte) (int, error) {
 }
 
 // validateTemplateStringFormat validates the first YAML document in a templateString
-// to ensure it uses a supported format: bare PodSpec, Pod, Deployment, or DaemonSet.
+// to ensure it uses a supported format: bare PodSpec, Pod, Deployment, DaemonSet, or Job.
 // This validation is best-effort because Go templates may produce dynamic content,
 // so it only checks templates where the first document can be statically analyzed.
 // yamlDocSeparator matches a YAML document separator line (--- optionally followed by whitespace).
@@ -1193,9 +1214,14 @@ func validateTemplateStringFormat(templateStr string, fldPath *field.Path) field
 			errs = append(errs, field.Invalid(fldPath, apiVersionStr,
 				fmt.Sprintf("%s requires apiVersion apps/v1, got %q", kindStr, apiVersionStr)))
 		}
+	case "Job":
+		if apiVersionStr != "batch/v1" {
+			errs = append(errs, field.Invalid(fldPath, apiVersionStr,
+				fmt.Sprintf("Job requires apiVersion batch/v1, got %q", apiVersionStr)))
+		}
 	default:
 		errs = append(errs, field.Invalid(fldPath, kindStr,
-			fmt.Sprintf("unsupported kind %q: only bare PodSpec, Pod, Deployment, and DaemonSet are supported", kindStr)))
+			fmt.Sprintf("unsupported kind %q: only bare PodSpec, Pod, Deployment, DaemonSet, and Job are supported", kindStr)))
 	}
 
 	return errs
@@ -1225,8 +1251,8 @@ func warnTemplateStringWorkloadMismatch(templateStr string, workloadType DebugWo
 	}
 
 	kindStr, _ := kind.(string)
-	// Only check for Deployment/DaemonSet manifests
-	if kindStr != "Deployment" && kindStr != "DaemonSet" {
+	// Only check for workload manifests
+	if kindStr != "Deployment" && kindStr != "DaemonSet" && kindStr != "Job" {
 		return warnings
 	}
 

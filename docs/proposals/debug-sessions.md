@@ -775,7 +775,7 @@ spec:
     # Retention for session recordings
     recordingRetention: "90d"
     
-    # Enable terminal session recording (asciinema format)
+    # Reserved until terminal-byte transport is implemented; enabling fails closed.
     enableTerminalRecording: true
 ```
 

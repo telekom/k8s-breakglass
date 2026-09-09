@@ -2,6 +2,12 @@
 
 This directory contains sample YAML manifests for all Custom Resource Definitions (CRDs) provided by the Breakglass Controller.
 
+The samples are independent examples, not one deployable bundle. Review each
+object against local RBAC, admission, image, and namespace policy before
+applying it. In particular, the comprehensive files and
+`debug_pod_templates.yaml` contain deprecated elevated objects for migration
+reference; they must not be applied directly.
+
 ## Validation
 
 All samples in this directory are validated on every build to ensure they conform to the CRD schemas. To run validation manually:
@@ -66,12 +72,12 @@ make validate-samples
 |------|-------------|
 | `debug_session_templates.yaml` | DebugSessionTemplate examples (workload, kubectl-debug, hybrid modes) |
 | `debug_session_template_namespace_selectors.yaml` | Templates with namespace filtering |
-| `debug-session-template-comprehensive.yaml` | **Comprehensive collection** of session templates for all use-cases |
-| `debug_pod_templates.yaml` | DebugPodTemplate examples |
+| `debug-session-template-comprehensive.yaml` | **Documentation-only** collection; elevated/node examples are deprecated |
+| `debug_pod_templates.yaml` | **Documentation-only** legacy collection; `privileged-debug` is quarantined |
 | `debug-pod-template-minimal.yaml` | Minimal debug pod |
-| `debug-pod-template-network.yaml` | Network debugging tools |
-| `debug-pod-template-log-inspector.yaml` | Log inspection tools |
-| `debug-pod-template-comprehensive.yaml` | **Comprehensive collection** of pod templates for all use-cases |
+| `debug-pod-template-network.yaml` | **Documentation-only** network tools; deprecated until an immutable image is supplied |
+| `debug-pod-template-log-inspector.yaml` | **Documentation-only** host-log inspection; hostPath requires review |
+| `debug-pod-template-comprehensive.yaml` | **Documentation-only** collection; elevated/node examples are quarantined |
 | `debug_sessions.yaml` | DebugSession examples |
 | `debug_session_cluster_binding.yaml` | DebugSessionClusterBinding for delegating template access |
 | `debug_session_template_auxiliary_resources.yaml` | Templates with auxiliary resources |
@@ -137,13 +143,20 @@ The comprehensive sample files cover these use-cases:
 - **Performance**: Linux perf tools (strace, ltrace, sysstat)
 - **Security**: Security scanner
 - **Kubernetes**: kubectl debug with API access
-- **Node-level**: Privileged node access, nsenter
+- **Node-level**: Historical privileged node access and nsenter examples are
+  retained only as deprecated migration references. Use the disabled,
+  explicitly elevated `node-recovery` profile in the
+  [`debug-session-catalogue` chart](../../charts/debug-session-catalogue/README.md).
 - **API testing**: curl + jq
 
 **DebugSessionTemplates** (`debug-session-template-comprehensive.yaml`):
 - **Developer access**: Basic and network debugging with auto-approval for dev clusters
 - **SRE/Operations**: Standard and production access with approval workflows
-- **Network troubleshooting**: Host network, packet capture, DNS debugging
+- **Network troubleshooting**: Historical host-network and packet-capture
+  examples are deprecated. Use the disabled `network-diagnostics` catalogue
+  profile with explicit elevation and an approved image. For existing dump
+  files, use the separate restricted `dump-access` profile; it does not
+  provide network troubleshooting or packet capture.
 - **Kubectl-debug mode**: Basic, advanced, and node debugging via ephemeral containers
 - **Hybrid mode**: Combined workload + kubectl-debug capabilities
 - **Emergency access**: Privileged node access for incident response
@@ -163,11 +176,26 @@ The comprehensive sample files cover these use-cases:
 
 ## Usage
 
-Apply samples to a cluster with:
+Apply a reviewed, non-deprecated sample to a cluster with:
 
 ```bash
-kubectl apply -f config/samples/<sample-file>.yaml
+kubectl apply -f config/samples/debug-pod-template-minimal.yaml
 ```
+
+Do not use `kubectl apply -f config/samples/` or apply either comprehensive
+file. Those files intentionally include migration-only objects, and applying
+them can create broad host-network, host-PID, host-IPC, hostPath, or privileged
+access. For new deployments, prefer the
+[`debug-session-catalogue` chart](../../charts/debug-session-catalogue/README.md):
+restricted profiles are enabled by default, elevated profiles are disabled,
+and each elevated use requires an explicit opt-in. The chart's image values
+should be replaced with organization-approved immutable digests.
+
+The historical elevated pod examples carry
+`breakglass.t-caas.telekom.com/deprecated: "true"` and a replacement
+annotation. Elevated session examples additionally set `spec.deprecated: true`
+with a `deprecationMessage`; these fields are deliberate safety signals, not a
+substitute for reviewing policy.
 
 **Note:** Most samples require supporting resources like Secrets. For examples, we prefer `stringData` with placeholder values to avoid base64 encoding mistakes.
 

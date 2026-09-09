@@ -2761,8 +2761,9 @@ spec:
                         type: boolean
                       enableTerminalRecording:
                         default: false
-                        description: enableTerminalRecording enables recording of
-                          terminal sessions.
+                        description: |-
+                          enableTerminalRecording requests terminal-byte recording. Rendering fails
+                          closed while the transport is unavailable.
                         type: boolean
                       enabled:
                         default: true
@@ -2772,6 +2773,7 @@ spec:
                         default: 90d
                         description: recordingRetention specifies how long recordings
                           are kept.
+                        pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+$
                         type: string
                     type: object
                   auxiliaryResourceDefaults:
@@ -2947,6 +2949,12 @@ spec:
                         description:
                           description: description provides help text for the user.
                           type: string
+                        disabled:
+                          description: |-
+                            disabled prevents this variable from being requested through a binding.
+                            Template variables are enabled by default; bindings may only set this to
+                            true, never use it to re-enable a disabled variable.
+                          type: boolean
                         displayName:
                           description: displayName is the human-readable label shown
                             in the UI.
@@ -3894,6 +3902,20 @@ spec:
                               description: DebugContainerOverride allows overriding
                                 container settings.
                               properties:
+                                args:
+                                  description: |-
+                                    args replaces the container arguments when an administrator-authored
+                                    podOverridesTemplate deliberately binds them to session variables.
+                                  items:
+                                    type: string
+                                  type: array
+                                command:
+                                  description: |-
+                                    command replaces the container command when an administrator-authored
+                                    podOverridesTemplate deliberately binds it to a session variable.
+                                  items:
+                                    type: string
+                                  type: array
                                 env:
                                   description: env adds environment variables to the
                                     container.
@@ -4329,6 +4351,12 @@ spec:
                           hostPID:
                             description: hostPID overrides the hostPID setting.
                             type: boolean
+                          nodeSelector:
+                            additionalProperties:
+                              type: string
+                            description: nodeSelector adds mandatory scheduling constraints
+                              to the pod.
+                            type: object
                         type: object
                     type: object
                   podOverridesTemplate:
@@ -4367,7 +4395,7 @@ spec:
                     default: 1
                     description: |-
                       replicas specifies the number of replicas for Deployment workloads.
-                      Defaults to 1. Ignored for DaemonSet workloads.
+                      Defaults to 1. Ignored for DaemonSet and Job workloads.
                     format: int32
                     minimum: 1
                     type: integer
@@ -6066,11 +6094,12 @@ spec:
                     type: object
                   workloadType:
                     description: |-
-                      workloadType specifies the type of workload to create (DaemonSet or Deployment).
+                      workloadType specifies the type of workload to create (DaemonSet, Deployment, or Job).
                       Required when mode is "workload" or "hybrid".
                     enum:
                     - DaemonSet
                     - Deployment
+                    - Job
                     type: string
                 type: object
               startsAt:

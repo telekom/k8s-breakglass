@@ -106,6 +106,12 @@ type ExtraDeployVariable struct {
 	// group organizes variables into collapsible sections in the UI.
 	// +optional
 	Group string `json:"group,omitempty"`
+
+	// disabled prevents this variable from being requested through a binding.
+	// Template variables are enabled by default; bindings may only set this to
+	// true, never use it to re-enable a disabled variable.
+	// +optional
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // SelectOption defines a choice for select/multiSelect inputs.

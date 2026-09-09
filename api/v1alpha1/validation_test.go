@@ -2099,6 +2099,29 @@ func TestValidateDebugSessionTemplate(t *testing.T) {
 		assert.Contains(t, result.ErrorMessage(), "defaultDuration")
 	})
 
+	t.Run("constraint duration validation order is deterministic", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				Constraints: &DebugSessionConstraints{
+					MaxDuration:     "invalid-max",
+					DefaultDuration: "invalid-default",
+				},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		require.False(t, result.IsValid())
+		require.Len(t, result.Errors, 2)
+		assert.Equal(t, "spec.constraints.maxDuration", result.Errors[0].Field)
+		assert.Equal(t, "spec.constraints.defaultDuration", result.Errors[1].Field)
+	})
+
 	t.Run("default mode (empty) uses workload", func(t *testing.T) {
 		template := &DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
@@ -3321,7 +3344,7 @@ spec:
 		template := &DebugPodTemplate{
 			Spec: DebugPodTemplateSpec{
 				TemplateString: `apiVersion: batch/v1
-kind: Job
+kind: CronJob
 metadata:
   name: test
 spec:
@@ -3336,7 +3359,7 @@ spec:
 		result := ValidateDebugPodTemplate(template)
 		assert.False(t, result.IsValid())
 		assert.Contains(t, result.ErrorMessage(), "unsupported kind")
-		assert.Contains(t, result.ErrorMessage(), "Job")
+		assert.Contains(t, result.ErrorMessage(), "CronJob")
 	})
 
 	t.Run("wrong apiVersion for Pod is rejected", func(t *testing.T) {

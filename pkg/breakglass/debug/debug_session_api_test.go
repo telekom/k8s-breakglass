@@ -5328,7 +5328,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			assert.Equal(t, http.StatusBadRequest, w.Code)
-			assert.Contains(t, w.Body.String(), "requestedDuration must be positive")
+			assert.Contains(t, w.Body.String(), "must be positive")
 		}
 	})
 
