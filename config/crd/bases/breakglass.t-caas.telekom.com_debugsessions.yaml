@@ -1138,6 +1138,11 @@ spec:
                           apiVersion:
                             description: apiVersion is the Kubernetes API version.
                             type: string
+                          createOperationID:
+                            description: |-
+                              createOperationID identifies the exact target create attempt represented by this intent.
+                              Recovery must match this immutable operation marker before reusing a same-name object.
+                            type: string
                           deleted:
                             description: deleted indicates if the resource was deleted.
                             type: boolean
@@ -1178,6 +1183,11 @@ spec:
                       type: string
                     category:
                       description: category is the resource category.
+                      type: string
+                    createOperationID:
+                      description: |-
+                        createOperationID identifies the exact target create attempt represented by this intent.
+                        Recovery must match this immutable operation marker before reusing a same-name object.
                       type: string
                     created:
                       description: created indicates if the resource was successfully
@@ -1298,6 +1308,11 @@ spec:
                   properties:
                     apiVersion:
                       description: apiVersion is the API version of the resource.
+                      type: string
+                    createOperationID:
+                      description: |-
+                        createOperationID identifies the exact target create attempt represented by this intent.
+                        Recovery must match this immutable operation marker before reusing a same-name object.
                       type: string
                     kind:
                       description: kind is the kind of the resource.
@@ -1482,6 +1497,11 @@ spec:
                   properties:
                     apiVersion:
                       description: apiVersion is the API version of the resource.
+                      type: string
+                    createOperationID:
+                      description: |-
+                        createOperationID identifies the exact target create attempt represented by this intent.
+                        Recovery must match this immutable operation marker before reusing a same-name object.
                       type: string
                     created:
                       description: created indicates whether the resource was successfully

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	corev1 "k8s.io/api/core/v1"
@@ -239,14 +240,31 @@ func applyOwnedTrackedResource(ctx context.Context, target client.Client, obj cl
 	if err := target.Get(ctx, client.ObjectKeyFromObject(obj), existing); err != nil {
 		return fmt.Errorf("check tracked resource ownership: %w", err)
 	}
-	if session == nil || existing.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
+	if session == nil || session.UID == "" || existing.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
 		return fmt.Errorf("target resource %s/%s already exists and is owned by another session", obj.GetNamespace(), obj.GetName())
 	}
 	createOpID := obj.GetAnnotations()[createOperationIDAnnotation]
-	if createOpID != "" && existing.GetAnnotations()[createOperationIDAnnotation] != createOpID {
+	if createOpID == "" || existing.GetAnnotations()[createOperationIDAnnotation] != createOpID {
 		return fmt.Errorf("target resource %s/%s already exists with a different operation identity", obj.GetNamespace(), obj.GetName())
 	}
 	obj.SetUID(existing.GetUID())
 	obj.SetResourceVersion(existing.GetResourceVersion())
 	return nil
+}
+
+func stampCreateOperation(obj client.Object, session *breakglassv1alpha1.DebugSession) (string, error) {
+	if session == nil {
+		return "", fmt.Errorf("cannot stamp create operation without a session")
+	}
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	operationID := uuid.NewString()
+	if session.UID != "" {
+		annotations[sourceSessionUIDAnnotation] = string(session.UID)
+	}
+	annotations[createOperationIDAnnotation] = operationID
+	obj.SetAnnotations(annotations)
+	return operationID, nil
 }

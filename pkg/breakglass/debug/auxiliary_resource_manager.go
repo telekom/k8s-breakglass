@@ -670,8 +670,11 @@ func (m *AuxiliaryResourceManager) deployResourceWithFence(
 			annotations[k] = v
 		}
 		annotations["breakglass.t-caas.telekom.com/source-session"] = fmt.Sprintf("%s/%s", session.Namespace, session.Name)
-		annotations[sourceSessionUIDAnnotation] = string(session.UID)
 		obj.SetAnnotations(annotations)
+		operationID, err := stampCreateOperation(obj, session)
+		if err != nil {
+			return status, fmt.Errorf("failed to stamp create operation for %s/%s: %w", obj.GetKind(), obj.GetName(), err)
+		}
 
 		// Create atomically and recover only a resource marked for this session.
 		obj.SetManagedFields(nil)
@@ -680,15 +683,17 @@ func (m *AuxiliaryResourceManager) deployResourceWithFence(
 			status.APIVersion = obj.GetAPIVersion()
 			status.ResourceName = obj.GetName()
 			status.Namespace = obj.GetNamespace()
+			status.CreateOperationID = operationID
 			status.Created = true
 			now := time.Now().UTC().Format(time.RFC3339)
 			status.CreatedAt = &now
 		} else {
 			status.AdditionalResources = append(status.AdditionalResources, breakglassv1alpha1.AdditionalResourceRef{
-				Kind:         obj.GetKind(),
-				APIVersion:   obj.GetAPIVersion(),
-				ResourceName: obj.GetName(),
-				Namespace:    obj.GetNamespace(),
+				Kind:              obj.GetKind(),
+				APIVersion:        obj.GetAPIVersion(),
+				ResourceName:      obj.GetName(),
+				Namespace:         obj.GetNamespace(),
+				CreateOperationID: operationID,
 			})
 		}
 		if persist != nil {
@@ -1012,23 +1017,25 @@ func AddAuxiliaryResourceToDeployedResources(
 
 	// Add primary resource
 	addRef(breakglassv1alpha1.DeployedResourceRef{
-		Kind:       status.Kind,
-		APIVersion: status.APIVersion,
-		Name:       status.ResourceName,
-		Namespace:  status.Namespace,
-		UID:        status.UID,
-		Source:     fmt.Sprintf("auxiliary:%s", status.Name),
+		Kind:              status.Kind,
+		APIVersion:        status.APIVersion,
+		Name:              status.ResourceName,
+		Namespace:         status.Namespace,
+		UID:               status.UID,
+		CreateOperationID: status.CreateOperationID,
+		Source:            fmt.Sprintf("auxiliary:%s", status.Name),
 	})
 
 	// Add additional resources from multi-document YAML templates
 	for _, addlRes := range status.AdditionalResources {
 		addRef(breakglassv1alpha1.DeployedResourceRef{
-			Kind:       addlRes.Kind,
-			APIVersion: addlRes.APIVersion,
-			Name:       addlRes.ResourceName,
-			Namespace:  addlRes.Namespace,
-			UID:        addlRes.UID,
-			Source:     fmt.Sprintf("auxiliary:%s", status.Name),
+			Kind:              addlRes.Kind,
+			APIVersion:        addlRes.APIVersion,
+			Name:              addlRes.ResourceName,
+			Namespace:         addlRes.Namespace,
+			UID:               addlRes.UID,
+			CreateOperationID: addlRes.CreateOperationID,
+			Source:            fmt.Sprintf("auxiliary:%s", status.Name),
 		})
 	}
 }

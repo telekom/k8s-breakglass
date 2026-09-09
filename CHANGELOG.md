@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Require every debug resource create intent to carry and recover by an exact
+  operation identity, preventing same-session same-name objects from being adopted.
+
 - Disable trusted raw field output for a complete debug template set when Sprig
   mutation functions can modify requester-visible maps during rendering.
 

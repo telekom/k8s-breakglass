@@ -92,6 +92,11 @@ type AuxiliaryResource struct {
 
 // AuxiliaryResourceStatus tracks the state of a deployed auxiliary resource.
 type AuxiliaryResourceStatus struct {
+	// createOperationID identifies the exact target create attempt represented by this intent.
+	// Recovery must match this immutable operation marker before reusing a same-name object.
+	// +optional
+	CreateOperationID string `json:"createOperationID,omitempty"`
+
 	// uid is the immutable Kubernetes UID observed when the resource was created.
 	// Cleanup must match this UID before deleting a name-reused replacement.
 	// +optional
@@ -149,6 +154,11 @@ type AuxiliaryResourceStatus struct {
 // AdditionalResourceRef tracks a resource created from a multi-document YAML template.
 // This is used when an auxiliary resource templateString produces multiple K8s resources.
 type AdditionalResourceRef struct {
+	// createOperationID identifies the exact target create attempt represented by this intent.
+	// Recovery must match this immutable operation marker before reusing a same-name object.
+	// +optional
+	CreateOperationID string `json:"createOperationID,omitempty"`
+
 	// uid is the immutable Kubernetes UID observed when the resource was created.
 	// Cleanup must match this UID before deleting a name-reused replacement.
 	// +optional

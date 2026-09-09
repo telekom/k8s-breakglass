@@ -348,6 +348,59 @@ func TestApplyOwnedTrackedResourceReusesOwnedExistingResource(t *testing.T) {
 	require.Equal(t, "17", obj.GetResourceVersion())
 }
 
+func TestApplyOwnedTrackedResourceRejectsMissingOperationIdentity(t *testing.T) {
+	obj := &unstructured.Unstructured{}
+	obj.SetAPIVersion("v1")
+	obj.SetKind("ConfigMap")
+	obj.SetName("tracked")
+	obj.SetNamespace("ns")
+	obj.SetAnnotations(map[string]string{sourceSessionUIDAnnotation: "session-uid"})
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tracked",
+			Namespace: "ns",
+			UID:       "owned",
+			Annotations: map[string]string{
+				sourceSessionUIDAnnotation: "session-uid",
+			},
+		},
+	}).Build()
+
+	err := applyOwnedTrackedResource(context.Background(), target, obj, session)
+	require.ErrorContains(t, err, "different operation identity")
+}
+
+func TestCreateOrRecoverTargetObjectRequiresExactOperationIdentity(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	for _, tc := range []struct {
+		name       string
+		desiredOp  string
+		existingOp string
+		wantErr    string
+	}{
+		{name: "missing desired operation", existingOp: "op-1", wantErr: "different operation identity"},
+		{name: "missing existing operation", desiredOp: "op-1", wantErr: "different operation identity"},
+		{name: "different operation", desiredOp: "op-1", existingOp: "op-2", wantErr: "different operation identity"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			annotations := map[string]string{sourceSessionUIDAnnotation: "session-uid"}
+			if tc.existingOp != "" {
+				annotations[createOperationIDAnnotation] = tc.existingOp
+			}
+			target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(&corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: "tracked", Namespace: "ns", UID: "owned", Annotations: annotations},
+			}).Build()
+			desired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "tracked", Namespace: "ns", Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}}}
+			if tc.desiredOp != "" {
+				desired.Annotations[createOperationIDAnnotation] = tc.desiredOp
+			}
+			err := createOrRecoverTargetObject(context.Background(), target, desired, session)
+			require.ErrorContains(t, err, tc.wantErr)
+		})
+	}
+}
+
 func TestWorkloadTemplateAllowsConfiguredDefaultTolerations(t *testing.T) {
 	template := &corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "debug", Image: "debug:v1"}}}}
 	for _, tc := range []struct {

@@ -201,12 +201,16 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			return fmt.Errorf("failed to build resource quota: %w", rqErr)
 		}
 		if rq != nil {
+			operationID, err := stampCreateOperation(rq, ds)
+			if err != nil {
+				return fmt.Errorf("failed to stamp resource quota create operation: %w", err)
+			}
 			if err := fence(); err != nil {
 				return err
 			}
 			gvk := rq.GetObjectKind().GroupVersionKind()
 			ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
-				APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: rq.Name, Namespace: rq.Namespace, Source: "debug-resourcequota",
+				APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: rq.Name, Namespace: rq.Namespace, Source: "debug-resourcequota", CreateOperationID: operationID,
 			})
 			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 				return fmt.Errorf("failed to persist resource quota intent: %w", err)
@@ -236,12 +240,16 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			return fmt.Errorf("failed to build pod disruption budget: %w", pdbErr)
 		}
 		if pdb != nil {
+			operationID, err := stampCreateOperation(pdb, ds)
+			if err != nil {
+				return fmt.Errorf("failed to stamp pod disruption budget create operation: %w", err)
+			}
 			if err := fence(); err != nil {
 				return err
 			}
 			gvk := pdb.GetObjectKind().GroupVersionKind()
 			ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
-				APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: pdb.Name, Namespace: pdb.Namespace, Source: "debug-pdb",
+				APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: pdb.Name, Namespace: pdb.Namespace, Source: "debug-pdb", CreateOperationID: operationID,
 			})
 			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 				return fmt.Errorf("failed to persist PDB intent: %w", err)
@@ -305,8 +313,12 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	if err := fence(); err != nil {
 		return err
 	}
+	operationID, err := stampCreateOperation(workload, ds)
+	if err != nil {
+		return fmt.Errorf("failed to stamp workload create operation: %w", err)
+	}
 	ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
-		APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: workload.GetName(), Namespace: targetNs, Source: "debug-pod",
+		APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: workload.GetName(), Namespace: targetNs, Source: "debug-pod", CreateOperationID: operationID,
 	})
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return fmt.Errorf("failed to persist workload intent: %w", err)
@@ -378,8 +390,12 @@ func createOrRecoverTargetObject(ctx context.Context, targetClient ctrlclient.Cl
 		return err
 	}
 	annotations := existing.GetAnnotations()
-	if annotations[sourceSessionUIDAnnotation] != string(session.UID) {
+	createOpID := obj.GetAnnotations()[createOperationIDAnnotation]
+	if session == nil || session.UID == "" || annotations[sourceSessionUIDAnnotation] != string(session.UID) {
 		return fmt.Errorf("target resource %s/%s already exists and is owned by another session", obj.GetNamespace(), obj.GetName())
+	}
+	if createOpID == "" || annotations[createOperationIDAnnotation] != createOpID {
+		return fmt.Errorf("target resource %s/%s already exists with a different operation identity", obj.GetNamespace(), obj.GetName())
 	}
 	obj.SetUID(existing.GetUID())
 	obj.SetResourceVersion(existing.GetResourceVersion())
@@ -669,18 +685,22 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		annotations = make(map[string]string)
 	}
 	annotations["breakglass.t-caas.telekom.com/source-session"] = fmt.Sprintf("%s/%s", ds.Namespace, ds.Name)
-	annotations[sourceSessionUIDAnnotation] = string(ds.UID)
+	operationID, err := stampCreateOperation(obj, ds)
+	if err != nil {
+		return err
+	}
 	obj.SetAnnotations(annotations)
 
 	// Persist an intent before the target write so a crash cannot hide a
 	// resource that must be recovered or cleaned up.
 	status := breakglassv1alpha1.PodTemplateResourceStatus{
-		Kind:         obj.GetKind(),
-		APIVersion:   obj.GetAPIVersion(),
-		ResourceName: obj.GetName(),
-		Namespace:    obj.GetNamespace(),
-		Source:       "podTemplateString",
-		Created:      true,
+		Kind:              obj.GetKind(),
+		APIVersion:        obj.GetAPIVersion(),
+		ResourceName:      obj.GetName(),
+		Namespace:         obj.GetNamespace(),
+		Source:            "podTemplateString",
+		Created:           true,
+		CreateOperationID: operationID,
 	}
 	ds.Status.PodTemplateResourceStatuses = append(ds.Status.PodTemplateResourceStatuses, status)
 	if c.client != nil {
@@ -716,12 +736,13 @@ func (c *DebugSessionController) deployPodTemplateResource(
 
 	// Add to deployed resources list
 	ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
-		APIVersion: obj.GetAPIVersion(),
-		Kind:       obj.GetKind(),
-		Name:       obj.GetName(),
-		Namespace:  obj.GetNamespace(),
-		Source:     "pod-template",
-		UID:        statusRef.UID,
+		APIVersion:        obj.GetAPIVersion(),
+		Kind:              obj.GetKind(),
+		Name:              obj.GetName(),
+		Namespace:         obj.GetNamespace(),
+		Source:            "pod-template",
+		UID:               statusRef.UID,
+		CreateOperationID: statusRef.CreateOperationID,
 	})
 
 	log.Infow("Deployed pod template resource",

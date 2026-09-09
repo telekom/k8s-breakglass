@@ -24,6 +24,7 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 type deletionTimestampSessionReader struct {
@@ -78,7 +79,16 @@ func newDeploymentFenceFixture(t *testing.T) (*DebugSessionController, *breakgla
 		WithObjects(cc, secret, ds, template).
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
-	target := fake.NewClientBuilder().WithScheme(s).WithObjects(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug"}}).Build()
+	target := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug"}}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				if obj.GetUID() == "" {
+					obj.SetUID("created-workload-uid")
+				}
+				return cl.Create(ctx, obj, opts...)
+			},
+		}).Build()
 	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, cluster.NewClientProvider(hub, zap.NewNop().Sugar()))
 	c.targetClientFactory = func(_ *rest.Config) (client.Client, error) { return target, nil }
 	return c, ds, template, target
@@ -129,14 +139,6 @@ func TestActivateSessionEstablishesLeaseBeforeDeployment(t *testing.T) {
 	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{Required: false}
 	ds.Spec.IdentityProviderName = "e2e-idp"
 	ds.Spec.IdentityProviderIssuer = "https://issuer.example/realms/e2e"
-	// The fake client does not assign UIDs to newly created objects. Seed the
-	// same-session workload so the production UID capture path exercises the
-	// exact identity returned by the API rather than a name-only fallback.
-	require.NoError(t, target.Create(context.Background(), &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{
-		Name: ds.Name, Namespace: "breakglass-debug", UID: "workload-uid",
-		Annotations: map[string]string{sourceSessionUIDAnnotation: string(ds.UID)},
-	}}))
-
 	_, err := c.activateSession(context.Background(), ds, template, nil)
 	require.NoError(t, err)
 	require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, ds.Status.State)

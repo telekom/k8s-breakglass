@@ -614,6 +614,7 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	allowedPod := breakglassv1alpha1.AllowedPodRef{
 		Namespace: namespace,
 		Name:      podName,
+		UID:       string(pod.UID),
 		Ready:     true,
 	}
 

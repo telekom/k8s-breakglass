@@ -35,6 +35,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: apiVersion
       type:
         scalar: string
+    - name: createOperationID
+      type:
+        scalar: string
     - name: deleted
       type:
         scalar: boolean
@@ -383,6 +386,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
     - name: category
+      type:
+        scalar: string
+    - name: createOperationID
       type:
         scalar: string
     - name: created
@@ -2075,6 +2081,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: apiVersion
       type:
         scalar: string
+    - name: createOperationID
+      type:
+        scalar: string
     - name: kind
       type:
         scalar: string
@@ -2969,6 +2978,9 @@ var schemaYAML = typed.YAMLObject(`types:
   map:
     fields:
     - name: apiVersion
+      type:
+        scalar: string
+    - name: createOperationID
       type:
         scalar: string
     - name: created

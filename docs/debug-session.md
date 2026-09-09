@@ -1341,6 +1341,9 @@ by the current attempt, preserving targets recorded concurrently by the same
 session, including nested auxiliary-document identities. ClusterConfig deletion
 keeps its finalizer while any DebugSession state still retains spoke inventory,
 including a session just transitioned to a terminal state.
+Every resource-create intent records a non-empty operation identity, and recovery
+requires the target object's exact matching marker before reusing a same-name
+resource from the same session.
 Auxiliary documents continue to be retried after their primary resource is
 deleted; once the primary and every child are deleted, their history no longer
 counts as outstanding cleanup inventory.

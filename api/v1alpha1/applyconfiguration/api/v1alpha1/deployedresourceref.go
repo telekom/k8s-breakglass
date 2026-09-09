@@ -13,6 +13,9 @@ package v1alpha1
 //
 // DeployedResourceRef references a deployed resource on the target cluster.
 type DeployedResourceRefApplyConfiguration struct {
+	// createOperationID identifies the exact target create attempt represented by this intent.
+	// Recovery must match this immutable operation marker before reusing a same-name object.
+	CreateOperationID *string `json:"createOperationID,omitempty"`
 	// apiVersion is the API version of the resource.
 	APIVersion *string `json:"apiVersion,omitempty"`
 	// kind is the kind of the resource.
@@ -33,6 +36,14 @@ type DeployedResourceRefApplyConfiguration struct {
 // apply.
 func DeployedResourceRef() *DeployedResourceRefApplyConfiguration {
 	return &DeployedResourceRefApplyConfiguration{}
+}
+
+// WithCreateOperationID sets the CreateOperationID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the CreateOperationID field is set to the value of the last call.
+func (b *DeployedResourceRefApplyConfiguration) WithCreateOperationID(value string) *DeployedResourceRefApplyConfiguration {
+	b.CreateOperationID = &value
+	return b
 }
 
 // WithAPIVersion sets the APIVersion field in the declarative configuration to the given value

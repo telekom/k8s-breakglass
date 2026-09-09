@@ -290,6 +290,11 @@ type DebugSessionStatus struct {
 
 // PodTemplateResourceStatus tracks the state of resources deployed from multi-doc pod templates.
 type PodTemplateResourceStatus struct {
+	// createOperationID identifies the exact target create attempt represented by this intent.
+	// Recovery must match this immutable operation marker before reusing a same-name object.
+	// +optional
+	CreateOperationID string `json:"createOperationID,omitempty"`
+
 	// uid is the immutable Kubernetes UID observed when the resource was created.
 	// Cleanup must match this UID before deleting a name-reused replacement.
 	// +optional
@@ -445,6 +450,11 @@ type TerminalSharingStatus struct {
 
 // DeployedResourceRef references a deployed resource on the target cluster.
 type DeployedResourceRef struct {
+	// createOperationID identifies the exact target create attempt represented by this intent.
+	// Recovery must match this immutable operation marker before reusing a same-name object.
+	// +optional
+	CreateOperationID string `json:"createOperationID,omitempty"`
+
 	// apiVersion is the API version of the resource.
 	// +required
 	APIVersion string `json:"apiVersion"`

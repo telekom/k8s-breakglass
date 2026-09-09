@@ -14,6 +14,9 @@ package v1alpha1
 // AdditionalResourceRef tracks a resource created from a multi-document YAML template.
 // This is used when an auxiliary resource templateString produces multiple K8s resources.
 type AdditionalResourceRefApplyConfiguration struct {
+	// createOperationID identifies the exact target create attempt represented by this intent.
+	// Recovery must match this immutable operation marker before reusing a same-name object.
+	CreateOperationID *string `json:"createOperationID,omitempty"`
 	// uid is the immutable Kubernetes UID observed when the resource was created.
 	// Cleanup must match this UID before deleting a name-reused replacement.
 	UID *string `json:"uid,omitempty"`
@@ -39,6 +42,14 @@ type AdditionalResourceRefApplyConfiguration struct {
 // apply.
 func AdditionalResourceRef() *AdditionalResourceRefApplyConfiguration {
 	return &AdditionalResourceRefApplyConfiguration{}
+}
+
+// WithCreateOperationID sets the CreateOperationID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the CreateOperationID field is set to the value of the last call.
+func (b *AdditionalResourceRefApplyConfiguration) WithCreateOperationID(value string) *AdditionalResourceRefApplyConfiguration {
+	b.CreateOperationID = &value
+	return b
 }
 
 // WithUID sets the UID field in the declarative configuration to the given value

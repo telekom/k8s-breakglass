@@ -998,6 +998,7 @@ func TestKubectlDebugHandler_InjectEphemeralContainerPreservesLiveStatusFromStal
 	assert.Contains(t, stored.Status.AllowedPods, breakglassv1alpha1.AllowedPodRef{
 		Namespace: "production",
 		Name:      "app-pod",
+		UID:       "pod-app-uid",
 		Ready:     true,
 	})
 }
@@ -1557,6 +1558,12 @@ func TestKubectlDebugHandler_CreatePodCopyPreservesLiveStatusFromStaleSession(t 
 				},
 			},
 		).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, cl ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.CreateOption) error {
+				obj.SetUID(types.UID("created-copy-uid"))
+				return cl.Create(ctx, obj, opts...)
+			},
+		}).
 		Build()
 
 	liveSession := &breakglassv1alpha1.DebugSession{
@@ -1608,6 +1615,7 @@ func TestKubectlDebugHandler_CreatePodCopyPreservesLiveStatusFromStaleSession(t 
 
 	pod, err := handler.CreatePodCopy(ctx, staleSession, "production", "app-pod", "busybox:latest", "test-user@example.com")
 	require.NoError(t, err)
+	require.NotEmpty(t, pod.UID)
 
 	stored := &breakglassv1alpha1.DebugSession{}
 	require.NoError(t, hubClient.Get(ctx, ctrlclient.ObjectKey{Name: liveSession.Name, Namespace: liveSession.Namespace}, stored))
@@ -1961,6 +1969,12 @@ func TestKubectlDebugHandler_CreateNodeDebugPodPreservesLiveStatusFromStaleSessi
 			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug", UID: "breakglass-debug-uid"}},
 			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1", UID: "node-live-uid"}},
 		).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, cl ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.CreateOption) error {
+				obj.SetUID(types.UID("created-node-uid"))
+				return cl.Create(ctx, obj, opts...)
+			},
+		}).
 		Build()
 
 	liveSession := &breakglassv1alpha1.DebugSession{
@@ -2012,6 +2026,7 @@ func TestKubectlDebugHandler_CreateNodeDebugPodPreservesLiveStatusFromStaleSessi
 
 	pod, err := handler.CreateNodeDebugPod(ctx, staleSession, "worker-1", "test-user@example.com")
 	require.NoError(t, err)
+	require.NotEmpty(t, pod.UID)
 
 	stored := &breakglassv1alpha1.DebugSession{}
 	require.NoError(t, hubClient.Get(ctx, ctrlclient.ObjectKey{Name: liveSession.Name, Namespace: liveSession.Namespace}, stored))
@@ -2032,6 +2047,7 @@ func TestKubectlDebugHandler_CreateNodeDebugPodPreservesLiveStatusFromStaleSessi
 		Kind:       "Pod",
 		Name:       pod.Name,
 		Namespace:  "breakglass-debug",
+		UID:        string(pod.UID),
 	})
 }
 
