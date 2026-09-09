@@ -131,7 +131,7 @@ stat_field() {
         mtime) format='%Y'; bsd_format='%m' ;;
         *) fail "unsupported metadata field: $field" ;;
     esac
-    stat -c "$format" "$source" 2>/dev/null || stat -f "$bsd_format" "$source"
+    stat -L -c "$format" "$source" 2>/dev/null || stat -f "$bsd_format" "$source"
 }
 
 inspect() {
