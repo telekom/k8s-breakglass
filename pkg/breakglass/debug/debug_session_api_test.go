@@ -35,6 +35,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -274,6 +275,60 @@ func TestActiveBreakglassGroupsRefreshesFreshReaderWhenCacheHasNoGrant(t *testin
 	assert.Empty(t, debugSessionRecordedFieldValues(fresh.calls, "spec.cluster"), "fresh fallback must use a full live read")
 }
 
+func TestActiveBreakglassGroupsRejectsStaleCachedGrant(t *testing.T) {
+	cachedSession := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "approval", Namespace: "breakglass", UID: "cached-uid"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:                "tenant-a",
+			User:                   "alice",
+			GrantedGroup:           "breakglass:debug",
+			IdentityProviderIssuer: "https://idp-a.example",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		},
+	}
+
+	tests := []struct {
+		name       string
+		freshSetup func(*runtime.Scheme) client.Client
+	}{
+		{
+			name: "revoked",
+			freshSetup: func(scheme *runtime.Scheme) client.Client {
+				revoked := cachedSession.DeepCopy()
+				revoked.Status.State = breakglassv1alpha1.SessionStateExpired
+				return fake.NewClientBuilder().WithScheme(scheme).WithObjects(revoked).Build()
+			},
+		},
+		{
+			name: "deleted",
+			freshSetup: func(scheme *runtime.Scheme) client.Client {
+				return fake.NewClientBuilder().WithScheme(scheme).Build()
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cachedBase := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(cachedSession).WithIndex(
+				&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+					return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+				},
+			).Build()
+			fresh := &debugSessionRecordingGetClient{Client: tt.freshSetup(testScheme())}
+			controller := &DebugSessionAPIController{client: cachedBase, apiReader: fresh}
+
+			groups, err := controller.activeBreakglassGroups(context.Background(), fresh, "tenant-a", "alice", "", "https://idp-a.example")
+
+			require.NoError(t, err)
+			assert.Empty(t, groups)
+			assert.Len(t, fresh.gets, 1)
+		})
+	}
+}
+
 func debugSessionAPITestRouter(t *testing.T, ctrl *DebugSessionAPIController, username, email string, groups []string) *gin.Engine {
 	t.Helper()
 	router := gin.New()
@@ -308,6 +363,16 @@ func (c *debugSessionRecordingListClient) List(ctx context.Context, list client.
 	}
 	c.calls = append(c.calls, listOpts)
 	return c.Client.List(ctx, list, opts...)
+}
+
+type debugSessionRecordingGetClient struct {
+	client.Client
+	gets []client.ObjectKey
+}
+
+func (c *debugSessionRecordingGetClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	c.gets = append(c.gets, key)
+	return c.Client.Get(ctx, key, obj, opts...)
 }
 
 func debugSessionRecordedFieldValues(calls []client.ListOptions, field string) []string {
