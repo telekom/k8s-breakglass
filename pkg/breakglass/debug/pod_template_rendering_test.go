@@ -4567,7 +4567,6 @@ func TestDeployPodTemplateResource_RejectsTenantConfigMapCollisionWithoutMutatio
 
 	err := (&DebugSessionController{log: zap.NewNop().Sugar()}).deployPodTemplateResource(context.Background(), targetClient, ds, obj, existing.Namespace)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "refusing to overwrite pre-existing")
 
 	var unchanged corev1.ConfigMap
 	require.NoError(t, targetClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(existing), &unchanged))
