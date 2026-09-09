@@ -52,7 +52,8 @@ func syncTrackedDebugJobDeadlines(
 			return fmt.Errorf("tracked Job %s/%s has no positive active deadline", ref.Namespace, ref.Name)
 		}
 		if job.Status.StartTime == nil {
-			return fmt.Errorf("tracked Job %s/%s has no start time", ref.Namespace, ref.Name)
+			// A pending Job has no deadline origin yet; normal reconciliation retries.
+			continue
 		}
 
 		remaining := newExpiry.Sub(job.Status.StartTime.Time)
