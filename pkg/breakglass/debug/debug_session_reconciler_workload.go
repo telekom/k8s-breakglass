@@ -183,7 +183,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	}
 
 	// Ensure target namespace exists
-	ready, err := c.ensureTargetNamespace(ctx, targetClient, targetNs, template.Spec.FailMode, namespaceConstraints)
+	ready, err := c.ensureTargetNamespace(ctx, targetClient, targetNs, template.Spec.FailMode, namespaceConstraints, fence)
 	if err != nil {
 		return err
 	}
@@ -406,7 +406,7 @@ func effectiveNamespaceConstraints(template *breakglassv1alpha1.DebugSessionTemp
 	return template.Spec.NamespaceConstraints
 }
 
-func (c *DebugSessionController) ensureTargetNamespace(ctx context.Context, targetClient ctrlclient.Client, targetNs, failMode string, constraints *breakglassv1alpha1.NamespaceConstraints) (bool, error) {
+func (c *DebugSessionController) ensureTargetNamespace(ctx context.Context, targetClient ctrlclient.Client, targetNs, failMode string, constraints *breakglassv1alpha1.NamespaceConstraints, fences ...func() error) (bool, error) {
 	ns := &corev1.Namespace{}
 	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: targetNs}, ns); err == nil {
 		return true, nil
@@ -415,6 +415,11 @@ func (c *DebugSessionController) ensureTargetNamespace(ctx context.Context, targ
 	}
 
 	if constraints != nil && constraints.CreateIfNotExists {
+		if len(fences) > 0 && fences[0] != nil {
+			if err := fences[0](); err != nil {
+				return false, err
+			}
+		}
 		ns = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
 			Name:   targetNs,
 			Labels: constraints.NamespaceLabels,
