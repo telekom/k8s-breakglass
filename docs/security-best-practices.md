@@ -230,12 +230,17 @@ This requires a matching audience protocol mapper in your identity provider (e.g
 
 ### Token Storage in the Browser
 
-The browser frontend uses `sessionStorage` through `oidc-client-ts`. Access
-tokens remain readable by same-origin JavaScript and are explicitly attached as
-Bearer tokens to API requests. Session storage limits persistence and prevents
-other origins from reading it; it does not protect tokens from compromised
-same-origin scripts. Browser-local cached runtime configuration is bootstrap
-state, not the server's issuer authorization policy.
+The browser frontend uses `sessionStorage` through `oidc-client-ts` by default.
+Development builds may explicitly opt into persistent `localStorage` storage;
+that mode is warned about because browser scripts can read it. Production builds
+use `sessionStorage` or an in-memory fallback when browser storage is
+unavailable, reset a stale persistent preference, and make a best-effort purge
+of legacy localStorage OIDC artifacts, including IDP name hints used for
+reauthentication. Access tokens remain readable by same-origin JavaScript and
+are explicitly attached as Bearer tokens to API requests. Session storage limits
+persistence and prevents other origins from reading it; it does not protect
+tokens from compromised same-origin scripts. Browser-local cached runtime
+configuration is bootstrap state, not the server's issuer authorization policy.
 
 CSP restricts script sources and reduces injection opportunities, but cannot
 guarantee that every XSS payload is blocked. Keep access tokens short-lived
@@ -288,7 +293,7 @@ The following patterns are stripped from text fields:
 ### OIDC Best Practices
 
 1. **Use short-lived tokens** - Configure your IDP to issue tokens with 5-15 minute expiry
-2. **Enable token refresh** - Allow token refresh for long-running sessions
+2. **Disable UI refresh tokens** - Do not issue `offline_access` or refresh tokens for breakglass UI sessions; use short access-token lifetimes and require explicit re-authentication instead
 3. **Validate audiences** - Ensure tokens are issued for the breakglass client
 4. **Use HTTPS** - Always use TLS for OIDC communication
 5. **Keep `hardenedIDPHints` enabled** (default) - Prevents disclosure of configured identity provider names and URLs in webhook error messages. See [Configuration Reference](configuration-reference.md#hardenedidphints-optional) for details.
@@ -527,7 +532,7 @@ Every lookup failure is observable, so the fallback is never silent:
 The breakglass frontend is **not vulnerable to CSRF** because it uses **OIDC Bearer token authentication** rather than cookie-based sessions:
 
 - All API requests include an `Authorization: Bearer <token>` header injected by the HTTP client interceptor (`frontend/src/services/httpClient.ts`).
-- OIDC access tokens are stored in the browser's `sessionStorage` via `oidc-client-ts`, **not** in cookies.
+- OIDC access tokens default to browser `sessionStorage` via `oidc-client-ts`, **not** cookies; development-only persistent `localStorage` is an explicit opt-in and production uses session storage or an in-memory fallback when browser storage is unavailable.
 - The browser never automatically attaches credentials to cross-origin requests, so a malicious site cannot forge authenticated API calls.
 
 This architecture inherently mitigates CSRF because:

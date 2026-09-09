@@ -38,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Keep refresh tokens stripped when browser storage fails, redact approval-page HTTP errors, and cap mock dataset scaling.
 
+- Disable automatic silent renewal and iframe-based session extension for frontend OIDC sessions. Production uses session storage or an in-memory fallback when browser storage is unavailable, resets stale persistent preferences, and makes a best-effort purge of legacy persistent OIDC artifacts; development-only persistent local storage remains an explicit opt-in.
+
 - Avoid duplicate approval-page error logging and preserve one contextual toast for unexpected approval failures.
 
 - Preserve contextual diagnostics when debug template output validation rejects unsafe actions.
@@ -411,7 +413,7 @@ non-buggy case:
 - **BreakglassEscalation admission validation**: Escalation duration fields now reject non-positive or malformed values consistently, `idleTimeout` and `approvalTimeout` are checked against the effective `maxValidFor`, and invalid cluster glob patterns are rejected before they can affect session admission.
 - **OIDC upstream response handling**: OIDC discovery, JWKS, userinfo, token, and Keycloak API reads now enforce bounded response bodies, preventing oversized identity-provider responses from exhausting controller memory. (#1131)
 - **BreakglassSession approver IDP enforcement**: Approval and rejection requests now enforce `BreakglassEscalation.spec.allowedIdentityProvidersForApprovers`, denying approvers whose authenticated IdentityProvider is missing or not allowed.
-- **Frontend debug logging hardening**: Production builds no longer enable verbose debug logging from URL or localStorage flags, group and claim refresh diagnostics log only counts and claim keys instead of sensitive group memberships or full profile claims, and stale OIDC refresh tokens are removed from browser session state before silent renew.
+- **Frontend debug logging hardening**: Production builds no longer enable verbose debug logging from URL or localStorage flags, group and claim refresh diagnostics log only counts and claim keys instead of sensitive group memberships or full profile claims, and stale OIDC refresh tokens are removed from browser session state when users are loaded.
 - **BreakglassSession approval safety**: Classic session approval now rejects pending sessions whose approval timeout has already elapsed, scopes approval authorization to the `BreakglassEscalation` that owns the session when an owner reference is present, and checks approval/rejection authorization before body validation or state-specific errors so unrelated callers cannot infer session details.
 - **DebugSession leave access revocation**: Debug session participant indexes, webhook pod-operation authorization, and kubectl-debug active-session lookup now ignore participants after `status.participants[].leftAt` is set, ensuring leaving a session revokes debug pod access immediately.
 - **DebugSession renewal authorization**: Debug session renewals now require the requester or an active `owner`/`participant` status entry; `viewer` entries and participants with `leftAt` set can no longer extend session lifetime.

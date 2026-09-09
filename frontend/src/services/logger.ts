@@ -44,23 +44,35 @@ function parseBooleanFlag(value: string | null | undefined): boolean | null {
   return null;
 }
 
+function getLocalStorage(): Storage | undefined {
+  if (typeof window === "undefined") return undefined;
+  try {
+    return window.localStorage;
+  } catch {
+    // localStorage unavailable (SSR, sandboxed iframe) — cannot read or persist flag
+    return undefined;
+  }
+}
+
 function readStoredDebugFlag(): boolean | null {
   if (!isDevRuntime()) return null;
-  if (typeof window === "undefined" || !window.localStorage) return null;
+  const storage = getLocalStorage();
+  if (!storage) return null;
   try {
-    const stored = window.localStorage.getItem(DEBUG_STORAGE_KEY);
+    const stored = storage.getItem(DEBUG_STORAGE_KEY);
     return parseBooleanFlag(stored);
   } catch {
-    // localStorage unavailable (SSR, sandboxed iframe) — cannot read flag
+    // localStorage read failed — cannot read flag
     return null;
   }
 }
 
 function persistDebugFlag(enabled: boolean) {
   if (!isDevRuntime()) return;
-  if (typeof window === "undefined" || !window.localStorage) return;
+  const storage = getLocalStorage();
+  if (!storage) return;
   try {
-    window.localStorage.setItem(DEBUG_STORAGE_KEY, String(enabled));
+    storage.setItem(DEBUG_STORAGE_KEY, String(enabled));
   } catch {
     // localStorage write failed (quota, disabled) — non-critical
   }
