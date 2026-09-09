@@ -1167,6 +1167,10 @@ Returns templates the current requester can use directly through
 matching `DebugSessionClusterBinding`. User, email, group, and binding-granted
 access are all considered before a template is included in the response.
 
+`workloadType` accepts `DaemonSet`, `Deployment`, or `Job`. `Job` is the
+bounded one-shot workload form; it is not normalized into a long-running
+Deployment or DaemonSet.
+
 **Query Parameters:**
 - `includeHidden` (optional, boolean): When `true`, includes templates marked `hidden`.
 
