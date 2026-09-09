@@ -426,7 +426,7 @@ assert_contains "$authenticated_secret_probe" 'helper-executed'
 assert_not_contains "$authenticated_secret_probe" "$token"
 # The fixture delays this response by four seconds; leave room for service
 # routing and exec overhead while still exercising a bounded request.
-unauthenticated_secret_probe=$(kubectl -n "$namespace" exec "$runner" -- /bin/sh -c "WORKLOAD_DEBUG_TIMEOUT=10 debug-kube-api --server '$http_url/slow' >/dev/null 2>&1 & p=\$!; observed=0; for _ in 1 2 3 4 5 6 7 8 9 10; do if kill -0 \$p 2>/dev/null; then observed=1; tr '\\000' ' ' < /proc/\$p/cmdline; fi; sleep .2; done; wait \$p; [ \$observed -eq 1 ] || { echo 'could not observe helper process' >&2; exit 1; }")
+unauthenticated_secret_probe=$(kubectl -n "$namespace" exec "$runner" -- /bin/sh -c "WORKLOAD_DEBUG_TIMEOUT=10 debug-kube-api --server '$http_url/slow' >/dev/null 2>&1 & p=\$!; observed=0; for _ in 1 2 3 4 5 6 7 8 9 10; do if kill -0 \$p 2>/dev/null; then observed=1; tr '\\000' ' ' < /proc/\$p/cmdline; fi; sleep .2; done; wait \$p || { echo 'unauthenticated helper failed' >&2; exit 1; }; [ \$observed -eq 1 ] || { echo 'could not observe helper process' >&2; exit 1; }")
 assert_not_contains "$unauthenticated_secret_probe" "$token"
 logs=$(kubectl -n "$namespace" logs "$runner")
 assert_not_contains "$logs" "$token"
