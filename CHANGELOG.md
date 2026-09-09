@@ -64,6 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Allow the webhook's issuer-scoped email alias fallback when exact sessions are expired or issuer-ineligible, while preserving eligible exact-match precedence and issuer ambiguity rejection (PR #1326).
 
+- Use indexed BreakglassSession lookups for DebugSession grant checks while retaining a fresh-reader fallback when the cache has no eligible exact grant (PR #1326).
+
 - Disable trusted raw field output for a complete debug template set when Sprig
   mutation functions can modify requester-visible maps during rendering.
 

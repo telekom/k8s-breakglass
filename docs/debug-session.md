@@ -1529,7 +1529,10 @@ and the issuer matches unless `allowIDPMismatch` is enabled. The API does not
 infer an email address from a username's local part, because the same local part
 can belong to different domains. The authorization webhook has a separate,
 issuer-scoped email-alias compatibility path for SubjectAccessReviews; that path
-does not broaden the DebugSession creation check.
+does not broaden the DebugSession creation check. Grant lookup uses the cached
+cluster index when available and performs a fresh reader fallback when the cache
+has no eligible exact grant, so newly approved grants are not hidden by cache
+propagation delay.
 
 Mutating DebugSession endpoints that accept JSON bodies use strict decoding:
 unknown fields, malformed JSON, and trailing JSON values return `400 Bad
