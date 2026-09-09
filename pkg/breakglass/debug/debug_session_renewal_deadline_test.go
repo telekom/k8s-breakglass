@@ -86,7 +86,7 @@ func TestExtendTrackedJobDeadlinesRejectsMissingDeadline(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "renew-job-session", Namespace: "default"},
 		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "production"},
 		Status: breakglassv1alpha1.DebugSessionStatus{DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{
-			Kind: "Job", Name: job.Name, Namespace: job.Namespace, UID: string(job.UID),
+			APIVersion: "batch/v1", Kind: "Job", Name: job.Name, Namespace: job.Namespace, UID: string(job.UID), Source: "debug-pod",
 		}}},
 	}
 	targetClient := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(job).Build()
@@ -107,7 +107,7 @@ func TestExtendTrackedJobDeadlinesUsesUIDAndIsIdempotent(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "renew-job-session", Namespace: "default"},
 		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "production"},
 		Status: breakglassv1alpha1.DebugSessionStatus{DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{
-			Kind: "Job", Name: job.Name, Namespace: job.Namespace, UID: "original-uid",
+			APIVersion: "batch/v1", Kind: "Job", Name: job.Name, Namespace: job.Namespace, UID: "original-uid", Source: "debug-pod",
 		}}},
 	}
 	targetClient := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(job).Build()
@@ -138,13 +138,49 @@ func TestExtendTrackedJobDeadlinesRejectsExpiryBeforeStart(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "renew-job-session", Namespace: "default"},
 		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "production"},
 		Status: breakglassv1alpha1.DebugSessionStatus{DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{
-			Kind: "Job", Name: job.Name, Namespace: job.Namespace, UID: string(job.UID),
+			APIVersion: "batch/v1", Kind: "Job", Name: job.Name, Namespace: job.Namespace, UID: string(job.UID), Source: "debug-pod",
 		}}},
 	}
 	targetClient := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(job).Build()
 	ctrl := NewDebugSessionAPIController(zap.NewNop().Sugar(), nil, nil, nil).
 		WithClusterClients(&mockClientProvider{clients: map[string]client.Client{"production": targetClient}})
 	require.ErrorContains(t, ctrl.extendTrackedJobDeadlines(context.Background(), session, metav1.NewTime(start.Add(-time.Second))), "precedes its start time")
+}
+
+func TestExtendTrackedJobDeadlinesIgnoresNonWorkloadJobs(t *testing.T) {
+	start := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
+	workloadDeadline := int64(3600)
+	auxiliaryDeadline := int64(3600)
+	workload := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "debug-job", Namespace: "default", UID: "workload-uid"},
+		Status:     batchv1.JobStatus{StartTime: &start},
+		Spec:       batchv1.JobSpec{ActiveDeadlineSeconds: &workloadDeadline},
+	}
+	auxiliary := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "auxiliary-job", Namespace: "default", UID: "auxiliary-uid"},
+		Status:     batchv1.JobStatus{StartTime: &start},
+		Spec:       batchv1.JobSpec{ActiveDeadlineSeconds: &auxiliaryDeadline},
+	}
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "renew-job-session", Namespace: "default"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "production"},
+		Status: breakglassv1alpha1.DebugSessionStatus{DeployedResources: []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "batch/v1", Kind: "Job", Name: workload.Name, Namespace: workload.Namespace, UID: string(workload.UID), Source: "debug-pod"},
+			{APIVersion: "batch/v1", Kind: "Job", Name: auxiliary.Name, Namespace: auxiliary.Namespace, UID: string(auxiliary.UID), Source: "auxiliary:collector"},
+			{APIVersion: "batch/v1", Kind: "Job", Name: "pod-template-job", Namespace: "default", UID: "pod-template-uid", Source: "pod-template"},
+		}},
+	}
+	targetClient := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(workload, auxiliary).Build()
+	ctrl := NewDebugSessionAPIController(zap.NewNop().Sugar(), nil, nil, nil).
+		WithClusterClients(&mockClientProvider{clients: map[string]client.Client{"production": targetClient}})
+
+	require.NoError(t, ctrl.extendTrackedJobDeadlines(context.Background(), session, metav1.NewTime(start.Add(2*time.Hour))))
+	updatedWorkload := &batchv1.Job{}
+	require.NoError(t, targetClient.Get(context.Background(), client.ObjectKeyFromObject(workload), updatedWorkload))
+	require.Equal(t, int64(7200), *updatedWorkload.Spec.ActiveDeadlineSeconds)
+	updatedAuxiliary := &batchv1.Job{}
+	require.NoError(t, targetClient.Get(context.Background(), client.ObjectKeyFromObject(auxiliary), updatedAuxiliary))
+	require.Equal(t, int64(3600), *updatedAuxiliary.Spec.ActiveDeadlineSeconds)
 }
 
 func ptrTime(value metav1.Time) *metav1.Time {
