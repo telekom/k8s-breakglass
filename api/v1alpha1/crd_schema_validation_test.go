@@ -189,5 +189,4 @@ func TestCRDInstallation(t *testing.T) {
 		require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(binding), &stored))
 		require.False(t, stored.Spec.Hidden, "API server must preserve hidden on update")
 	})
-
 }
