@@ -1465,6 +1465,14 @@ debug session when they are the requester, an active participant, an invited
 participant, a configured approver, or a recorded approver/rejector for that
 session.
 
+When creating a session, active Breakglass grants are added only when the
+authenticated username or email claim exactly matches `BreakglassSession.spec.user`
+and the issuer matches unless `allowIDPMismatch` is enabled. The API does not
+infer an email address from a username's local part, because the same local part
+can belong to different domains. The authorization webhook has a separate,
+issuer-scoped email-alias compatibility path for SubjectAccessReviews; that path
+does not broaden the DebugSession creation check.
+
 Mutating DebugSession endpoints that accept JSON bodies use strict decoding:
 unknown fields, malformed JSON, and trailing JSON values return `400 Bad
 Request`. The join endpoint may omit its body and defaults to the `viewer` role;

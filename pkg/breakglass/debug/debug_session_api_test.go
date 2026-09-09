@@ -184,6 +184,32 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 	}, groups)
 }
 
+func TestActiveBreakglassGroupsDoesNotInferEmailFromUsername(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	reader := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "alice-other-domain"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:                "tenant-a",
+				User:                   "alice@other-domain.example",
+				GrantedGroup:           "breakglass:admin",
+				IdentityProviderIssuer: "https://idp-a.example",
+				AllowIDPMismatch:       true,
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: future,
+			},
+		},
+	).Build()
+
+	controller := &DebugSessionAPIController{}
+	groups, err := controller.activeBreakglassGroups(context.Background(), reader, "tenant-a", "alice", "", "https://idp-a.example")
+
+	require.NoError(t, err)
+	assert.Empty(t, groups, "the API must require an exact authenticated username or email claim")
+}
+
 func debugSessionAPITestRouter(t *testing.T, ctrl *DebugSessionAPIController, username, email string, groups []string) *gin.Engine {
 	t.Helper()
 	router := gin.New()
