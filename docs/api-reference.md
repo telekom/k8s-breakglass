@@ -1074,7 +1074,8 @@ Extends the session duration. Subject to template constraints (`maxDuration`,
 `status.startsAt + maxDuration`. For a Job-backed workload, the renewed expiry
 and count are committed before the tracked Job's `activeDeadlineSeconds` is
 synchronized. A target update failure is retried by the active reconciler and
-does not reject an otherwise committed renewal. Only the requester or an active `owner` or
+does not reject an otherwise committed renewal; each target patch rechecks the
+live session and privileged cluster configuration. Only the requester or an active `owner` or
 `participant` status entry can renew; `viewer` entries and participants with
 `leftAt` set cannot renew sessions.
 

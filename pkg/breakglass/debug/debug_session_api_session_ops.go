@@ -298,14 +298,27 @@ func (c *DebugSessionAPIController) extendTrackedJobDeadlines(ctx context.Contex
 	if !hasTrackedDebugJob(session) {
 		return nil
 	}
-	targetClient, err := c.targetClusterClient(ctx, session.Spec.Cluster)
+	provider := c.clusterClients
+	if provider == nil {
+		if c.ccProvider == nil {
+			return fmt.Errorf("cluster client provider is not configured")
+		}
+		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
+	}
+	targetClient, configured, err := provider.GetClientForPrivilegedOperation(ctx, session.Spec.Cluster)
 	if err != nil {
 		return fmt.Errorf("get target client for debug session %q: %w", session.Name, err)
 	}
+	defer releasePrivilegedOperationSnapshot(provider, configured)
 	if targetClient == nil {
 		return fmt.Errorf("target client for debug session %q is unavailable", session.Name)
 	}
-	return syncTrackedDebugJobDeadlines(ctx, targetClient, session, newExpiry)
+	return syncTrackedDebugJobDeadlines(ctx, targetClient, session, newExpiry, func(fenceCtx context.Context, requested metav1.Time) (metav1.Time, error) {
+		if err := provider.ValidatePrivilegedOperationClusterConfig(fenceCtx, configured); err != nil {
+			return requested, fmt.Errorf("privileged target configuration changed: %w", err)
+		}
+		return liveDebugSessionDeadline(fenceCtx, c.reader(), session, requested)
+	})
 }
 
 func canRenewDebugSession(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {

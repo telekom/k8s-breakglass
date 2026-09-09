@@ -56,7 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including kubectl-debug, while the terminal-byte transport remains unavailable.
 - Renewing a Job-backed DebugSession now commits the session expiry and renewal
   count before synchronizing its tracked batch/v1 debug workload Job deadline;
-  a target failure is retried by reconciliation without double-counting.
+  a target failure is retried by reconciliation without double-counting, with a
+  live session and privileged cluster-configuration fence before each patch.
 - Reference usage cleanup bounds every waited Kubernetes delete and makes EXIT
   cleanup explicitly nonblocking; the API reference now lists `Job` among the
   allowed `workloadType` values.

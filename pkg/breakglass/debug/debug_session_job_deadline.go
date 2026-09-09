@@ -14,6 +14,8 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+type debugJobDeadlineFence func(context.Context, metav1.Time) (metav1.Time, error)
+
 // syncTrackedDebugJobDeadlines makes every tracked workload Job at least as
 // long-lived as the committed session expiry. It is deliberately monotonic:
 // retries never shorten a deadline, and the recorded UID and optimistic
@@ -23,6 +25,7 @@ func syncTrackedDebugJobDeadlines(
 	targetClient ctrlclient.Client,
 	session *breakglassv1alpha1.DebugSession,
 	newExpiry metav1.Time,
+	fence debugJobDeadlineFence,
 ) error {
 	if session == nil {
 		return nil
@@ -56,7 +59,15 @@ func syncTrackedDebugJobDeadlines(
 			continue
 		}
 
-		remaining := newExpiry.Sub(job.Status.StartTime.Time)
+		effectiveExpiry := newExpiry
+		if fence != nil {
+			var err error
+			effectiveExpiry, err = fence(ctx, newExpiry)
+			if err != nil {
+				return fmt.Errorf("fence tracked Job %s/%s deadline: %w", ref.Namespace, ref.Name, err)
+			}
+		}
+		remaining := effectiveExpiry.Sub(job.Status.StartTime.Time)
 		desiredSeconds := int64(remaining / time.Second)
 		if remaining%time.Second != 0 {
 			desiredSeconds++
@@ -88,4 +99,33 @@ func hasTrackedDebugJob(session *breakglassv1alpha1.DebugSession) bool {
 		}
 	}
 	return false
+}
+
+func liveDebugSessionDeadline(
+	ctx context.Context,
+	reader ctrlclient.Reader,
+	session *breakglassv1alpha1.DebugSession,
+	requested metav1.Time,
+) (metav1.Time, error) {
+	if reader == nil {
+		return requested, fmt.Errorf("live debug session reader is unavailable")
+	}
+	if session == nil || session.UID == "" {
+		return requested, fmt.Errorf("debug session identity is incomplete")
+	}
+	live := &breakglassv1alpha1.DebugSession{}
+	if err := reader.Get(ctx, ctrlclient.ObjectKeyFromObject(session), live); err != nil {
+		return requested, fmt.Errorf("read live debug session: %w", err)
+	}
+	if live.UID == "" || live.UID != session.UID {
+		return requested, fmt.Errorf("debug session identity changed")
+	}
+	if !live.DeletionTimestamp.IsZero() || live.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
+		live.Status.ExpiresAt == nil || !time.Now().UTC().Before(live.Status.ExpiresAt.Time) {
+		return requested, fmt.Errorf("debug session is no longer active")
+	}
+	if live.Status.ExpiresAt.Before(&requested) {
+		return *live.Status.ExpiresAt, nil
+	}
+	return requested, nil
 }

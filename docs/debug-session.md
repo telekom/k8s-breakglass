@@ -1334,7 +1334,10 @@ expiration time, but the renewed expiration cannot move past
 For a Job-backed workload, renewal commits the new expiry and renewal count
 before synchronizing the tracked Job's `activeDeadlineSeconds`. If the target
 update fails, the renewal remains accepted and the active reconciler retries
-the deadline sync without counting the renewal again. Jobs that have not started yet defer deadline synchronization until their start time is available; normal reconciliation retries without warning.
+the deadline sync without counting the renewal again. Each target patch is
+fenced by a live session and privileged cluster-configuration check. Jobs that
+have not started yet defer synchronization until their start time is available;
+normal reconciliation retries without warning.
 Only the requester or an active `owner`/`participant` status entry can renew a
 session; `viewer` entries and participants with `leftAt` set cannot renew.
 The active-session expiry, approval-timeout, expiring-soon message, cleanup
