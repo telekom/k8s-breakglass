@@ -19,10 +19,13 @@ printf 'chart payload\n' >"${package}"
 cat >"${sbom}" <<'EOF'
 {
   "spdxVersion": "SPDX-2.3",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "dataLicense": "CC0-1.0",
+  "documentNamespace": "https://example.invalid/spdx/chart-test",
   "creationInfo": {"created": "2026-08-27T00:00:00Z", "creators": ["Tool: syft"]},
   "name": "debug-session-catalogue",
   "packages": [
-    {"SPDXID": "SPDXRef-Package-chart", "name": "debug-session-catalogue"}
+    {"SPDXID": "SPDXRef-Package-chart", "name": "debug-session-catalogue", "downloadLocation": "NOASSERTION"}
   ]
 }
 EOF
@@ -30,8 +33,25 @@ EOF
 "${script_dir}/attach-chart-subject.sh" "${package}" "${sbom}"
 "${script_dir}/verify-chart-sbom.sh" "${package}" "${sbom}"
 
+# Mutate a valid, correctly bound document so each failure exercises its schema.
+for mutation in \
+  '.spdxVersion = "not-spdx"' \
+  '.creationInfo = {}' \
+  'del(.SPDXID)' \
+  'del(.dataLicense)' \
+  'del(.documentNamespace)' \
+  '.packages[0].downloadLocation = 42' \
+  '.annotations[0].annotationType = "INVALID"'; do
+  malformed="${test_dir}/malformed.spdx.json"
+  jq "${mutation}" "${sbom}" >"${malformed}"
+  if "${script_dir}/verify-chart-sbom.sh" "${package}" "${malformed}" >/dev/null 2>&1; then
+    echo "Malformed SPDX document was accepted: ${mutation}" >&2
+    exit 1
+  fi
+done
+
 conflicting="${test_dir}/conflicting.spdx.json"
-jq '.annotations += [{"annotationType":"OTHER","annotator":"Tool: k8s-breakglass-release","comment":"Chart artifact: other-chart-0.2.0.tgz sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]' \
+jq '.annotations += [(.annotations[0] | .comment = "Chart artifact: other-chart-0.2.0.tgz sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]' \
   "${sbom}" >"${conflicting}"
 if "${script_dir}/verify-chart-sbom.sh" "${package}" "${conflicting}" >/dev/null 2>&1; then
   echo "SBOM with conflicting chart bindings was accepted" >&2

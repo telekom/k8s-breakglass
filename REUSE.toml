@@ -115,3 +115,10 @@ precedence = "aggregate"
 path = [".editorconfig", ".dockerignore", ".gitignore", ".gitattributes", ".copilotignore", ".reuse/"]
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "CC0-1.0"
+
+# Unmodified upstream SPDX 2.3 JSON schema.
+[[annotations]]
+path = "hack/schemas/spdx-2.3.schema.json"
+precedence = "override"
+SPDX-FileCopyrightText = "SPDX contributors"
+SPDX-License-Identifier = "CC-BY-3.0"

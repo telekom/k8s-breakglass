@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject malformed chart SBOMs against the SPDX 2.3 schema before release attestation.
+
 - Retain tracked-resource cleanup inventory while the original resource remains pending finalizers.
 
 - OCI attestation verification now rejects unsupported or duplicate image
