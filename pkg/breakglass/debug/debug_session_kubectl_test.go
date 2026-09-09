@@ -1622,6 +1622,7 @@ func TestKubectlDebugHandler_CreatePodCopyPreservesLiveStatusFromStaleSession(t 
 	assert.Contains(t, stored.Status.AllowedPods, breakglassv1alpha1.AllowedPodRef{
 		Namespace: "debug-copies",
 		Name:      pod.Name,
+		UID:       string(pod.UID),
 		Ready:     false,
 	})
 }
@@ -2022,6 +2023,7 @@ func TestKubectlDebugHandler_CreateNodeDebugPodPreservesLiveStatusFromStaleSessi
 	assert.Contains(t, stored.Status.AllowedPods, breakglassv1alpha1.AllowedPodRef{
 		Namespace: "breakglass-debug",
 		Name:      pod.Name,
+		UID:       string(pod.UID),
 		NodeName:  "worker-1",
 		Ready:     false,
 	})

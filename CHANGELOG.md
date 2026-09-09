@@ -149,9 +149,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Failed-session cleanup completion**: Fully deleted auxiliary history no
   longer causes a Failed DebugSession to requeue forever.
 - **Allowed pod identity tracking**: DebugSession status now records each
-  allowed Pod UID so webhook authorization remains bound to the original Pod
-  after same-name replacement; refreshes accept a new UID only for a Pod
-  proven to belong to the session's recorded workload.
+  allowed Pod UID, including Pods created by API-mediated debug operations, so
+  webhook authorization remains bound to the original Pod after same-name
+  replacement; refreshes accept a new UID only for a Pod proven to belong to
+  the session's recorded workload.
 - **DebugSession authorization discovery**: Webhook authorization now retries
   live DebugSession discovery when the informer cache has not observed a newly
   active session. The fallback is scoped to the selected ClusterConfig

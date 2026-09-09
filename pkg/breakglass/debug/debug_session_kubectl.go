@@ -839,6 +839,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	allowedPod := breakglassv1alpha1.AllowedPodRef{
 		Namespace: targetNs,
 		Name:      copyName,
+		UID:       string(copyPod.UID),
 		Ready:     false, // Will be updated by reconciler
 	}
 
@@ -1075,6 +1076,7 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	allowedPod := breakglassv1alpha1.AllowedPodRef{
 		Namespace: namespace,
 		Name:      podName,
+		UID:       string(debugPod.UID),
 		NodeName:  nodeName,
 		Ready:     false, // Will be updated by reconciler
 	}
