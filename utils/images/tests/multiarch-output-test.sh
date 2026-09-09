@@ -100,7 +100,7 @@ FAKE_FIXTURE="$test_root/fixture.rb" \
 REAL_RUBY=/usr/bin/ruby \
 make -s -C "$images_root" multiarch
 
-[ "$(wc -l <"$test_root/docker.calls" | tr -d ' ')" -eq 2 ] || { echo "multiarch target did not invoke both image exports" >&2; exit 1; }
-[ "$(wc -l <"$test_root/verifier.calls" | tr -d ' ')" -eq 2 ] || { echo "multiarch target did not strictly verify both archives" >&2; exit 1; }
-awk '/--output type=oci,oci-artifact=false,name=breakglass-local\/[^ ]*:validation,dest=/{count++} END { exit count == 2 ? 0 : 1 }' "$test_root/docker.calls" || { echo "multiarch export did not use the named non-artifact contract" >&2; exit 1; }
-echo "multiarch output contract passed"
+[ "$(wc -l <"$test_root/docker.calls" | tr -d ' ')" -eq 3 ] || { echo "multiarch target did not invoke all three image exports" >&2; exit 1; }
+[ "$(wc -l <"$test_root/verifier.calls" | tr -d ' ')" -eq 3 ] || { echo "multiarch target did not strictly verify all three archives" >&2; exit 1; }
+awk '/--output type=oci,oci-artifact=false,name=breakglass-local\/[^ ]*:validation,dest=/{count++} END { exit count == 3 ? 0 : 1 }' "$test_root/docker.calls" || { echo "multiarch export did not use the named non-artifact contract" >&2; exit 1; }
+echo "multiarch output contract passed for storage-debug, dump-reader, and diagnostic-artifact-collector"

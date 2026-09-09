@@ -255,10 +255,11 @@ func startAuxiliaryStatusTracking(ds *breakglassv1alpha1.DebugSession, auxiliary
 // buildWorkload creates the DaemonSet or Deployment for debug pods.
 // It also returns any additional resources from multi-document pod templates
 // that should be deployed alongside the workload.
-// Supports three templateString formats:
+// Supports four templateString formats:
 //   - Bare PodSpec: wrapped into the workloadType (DaemonSet/Deployment/Job)
 //   - Full Pod manifest (kind: Pod): PodSpec extracted, wrapped into workloadType
 //   - Full workload manifest (kind: Deployment/DaemonSet): used directly with breakglass labels merged
+//   - Full Job manifest (kind: Job): PodSpec extracted, wrapped into a Job
 func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, podTemplate *breakglassv1alpha1.DebugPodTemplate, targetNs string) (ctrlclient.Object, []*unstructured.Unstructured, error) {
 	// ds.Name already starts with "debug-" (generated as "debug-{user}-{cluster}-{ts}"),
 	// so we use it directly to avoid a redundant "debug-debug-" prefix.
