@@ -10,6 +10,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -448,15 +449,20 @@ func startAuxiliaryStatusTracking(ds *breakglassv1alpha1.DebugSession, auxiliary
 // buildWorkload creates the DaemonSet or Deployment for debug pods.
 // It also returns any additional resources from multi-document pod templates
 // that should be deployed alongside the workload.
-// Supports three templateString formats:
-//   - Bare PodSpec: wrapped into the workloadType (DaemonSet/Deployment)
+// Supports four templateString formats:
+//   - Bare PodSpec: wrapped into the workloadType (DaemonSet/Deployment/Job)
 //   - Full Pod manifest (kind: Pod): PodSpec extracted, wrapped into workloadType
 //   - Full workload manifest (kind: Deployment/DaemonSet): used directly with breakglass labels merged
+//   - Full Job manifest (kind: Job): PodSpec extracted, wrapped into a Job
 func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, podTemplate *breakglassv1alpha1.DebugPodTemplate, targetNs string) (ctrlclient.Object, []*unstructured.Unstructured, error) {
 	// ds.Name already starts with "debug-" (generated as "debug-{user}-{cluster}-{ts}"),
 	// so we use it directly to avoid a redundant "debug-debug-" prefix.
 	workloadName := ds.Name
 	renderResult, err := c.buildPodSpec(ds, template, podTemplate)
+	if err != nil {
+		return nil, nil, err
+	}
+	restrictedCatalogue, _, err := restrictedCatalogueProfile(template, podTemplate)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -497,10 +503,11 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 
 	// Merge pod-level annotations from the template manifest
 	annotations = mergeStringMaps(annotations, renderResult.PodAnnotations)
-	if annotations == nil {
-		annotations = make(map[string]string)
+	if restrictedCatalogue {
+		if err := validateRestrictedCatalogueAnnotations(annotations); err != nil {
+			return nil, nil, err
+		}
 	}
-	annotations[sourceSessionUIDAnnotation] = string(ds.UID)
 
 	workloadType := template.Spec.WorkloadType
 	if workloadType == "" {
@@ -511,10 +518,20 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 
 	// If the template produced a full workload manifest, validate and use it directly
 	if renderResult.Workload != nil {
-		return c.useTemplateWorkload(renderResult, workloadType, workloadName, targetNs, ds, template, labels, annotations)
+		workload, resources, err := c.useTemplateWorkload(renderResult, workloadType, workloadName, targetNs, ds, template, binding, labels, annotations)
+		if err != nil {
+			return nil, nil, err
+		}
+		if restrictedCatalogue {
+			if err := validateRestrictedWorkloadAnnotations(workload); err != nil {
+				return nil, nil, err
+			}
+		}
+		return workload, resources, nil
 	}
 
-	// Enforce RestartPolicy: Always for DaemonSets and Deployments
+	// Enforce RestartPolicy: Always for DaemonSets and Deployments. Jobs retain
+	// Never so bounded diagnostics are not restarted after completion.
 	// These workload types require Always restart policy
 	if workloadType == breakglassv1alpha1.DebugWorkloadDaemonSet || workloadType == breakglassv1alpha1.DebugWorkloadDeployment {
 		if podSpec.RestartPolicy != corev1.RestartPolicyAlways {
@@ -529,7 +546,7 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 
 	switch workloadType {
 	case breakglassv1alpha1.DebugWorkloadDaemonSet:
-		return &appsv1.DaemonSet{
+		workload := &appsv1.DaemonSet{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "apps/v1",
 				Kind:       "DaemonSet",
@@ -542,19 +559,23 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 			},
 			Spec: appsv1.DaemonSetSpec{
 				Selector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{
-						DebugSessionLabelKey: ds.Name,
-					},
+					MatchLabels: debugSessionSelectorLabels(ds),
 				},
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
-						Labels:      labels,
+						Labels:      mergeStringMaps(labels, debugSessionSelectorLabels(ds)),
 						Annotations: annotations,
 					},
 					Spec: podSpec,
 				},
 			},
-		}, renderResult.AdditionalResources, nil
+		}
+		if restrictedCatalogue {
+			if err := validateRestrictedWorkloadAnnotations(workload); err != nil {
+				return nil, nil, err
+			}
+		}
+		return workload, renderResult.AdditionalResources, nil
 
 	case breakglassv1alpha1.DebugWorkloadDeployment:
 		replicas := int32(1)
@@ -564,7 +585,7 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 		if template.Spec.ResourceQuota != nil && template.Spec.ResourceQuota.MaxPods != nil && replicas > *template.Spec.ResourceQuota.MaxPods {
 			return nil, nil, fmt.Errorf("replicas (%d) exceed resourceQuota.maxPods (%d)", replicas, *template.Spec.ResourceQuota.MaxPods)
 		}
-		return &appsv1.Deployment{
+		workload := &appsv1.Deployment{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "apps/v1",
 				Kind:       "Deployment",
@@ -590,7 +611,50 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 					Spec: podSpec,
 				},
 			},
-		}, renderResult.AdditionalResources, nil
+		}
+		if restrictedCatalogue {
+			if err := validateRestrictedWorkloadAnnotations(workload); err != nil {
+				return nil, nil, err
+			}
+		}
+		return workload, renderResult.AdditionalResources, nil
+
+	case breakglassv1alpha1.DebugWorkloadJob:
+		if podSpec.RestartPolicy != corev1.RestartPolicyNever && podSpec.RestartPolicy != corev1.RestartPolicyOnFailure {
+			podSpec.RestartPolicy = corev1.RestartPolicyNever
+		}
+		manualSelector := true
+		one := int32(1)
+		backoffLimit := int32(0)
+		activeDeadlineSeconds := max(int64(c.parseDuration(ds.Spec.RequestedDuration, effectiveDebugSessionConstraints(template, binding)).Seconds()), 1)
+		selectorLabels := debugSessionSelectorLabels(ds)
+		jobLabels := mergeStringMaps(labels, map[string]string{
+			DebugSessionUIDLabelKey: debugSessionIdentity(ds),
+		})
+		workload := &batchv1.Job{
+			TypeMeta: metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: workloadName, Namespace: targetNs, Labels: jobLabels, Annotations: annotations,
+			},
+			Spec: batchv1.JobSpec{
+				ManualSelector:        &manualSelector,
+				Selector:              &metav1.LabelSelector{MatchLabels: selectorLabels},
+				Parallelism:           &one,
+				Completions:           &one,
+				BackoffLimit:          &backoffLimit,
+				ActiveDeadlineSeconds: &activeDeadlineSeconds,
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{Labels: mergeStringMaps(jobLabels, selectorLabels), Annotations: annotations},
+					Spec:       podSpec,
+				},
+			},
+		}
+		if restrictedCatalogue {
+			if err := validateRestrictedWorkloadAnnotations(workload); err != nil {
+				return nil, nil, err
+			}
+		}
+		return workload, renderResult.AdditionalResources, nil
 
 	default:
 		return nil, nil, fmt.Errorf("unsupported workload type: %s", workloadType)
@@ -606,6 +670,7 @@ func (c *DebugSessionController) useTemplateWorkload(
 	workloadName, targetNs string,
 	ds *breakglassv1alpha1.DebugSession,
 	template *breakglassv1alpha1.DebugSessionTemplate,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
 	labels, annotations map[string]string,
 ) (ctrlclient.Object, []*unstructured.Unstructured, error) {
 	workload := renderResult.Workload
@@ -619,9 +684,7 @@ func (c *DebugSessionController) useTemplateWorkload(
 		)
 	}
 
-	selectorLabels := map[string]string{
-		DebugSessionLabelKey: ds.Name,
-	}
+	selectorLabels := debugSessionSelectorLabels(ds)
 
 	switch w := workload.(type) {
 	case *appsv1.Deployment:
@@ -631,7 +694,7 @@ func (c *DebugSessionController) useTemplateWorkload(
 		w.Labels = labels
 		w.Annotations = annotations
 		w.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
-		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels)
+		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels, selectorLabels)
 		w.Spec.Template.Annotations = mergeStringMaps(w.Spec.Template.Annotations, annotations)
 
 		// Apply the modified PodSpec back into the workload.
@@ -667,7 +730,7 @@ func (c *DebugSessionController) useTemplateWorkload(
 		w.Labels = labels
 		w.Annotations = annotations
 		w.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
-		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels)
+		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels, selectorLabels)
 		w.Spec.Template.Annotations = mergeStringMaps(w.Spec.Template.Annotations, annotations)
 
 		// Apply the modified PodSpec back into the workload (see Deployment comment above).
@@ -678,6 +741,43 @@ func (c *DebugSessionController) useTemplateWorkload(
 			w.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyAlways
 		}
 
+		return w, renderResult.AdditionalResources, nil
+
+	case *batchv1.Job:
+		w.Name = workloadName
+		w.Namespace = targetNs
+		w.Labels = mergeStringMaps(labels, map[string]string{
+			DebugSessionUIDLabelKey: debugSessionIdentity(ds),
+		})
+		w.Annotations = annotations
+		manualSelector := true
+		w.Spec.ManualSelector = &manualSelector
+		w.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
+		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels, selectorLabels)
+		w.Spec.Template.Annotations = mergeStringMaps(w.Spec.Template.Annotations, annotations)
+		w.Spec.Template.Spec = renderResult.PodSpec
+		if w.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyNever && w.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyOnFailure {
+			w.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyNever
+		}
+		one := int32(1)
+		zero := int32(0)
+		activeDeadlineSeconds := max(int64(c.parseDuration(ds.Spec.RequestedDuration, effectiveDebugSessionConstraints(template, binding)).Seconds()), 1)
+		w.Spec.Parallelism = &one
+		w.Spec.Completions = &one
+		w.Spec.BackoffLimit = &zero
+		w.Spec.ActiveDeadlineSeconds = &activeDeadlineSeconds
+		// Template authors cannot expand one session into unbounded pods or make
+		// cleanup depend on Kubernetes Job lifecycle features. Session cleanup is
+		// the sole owner of the rendered workload.
+		w.Spec.TTLSecondsAfterFinished = nil
+		w.Spec.CompletionMode = nil
+		w.Spec.Suspend = nil
+		w.Spec.PodFailurePolicy = nil
+		w.Spec.SuccessPolicy = nil
+		w.Spec.BackoffLimitPerIndex = nil
+		w.Spec.MaxFailedIndexes = nil
+		w.Spec.PodReplacementPolicy = nil
+		w.Spec.ManagedBy = nil
 		return w, renderResult.AdditionalResources, nil
 
 	default:
@@ -792,6 +892,17 @@ func (c *DebugSessionController) deployPodTemplateResource(
 // Now supports multi-document YAML where the first document can be a bare PodSpec,
 // a full Pod manifest, or a full Deployment/DaemonSet manifest.
 // Returns a PodTemplateRenderResult containing the PodSpec, optional workload, and metadata.
+func debugSessionSelectorLabels(ds *breakglassv1alpha1.DebugSession) map[string]string {
+	name := "unknown"
+	if ds != nil && ds.Name != "" {
+		name = ds.Name
+	}
+	return map[string]string{
+		DebugSessionLabelKey:    name,
+		DebugSessionUIDLabelKey: debugSessionIdentity(ds),
+	}
+}
+
 func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, podTemplate *breakglassv1alpha1.DebugPodTemplate) (*PodTemplateRenderResult, error) {
 	var renderResult *PodTemplateRenderResult
 
@@ -857,14 +968,13 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 	// Apply static overrides from session template (legacy support)
 	if template.Spec.PodOverrides != nil && template.Spec.PodOverrides.Spec != nil {
 		overrides := template.Spec.PodOverrides.Spec
-		if overrides.HostNetwork != nil {
-			spec.HostNetwork = *overrides.HostNetwork
+		if restrictedCatalogue {
+			if err := validateRestrictedCatalogueOverrides(overrides); err != nil {
+				return nil, err
+			}
 		}
-		if overrides.HostPID != nil {
-			spec.HostPID = *overrides.HostPID
-		}
-		if overrides.HostIPC != nil {
-			spec.HostIPC = *overrides.HostIPC
+		if err := c.applyPodOverridesStruct(spec, overrides); err != nil {
+			return nil, fmt.Errorf("apply static pod overrides: %w", err)
 		}
 	}
 
@@ -884,6 +994,9 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 			spec.NodeSelector = make(map[string]string)
 		}
 		for k, v := range ds.Spec.NodeSelector {
+			if existing, ok := spec.NodeSelector[k]; ok && existing != v {
+				return nil, fmt.Errorf("session nodeSelector %q=%q conflicts with the template selector value %q", k, v, existing)
+			}
 			spec.NodeSelector[k] = v
 		}
 	}
@@ -1041,9 +1154,31 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 	} else if spec.ServiceAccountName != "" || spec.AutomountServiceAccountToken == nil || *spec.AutomountServiceAccountToken {
 		return fmt.Errorf("restricted catalogue profiles cannot receive a Kubernetes service account identity")
 	}
+	dumpInputReadOnly := false
+	dumpInputMounts := 0
+	if intent == "dump-access" {
+		containers := append(append([]corev1.Container{}, spec.InitContainers...), spec.Containers...)
+		for _, container := range containers {
+			for _, mount := range container.VolumeMounts {
+				if mount.Name != "input" {
+					continue
+				}
+				dumpInputMounts++
+				if mount.MountPath != "/input" || !mount.ReadOnly {
+					return fmt.Errorf("dump-access input volume mounts must have exactly one read-only mount at /input")
+				}
+				dumpInputReadOnly = true
+			}
+		}
+		if dumpInputMounts != 1 {
+			return fmt.Errorf("dump-access requires exactly one read-only input volume mount at /input")
+		}
+	}
 	for _, volume := range spec.Volumes {
 		source := volume.VolumeSource
-		if source.EmptyDir == nil && source.ConfigMap == nil && source.DownwardAPI == nil {
+		approvedDumpInput := intent == "dump-access" && volume.Name == "input" && dumpInputReadOnly &&
+			(source.HostPath != nil || source.PersistentVolumeClaim != nil)
+		if source.EmptyDir == nil && source.ConfigMap == nil && source.DownwardAPI == nil && !approvedDumpInput {
 			return fmt.Errorf("restricted catalogue profile volume %q uses a disallowed source", volume.Name)
 		}
 	}
@@ -1085,6 +1220,10 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 		}
 		for _, env := range container.Env {
 			if env.ValueFrom != nil {
+				if intent == "cluster-validation" && ((env.Name == "VALIDATOR_POD_NAME" && env.ValueFrom.FieldRef != nil && env.ValueFrom.FieldRef.FieldPath == "metadata.name") ||
+					(env.Name == "VALIDATOR_POD_NAMESPACE" && env.ValueFrom.FieldRef != nil && env.ValueFrom.FieldRef.FieldPath == "metadata.namespace")) {
+					continue
+				}
 				return fmt.Errorf("restricted catalogue profile container %q cannot source environment variable %q", container.Name, env.Name)
 			}
 		}
@@ -1222,6 +1361,21 @@ func validateRestrictedCatalogueAnnotations(annotations map[string]string) error
 		}
 	}
 	return nil
+}
+
+func validateRestrictedWorkloadAnnotations(workload ctrlclient.Object) error {
+	var annotations map[string]string
+	switch typed := workload.(type) {
+	case *appsv1.Deployment:
+		annotations = typed.Spec.Template.Annotations
+	case *appsv1.DaemonSet:
+		annotations = typed.Spec.Template.Annotations
+	case *batchv1.Job:
+		annotations = typed.Spec.Template.Annotations
+	default:
+		return nil
+	}
+	return validateRestrictedCatalogueAnnotations(annotations)
 }
 
 func dropsAllCapabilities(drop []corev1.Capability) bool {
