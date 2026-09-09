@@ -66,7 +66,8 @@ as a writable volume, or pass `--report -` to disable the file.
 For safety, a report path supplied with `--report` or `VALIDATOR_REPORT_PATH`
 must resolve below `/reports`; relative paths are resolved within that volume,
 and traversal or symlink escapes are rejected. Report files are written with
-owner-only permissions.
+owner-only permissions. An existing report path is preserved and causes the
+write to fail; remove or choose a new path before retrying.
 
 ```bash
 docker run --rm \

@@ -231,10 +231,13 @@ func writeReportAtRoot(report clustervalidator.Report, path, root string) error 
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close temporary report: %w", err)
 	}
-	// os.Root performs every path traversal relative to one open directory
-	// descriptor and refuses symlink escapes, including concurrent replacements.
-	if err := rootHandle.Rename(temporaryName, relativePath); err != nil {
+	// Link installs the report without replacement. Unlike Root.Rename, it
+	// refuses an existing destination, including one created concurrently.
+	if err := rootHandle.Link(temporaryName, relativePath); err != nil {
 		return fmt.Errorf("install report %q: %w", relativePath, err)
+	}
+	if err := rootHandle.Remove(temporaryName); err != nil {
+		return fmt.Errorf("remove temporary report %q: %w", temporaryName, err)
 	}
 	return nil
 }

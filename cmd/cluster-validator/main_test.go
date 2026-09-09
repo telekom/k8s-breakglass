@@ -99,3 +99,15 @@ func TestWriteReportRejectsSymlinkEscapes(t *testing.T) {
 	require.Error(t, writeReportAtRoot(report, destination, root))
 	require.NoFileExists(t, outsideDestination)
 }
+
+func TestWriteReportPreservesExistingDestination(t *testing.T) {
+	root := t.TempDir()
+	report := failureReport(clustervalidator.ModeOneTime, "configuration", "new report", false)
+	destination := filepath.Join(root, "report.json")
+	require.NoError(t, os.WriteFile(destination, []byte("existing report"), 0o600))
+
+	require.Error(t, writeReportAtRoot(report, "report.json", root))
+	contents, err := os.ReadFile(destination)
+	require.NoError(t, err)
+	require.Equal(t, []byte("existing report"), contents)
+}
