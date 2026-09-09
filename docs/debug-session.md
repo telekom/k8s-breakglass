@@ -1531,10 +1531,11 @@ infer an email address from a username's local part, because the same local part
 can belong to different domains. The authorization webhook has a separate,
 issuer-scoped email-alias compatibility path for SubjectAccessReviews; that path
 does not broaden the DebugSession creation check. Grant lookup uses the cached
-cluster index when available and re-reads positive candidates through the fresh
-reader. If no eligible exact grant remains, it performs a fresh full-reader
-fallback, so newly approved grants are not hidden by cache propagation delay and
-revoked or deleted cached grants are not trusted.
+`spec.cluster` and `spec.user` field indexes when available and re-reads positive
+candidates through the fresh reader. If the indexes are unavailable, it performs
+one full-list fallback. If no eligible exact grant remains, it performs a fresh
+full-reader fallback, so newly approved grants are not hidden by cache
+propagation delay and revoked or deleted cached grants are not trusted.
 
 Mutating DebugSession endpoints that accept JSON bodies use strict decoding:
 unknown fields, malformed JSON, and trailing JSON values return `400 Bad

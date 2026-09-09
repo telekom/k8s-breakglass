@@ -1398,19 +1398,66 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		indexedReader = c.client
 	}
 	var sessions breakglassv1alpha1.BreakglassSessionList
-	if err := indexedReader.List(ctx, &sessions, ctrlclient.MatchingFields{"spec.cluster": cluster}); err != nil {
-		if !breakglass.IsFieldIndexError(err) {
-			return nil, err
+	identities := make([]string, 0, 2)
+	seenIdentities := make(map[string]struct{}, 2)
+	for _, identity := range []string{username, email} {
+		if identity == "" {
+			continue
 		}
+		if _, seen := seenIdentities[identity]; seen {
+			continue
+		}
+		seenIdentities[identity] = struct{}{}
+		identities = append(identities, identity)
+	}
+	appendSession := func(session breakglassv1alpha1.BreakglassSession, seen map[string]struct{}) {
+		key := session.Namespace + "\x00" + session.Name
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		sessions.Items = append(sessions.Items, session)
+	}
+	seenSessions := make(map[string]struct{})
+	if len(identities) == 0 {
 		var all breakglassv1alpha1.BreakglassSessionList
 		if err := reader.List(ctx, &all); err != nil {
 			return nil, err
 		}
-		sessions.Items = make([]breakglassv1alpha1.BreakglassSession, 0, len(all.Items))
 		for _, session := range all.Items {
 			if session.Spec.Cluster == cluster {
-				sessions.Items = append(sessions.Items, session)
+				appendSession(session, seenSessions)
 			}
+		}
+	} else {
+		for _, identity := range identities {
+			var matches breakglassv1alpha1.BreakglassSessionList
+			err := indexedReader.List(ctx, &matches, ctrlclient.MatchingFields{
+				"spec.cluster": cluster,
+				"spec.user":    identity,
+			})
+			if err == nil {
+				for _, session := range matches.Items {
+					appendSession(session, seenSessions)
+				}
+				continue
+			}
+			if !breakglass.IsFieldIndexError(err) {
+				return nil, err
+			}
+			// A missing index invalidates all identity-specific queries. Do one
+			// full read and apply the same cluster filter instead of issuing a
+			// second indexed query for the other identity.
+			var all breakglassv1alpha1.BreakglassSessionList
+			if err := reader.List(ctx, &all); err != nil {
+				return nil, err
+			}
+			for _, session := range all.Items {
+				if session.Spec.Cluster == cluster {
+					appendSession(session, seenSessions)
+				}
+			}
+			break
 		}
 	}
 	now := time.Now()
