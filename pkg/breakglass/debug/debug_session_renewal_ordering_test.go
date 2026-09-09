@@ -28,7 +28,7 @@ import (
 func newRenewalOrderingSession(now metav1.Time) *breakglassv1alpha1.DebugSession {
 	expiresAt := metav1.NewTime(now.Add(time.Hour))
 	return &breakglassv1alpha1.DebugSession{
-		ObjectMeta: metav1.ObjectMeta{Name: "renew-ordering", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "renew-ordering", Namespace: "default", UID: "session-uid"},
 		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:     "production",
 			TemplateRef: "standard-debug",
