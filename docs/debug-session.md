@@ -1301,9 +1301,10 @@ applicable binding for the target cluster, that binding's duration constraints
 override the template constraints for that session. Renewals extend the current
 expiration time, but the renewed expiration cannot move past
 `status.startsAt + maxDuration`.
-For a Job-backed workload, renewal also extends the tracked Job's
-`activeDeadlineSeconds` before the new expiry is written to session status;
-the API fails closed if that workload deadline cannot be updated.
+For a Job-backed workload, renewal commits the new expiry and renewal count
+before synchronizing the tracked Job's `activeDeadlineSeconds`. If the target
+update fails, the renewal remains accepted and the active reconciler retries
+the deadline sync without counting the renewal again.
 Only the requester or an active `owner`/`participant` status entry can renew a
 session; `viewer` entries and participants with `leftAt` set cannot renew.
 The active-session expiry, approval-timeout, expiring-soon message, cleanup
