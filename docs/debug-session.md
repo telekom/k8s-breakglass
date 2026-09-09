@@ -793,7 +793,7 @@ When a user creates a debug session:
    - `selectorTerms` on either the allow or the deny side are evaluated against **live namespace labels** read from the target cluster. If those labels cannot be read (spoke API error, namespace missing, no client configured), the request is **rejected** with an error naming the namespace and the offending filter — a selector-based policy is never silently skipped.
    - If a `DebugSessionClusterBinding` is selected, the namespace must satisfy both the template constraints and the binding constraints
 4. **Namespace doesn't exist**: 
-   - `createIfNotExists: true`: Creates namespace with `namespaceLabels`
+   - `createIfNotExists: true`: Creates namespace with `namespaceLabels` from the effective constraints; a binding's namespace constraints take precedence when present
    - `createIfNotExists: false`: Session fails or uses fail-open mode
 
 The web UI validates Kubernetes namespace syntax and glob-style allowed/denied patterns before submitting a debug session request. The API and controller remain the authoritative enforcement points for namespace constraints and cluster state.

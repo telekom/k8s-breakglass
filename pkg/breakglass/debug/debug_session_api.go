@@ -821,7 +821,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
 	authorizationReader := c.reader()
-	sessionGroups, err := c.activeBreakglassGroups(apiCtx, authorizationReader, req.Cluster, currentUserStr, userEmail)
+	sessionGroups, err := c.activeBreakglassGroups(apiCtx, authorizationReader, req.Cluster, currentUserStr, userEmail, ctx.GetString("issuer"))
 	if err != nil {
 		reqLog.Errorw("Failed to load active Breakglass session groups", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate Breakglass access")
@@ -1387,7 +1387,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	ctx.JSON(http.StatusCreated, response)
 }
 
-func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, reader ctrlclient.Reader, cluster, username, email string) ([]string, error) {
+func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, reader ctrlclient.Reader, cluster, username, email, issuer string) ([]string, error) {
 	var sessions breakglassv1alpha1.BreakglassSessionList
 	if err := reader.List(ctx, &sessions); err != nil {
 		return nil, err
@@ -1396,10 +1396,10 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 	groups := make([]string, 0)
 	for _, session := range sessions.Items {
 		if session.Spec.Cluster != cluster ||
-			session.Status.State != breakglassv1alpha1.SessionStateApproved ||
-			session.Status.ExpiresAt.IsZero() ||
-			!session.Status.ExpiresAt.After(now) ||
-			(session.Spec.User != username && session.Spec.User != email) {
+			!breakglass.IsSessionAuthorizationEligible(session, now) ||
+			(session.Spec.User != username && session.Spec.User != email) ||
+			(issuer != "" && !session.Spec.AllowIDPMismatch &&
+				strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") != strings.TrimRight(issuer, "/")) {
 			continue
 		}
 		groups = append(groups, session.Spec.GrantedGroup)

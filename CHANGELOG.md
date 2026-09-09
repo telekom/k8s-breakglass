@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Filter Breakglass grants used for DebugSession creation by the request issuer unless the grant explicitly allows IDP mismatch (PR #1326).
+
 - Disable trusted raw field output for a complete debug template set when Sprig
   mutation functions can modify requester-visible maps during rendering.
 
