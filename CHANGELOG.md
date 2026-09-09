@@ -217,7 +217,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cluster-validator pod checks now exclude only the exact in-cluster validator
   pod when both Downward API identity values match; incomplete identity fails
   safe by excluding nothing.
-- Cluster-validator pod readiness now uses bounded continuation-token pages and
+- Cluster-validator pod readiness excludes both Succeeded and Failed terminal
+  pods, uses bounded continuation-token pages, and
   stops at the first unhealthy active pod, while preserving exact validator
   self-pod exclusion and fail-closed list errors.
 - Pod-template cleanup now migrates pre-UID auxiliary resources only when their

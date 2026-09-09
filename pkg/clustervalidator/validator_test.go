@@ -159,6 +159,35 @@ func TestPodsCheckPaginatesWithBoundedContinueTokens(t *testing.T) {
 	require.Equal(t, "page-2", requests[1].Continue)
 }
 
+func TestPodsCheckExcludesSucceededAndFailedPods(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result func(*testing.T, kubernetes.Interface) CheckResult
+	}{
+		{
+			name: "unpaged",
+			result: func(_ *testing.T, client kubernetes.Interface) CheckResult {
+				return (podsCheck{}).Run(context.Background(), readOnlyClient{client: client}, nil)
+			},
+		},
+		{
+			name: "paged",
+			result: func(t *testing.T, client kubernetes.Interface) CheckResult {
+				return runPodsCheckWithIdentity(t, client, PodIdentity{})
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := k8sfake.NewSimpleClientset(
+				&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "succeeded", Namespace: "default"}, Status: corev1.PodStatus{Phase: corev1.PodSucceeded}},
+				&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "failed", Namespace: "default"}, Status: corev1.PodStatus{Phase: corev1.PodFailed}},
+				&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "active", Namespace: "default"}, Status: readyPodStatus()},
+			)
+			require.Equal(t, CheckResult{Name: "pods-ready", Status: StatusReady, Message: "1 active pod(s) Ready"}, tc.result(t, client))
+		})
+	}
+}
+
 func TestPodsCheckStopsBeforeLaterPagesWhenAnActivePodIsUnready(t *testing.T) {
 	var requests []metav1.ListOptions
 	client := newPagedPodClient(func(_ context.Context, options metav1.ListOptions) (*corev1.PodList, error) {

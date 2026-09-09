@@ -337,7 +337,7 @@ func (podsCheck) Run(ctx context.Context, client ReadOnlyClient, _ ReadOnlyDisco
 	}
 	active := 0
 	for _, pod := range pods.Items {
-		if pod.Status.Phase == corev1.PodSucceeded {
+		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
 			continue
 		}
 		active++
@@ -357,7 +357,7 @@ func runPagedPodsCheck(ctx context.Context, client podPageReader) CheckResult {
 			return CheckResult{Name: "pods-ready", Status: StatusNotReady, Message: "could not list pods"}
 		}
 		for _, pod := range pods.Items {
-			if pod.Status.Phase == corev1.PodSucceeded {
+			if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
 				continue
 			}
 			active++

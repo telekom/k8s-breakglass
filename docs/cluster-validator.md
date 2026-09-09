@@ -48,8 +48,8 @@ Built-in checks use only public Kubernetes APIs:
 * API server version and API discovery are reachable;
 * at least one node exists and every node reports `Ready=True`;
 * no namespace is terminating; and
-* every non-Succeeded pod is Running and reports `PodReady=True`. When the
-  validator runs inside Kubernetes, it excludes only its exact current pod
+* every non-Succeeded, non-Failed pod is Running and reports `PodReady=True`.
+  When the validator runs inside Kubernetes, it excludes only its exact current pod
   (matching both `metadata.name` and `metadata.namespace`) from this check.
   The two Downward API identity values are optional for standalone runs; if
   either is missing or does not match, no pod is excluded.
