@@ -584,7 +584,8 @@ func (c *DebugSessionController) cleanupDeployedResources(
 				continue
 			}
 		}
-		// Skip pod-template resources - already cleaned up above
+		// Retain pod-template inventory while specialized cleanup is pending;
+		// otherwise let the generic pass remove legacy residual references.
 		if ref.Source == "pod-template" {
 			if keepPodTemplateRefs {
 				remainingDeployedResources = append(remainingDeployedResources, ref)
@@ -876,7 +877,7 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 }
 
 // parseDuration parses the requested duration with template constraints.
-// Supports day units (e.g., "1d", "7d") in addition to standard Go duration units.
+// Supports day, week, and year units (e.g., "1d", "1w", "1y") in addition to standard Go duration units.
 func (c *DebugSessionController) parseDuration(requested string, constraints *breakglassv1alpha1.DebugSessionConstraints) time.Duration {
 	defaultDur := time.Hour
 	maxDur := 4 * time.Hour
