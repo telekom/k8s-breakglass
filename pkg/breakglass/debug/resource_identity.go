@@ -260,11 +260,47 @@ func stampCreateOperation(obj client.Object, session *breakglassv1alpha1.DebugSe
 	if annotations == nil {
 		annotations = make(map[string]string)
 	}
-	operationID := uuid.NewString()
+	operationID := persistedCreateOperationID(obj, session)
+	if operationID == "" {
+		operationID = uuid.NewString()
+	}
 	if session.UID != "" {
 		annotations[sourceSessionUIDAnnotation] = string(session.UID)
 	}
 	annotations[createOperationIDAnnotation] = operationID
 	obj.SetAnnotations(annotations)
 	return operationID, nil
+}
+
+func persistedCreateOperationID(obj client.Object, session *breakglassv1alpha1.DebugSession) string {
+	if session == nil {
+		return ""
+	}
+	apiVersion := obj.GetObjectKind().GroupVersionKind().GroupVersion().String()
+	kind := obj.GetObjectKind().GroupVersionKind().Kind
+	if unstructuredObj, ok := obj.(*unstructured.Unstructured); ok {
+		apiVersion = unstructuredObj.GetAPIVersion()
+		kind = unstructuredObj.GetKind()
+	}
+	for _, ref := range session.Status.DeployedResources {
+		if ref.APIVersion == apiVersion && ref.Kind == kind && ref.Name == obj.GetName() && ref.Namespace == obj.GetNamespace() {
+			return ref.CreateOperationID
+		}
+	}
+	for _, status := range session.Status.PodTemplateResourceStatuses {
+		if status.APIVersion == apiVersion && status.Kind == kind && status.ResourceName == obj.GetName() && status.Namespace == obj.GetNamespace() {
+			return status.CreateOperationID
+		}
+	}
+	for _, status := range session.Status.AuxiliaryResourceStatuses {
+		if status.APIVersion == apiVersion && status.Kind == kind && status.ResourceName == obj.GetName() && status.Namespace == obj.GetNamespace() {
+			return status.CreateOperationID
+		}
+		for _, ref := range status.AdditionalResources {
+			if ref.APIVersion == apiVersion && ref.Kind == kind && ref.ResourceName == obj.GetName() && ref.Namespace == obj.GetNamespace() {
+				return ref.CreateOperationID
+			}
+		}
+	}
+	return ""
 }
