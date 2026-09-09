@@ -186,3 +186,26 @@ func TestExtendTrackedJobDeadlinesIgnoresNonWorkloadJobs(t *testing.T) {
 func ptrTime(value metav1.Time) *metav1.Time {
 	return &value
 }
+
+func TestTrackedJobDeadlineWaitsForStart(t *testing.T) {
+	start := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
+	deadline := int64(3600)
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "pending-job", Namespace: "default", UID: "job-uid"}, Spec: batchv1.JobSpec{ActiveDeadlineSeconds: &deadline}}
+	session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name, Namespace: job.Namespace, UID: string(job.UID), Source: "debug-pod"}}}}
+	patches := 0
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(job).WithStatusSubresource(job).WithInterceptorFuncs(interceptor.Funcs{Patch: func(ctx context.Context, underlying client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+		patches++
+		return underlying.Patch(ctx, obj, patch, opts...)
+	}}).Build()
+	expiry := metav1.NewTime(start.Add(2 * time.Hour))
+	require.NoError(t, syncTrackedDebugJobDeadlines(context.Background(), target, session, expiry))
+	require.Zero(t, patches)
+	require.NoError(t, target.Get(context.Background(), client.ObjectKeyFromObject(job), job))
+	require.Equal(t, int64(3600), *job.Spec.ActiveDeadlineSeconds)
+	job.Status.StartTime = &start
+	require.NoError(t, target.Status().Update(context.Background(), job))
+	require.NoError(t, syncTrackedDebugJobDeadlines(context.Background(), target, session, expiry))
+	require.Equal(t, 1, patches)
+	require.NoError(t, target.Get(context.Background(), client.ObjectKeyFromObject(job), job))
+	require.Equal(t, int64(7200), *job.Spec.ActiveDeadlineSeconds)
+}

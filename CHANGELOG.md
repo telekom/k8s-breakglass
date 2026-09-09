@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retry deadline synchronization quietly while tracked Jobs are waiting to start.
+
 - Include diagnostic-artifact-collector in aggregate multi-platform utility builds.
 
 - Reject malformed chart SBOMs against the SPDX 2.3 schema before release attestation.
