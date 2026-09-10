@@ -795,13 +795,13 @@ type DebugSessionConstraints struct {
 	// maxDuration is the maximum allowed session duration.
 	// +optional
 	// +kubebuilder:default="4h"
-	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
+	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
 	MaxDuration string `json:"maxDuration,omitempty"`
 
 	// defaultDuration is the default session duration if not specified.
 	// +optional
 	// +kubebuilder:default="1h"
-	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
+	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
 	DefaultDuration string `json:"defaultDuration,omitempty"`
 
 	// allowRenewal controls whether session renewal is permitted.

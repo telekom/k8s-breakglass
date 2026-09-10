@@ -202,3 +202,7 @@ rejections; validation performs no schema downloads.
 
 `make -C utils/images multiarch` builds and verifies both supported platforms
 for storage-debug, dump-reader, and diagnostic-artifact-collector.
+
+The catalogue utility integration workflow applies its optional dispatch `ref` to
+every job, including diagnostic artifact collection. Without it, all jobs use
+the PR head or triggering commit.

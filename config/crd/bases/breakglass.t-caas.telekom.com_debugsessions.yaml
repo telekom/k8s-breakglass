@@ -2865,7 +2865,7 @@ spec:
                         default: 1h
                         description: defaultDuration is the default session duration
                           if not specified.
-                        pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
+                        pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                         type: string
                       maxConcurrentSessions:
                         default: 2
@@ -2876,7 +2876,7 @@ spec:
                       maxDuration:
                         default: 4h
                         description: maxDuration is the maximum allowed session duration.
-                        pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
+                        pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                         type: string
                       maxRenewals:
                         description: |-

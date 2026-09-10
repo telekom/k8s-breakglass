@@ -1825,6 +1825,13 @@ spec:
 4. **Investigate cleanup retries**: Failed debug-resource deletes keep their status tracking entries so the controller can retry cleanup on the next reconciliation
 5. **Bound Job lifetimes**: Job workloads reconcile their active deadline against the committed session expiry after a delayed start
 
+Template and cluster-binding `constraints.maxDuration` and `defaultDuration`
+accept weeks (`1w`), years (`1y`), and fractional sub-day values (`1.5h`),
+consistent with runtime duration parsing. Day, week, and year terms must be integers.
+
+When `spec.audit.recordingRetention` is supplied, it must be a positive duration,
+even when terminal recording is disabled. Invalid values produce one field error.
+
 ## Troubleshooting
 
 ### Session stuck in Pending

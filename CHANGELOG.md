@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Align template and cluster-binding duration schemas with supported week, year, and fractional sub-day values.
+
+- Report invalid terminal-recording retention once and test every catalogue utility job at the requested dispatch revision.
+
 - Omit disabled deployment variables from requester template discovery.
 
 - Retry deadline synchronization quietly while tracked Jobs are waiting to start.

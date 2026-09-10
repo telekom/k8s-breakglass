@@ -189,4 +189,39 @@ func TestCRDInstallation(t *testing.T) {
 		require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(binding), &stored))
 		require.False(t, stored.Spec.Hidden, "API server must preserve hidden on update")
 	})
+	t.Run("template and binding duration admission", func(t *testing.T) {
+		scheme := runtime.NewScheme()
+		require.NoError(t, corev1.AddToScheme(scheme))
+		require.NoError(t, AddToScheme(scheme))
+		apiClient, err := client.New(cfg, client.Options{Scheme: scheme})
+		require.NoError(t, err)
+		ctx := context.Background()
+		namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "duration-schema-"}}
+		require.NoError(t, apiClient.Create(ctx, namespace))
+		for _, value := range []string{"1w", "1y", "1.5h", ".5h", "1d1.5h", "500µs", "500μs", "1d500µs", "-1h", "1.5d", "1.5w", "1d.5h", "1d500μs"} {
+			t.Run(value, func(t *testing.T) {
+				valid := value != "-1h" && value != "1.5d" && value != "1.5w" && value != "1d.5h" && value != "1d500μs"
+				constraints := &DebugSessionConstraints{MaxDuration: value, DefaultDuration: value}
+				template := &DebugSessionTemplate{
+					ObjectMeta: metav1.ObjectMeta{GenerateName: "duration-template-"},
+					Spec:       DebugSessionTemplateSpec{PodTemplateRef: &DebugPodTemplateReference{Name: "debug-pod"}, Constraints: constraints},
+				}
+				result := ValidateDebugSessionTemplate(template)
+				require.Equal(t, valid, result.IsValid(), result.ErrorMessage())
+				binding := &DebugSessionClusterBinding{
+					ObjectMeta: metav1.ObjectMeta{GenerateName: "duration-binding-", Namespace: namespace.Name},
+					Spec:       DebugSessionClusterBindingSpec{TemplateRef: &TemplateReference{Name: "debug-template"}, Clusters: []string{"test-cluster"}, Constraints: constraints},
+				}
+				for _, object := range []client.Object{template, binding} {
+					err := apiClient.Create(ctx, object)
+					if valid {
+						require.NoError(t, err)
+					} else {
+						require.Error(t, err)
+						require.Contains(t, err.Error(), "constraints")
+					}
+				}
+			})
+		}
+	})
 }
