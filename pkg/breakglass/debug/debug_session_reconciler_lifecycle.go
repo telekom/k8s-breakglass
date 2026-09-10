@@ -18,6 +18,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -1240,7 +1241,7 @@ func (c *DebugSessionController) reconcileActiveAccounting(ctx context.Context, 
 		continuation := ""
 		for {
 			var sessions breakglassv1alpha1.DebugSessionList
-			if err := reader.List(ctx, &sessions, &ctrlclient.ListOptions{Limit: 500, Continue: continuation}); err != nil {
+			if err := reader.List(ctx, &sessions, &ctrlclient.ListOptions{Limit: 500, Continue: continuation, Raw: &metav1.ListOptions{FieldSelector: fields.OneTermEqualSelector("spec.templateRef", ds.Spec.TemplateRef).String()}}); err != nil {
 				return fmt.Errorf("list accounting sessions: %w", err)
 			}
 			for i := range sessions.Items {

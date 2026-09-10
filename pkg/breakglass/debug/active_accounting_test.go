@@ -46,7 +46,16 @@ func TestActiveAccountingRetriesFreshGlobalCountAndPreservesMetadata(t *testing.
 		}
 		return cl.Status().Patch(ctx, obj, p, opts...)
 	}})
-	c := NewDebugSessionController(zap.NewNop().Sugar(), writer, nil).WithAPIReader(hub)
+	reader := interceptor.NewClient(hub, interceptor.Funcs{List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+		options := &client.ListOptions{}
+		for _, option := range opts {
+			option.ApplyToList(options)
+		}
+		require.Equal(t, "spec.templateRef="+template.Name, options.AsListOptions().FieldSelector)
+		require.EqualValues(t, 500, options.AsListOptions().Limit)
+		return cl.List(ctx, list, opts...)
+	}})
+	c := NewDebugSessionController(zap.NewNop().Sugar(), writer, nil).WithAPIReader(reader)
 	require.NoError(t, c.reconcileActiveAccounting(ctx, first, true))
 	require.Equal(t, 2, writes)
 	live := &breakglassv1alpha1.DebugSessionTemplate{}
@@ -108,4 +117,34 @@ func TestTerminalAccountingRepairsUsageAfterActivationWriteFailure(t *testing.T)
 	require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(podTemplate), podTemplate))
 	require.Contains(t, podTemplate.Status.UsedBy, template.Name)
 	t.Cleanup(func() { metrics.DebugSessionsActive.DeleteLabelValues("one", template.Name) })
+}
+
+func TestActiveAccountingConflictDoesNotRetainClearedPodTemplate(t *testing.T) {
+	ctx := context.Background()
+	pod := &breakglassv1alpha1.DebugPodTemplate{ObjectMeta: metav1.ObjectMeta{Name: "old-pod-template"}}
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "rotating-template", UID: "template-uid"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{Name: pod.Name}}}
+	ds := newTestDebugSession("rotating-session", template.Name, "cluster", "user")
+	ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(template, pod, ds).WithStatusSubresource(template, pod, ds).Build()
+	attempts := 0
+	writer := interceptor.NewClient(hub, interceptor.Funcs{SubResourcePatch: func(ctx context.Context, cl client.Client, sub string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+		if _, ok := obj.(*breakglassv1alpha1.DebugSessionTemplate); ok {
+			attempts++
+			if attempts == 1 {
+				live := &breakglassv1alpha1.DebugSessionTemplate{}
+				require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(template), live))
+				live.Spec.PodTemplateRef = nil
+				require.NoError(t, hub.Update(ctx, live))
+			}
+		}
+		return cl.Status().Patch(ctx, obj, patch, opts...)
+	}})
+	c := NewDebugSessionController(zap.NewNop().Sugar(), writer, nil).WithAPIReader(hub)
+	require.NoError(t, c.reconcileActiveAccounting(ctx, ds, true))
+	require.Equal(t, 2, attempts, "real resource-version conflict must retry")
+	require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(pod), pod))
+	require.Empty(t, pod.Status.UsedBy, "failed attempt must not retain its old pod-template target")
+	require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(template), template))
+	require.EqualValues(t, 1, template.Status.ActiveSessionCount)
+	t.Cleanup(func() { metrics.DebugSessionsActive.DeleteLabelValues(ds.Spec.Cluster, template.Name) })
 }

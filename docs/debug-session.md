@@ -2066,3 +2066,5 @@ markers and matching the requested content, then records its returned UID. Cance
 transport errors do not trigger adoption.
 
 Active accounting is recomputed from live session state: template counts include all clusters, while active gauges remain per cluster and template. Optimistic template conflicts repeat the live list, and Active reconciliation repairs accounting after a transient publication failure. Accounting failures do not prevent spoke resource cleanup.
+
+Active accounting uses the CRD selectable `spec.templateRef` field to bound each authoritative paginated list to the affected template, rather than scanning unrelated session history.
