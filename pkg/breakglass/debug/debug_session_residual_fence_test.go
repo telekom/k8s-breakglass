@@ -6,6 +6,7 @@ package debug
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -116,6 +117,12 @@ func TestDebugSessionCleanupMergesConcurrentSameUIDInventory(t *testing.T) {
 func TestDebugSessionCleanupMergesConcurrentCreateOperationInventoryAfterConflict(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	liveTransitionTime := metav1.NewTime(time.Date(2026, 9, 10, 18, 0, 0, 0, time.UTC))
+	liveCleanupCondition := metav1.Condition{
+		Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionTrue,
+		ObservedGeneration: 11, LastTransitionTime: liveTransitionTime,
+		Reason: "CleanupFailed", Message: "live cleanup failure",
+	}
 	deployedA := breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "target", Name: "resource", UID: "", CreateOperationID: "op-a"}
 	deployedB := deployedA
 	deployedB.CreateOperationID = "op-b"
@@ -133,6 +140,7 @@ func TestDebugSessionCleanupMergesConcurrentCreateOperationInventoryAfterConflic
 		DeployedResources:           []breakglassv1alpha1.DeployedResourceRef{deployedA},
 		PodTemplateResourceStatuses: []breakglassv1alpha1.PodTemplateResourceStatus{podTemplateA},
 		AuxiliaryResourceStatuses:   []breakglassv1alpha1.AuxiliaryResourceStatus{mainA, nestedA},
+		Conditions:                  []metav1.Condition{liveCleanupCondition},
 	}}
 	injected := false
 	hub := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).WithObjects(live).
@@ -152,6 +160,11 @@ func TestDebugSessionCleanupMergesConcurrentCreateOperationInventoryAfterConflic
 	stale := live.DeepCopy()
 	stale.Status.DeployedResources = nil
 	stale.Status.PodTemplateResourceStatuses = nil
+	stale.Status.Conditions = []metav1.Condition{{
+		Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionFalse,
+		ObservedGeneration: 3, LastTransitionTime: metav1.NewTime(liveTransitionTime.Add(time.Hour)),
+		Reason: "CleanupRecovered", Message: "stale recovery",
+	}}
 	nestedDesired := nestedA.DeepCopy()
 	nestedDesired.AdditionalResources = nil
 	stale.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{*nestedDesired}
@@ -160,6 +173,12 @@ func TestDebugSessionCleanupMergesConcurrentCreateOperationInventoryAfterConflic
 	assert.True(t, injected, "status patch conflict was not injected")
 	var stored breakglassv1alpha1.DebugSession
 	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(live), &stored))
+	storedCleanupCondition := stored.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+	require.NotNil(t, storedCleanupCondition)
+	assert.Equal(t, metav1.ConditionTrue, storedCleanupCondition.Status)
+	assert.Equal(t, liveCleanupCondition.ObservedGeneration, storedCleanupCondition.ObservedGeneration)
+	assert.True(t, storedCleanupCondition.LastTransitionTime.Equal(&liveCleanupCondition.LastTransitionTime))
+	assert.Equal(t, liveCleanupCondition.Message, storedCleanupCondition.Message)
 	require.Len(t, stored.Status.DeployedResources, 1)
 	assert.Equal(t, "op-b", stored.Status.DeployedResources[0].CreateOperationID)
 	require.Len(t, stored.Status.PodTemplateResourceStatuses, 1)

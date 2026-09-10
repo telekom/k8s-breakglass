@@ -81,6 +81,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Preserve concurrently created cleanup inventory entries when same-coordinate resources have distinct creation-operation provenance.
 
+- Preserve live cleanup condition transition metadata when a stale recovery
+  retry races with newly retained residual inventory.
+
 - Redact structured diagnostic authorization headers and remove obsolete variable-sanitization warnings; template serialization remains mandatory.
 
 - Align template and cluster-binding duration schemas with supported week, year, and fractional sub-day values.

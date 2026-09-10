@@ -716,9 +716,19 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 		if condition := desiredCleanupCondition(desiredStatus.Conditions); condition != nil {
 			mergedCondition := condition.DeepCopy()
 			if mergedCondition.Status == metav1.ConditionFalse && cleanupStatusHasResiduals(current.Status) {
-				mergedCondition.Status = metav1.ConditionTrue
-				mergedCondition.Reason = "CleanupFailed"
-				mergedCondition.Message = boundedCleanupConditionMessage(current)
+				// A stale recovery attempt must not rewrite the live failure
+				// condition after a concurrent resource was retained. Preserve the
+				// live condition when it already records that same failure; its
+				// transition metadata describes the actual persisted state.
+				if liveCondition := current.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)); liveCondition != nil && liveCondition.Status == metav1.ConditionTrue {
+					mergedCondition = liveCondition.DeepCopy()
+				} else {
+					mergedCondition.Status = metav1.ConditionTrue
+					mergedCondition.ObservedGeneration = current.Generation
+					mergedCondition.LastTransitionTime = metav1.Now()
+					mergedCondition.Reason = "CleanupFailed"
+					mergedCondition.Message = boundedCleanupConditionMessage(current)
+				}
 			}
 			current.SetCondition(*mergedCondition)
 		}
