@@ -433,8 +433,8 @@ func (r *ClusterConfigReconciler) stampDebugSessionTerminationRetention(ctx cont
 		}
 		return nil
 	}
+	template := &breakglassv1alpha1.DebugSessionTemplate{}
 	if session.Spec.TemplateRef != "" {
-		template := &breakglassv1alpha1.DebugSessionTemplate{}
 		if err := r.Get(ctx, client.ObjectKey{Name: session.Spec.TemplateRef}, template); err != nil {
 			return fmt.Errorf("resolve debug session retention template: %w", err)
 		}
@@ -451,7 +451,16 @@ func (r *ClusterConfigReconciler) stampDebugSessionTerminationRetention(ctx cont
 		if err := r.Get(ctx, client.ObjectKey{Name: session.Spec.BindingRef.Name, Namespace: session.Spec.BindingRef.Namespace}, binding); err != nil {
 			return fmt.Errorf("resolve debug session retention binding: %w", err)
 		}
+	} else if !session.Status.ResolvedBindingSnapshotCaptured && session.Spec.TemplateRef != "" {
+		discovered, err := utils.FindDebugSessionBinding(ctx, r.Client, template, session.Spec.Cluster)
+		if err != nil {
+			return fmt.Errorf("resolve debug session retention binding: %w", err)
+		}
+		if discovered != nil {
+			binding = discovered
+		}
 	}
+
 	if err := include(binding.Spec.Constraints); err != nil {
 		return err
 	}

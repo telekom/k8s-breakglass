@@ -24,8 +24,6 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
-	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -39,13 +37,13 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -1184,55 +1182,7 @@ func (c *DebugSessionController) deferOnUnresolvedBinding(
 // This enables binding configuration to be applied even when BindingRef is not explicitly set.
 // Returns nil if no matching binding is found.
 func (c *DebugSessionController) findBindingForSession(ctx context.Context, template *breakglassv1alpha1.DebugSessionTemplate, clusterName string) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
-	bindingList := &breakglassv1alpha1.DebugSessionClusterBindingList{}
-	if err := c.approvalReader().List(ctx, bindingList); err != nil {
-		return nil, fmt.Errorf("failed to list cluster bindings: %w", err)
-	}
-
-	// Get cluster config for label-based matching
-	var clusterConfig *breakglassv1alpha1.ClusterConfig
-	clusterConfigList := &breakglassv1alpha1.ClusterConfigList{}
-	if err := c.approvalReader().List(ctx, clusterConfigList); err != nil {
-		return nil, fmt.Errorf("list cluster configs for binding quota resolution: %w", err)
-	}
-	for i := range clusterConfigList.Items {
-		if clusterConfigList.Items[i].Name == clusterName {
-			if clusterConfig != nil {
-				return nil, fmt.Errorf("ambiguous cluster config for binding quota resolution")
-			}
-			clusterConfig = &clusterConfigList.Items[i]
-		}
-	}
-
-	sort.Slice(bindingList.Items, func(i, j int) bool {
-		a, b := bindingList.Items[i], bindingList.Items[j]
-		return a.Namespace+"/"+a.Name < b.Namespace+"/"+b.Name
-	})
-	for i := range bindingList.Items {
-		binding := &bindingList.Items[i]
-		if !breakglass.IsBindingActive(binding) {
-			continue
-		}
-
-		// Check if binding references this template
-		if !c.bindingMatchesTemplate(binding, template) {
-			continue
-		}
-
-		if binding.Spec.ClusterSelector != nil && clusterConfig == nil && !slices.Contains(binding.Spec.Clusters, clusterName) {
-			return nil, fmt.Errorf("cluster config required to resolve binding selector")
-		}
-
-		// Check if binding matches this cluster
-		if !c.bindingMatchesCluster(binding, clusterName, clusterConfig) {
-			continue
-		}
-
-		// Found a matching binding
-		return binding, nil
-	}
-
-	return nil, nil // No matching binding found (not an error)
+	return utils.FindDebugSessionBinding(ctx, c.approvalReader(), template, clusterName)
 }
 
 func (c *DebugSessionController) approvalReader() ctrlclient.Reader {
@@ -1255,44 +1205,10 @@ func (c *DebugSessionController) newKubectlDebugHandler() *KubectlDebugHandler {
 
 // bindingMatchesTemplate checks if a binding references the given template
 func (c *DebugSessionController) bindingMatchesTemplate(binding *breakglassv1alpha1.DebugSessionClusterBinding, template *breakglassv1alpha1.DebugSessionTemplate) bool {
-	// Check templateRef
-	if binding.Spec.TemplateRef != nil && binding.Spec.TemplateRef.Name == template.Name {
-		return true
-	}
-	// Check templateSelector
-	if binding.Spec.TemplateSelector != nil {
-		selector, err := metav1.LabelSelectorAsSelector(binding.Spec.TemplateSelector)
-		if err == nil {
-			templateLabels := labels.Set(template.Labels)
-			if selector.Matches(templateLabels) {
-				return true
-			}
-		}
-	}
-	return false
+	return utils.DebugBindingMatchesTemplate(binding, template)
 }
-
-// bindingMatchesCluster checks if a binding applies to the given cluster
 func (c *DebugSessionController) bindingMatchesCluster(binding *breakglassv1alpha1.DebugSessionClusterBinding, clusterName string, clusterConfig *breakglassv1alpha1.ClusterConfig) bool {
-	// Check explicit cluster list
-	for _, cluster := range binding.Spec.Clusters {
-		if cluster == clusterName {
-			return true
-		}
-	}
-
-	// Check clusterSelector
-	if binding.Spec.ClusterSelector != nil && clusterConfig != nil {
-		selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
-		if err == nil {
-			clusterLabels := labels.Set(clusterConfig.Labels)
-			if selector.Matches(clusterLabels) {
-				return true
-			}
-		}
-	}
-
-	return false
+	return utils.DebugBindingMatchesCluster(binding, clusterName, clusterConfig)
 }
 
 // resolveImpersonationConfig determines the impersonation configuration for a session.
