@@ -592,7 +592,6 @@ func (h *KubectlDebugHandler) completeEphemeralContainerOperation(
 						addEphemeralContainerRefIfMissing(status, *ref)
 					}
 					if ref != nil && recordRefs && status.State == breakglassv1alpha1.DebugSessionStateActive {
-						addEphemeralContainerRefIfMissing(status, *ref)
 						addAllowedPodIfMissing(status, breakglassv1alpha1.AllowedPodRef{Namespace: ref.Namespace, Name: ref.PodName, UID: ref.PodUID, Ready: true})
 					}
 				}
