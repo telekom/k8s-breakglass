@@ -50,10 +50,9 @@ func TestConnectionLeaseAcquireValidateRecreateFencesOldReference(t *testing.T) 
 	ref, err := service.Acquire(ctx, proof)
 	require.NoError(t, err)
 	require.NoError(t, service.Validate(ctx, ref, 0))
-	refB, err := service.Acquire(ctx, ConnectionLeaseProof{Namespace: proof.Namespace, SessionUID: "session-b", TargetUID: proof.TargetUID, ProfileDigest: proof.ProfileDigest, ExpiresAt: proof.ExpiresAt})
-	require.NoError(t, err)
+	_, err = service.Acquire(ctx, ConnectionLeaseProof{Namespace: proof.Namespace, SessionUID: "session-b", TargetUID: proof.TargetUID, ProfileDigest: proof.ProfileDigest, ExpiresAt: proof.ExpiresAt})
+	require.Error(t, err, "a target attachment is exclusive while the existing lease is active")
 	require.NoError(t, service.Revoke(ctx, ref))
-	require.NoError(t, service.Revoke(ctx, refB))
 	newRef, err := service.Acquire(ctx, ConnectionLeaseProof{Namespace: proof.Namespace, SessionUID: "session-b", TargetUID: proof.TargetUID, ProfileDigest: proof.ProfileDigest, ExpiresAt: proof.ExpiresAt})
 	require.NoError(t, err)
 	require.NotEqual(t, ref.HolderUID, newRef.HolderUID)
@@ -72,6 +71,24 @@ func TestConnectionLeaseExpiredCannotBeAcquiredByDifferentSession(t *testing.T) 
 	service := NewConnectionLeaseService(client)
 	_, err := service.Acquire(ctx, ConnectionLeaseProof{Namespace: "controller", SessionUID: types.UID("session-b"), TargetUID: "cluster-a", ProfileDigest: "sha256:a", ExpiresAt: time.Now().Add(time.Minute)})
 	require.NoError(t, err)
+}
+
+func TestConnectionLeaseSessionScopedClaimsAllowDistinctSessionsOnCluster(t *testing.T) {
+	ctx := context.Background()
+	scheme := testScheme()
+	require.NoError(t, coordinationv1.AddToScheme(scheme))
+	client := newLeaseClient(fake.NewClientBuilder().WithScheme(scheme))
+	service := NewConnectionLeaseService(client)
+	base := ConnectionLeaseProof{Namespace: "controller", TargetUID: "cluster-a", ProfileDigest: "sha256:a", ExpiresAt: time.Now().Add(time.Minute)}
+	first, err := service.acquire(ctx, ConnectionLeaseProof{Namespace: base.Namespace, SessionUID: "session-a", TargetUID: base.TargetUID, ProfileDigest: base.ProfileDigest, ExpiresAt: base.ExpiresAt}, true)
+	require.NoError(t, err)
+	second, err := service.acquire(ctx, ConnectionLeaseProof{Namespace: base.Namespace, SessionUID: "session-b", TargetUID: base.TargetUID, ProfileDigest: base.ProfileDigest, ExpiresAt: base.ExpiresAt}, true)
+	require.NoError(t, err)
+	require.NotEqual(t, first.Name, second.Name)
+	_, err = service.Acquire(ctx, ConnectionLeaseProof{Namespace: base.Namespace, SessionUID: "attachment-a", TargetUID: base.TargetUID, ProfileDigest: base.ProfileDigest, ExpiresAt: base.ExpiresAt})
+	require.NoError(t, err)
+	_, err = service.Acquire(ctx, ConnectionLeaseProof{Namespace: base.Namespace, SessionUID: "attachment-b", TargetUID: base.TargetUID, ProfileDigest: base.ProfileDigest, ExpiresAt: base.ExpiresAt})
+	require.Error(t, err, "target-scoped attachment claim remains exclusive")
 }
 
 func TestConnectionLeaseExpiredSameSessionAdvancesEpoch(t *testing.T) {

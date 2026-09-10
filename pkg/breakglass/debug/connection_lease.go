@@ -196,7 +196,7 @@ func (s *ConnectionLeaseService) AcquireForSession(ctx context.Context, ds *brea
 	if namespace == "" {
 		namespace = ds.Namespace
 	}
-	ref, err := s.Acquire(ctx, ConnectionLeaseProof{Namespace: namespace, SessionUID: ds.UID, TargetUID: targetUID, ProfileDigest: digest, ExpiresAt: ds.Status.ExpiresAt.Time})
+	ref, err := s.acquire(ctx, ConnectionLeaseProof{Namespace: namespace, SessionUID: ds.UID, TargetUID: targetUID, ProfileDigest: digest, ExpiresAt: ds.Status.ExpiresAt.Time}, true)
 	if err != nil {
 		return breakglassv1alpha1.DebugSessionConnectionLease{}, err
 	}
@@ -220,20 +220,34 @@ func (s *ConnectionLeaseService) RevokeSession(ctx context.Context, ds *breakgla
 }
 
 func connectionLeaseName(p ConnectionLeaseProof) string {
-	// One durable lease per session/target prevents duplicate attachments while
-	// allowing independent sessions to use the same target concurrently.
-	sum := sha256.Sum256([]byte(string(p.SessionUID) + "\x00" + string(p.TargetUID)))
+	// One durable lease per target is the exclusive attachment claim. The
+	// holder/session identity is stored in the lease and changes only after an
+	// expired claim is taken over.
+	sum := sha256.Sum256([]byte(string(p.TargetUID)))
 	return "debug-connection-" + hex.EncodeToString(sum[:])[:20]
 }
 
+func connectionSessionLeaseName(p ConnectionLeaseProof) string {
+	sum := sha256.Sum256([]byte(string(p.SessionUID) + "\x00" + string(p.TargetUID)))
+	return "debug-connection-session-" + hex.EncodeToString(sum[:])[:20]
+}
+
 func (s *ConnectionLeaseService) Acquire(ctx context.Context, proof ConnectionLeaseProof) (ConnectionLeaseRef, error) {
+	return s.acquire(ctx, proof, false)
+}
+
+func (s *ConnectionLeaseService) acquire(ctx context.Context, proof ConnectionLeaseProof, sessionScoped bool) (ConnectionLeaseRef, error) {
 	if s == nil || s.client == nil {
 		return ConnectionLeaseRef{}, fmt.Errorf("connection lease client is not configured")
 	}
 	if proof.Namespace == "" || proof.SessionUID == "" || proof.TargetUID == "" || proof.ProfileDigest == "" || proof.ExpiresAt.IsZero() || !time.Now().Before(proof.ExpiresAt) {
 		return ConnectionLeaseRef{}, fmt.Errorf("connection lease proof is incomplete or expired")
 	}
-	key := types.NamespacedName{Namespace: proof.Namespace, Name: connectionLeaseName(proof)}
+	leaseName := connectionLeaseName(proof)
+	if sessionScoped {
+		leaseName = connectionSessionLeaseName(proof)
+	}
+	key := types.NamespacedName{Namespace: proof.Namespace, Name: leaseName}
 	for attempt := 0; attempt < 3; attempt++ {
 		lease := &coordinationv1.Lease{}
 		err := s.liveReader().Get(ctx, key, lease)
