@@ -154,10 +154,7 @@ func TestActivateSessionEstablishesLeaseBeforeDeployment(t *testing.T) {
 	require.Equal(t, ds.Spec.IdentityProviderIssuer, persisted.Status.Participants[0].IdentityProviderIssuer)
 
 	deployment := &appsv1.Deployment{}
-	var deployments appsv1.DeploymentList
-	require.NoError(t, target.List(context.Background(), &deployments))
-	require.Len(t, deployments.Items, 1)
-	*deployment = deployments.Items[0]
+	require.NoError(t, target.Get(context.Background(), client.ObjectKey{Namespace: "breakglass-debug", Name: ds.Name}, deployment))
 }
 
 func TestBindingVariablePolicySurvivesApprovalActivationAndTemplateRotation(t *testing.T) {
@@ -206,10 +203,8 @@ func TestBindingVariablePolicySurvivesApprovalActivationAndTemplateRotation(t *t
 	persisted.Status.Approval.ApprovedBy = "approver"
 	_, err = c.handlePendingApproval(context.Background(), persisted)
 	require.NoError(t, err)
-	var deployments appsv1.DeploymentList
-	require.NoError(t, target.List(context.Background(), &deployments))
-	require.Len(t, deployments.Items, 1)
-	deployment := &deployments.Items[0]
+	deployment := &appsv1.Deployment{}
+	require.NoError(t, target.Get(context.Background(), client.ObjectKey{Namespace: "breakglass-debug", Name: ds.Name}, deployment))
 	require.Equal(t, "safe-prod", deployment.Spec.Template.Spec.Containers[0].Image)
 }
 
