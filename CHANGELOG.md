@@ -13,10 +13,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   images through the signed utility-image release matrix, with their existing
   runtime behavior gates and multi-architecture build contexts.
 
-- Binding-level DebugSession variable constraints now narrow template options,
-  validation, required/disabled state, and defaults while preserving the
-  template policy as the upper bound.
-
 - DebugSession cluster bindings can narrow template extra-deploy variables
   (option subsets, validation bounds/regexes, required or disabled state, and
   defaults) without widening the template policy. Effective constraints are
@@ -38,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reconciliation, cleanup, CLI filters, and the frontend.
 - Make terminal cleanup accounting idempotent and avoid decrementing active
   counts for sessions rejected before activation.
+
+- Retry final quota-admission completion after same-UID resource-version
+  conflicts, while refusing terminal or replacement sessions.
 
 - Reapply binding variable intersections during controller reconciliation and
   activation, reject invalid bindings during discovery, and keep all-disabled
