@@ -72,3 +72,7 @@ Legacy deployed references without a source still honor auxiliary retention when
 the full API version, kind, namespace, name, and UID match. Coordinate matches
 alone select conservative policy review; mismatched UIDs remain durable residuals
 and cannot be retired using another object's deleted status.
+
+Without a cluster provider, terminal sessions can still durably clear AllowedPods-only
+authorization bookkeeping. Concurrently added entries survive the merge and retry;
+spoke identities and unresolved create intents remain protected.

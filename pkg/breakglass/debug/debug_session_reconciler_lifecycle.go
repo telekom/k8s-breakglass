@@ -490,13 +490,17 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 				}
 			}
 		}
-		if patchErr == nil && cleanupStatusHasResiduals(ds) {
+		if patchErr == nil && (cleanupStatusHasResiduals(ds) || len(ds.Status.AllowedPods) > 0) {
 			operationErr = errors.Join(operationErr, errors.New("cleanup inventory remains unresolved"))
 		}
 		return errors.Join(operationErr, patchErr)
 	}
 
 	if c.ccProvider == nil {
+		if !cleanupStatusHasResiduals(ds) && len(ds.Status.AllowedPods) > 0 {
+			ds.Status.AllowedPods = nil
+			return finishCleanup(nil)
+		}
 		if hasTrackedSpokeResources(ds) {
 			return finishCleanup(fmt.Errorf("cannot clean up tracked spoke resources: cluster client provider is unavailable"))
 		}

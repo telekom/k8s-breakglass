@@ -473,3 +473,30 @@ func TestCleanupAuxiliaryDeletedShortcutUsesChildUIDAndSource(t *testing.T) {
 		}
 	}
 }
+
+func TestCleanupWithoutProviderClearsOnlyAuthorizationBookkeeping(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "bookkeeping", Namespace: "ns", UID: "uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateTerminated, AllowedPods: []breakglassv1alpha1.AllowedPodRef{{Namespace: "target", Name: "old"}}}}
+	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(session).WithStatusSubresource(session).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+	result, err := controller.handleCleanup(context.Background(), session)
+	require.NoError(t, err)
+	require.Zero(t, result.RequeueAfter)
+	stored := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), stored))
+	require.Empty(t, stored.Status.AllowedPods)
+	require.False(t, cleanupConditionFailed(stored))
+}
+
+func TestCleanupWithoutProviderPreservesConcurrentBookkeeping(t *testing.T) {
+	baseline := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "concurrent-bookkeeping", Namespace: "ns", UID: "uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateTerminated, AllowedPods: []breakglassv1alpha1.AllowedPodRef{{Namespace: "target", Name: "old"}}}}
+	live := baseline.DeepCopy()
+	live.Status.AllowedPods = append(live.Status.AllowedPods, breakglassv1alpha1.AllowedPodRef{Namespace: "target", Name: "new"})
+	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(live).WithStatusSubresource(live).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+	require.ErrorContains(t, controller.cleanupResources(context.Background(), baseline), "inventory remains unresolved")
+	require.Len(t, baseline.Status.AllowedPods, 1)
+	require.Equal(t, "new", baseline.Status.AllowedPods[0].Name)
+	require.False(t, cleanupConditionFailed(baseline))
+	require.NoError(t, controller.cleanupResources(context.Background(), baseline))
+	require.Empty(t, baseline.Status.AllowedPods)
+}

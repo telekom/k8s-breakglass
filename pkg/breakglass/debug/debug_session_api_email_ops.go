@@ -341,7 +341,7 @@ func (c *DebugSessionAPIController) sendDebugSessionCreatedEmail(ctx context.Con
 
 // emitDebugSessionAuditEvent emits an audit event for debug session lifecycle changes
 func (c *DebugSessionAPIController) emitDebugSessionAuditEvent(ctx context.Context, eventType audit.EventType, session *breakglassv1alpha1.DebugSession, user string, message string) {
-	if c.auditService == nil || !c.auditService.IsEnabled() || !c.shouldEmitAudit(session) {
+	if c.auditService == nil || !c.auditService.IsEnabled() || !c.shouldEmitAudit(ctx, session) {
 		return
 	}
 
@@ -373,14 +373,20 @@ func (c *DebugSessionAPIController) emitDebugSessionAuditEvent(ctx context.Conte
 	c.auditService.Emit(ctx, event)
 }
 
-func (c *DebugSessionAPIController) shouldEmitAudit(session *breakglassv1alpha1.DebugSession) bool {
-	if session.Status.ResolvedTemplate == nil {
-		return true
+func (c *DebugSessionAPIController) shouldEmitAudit(ctx context.Context, session *breakglassv1alpha1.DebugSession) bool {
+	policy := session.Status.ResolvedTemplate
+	if policy == nil {
+		if session.Spec.TemplateRef == "" {
+			return true
+		}
+		template := &breakglassv1alpha1.DebugSessionTemplate{}
+		if err := c.reader().Get(ctx, ctrlclient.ObjectKey{Name: session.Spec.TemplateRef}, template); err != nil {
+			c.log.Warnw("Skipping debug session audit event: template audit policy unavailable", "session", session.Name, "template", session.Spec.TemplateRef, "error", err)
+			return false
+		}
+		policy = &template.Spec
 	}
-	if session.Status.ResolvedTemplate.Audit == nil {
-		return true
-	}
-	return session.Status.ResolvedTemplate.Audit.Enabled
+	return policy.Audit == nil || policy.Audit.Enabled
 }
 
 // handleInjectEphemeralContainer injects a debug container into an existing pod
