@@ -1313,3 +1313,28 @@ func TestClusterConfigReconciler_RetentionResolutionFailurePreservesPending(t *t
 	require.Equal(t, breakglassv1alpha1.DebugSessionStatePending, live.Status.State)
 	require.Nil(t, live.Status.RetainedUntil)
 }
+
+func TestClusterConfigReconciler_AutoDiscoveredRetentionResolvedBeforeTermination(t *testing.T) {
+	for _, bindingRetention := range []string{"", "30m", "3h"} {
+		t.Run(bindingRetention, func(t *testing.T) {
+			scheme := newTestClusterConfigReconcilerScheme()
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "pending-retention", Namespace: "default", UID: "session-uid"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster", TemplateRef: "template"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePendingApproval}}
+			template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: "2h"}}}
+			binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template"}, Clusters: []string{"cluster"}, Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: bindingRetention}}}
+			hub := newTestClusterConfigFakeClient(scheme, session, template, binding)
+			r := &ClusterConfigReconciler{Client: hub, Scheme: scheme, Log: zap.NewNop().Sugar()}
+			before := time.Now()
+			require.NoError(t, r.terminateDebugSessionsForCluster(context.Background(), "cluster", r.Log))
+			live := &breakglassv1alpha1.DebugSession{}
+			require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), live))
+			require.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, live.Status.State)
+			require.NotNil(t, live.Status.RetainedUntil)
+			want := 2 * time.Hour
+			if bindingRetention == "3h" {
+				want = 3 * time.Hour
+			}
+			require.WithinDuration(t, before.Add(want), live.Status.RetainedUntil.Time, 2*time.Second)
+			require.Nil(t, live.Status.ResolvedTemplate)
+		})
+	}
+}
