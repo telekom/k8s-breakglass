@@ -600,7 +600,12 @@ func debugSessionCleanupOutstanding(ds *breakglassv1alpha1.DebugSession) bool {
 			return true
 		}
 	}
-	if len(ds.Status.PodTemplateResourceStatuses) > 0 || len(ds.Status.AllowedPods) > 0 {
+	for _, resource := range ds.Status.PodTemplateResourceStatuses {
+		if utils.DebugSessionPodTemplateStatusHasCleanupResidual(resource) {
+			return true
+		}
+	}
+	if len(ds.Status.AllowedPods) > 0 {
 		return true
 	}
 	// Completed operation history is retained evidence, not a pending cleanup.
@@ -616,20 +621,11 @@ func debugSessionCleanupOutstanding(ds *breakglassv1alpha1.DebugSession) bool {
 		}
 	}
 	for _, resource := range ds.Status.AuxiliaryResourceStatuses {
-		intentionallyRetained := false
-		if ds.Status.ResolvedTemplate != nil {
-			for _, configured := range ds.Status.ResolvedTemplate.AuxiliaryResources {
-				if configured.Name == resource.Name && !configured.DeleteAfter {
-					intentionallyRetained = true
-					break
-				}
-			}
-		}
-		if !resource.Deleted && (resource.Created || resource.CreateOperationID != "" || resource.UID != "" || resource.ResourceName != "") && (!intentionallyRetained || resource.UID == "") {
+		if utils.DebugSessionAuxiliaryStatusHasCleanupResidual(ds, resource) {
 			return true
 		}
 		for _, child := range resource.AdditionalResources {
-			if !child.Deleted && (!intentionallyRetained || child.UID == "") {
+			if utils.DebugSessionAuxiliaryChildHasCleanupResidual(ds, resource.Name, child) {
 				return true
 			}
 		}

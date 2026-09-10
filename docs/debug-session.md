@@ -2091,3 +2091,11 @@ retries prepared-operation recovery after its grace period and transient errors;
 recovery reads the exact Pod UID and container intent without repeating the target
 mutation. Confirmed policy-retained auxiliary resources do not hold the cluster
 finalizer, while unknown creation outcomes still do.
+
+Terminal retention cleanup and cluster deletion share the same residual-resource
+predicates. Confirmed deleted pod-template history does not hold a session after
+retention; non-deleted partial records and auxiliary children without UIDs remain
+protected. A pending request rejected for unavailable terminal recording first
+resolves effective retention constraints; an existing snapshot or retention
+deadline remains authoritative. Unresolved binding reads still defer failure
+rather than inventing a retention policy or granting access.
