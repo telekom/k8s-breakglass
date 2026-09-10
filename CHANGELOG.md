@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Reject approval or rejection when the authorized session was replaced under the same name, and clear completed debug-session pod authorization references while retaining concurrent additions.
 
+- Preserve concurrently created cleanup inventory entries when same-coordinate resources have distinct creation-operation provenance.
+
 - Redact structured diagnostic authorization headers and remove obsolete variable-sanitization warnings; template serialization remains mandatory.
 
 - Align template and cluster-binding duration schemas with supported week, year, and fractional sub-day values.

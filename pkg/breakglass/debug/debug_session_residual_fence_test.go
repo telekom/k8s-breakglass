@@ -13,8 +13,10 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"go.uber.org/zap"
 	extensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -109,6 +111,74 @@ func TestDebugSessionCleanupMergesConcurrentSameUIDInventory(t *testing.T) {
 	if len(stored.Status.DeployedResources) != 1 || stored.Status.DeployedResources[0].UID != "late-uid" {
 		t.Fatal("cleanup erased concurrently persisted target inventory without deleting the target")
 	}
+}
+
+func TestDebugSessionCleanupMergesConcurrentCreateOperationInventoryAfterConflict(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	deployedA := breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "target", Name: "resource", UID: "", CreateOperationID: "op-a"}
+	deployedB := deployedA
+	deployedB.CreateOperationID = "op-b"
+	podTemplateA := breakglassv1alpha1.PodTemplateResourceStatus{APIVersion: "v1", Kind: "ConfigMap", Namespace: "target", ResourceName: "template-resource", Source: "template", CreateOperationID: "op-a"}
+	podTemplateB := podTemplateA
+	podTemplateB.CreateOperationID = "op-b"
+	mainA := breakglassv1alpha1.AuxiliaryResourceStatus{Name: "aux", APIVersion: "v1", Kind: "ConfigMap", Namespace: "target", ResourceName: "aux-resource", CreateOperationID: "op-a"}
+	mainB := mainA
+	mainB.CreateOperationID = "op-b"
+	nestedA := breakglassv1alpha1.AuxiliaryResourceStatus{Name: "nested", APIVersion: "v1", Kind: "ConfigMap", Namespace: "target", ResourceName: "nested-parent", CreateOperationID: "same-parent"}
+	nestedA.AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{{APIVersion: "v1", Kind: "Secret", Namespace: "target", ResourceName: "nested", CreateOperationID: "op-a"}}
+	nestedB := nestedA.DeepCopy()
+	nestedB.AdditionalResources[0].CreateOperationID = "op-b"
+	live := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session-uid"}, Status: breakglassv1alpha1.DebugSessionStatus{
+		DeployedResources:           []breakglassv1alpha1.DeployedResourceRef{deployedA},
+		PodTemplateResourceStatuses: []breakglassv1alpha1.PodTemplateResourceStatus{podTemplateA},
+		AuxiliaryResourceStatuses:   []breakglassv1alpha1.AuxiliaryResourceStatus{mainA, nestedA},
+	}}
+	injected := false
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).WithObjects(live).
+		WithInterceptorFuncs(interceptor.Funcs{SubResourcePatch: func(ctx context.Context, underlying client.Client, subResource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+			if !injected && subResource == "status" {
+				injected = true
+				var concurrent breakglassv1alpha1.DebugSession
+				require.NoError(t, underlying.Get(ctx, client.ObjectKeyFromObject(live), &concurrent))
+				concurrent.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{deployedB}
+				concurrent.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{podTemplateB}
+				concurrent.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{mainB, *nestedB}
+				require.NoError(t, underlying.Status().Update(ctx, &concurrent))
+				return apierrors.NewConflict(schema.GroupResource{Group: "breakglass.t-caas.telekom.com", Resource: "debugsessions"}, live.Name, assert.AnError)
+			}
+			return underlying.Status().Patch(ctx, obj, patch, opts...)
+		}}).Build()
+	stale := live.DeepCopy()
+	stale.Status.DeployedResources = nil
+	stale.Status.PodTemplateResourceStatuses = nil
+	nestedDesired := nestedA.DeepCopy()
+	nestedDesired.AdditionalResources = nil
+	stale.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{*nestedDesired}
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+	require.NoError(t, controller.patchDebugSessionCleanupStatus(context.Background(), stale, live.Status.DeepCopy()))
+	assert.True(t, injected, "status patch conflict was not injected")
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(live), &stored))
+	require.Len(t, stored.Status.DeployedResources, 1)
+	assert.Equal(t, "op-b", stored.Status.DeployedResources[0].CreateOperationID)
+	require.Len(t, stored.Status.PodTemplateResourceStatuses, 1)
+	assert.Equal(t, "op-b", stored.Status.PodTemplateResourceStatuses[0].CreateOperationID)
+	require.Len(t, stored.Status.AuxiliaryResourceStatuses, 2)
+	var mainStored, nestedStored *breakglassv1alpha1.AuxiliaryResourceStatus
+	for _, status := range stored.Status.AuxiliaryResourceStatuses {
+		switch status.Name {
+		case "aux":
+			mainStored = status.DeepCopy()
+		case "nested":
+			nestedStored = status.DeepCopy()
+		}
+	}
+	require.NotNil(t, mainStored)
+	assert.Equal(t, "op-b", mainStored.CreateOperationID)
+	require.NotNil(t, nestedStored)
+	require.Len(t, nestedStored.AdditionalResources, 1)
+	assert.Equal(t, "op-b", nestedStored.AdditionalResources[0].CreateOperationID)
 }
 
 func TestDebugSessionCleanupMergesConcurrentCopiedPodReplacementAfterConflict(t *testing.T) {

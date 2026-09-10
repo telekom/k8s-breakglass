@@ -657,7 +657,7 @@ func mergeCleanupInventory[T any](baseline, desired, current []T, key func(T) st
 }
 
 func deployedResourceKey(ref breakglassv1alpha1.DeployedResourceRef) string {
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%s", ref.APIVersion, ref.Kind, ref.Namespace, ref.Name, ref.Source, ref.UID)
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", ref.APIVersion, ref.Kind, ref.Namespace, ref.Name, ref.Source, ref.UID, ref.CreateOperationID)
 }
 
 func allowedPodKey(ref breakglassv1alpha1.AllowedPodRef) string {
@@ -665,11 +665,11 @@ func allowedPodKey(ref breakglassv1alpha1.AllowedPodRef) string {
 }
 
 func auxiliaryResourceStatusKey(status breakglassv1alpha1.AuxiliaryResourceStatus) string {
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", status.Name, status.Category, status.APIVersion, status.Kind, status.ResourceName, status.Namespace, status.UID)
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s", status.Name, status.Category, status.APIVersion, status.Kind, status.ResourceName, status.Namespace, status.UID, status.CreateOperationID)
 }
 
 func additionalResourceKey(ref breakglassv1alpha1.AdditionalResourceRef) string {
-	return fmt.Sprintf("%s|%s|%s|%s|%s", ref.APIVersion, ref.Kind, ref.Namespace, ref.ResourceName, ref.UID)
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s", ref.APIVersion, ref.Kind, ref.Namespace, ref.ResourceName, ref.UID, ref.CreateOperationID)
 }
 
 func mergeAuxiliaryResourceStatuses(
@@ -704,7 +704,7 @@ func mergeAuxiliaryResourceStatuses(
 }
 
 func podTemplateResourceStatusKey(status breakglassv1alpha1.PodTemplateResourceStatus) string {
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%s", status.APIVersion, status.Kind, status.Namespace, status.ResourceName, status.Source, status.UID)
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", status.APIVersion, status.Kind, status.Namespace, status.ResourceName, status.Source, status.UID, status.CreateOperationID)
 }
 
 func canonicalCopiedPodUID(ref breakglassv1alpha1.CopiedPodRef) string {
