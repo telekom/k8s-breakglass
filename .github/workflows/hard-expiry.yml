@@ -191,7 +191,7 @@ jobs:
             kubectl --kubeconfig "$kubeconfig" get events -A --sort-by=.lastTimestamp 2>&1 \
               | ci_write_bounded_redacted_file "$cluster_dir/events.txt" 1000 524288
             for pod in $(kubectl --kubeconfig "$kubeconfig" -n breakglass-system get pods \
-              -l app.kubernetes.io/name=breakglass -o name 2>/dev/null); do
+              -l app=breakglass -o name 2>/dev/null); do
               safe_pod="${pod#pod/}"
               kubectl --kubeconfig "$kubeconfig" -n breakglass-system logs "$pod" \
                 --all-containers --timestamps --tail=2000 2>&1 \

@@ -30,3 +30,18 @@ administrator fixture, verifies removal after artifact finalization, and keeps a
 second artifact readable while the first is deleted. The disposable Kind cluster
 and its PVC are removed by the existing CI cluster teardown. Generated private
 keys are never printed or attached to diagnostics.
+
+## Activation and hard-expiry diagnostics
+
+The separate hard-expiry lane exercises authorization expiry and API-mediated
+ephemeral injection. Its failure bundle selects the deployed controller pods by
+`app=breakglass` and captures bounded, redacted logs. DebugSession wait failures
+report the last observed UID, resource version, state, message, expiry, and read
+error before fixture cleanup removes the object.
+
+`TestFreshKubectlDebugSessionActivatesWithRealAPI` runs the production reconciler
+with quota admission, a persisted template, and a real connection Lease against
+an envtest API server. Set `KUBEBUILDER_ASSETS` to run it. This is complementary
+to the Kind lane; it does not reproduce manager-cache timing or spoke transport.
+Completed ephemeral-operation replay records its existing reference once while
+preserving the separate Active-only allowed-Pod update.
