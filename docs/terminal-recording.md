@@ -15,6 +15,13 @@ distinct from the narrated/demo recordings under `e2e/` and `docs/demos/`.
 is currently ignored; setting it does not select an image or change the
 fail-closed behavior.
 
+The recorder implementation uses a bounded framed stream with separate input
+and output directions. Each frame carries the previous frame's SHA-256 digest,
+so a finalized artifact can be verified without placing terminal bytes or
+credentials in DebugSession status or audit details. The recorder is only a
+streaming primitive; the controller still requires an explicitly configured
+target proxy and durable artifact store before enabling the template field.
+
 When the transport is implemented, its planned bounded artifact volume will
 use `BREAKGLASS_RECORDING_MAX_BYTES=536870912` (512 MiB). Until then, no
 recording image, artifact route, replay route, or external cleanup contract is

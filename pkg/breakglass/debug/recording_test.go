@@ -5,6 +5,9 @@
 package debug
 
 import (
+	"bytes"
+	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -12,17 +15,40 @@ import (
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/remotecommand"
 )
+
+type testTerminalExecutor struct {
+	input  []byte
+	output []byte
+	err    error
+}
+
+func (e *testTerminalExecutor) Stream(_ remotecommand.StreamOptions) error { return nil }
+
+func (e *testTerminalExecutor) StreamWithContext(_ context.Context, options remotecommand.StreamOptions) error {
+	input, err := io.ReadAll(options.Stdin)
+	if err != nil {
+		return err
+	}
+	e.input = append([]byte(nil), input...)
+	if len(e.output) > 0 {
+		if _, err := options.Stdout.Write(e.output); err != nil {
+			return err
+		}
+	}
+	return e.err
+}
 
 func recordingFixture(enabled bool) (*breakglassv1alpha1.DebugSession, *breakglassv1alpha1.DebugSessionTemplate) {
 	return &breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: "debug-one", Namespace: "breakglass"},
-			Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "prod", TemplateRef: "netshoot"},
-		}, &breakglassv1alpha1.DebugSessionTemplate{
-			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
-				Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: enabled, RecordingRetention: "30d"},
-			},
-		}
+		ObjectMeta: metav1.ObjectMeta{Name: "debug-one", Namespace: "breakglass"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "prod", TemplateRef: "netshoot"},
+	}, &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: enabled, RecordingRetention: "30d"},
+		},
+	}
 }
 
 func TestRejectUnsupportedTerminalRecordingContract(t *testing.T) {
@@ -56,5 +82,49 @@ func TestRejectUnsupportedTerminalRecordingAllowsDisabled(t *testing.T) {
 	_, template := recordingFixture(false)
 	if err := rejectUnsupportedTerminalRecording(template); err != nil {
 		t.Fatalf("disabled terminal recording should remain supported: %v", err)
+	}
+}
+
+func TestStreamTerminalRecordsBothDirectionsAndFinalizesHashChain(t *testing.T) {
+	executor := &testTerminalExecutor{output: []byte("target-output")}
+	recorder := NewTerminalRecorder(1024)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	result, err := StreamTerminal(context.Background(), executor, strings.NewReader("user-input"), &stdout, &stderr, recorder)
+	if err != nil {
+		t.Fatalf("StreamTerminal() error = %v", err)
+	}
+	if string(executor.input) != "user-input" {
+		t.Fatalf("executor input = %q, want user-input", executor.input)
+	}
+	if stdout.String() != "target-output" {
+		t.Fatalf("stdout = %q, want target-output", stdout.String())
+	}
+	if result.SHA256 == "" || len(result.Bytes) == 0 {
+		t.Fatalf("finalized recording missing bytes or digest: %#v", result)
+	}
+	if _, err := recorder.Finalize(); err != nil {
+		t.Fatalf("idempotent Finalize() error = %v", err)
+	}
+	if err := recorder.Write(TerminalRecordingOutput, []byte("late")); err == nil {
+		t.Fatal("Write() after Finalize() succeeded")
+	}
+}
+
+func TestTerminalRecorderFailsClosedAtByteLimit(t *testing.T) {
+	recorder := NewTerminalRecorder(terminalRecordingFrameHeaderSize + 3)
+	if err := recorder.Write(TerminalRecordingInput, []byte("abc")); err != nil {
+		t.Fatalf("first Write() error = %v", err)
+	}
+	if err := recorder.Write(TerminalRecordingOutput, []byte("d")); err == nil {
+		t.Fatal("Write() beyond the byte limit succeeded")
+	}
+	result, err := recorder.Finalize()
+	if err != nil {
+		t.Fatalf("Finalize() error = %v", err)
+	}
+	if len(result.Bytes) != terminalRecordingFrameHeaderSize+3 {
+		t.Fatalf("finalized bytes = %d, want %d", len(result.Bytes), terminalRecordingFrameHeaderSize+3)
 	}
 }
