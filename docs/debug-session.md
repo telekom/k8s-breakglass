@@ -2069,3 +2069,12 @@ Templates may set `constraints.idleTimeout` to expire an Active session after no
 The periodic cleanup fallback also enforces inactivity expiry. Terminal retention never deletes a session while its status still tracks resources awaiting cleanup or an uncertain create result. Resources explicitly configured to remain after the session are excluded once their creation is confirmed. Cluster deletion stamps the same explicit retention deadline. A completed operation records activity using bounded bookkeeping even if its HTTP request was canceled; a fresh session check still prevents extending an expired session.
 
 Completed and failed kubectl-debug operation history does not delay deletion after the configured retention deadline. Copied pods awaiting cleanup and unresolved operation outcomes remain protected until cleanup or investigation resolves them.
+
+After hard or idle expiry, an already prepared ephemeral-container operation may
+persist its terminal outcome as evidence. This narrow status-only update cannot
+change the session state, expiry, activity, participants, or access references.
+The normal expiry reconciler still performs lifecycle effects. Terminal cleanup
+retries prepared-operation recovery after its grace period and transient errors;
+recovery reads the exact Pod UID and container intent without repeating the target
+mutation. Confirmed policy-retained auxiliary resources do not hold the cluster
+finalizer, while unknown creation outcomes still do.
