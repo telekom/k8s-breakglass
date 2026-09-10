@@ -327,18 +327,26 @@ func validateTextValue(value apiextensionsv1.JSON, validation *VariableValidatio
 			fmt.Sprintf("length must be at most %d", *validation.MaxLength)))
 	}
 
-	// Validate pattern
-	patterns := append([]string(nil), validation.AdditionalPatterns...)
-	if validation.Pattern != "" {
-		patterns = append(patterns, validation.Pattern)
-	}
-	for _, pattern := range patterns {
+	// Internal additional patterns are template-derived intersections and do
+	// not own the user-facing error message. The binding/template pattern may
+	// use PatternError for the boundary the user configured.
+	for _, pattern := range validation.AdditionalPatterns {
 		matched, err := regexp.MatchString(pattern, strVal)
 		if err != nil {
 			allErrs = append(allErrs, field.Invalid(fldPath, strVal,
 				fmt.Sprintf("invalid pattern %q: %v", pattern, err)))
 		} else if !matched {
-			errMsg := fmt.Sprintf("must match pattern %q", pattern)
+			allErrs = append(allErrs, field.Invalid(fldPath, strVal,
+				fmt.Sprintf("must match pattern %q", pattern)))
+		}
+	}
+	if validation.Pattern != "" {
+		matched, err := regexp.MatchString(validation.Pattern, strVal)
+		if err != nil {
+			allErrs = append(allErrs, field.Invalid(fldPath, strVal,
+				fmt.Sprintf("invalid pattern %q: %v", validation.Pattern, err)))
+		} else if !matched {
+			errMsg := fmt.Sprintf("must match pattern %q", validation.Pattern)
 			if validation.PatternError != "" {
 				errMsg = validation.PatternError
 			}
