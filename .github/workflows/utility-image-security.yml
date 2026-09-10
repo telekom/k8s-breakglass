@@ -20,6 +20,7 @@ on:
       - "hack/test-utility-image-security-contract.sh"
       - "hack/release-required-checks.json"
       - ".github/workflows/utility-image-security.yml"
+      - ".github/workflows/release.yml"
   push:
     # This intentionally has no path filter. Release tags require this exact
     # check on the exact main commit, including when only controller code
@@ -67,7 +68,7 @@ jobs:
       - name: Build exact platform image for scanning
         id: build
         env:
-          CONTEXT: ${{ matrix.image.context }}
+          CONTEXT: ${{ matrix.image.buildContext || matrix.image.context }}
           DOCKERFILE: ${{ matrix.image.file }}
           PLATFORM: ${{ matrix.platform }}
         run: |

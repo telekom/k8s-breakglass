@@ -99,10 +99,11 @@ and target-cluster permissions before enabling any elevated profile.
 
 Each profile selects `images.<profile imageKey>` or supplies a direct `image`
 reference and runs its `command`/`args`. The chart's checked-in image values
-are non-runnable zero-digest placeholders. The five public utility names use
-the canonical `ghcr.io/telekom/k8s-breakglass/utils/<intent-image>` path;
-dump-access and internal cluster-validation remain non-public placeholders
-until separately approved. Replace public images with independently verified
+are non-runnable zero-digest placeholders. The seven generic utility names use
+the canonical `ghcr.io/telekom/k8s-breakglass/utils/<intent-image>` path, including
+`dump-reader` and the provider-neutral `cluster-validator`. Catalogue image
+values remain non-runnable zero-digest placeholders until independently
+verified release digests are injected. Replace public images with independently verified
 release digests before enabling access; release packaging injects validated
 values from `release-refs/*.ref`. Mutable tags are not release inputs. The
 storage and dump mounts match the
@@ -114,8 +115,10 @@ opt-in flag is set because the catalogue contract does not carry the
 controller-issued immutable approval tuple required by node-maintenance; the
 example logs that limitation and does not attempt to bypass the chart gate.
 The restricted `dump-access` profile is also disabled by default, but does not
-require elevation; it remains a non-public placeholder until its image and
-reviewed source-volume contract are approved.
+require elevation. It still needs a separately approved source-volume and
+retention contract before catalogue enablement. Internal cluster-validation
+adapters remain downstream-owned and gated by their own approval; the generic
+upstream validator does not make that internal support claim.
 
 Profile items are concise: shared authorization, lifecycle, audit, image
 resolution, workload wiring, pod hardening, and resource defaults are named

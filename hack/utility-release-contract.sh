@@ -47,16 +47,22 @@ matrix() {
 	jq -e '(.schemaVersion == 1) and (.images|type=="array" and length>0) and
 		(([.images[].name]|length) == ([.images[].name]|unique|length)) and
 		(([.images[].file]|length) == ([.images[].file]|unique|length)) and
-		all(.images[]; (.name|test("^[a-z0-9]+([.-][a-z0-9]+)*$")) and
+		all(.images[]; (.buildContext // .context) as $buildContext |
+		(.name|test("^[a-z0-9]+([.-][a-z0-9]+)*$")) and
 		(.context|test("^utils/[A-Za-z0-9._/-]+$")) and
 		(.context|contains("..")|not) and (.context|contains("//")|not) and
-		(.file == (.context + "/Dockerfile")) and
+		($buildContext|test("^(\\.|utils/[A-Za-z0-9._/-]+)$")) and
+		($buildContext|contains("..")|not) and ($buildContext|contains("//")|not) and
+		((.name == "cluster-validator" and .buildContext == ".") or
+		 (.name != "cluster-validator" and .buildContext == null)) and
+        (.file == (.context + "/Dockerfile")) and
 		(.smokeCommand|type=="array" and length>0 and all(.[]; type=="string" and length>0)) and
 		(.smokeOutput|type=="string" and length>0) and
 		(.requiredChecks|type=="array" and length>0 and all(.[]; type=="string" and length>0)) and
 		(.behaviorWorkflows|type=="array" and length>0 and all(.[]; type=="string" and test("^\\.github/workflows/[A-Za-z0-9._-]+\\.yml$")))) and
 		(([.images[].requiredChecks[]]|length) == ([.images[].requiredChecks[]]|unique|length))' "${manifest}" >/dev/null || die 'invalid utility image manifest'
 	while IFS= read -r path; do [[ -d "${root}/${path}" ]] || die "manifest context does not exist: ${path}"; done < <(jq -r '.images[].context' "${manifest}")
+	while IFS= read -r path; do [[ -d "${root}/${path}" ]] || die "manifest build context does not exist: ${path}"; done < <(jq -r '.images[] | (.buildContext // .context)' "${manifest}")
 	while IFS= read -r path; do [[ -f "${root}/${path}" ]] || die "manifest Dockerfile does not exist: ${path}"; done < <(jq -r '.images[].file' "${manifest}")
 	while IFS= read -r path; do [[ -f "${root}/${path}" ]] || die "behavior workflow does not exist: ${path}"; done < <(jq -r '.images[].behaviorWorkflows[]' "${manifest}")
 	jq -cS --arg prefix "${prefix}" '[.images[] | . + {image:($prefix+"/"+.name)}] | sort_by(.name)' "${manifest}"

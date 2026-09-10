@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Publish the generic `dump-reader` and provider-neutral `cluster-validator`
+  images through the signed utility-image release matrix, with their existing
+  runtime behavior gates and multi-architecture build contexts.
+
 - The debug-session-catalogue Helm chart provides administrator-authored,
   restricted DebugSession profiles for workload, network, storage, dump-access,
   and cluster-validation diagnostics.
