@@ -83,10 +83,11 @@ jobs:
       - name: Remove and verify disposable cluster
         if: always()
         run: |
-          set +e
+          set -euo pipefail
           # The integration script owns and deletes its uniquely named kind
           # cluster. This step catches an orphaned proof cluster on the runner.
-          if kind get clusters | grep -E '^network-debug-proof-' >/dev/null; then
+          clusters="$(kind get clusters)"
+          if grep -E '^network-debug-proof-' <<<"${clusters}" >/dev/null; then
             echo "network-debug proof cluster survived cleanup" >&2
             exit 1
           fi

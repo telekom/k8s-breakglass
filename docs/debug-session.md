@@ -365,6 +365,9 @@ An `Active` DebugSession must have a non-zero `status.expiresAt`. Admission and
 internal status writers reject adding a lease later to a malformed active
 session, and reconciliation changes that session to terminal `Failed` state.
 
+`gracePeriodBeforeExpiry` uses the same shared duration parser as the other
+session timing fields, including extended day, week, and year units.
+
 The controller updates `DebugSessionTemplate.status` with readiness conditions,
 the observed generation, pod-template reference resolution, active session
 usage, and clusters made available through active

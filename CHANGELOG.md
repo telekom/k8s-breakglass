@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Report invalid terminal-recording retention once and test every catalogue utility job at the requested dispatch revision.
 
+- Verify SLSA provenance for both published reference image and catalogue chart,
+  preserve reference namespaces safely during EXIT cleanup, and keep catalogue
+  integration checks on the requested workflow ref.
+
+- Parse debug-session expiry grace periods with the shared duration parser.
+
 - Omit disabled deployment variables from requester template discovery.
 
 - Retry deadline synchronization quietly while tracked Jobs are waiting to start.

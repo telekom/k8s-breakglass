@@ -31,6 +31,7 @@ CATALOGUE_CHART="${CATALOGUE_CHART:-oci://ghcr.io/telekom/k8s-breakglass/charts/
 CATALOGUE_CHART_DIGEST="${CATALOGUE_CHART_DIGEST:-}"
 DEBUG_NAMESPACE="${REFERENCE_DEBUG_NAMESPACE:-reference-debug}"
 DEBUG_NAMESPACE_CREATED=false
+DEBUG_NAMESPACE_UID=""
 CATALOGUE_RELEASE="${REFERENCE_CATALOGUE_RELEASE:-debug-catalogue}"
 CATALOGUE_VALUES_FILE=""
 
@@ -77,6 +78,51 @@ ESCALATION_NAME="reference-restricted-${REFERENCE_RUN_ID}"
 
 die() { printf 'reference-usage: %s\n' "$*" >&2; exit 1; }
 log() { printf 'reference-usage: %s\n' "$*"; }
+
+delete_created_debug_namespace() {
+  [[ "${DEBUG_NAMESPACE_CREATED}" == true ]] || return 0
+  local namespace_lookup namespace_status namespace_uid
+  if namespace_lookup="$(KUBECONFIG="${KUBECONFIG_FILE}" kubectl get namespace "${DEBUG_NAMESPACE}" \
+    --ignore-not-found -o json)"; then
+    namespace_status=0
+  else
+    namespace_status=$?
+  fi
+  if [[ "${namespace_status}" -ne 0 ]]; then
+    printf 'reference-usage: unable to inspect created debug namespace: %s\n' "${DEBUG_NAMESPACE}" >&2
+    return 1
+  fi
+  if [[ -n "${namespace_lookup}" ]]; then
+    if ! namespace_uid="$(jq -er '.metadata.uid' <<<"${namespace_lookup}")"; then
+      printf 'reference-usage: debug namespace has no UID: %s\n' "${DEBUG_NAMESPACE}" >&2
+      return 1
+    fi
+    if [[ -z "${DEBUG_NAMESPACE_UID}" || "${namespace_uid}" != "${DEBUG_NAMESPACE_UID}" ]]; then
+      printf 'reference-usage: refusing to delete replaced debug namespace: %s\n' "${DEBUG_NAMESPACE}" >&2
+      return 1
+    fi
+    local delete_options="${STATE_DIR}/debug-namespace-delete.json"
+    if ! jq -cn --arg uid "${DEBUG_NAMESPACE_UID}" \
+      '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid}}' >"${delete_options}" ||
+      ! KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete --raw "/api/v1/namespaces/${DEBUG_NAMESPACE}" \
+        --request-timeout "${REFERENCE_CLEANUP_TIMEOUT}" -f "${delete_options}" >/dev/null 2>&1; then
+      return 1
+    fi
+    if ! KUBECONFIG="${KUBECONFIG_FILE}" kubectl wait --for=delete "namespace/${DEBUG_NAMESPACE}" \
+      --timeout "${REFERENCE_CLEANUP_TIMEOUT}" >/dev/null 2>&1; then
+      return 1
+    fi
+  fi
+  if ! namespace_lookup="$(KUBECONFIG="${KUBECONFIG_FILE}" kubectl get namespace "${DEBUG_NAMESPACE}" \
+    --ignore-not-found -o json)"; then
+    printf 'reference-usage: unable to verify debug namespace deletion: %s\n' "${DEBUG_NAMESPACE}" >&2
+    return 1
+  fi
+  if [[ -n "${namespace_lookup}" ]]; then
+    printf 'reference-usage: created debug namespace remains: %s\n' "${DEBUG_NAMESPACE}" >&2
+    return 1
+  fi
+}
 
 require_commands() {
   local command
@@ -127,9 +173,10 @@ validate_inputs() {
 }
 
 cleanup() {
+  local exit_code="${1:-$?}"
+  local cleanup_failed=false
   set +e
   [[ -n "${CATALOGUE_VALUES_FILE}" ]] && rm -f "${CATALOGUE_VALUES_FILE}"
-  [[ -d "${STATE_DIR}" ]] && rm -rf "${STATE_DIR}"
   if [[ -n "${KUBECONFIG_FILE}" ]]; then
     if [[ "${AUDIT_CONFIG_CREATED}" == true ]]; then
       KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete auditconfig "${REFERENCE_AUDIT_CONFIG_NAME}" \
@@ -147,12 +194,22 @@ cleanup() {
       -n "${NAMESPACE}" --ignore-not-found --wait=false >/dev/null 2>&1
     [[ -n "${ELEVATED_DEBUG_SESSION_NAME}" ]] && KUBECONFIG="${KUBECONFIG_FILE}" kubectl delete debugsession "${ELEVATED_DEBUG_SESSION_NAME}" \
       -n "${NAMESPACE}" --ignore-not-found --wait=false >/dev/null 2>&1
+    if ! delete_created_debug_namespace; then cleanup_failed=true; fi
   fi
+  [[ -d "${STATE_DIR}" ]] && rm -rf "${STATE_DIR}"
   if [[ "${CLUSTER_OWNED}" == true ]] && command -v kind >/dev/null 2>&1; then
     kind delete cluster --name "${CLUSTER_NAME}" >/dev/null 2>&1
   fi
+  [[ "${cleanup_failed}" == true && "${exit_code}" -eq 0 ]] && exit_code=1
+  return "${exit_code}"
 }
-trap cleanup EXIT
+on_exit() {
+  local exit_code=$?
+  trap - EXIT
+  cleanup "${exit_code}"
+  exit "$?"
+}
+trap on_exit EXIT
 
 load_environment() {
   if [[ -n "${REFERENCE_ENV_FILE}" ]]; then
@@ -179,7 +236,7 @@ verify_public_artifacts() {
     --certificate-identity-regexp="${identity}" \
     --certificate-oidc-issuer="https://token.actions.githubusercontent.com" >/dev/null
   log "Verifying SLSA provenance attestation"
-  cosign verify-attestation "${PUBLISHED_IMAGE_DIGEST_REF}" --type slsaprovenance \
+  cosign verify-attestation "${PUBLISHED_IMAGE_DIGEST_REF}" --type slsaprovenance1 \
     --certificate-identity-regexp="${identity}" \
     --certificate-oidc-issuer="https://token.actions.githubusercontent.com" >/dev/null
   if [[ "${VERIFY_GH_ATTESTATION}" == true ]]; then
@@ -199,7 +256,7 @@ verify_public_artifacts() {
     --certificate-identity-regexp="${identity}" \
     --certificate-oidc-issuer="https://token.actions.githubusercontent.com" >/dev/null
   log "Verifying chart SLSA provenance attestation"
-  cosign verify-attestation "${chart_subject}" --type slsaprovenance \
+  cosign verify-attestation "${chart_subject}" --type slsaprovenance1 \
     --certificate-identity-regexp="${identity}" \
     --certificate-oidc-issuer="https://token.actions.githubusercontent.com" >/dev/null
 }
@@ -239,8 +296,11 @@ install_stack() {
   if kubectl get namespace "${DEBUG_NAMESPACE}" >/dev/null 2>&1; then
     log "Reusing existing debug namespace ${DEBUG_NAMESPACE}; it will not be deleted"
   else
-    kubectl create namespace "${DEBUG_NAMESPACE}" >/dev/null
+    local namespace_create_json
+    namespace_create_json="$(kubectl create namespace "${DEBUG_NAMESPACE}" -o json)"
     DEBUG_NAMESPACE_CREATED=true
+    DEBUG_NAMESPACE_UID="$(jq -er '.metadata.uid' <<<"${namespace_create_json}")"
+    [[ -n "${DEBUG_NAMESPACE_UID}" ]] || die "created debug namespace has no UID"
   fi
   log "Installing debug-session-catalogue ${CATALOGUE_VERSION}"
   CATALOGUE_VALUES_FILE="$(mktemp)"
@@ -687,9 +747,7 @@ assert_zero_residual() {
     -l "breakglass.t-caas.telekom.com/session" -o name 2>/dev/null | grep -q . && die "debug workload or policy resources remain"
   kubectl get clusterrole,clusterrolebinding -l "breakglass.t-caas.telekom.com/session" \
     -o name 2>/dev/null | grep -q . && die "debug cluster policy resources remain"
-  if [[ "${DEBUG_NAMESPACE_CREATED}" == true ]]; then
-    kubectl delete namespace "${DEBUG_NAMESPACE}" --ignore-not-found --wait --timeout "${REFERENCE_CLEANUP_TIMEOUT}" >/dev/null
-  fi
+  delete_created_debug_namespace || die "created debug namespace cleanup failed"
   log "Reference resources have zero residual objects"
 }
 
