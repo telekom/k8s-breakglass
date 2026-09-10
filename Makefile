@@ -175,6 +175,8 @@ validate-crds: manifests setup-envtest ## Validate CRD schemas offline and again
 	CGO_ENABLED=1 KUBEBUILDER_ASSETS="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./api/v1alpha1/... -run TestCRDInstallation -v -count=1
 	@echo "Validating constrained-impersonation CRD schema accept/reject cases against envtest..."
 	CGO_ENABLED=1 KUBEBUILDER_ASSETS="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./api/v1alpha1/... -run 'TestCRDSchema_' -v -count=1
+	@echo "Validating approved binding snapshot SSA and activation..."
+	CGO_ENABLED=1 KUBEBUILDER_ASSETS="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./pkg/breakglass/debug -run '^TestApprovedBindingSnapshotServerSideApplyThenActivation$' -v -count=1
 	@echo "CRD validation passed"
 
 .PHONY: validate-fixtures

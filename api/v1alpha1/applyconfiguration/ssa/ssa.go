@@ -1024,7 +1024,9 @@ func DebugSessionTemplateSpecFrom(t *breakglassv1alpha1.DebugSessionTemplateSpec
 	result.WithHidden(t.Hidden)
 	result.WithDeprecated(t.Deprecated)
 	result.WithDeprecationMessage(t.DeprecationMessage)
-	result.WithExpirationBehavior(t.ExpirationBehavior)
+	if t.ExpirationBehavior != "" {
+		result.WithExpirationBehavior(t.ExpirationBehavior)
+	}
 	result.WithGracePeriodBeforeExpiry(t.GracePeriodBeforeExpiry)
 	if t.AllowedPodOperations != nil {
 		result.WithAllowedPodOperations(AllowedPodOperationsFrom(t.AllowedPodOperations))
