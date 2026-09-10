@@ -84,5 +84,7 @@ printf '%s\n' '{"schemaVersion":1,"images":[{"name":"future-tool","context":"uti
 expect_fail "${contract}" matrix "${fixture}"
 printf '%s\n' '{"schemaVersion":1,"images":[{"name":"future-tool","context":"utils/images/future-tool","buildContext":".","file":"utils/images/future-tool/Dockerfile","smokeCommand":["help"],"smokeOutput":"future help","requiredChecks":["Future behavior"],"behaviorWorkflows":[".github/workflows/future-tool.yml"]}]}' >"${fixture}/hack/utility-image-matrix.json"
 expect_fail "${contract}" matrix "${fixture}"
+printf '%s\n' '{"schemaVersion":1,"images":[{"name":"cluster-validator","context":"utils/images/future-tool","file":"utils/images/future-tool/Dockerfile","smokeCommand":["help"],"smokeOutput":"future help","requiredChecks":["Future behavior"],"behaviorWorkflows":[".github/workflows/future-tool.yml"]}]}' >"${fixture}/hack/utility-image-matrix.json"
+expect_fail "${contract}" matrix "${fixture}"
 
 printf '%s\n' 'utility release contract behavioral tests passed'

@@ -53,7 +53,8 @@ matrix() {
 		(.context|contains("..")|not) and (.context|contains("//")|not) and
 		($buildContext|test("^(\\.|utils/[A-Za-z0-9._/-]+)$")) and
 		($buildContext|contains("..")|not) and ($buildContext|contains("//")|not) and
-		((.buildContext == null) or (.name == "cluster-validator" and .buildContext == ".")) and
+		((.name == "cluster-validator" and .buildContext == ".") or
+		 (.name != "cluster-validator" and .buildContext == null)) and
         (.file == (.context + "/Dockerfile")) and
 		(.smokeCommand|type=="array" and length>0 and all(.[]; type=="string" and length>0)) and
 		(.smokeOutput|type=="string" and length>0) and
