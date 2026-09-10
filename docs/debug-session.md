@@ -2136,14 +2136,6 @@ controller recovers only a live object carrying the session and operation
 markers and matching the requested content, then records its returned UID. Canceled, permanent, and non-timeout
 transport errors do not trigger adoption.
 
-Active accounting is recomputed from live session state: template counts include all clusters, while active gauges remain per cluster and template. Optimistic template conflicts repeat the live list, and Active reconciliation repairs accounting after a transient publication failure. Accounting failures do not prevent spoke resource cleanup.
-
-Active accounting uses the CRD selectable `spec.templateRef` field to bound each authoritative paginated list to the affected template, rather than scanning unrelated session history.
-
-Active-session accounting uses authoritative, paginated template-scoped reads. Lifecycle transitions update counts immediately; periodic repairs are coalesced per template for 30 seconds within each controller and skip unchanged template status writes. Failed accounting retries remain immediate. Optional pod-template usage metadata failures are logged and retried on the next periodic repair without blocking session cleanup.
-
-Accounting scans and gauge publication are serialized per template within each controller, so an older scan cannot overwrite a newer lifecycle count. Completed operations release their locks; bounded periodic bookkeeping evicts only the oldest template instead of resetting other repair intervals.
-
 ### Inactivity and terminal evidence retention
 
 Templates may set `constraints.idleTimeout` to expire an Active session after no successful server-observed debug operation. The initial baseline is the activation `startsAt`; successful API operations advance `lastActivity` and `activityCount`. This records completed server operations, not every byte of a long-running terminal stream. Idle expiry cannot extend the hard session expiry. API actions, kubectl mutations, and the final authorization webhook response reject an elapsed idle deadline, including when it passes during target lookup. Each final access decision uses one freshly sampled timestamp for both hard and idle expiry checks. Controller expiry classification also uses the freshly read status and one post-read timestamp. Missing baseline or invalid configured idle duration fails closed for Active sessions. Pending and PendingApproval requests still count toward binding limits before their activation baseline exists. Job deadline synchronization and allowed-pod refresh recheck live expiry after target reads.
@@ -2161,28 +2153,7 @@ The normal expiry reconciler still performs lifecycle effects. Terminal cleanup
 retries prepared-operation recovery after its grace period and transient errors;
 recovery reads the exact Pod UID and container intent without repeating the target
 mutation. Confirmed policy-retained auxiliary resources do not hold the cluster
-finalizer, while unknown creation outcomes still do, including kubectl-debug
-operations whose durable outcome is `Unknown`.
-
-Quota-ledger bootstrap includes pending sessions even before their admission
-annotation changes to `ready`; a ledger rebuild must not free their reserved
-capacity for a competing request.
-Auxiliary cleanup retires retained or deleted inventory only when its recorded
-UID and source match the durable auxiliary status. Mismatches remain evidence
-requiring reconciliation. A zero retention timestamp is unset and does not
-override explicit `retainFor`; active sessions with no hard expiry cannot be
-joined, left, or terminated through the normal API actions.
-Periodic cleanup also expires those malformed active sessions and stamps their
-retention deadline. Terminal status retries preserve an existing non-zero
-deadline rather than restarting the retention window. Confirmed auxiliary
-deletions retire stale inventory only when its full identity matches.
-The periodic retention pass uses the same identity rule. Binding-limit
-preflight excludes active sessions without a hard deadline even when idle
-expiry is disabled; pending requests continue to count.
-Quota bootstrap loads template, binding and cluster policies once per pass;
-pending requests still consume capacity. Pod-copy operations recheck the live
-session after target creation and roll back the copy if authorization expired
-or changed before its references could be recorded.
+finalizer, while unknown creation outcomes still do.
 
 Terminal retention cleanup and cluster deletion share the same residual-resource
 predicates. Confirmed deleted pod-template history does not hold a session after
@@ -2191,10 +2162,12 @@ protected. A pending request rejected for unavailable terminal recording first
 resolves effective retention constraints; an existing snapshot or retention
 deadline remains authoritative. Unresolved binding reads still defer failure
 rather than inventing a retention policy or granting access.
+Active accounting is recomputed from live session state: template counts include all clusters, while active gauges remain per cluster and template. Optimistic template conflicts repeat the live list, and Active reconciliation repairs accounting after a transient publication failure. Accounting failures do not prevent spoke resource cleanup.
 
-Rejected requests are terminal evidence: explicit `retainFor` is stamped on the
-rejection API transition and is not extended by cleanup retries. Periodic cleanup
-honors that deadline and preserves unresolved resource evidence even after it
-elapses. Rejected requests never count as active sessions.
+Active accounting uses the CRD selectable `spec.templateRef` field to bound each authoritative paginated list to the affected template, rather than scanning unrelated session history.
 
-Replaying a confirmed ephemeral-container completion keeps reference bookkeeping idempotent. Allowed-pod authorization is restored only for an Active session that still passes the expiry fence.
+Active-session accounting uses authoritative, paginated template-scoped reads. Lifecycle transitions update counts immediately; periodic repairs are coalesced per template for 30 seconds within each controller and skip unchanged template status writes. Failed accounting retries remain immediate. Optional pod-template usage metadata failures are logged and retried on the next periodic repair without blocking session cleanup.
+
+Accounting scans and gauge publication are serialized per template within each controller, so an older scan cannot overwrite a newer lifecycle count. Completed operations release their locks; bounded periodic bookkeeping evicts only the oldest template instead of resetting other repair intervals.
+
+On upgrade, a Pending session with complete persisted approval snapshots can initialize its missing variable-policy snapshot only as an exact copy of the stored template variables, and only when the stored binding contains no variable constraints. Pending retries preserve those original snapshots, including inline workload templates and disabled variables through SSA persistence, despite live template or binding rotation. Missing constrained provenance fails closed with a recreate-session message; the controller never reconstructs approved policy from live configuration. Binding defaults populate only explicitly defaulted binding variables, leaving unrelated hidden template defaults out of requester inputs.
