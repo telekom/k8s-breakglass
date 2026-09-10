@@ -117,3 +117,9 @@ Recording consumers use the shared reserve/finalize/recover and guarded replay
 methods. An independent artifact controller retries recovery and owns retention
 cleanup even when session mirror publication fails. Provider metadata and tokens
 are excluded from public artifact responses.
+
+Artifact admission, upload, download, and collector writes also enforce the
+session's optional idle deadline. The controller's generated RBAC includes
+artifact resource, status, and finalizer operations. Signing and provider
+credentials are read by exact Secret name in the configured hub namespace;
+this feature adds no cluster-wide Secret permission.

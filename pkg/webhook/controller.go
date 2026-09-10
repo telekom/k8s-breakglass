@@ -383,14 +383,16 @@ func (wc *WebhookController) findDebugSessionAccessForIssuerInNamespace(ctx cont
 		if !ds.DeletionTimestamp.IsZero() || ds.Status.State != breakglassv1alpha1.DebugSessionStateActive || ds.Spec.Cluster != clusterName {
 			continue
 		}
-		// Debug sessions must always carry a live lease. Missing, equal, and
-		// past expiry are all denied; only a strictly-future timestamp grants.
-		if ds.Status.ExpiresAt == nil || !time.Now().Before(ds.Status.ExpiresAt.Time) {
+		// Debug sessions require a strictly-future hard lease and, when idle
+		// expiry is configured, a valid future idle deadline. Missing, equal,
+		// and past required deadlines deny access.
+		fenceNow := time.Now().UTC()
+		if ds.Status.ExpiresAt == nil || !fenceNow.Before(ds.Status.ExpiresAt.Time) || breakglass.DebugSessionIdleExpired(ds, fenceNow) {
 			var expiresAt interface{}
 			if ds.Status.ExpiresAt != nil {
 				expiresAt = ds.Status.ExpiresAt.Time
 			}
-			reqLog.Debugw("Debug session skipped because it is expired or missing expiry",
+			reqLog.Debugw("Debug session skipped because it is expired, idle, or missing expiry",
 				"session", ds.Name, "expiresAt", expiresAt)
 			continue
 		}
@@ -537,7 +539,7 @@ func (wc *WebhookController) liveDebugSessionAccess(ctx context.Context, usernam
 		return false, ""
 	}
 	now := time.Now()
-	if ds.Status.ExpiresAt == nil || !now.Before(ds.Status.ExpiresAt.Time) {
+	if ds.Status.ExpiresAt == nil || !now.Before(ds.Status.ExpiresAt.Time) || breakglass.DebugSessionIdleExpired(&ds, now) {
 		return false, ""
 	}
 	podAllowed := false
@@ -564,7 +566,8 @@ func (wc *WebhookController) liveDebugSessionAccess(ctx context.Context, usernam
 		if participant.User == username && participant.LeftAt == nil &&
 			debugParticipantIssuerMatches(ctx, reader, participant, issuer) &&
 			canDebugSessionParticipantAccessPodOperations(participant.Role) {
-			if !time.Now().Before(ds.Status.ExpiresAt.Time) {
+			fenceNow := time.Now().UTC()
+			if !fenceNow.Before(ds.Status.ExpiresAt.Time) || breakglass.DebugSessionIdleExpired(&ds, fenceNow) {
 				return false, ""
 			}
 			return true, fmt.Sprintf("Allowed by debug session %s (role: %s, operation: %s)", ds.Name, participant.Role, ra.Subresource)

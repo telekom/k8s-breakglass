@@ -10,6 +10,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap/zaptest"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -1571,4 +1572,94 @@ func TestCleanupRoutine_pruneActivityTracker(t *testing.T) {
 		require.Len(t, mock.cleanupCalls, 1)
 		assert.Empty(t, mock.cleanupCalls[0])
 	})
+}
+
+func TestDebugSessionRetentionUsesExplicitDeadlineOrLegacyConfiguredFallback(t *testing.T) {
+	original := DebugSessionRetentionPeriod
+	t.Cleanup(func() { DebugSessionRetentionPeriod = original })
+	for _, tt := range []struct {
+		name, env           string
+		retained            *metav1.Time
+		active, wantDeleted bool
+	}{
+		{name: "unset default remains seven days"},
+		{name: "unset honors legacy environment", env: "72h", wantDeleted: true},
+		{name: "explicit future retains evidence", env: "1h", retained: func() *metav1.Time { v := metav1.NewTime(time.Now().Add(time.Hour)); return &v }()},
+		{name: "explicit elapsed deadline", retained: func() *metav1.Time { v := metav1.NewTime(time.Now().Add(-time.Hour)); return &v }(), wantDeleted: true},
+		{name: "active never deleted by retention", retained: func() *metav1.Time { v := metav1.NewTime(time.Now().Add(-time.Hour)); return &v }(), active: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("DEBUG_SESSION_RETENTION_PERIOD", tt.env)
+			DebugSessionRetentionPeriod = getDebugSessionRetentionPeriod()
+			expiry := metav1.NewTime(time.Now().Add(-96 * time.Hour))
+			state := breakglassv1alpha1.DebugSessionStateTerminated
+			if tt.active {
+				state = breakglassv1alpha1.DebugSessionStateActive
+				expiry = metav1.NewTime(time.Now().Add(time.Hour))
+			}
+			ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "retained", Namespace: "default", UID: "retained-uid", CreationTimestamp: metav1.NewTime(time.Now().Add(-96 * time.Hour))}, Status: breakglassv1alpha1.DebugSessionStatus{State: state, ExpiresAt: &expiry, RetainedUntil: tt.retained}}
+			scheme := runtime.NewScheme()
+			require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+			hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
+			routine := CleanupRoutine{Log: zaptest.NewLogger(t).Sugar(), Manager: &SessionManager{Client: hub}}
+			routine.cleanupExpiredDebugSessions(context.Background())
+			var stored breakglassv1alpha1.DebugSession
+			err := hub.Get(context.Background(), client.ObjectKeyFromObject(ds), &stored)
+			if tt.wantDeleted {
+				require.True(t, apierrors.IsNotFound(err))
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestDebugSessionCleanupPreservesPendingResourcesAndExpiresIdle(t *testing.T) {
+	for _, name := range []string{"idle", "deployed", "unknown auxiliary", "pod template", "cleaned auxiliary", "intentionally retained auxiliary", "retained parent unknown child"} {
+		t.Run(name, func(t *testing.T) {
+			past := metav1.NewTime(time.Now().Add(-time.Hour))
+			future := metav1.NewTime(time.Now().Add(time.Hour))
+			ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "cleanup", Namespace: "default", UID: "cleanup-uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateTerminated, RetainedUntil: &past}}
+			switch name {
+			case "idle":
+				ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
+				ds.Status.RetainedUntil = nil
+				ds.Status.ExpiresAt = &future
+				ds.Status.LastActivity = &past
+				ds.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m", RetainFor: "2h"}}
+			case "deployed":
+				ds.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{{Name: "pending"}}
+			case "unknown auxiliary":
+				ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{{CreateOperationID: "prepared", ResourceName: "unknown"}}
+			case "pod template":
+				ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{{CreateOperationID: "prepared", ResourceName: "unknown"}}
+			case "intentionally retained auxiliary":
+				ds.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "keep", DeleteAfter: false}}}
+				ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "keep", Created: true, UID: "retained-uid"}}
+			case "retained parent unknown child":
+				ds.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "keep", DeleteAfter: false}}}
+				ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "keep", Created: true, UID: "retained-uid", AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{{CreateOperationID: "unknown-child"}}}}
+			case "cleaned auxiliary":
+				ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{{Created: true, Deleted: true}}
+			}
+			scheme := runtime.NewScheme()
+			require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+			hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
+			routine := CleanupRoutine{Log: zaptest.NewLogger(t).Sugar(), Manager: &SessionManager{Client: hub}}
+			routine.cleanupExpiredDebugSessions(context.Background())
+			var stored breakglassv1alpha1.DebugSession
+			err := hub.Get(context.Background(), client.ObjectKeyFromObject(ds), &stored)
+			if name == "cleaned auxiliary" || name == "intentionally retained auxiliary" {
+				require.True(t, apierrors.IsNotFound(err))
+				return
+			}
+			require.NoError(t, err)
+			if name == "idle" {
+				require.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, stored.Status.State)
+				require.Equal(t, "Session expired due to inactivity", stored.Status.Message)
+				require.NotNil(t, stored.Status.RetainedUntil)
+				require.True(t, stored.Status.RetainedUntil.After(time.Now().Add(time.Hour)))
+			}
+		})
+	}
 }

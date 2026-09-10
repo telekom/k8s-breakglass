@@ -1021,9 +1021,14 @@ func TestKubectlDebugHandler_InjectEphemeralContainerFinalSessionFence(t *testin
 
 	tests := []struct {
 		name          string
+		idle          bool
 		mutateSession func(*breakglassv1alpha1.DebugSession)
 		mutatePod     func(*corev1.Pod)
 	}{
+		{name: "idle expired", idle: true, mutateSession: func(ds *breakglassv1alpha1.DebugSession) {
+			at := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+			ds.Status.LastActivity = &at
+		}},
 		{name: "missing expiry", mutateSession: func(ds *breakglassv1alpha1.DebugSession) { ds.Status.ExpiresAt = nil }},
 		{name: "equal expiry", mutateSession: func(ds *breakglassv1alpha1.DebugSession) { at := metav1.Now(); ds.Status.ExpiresAt = &at }},
 		{name: "past expiry", mutateSession: func(ds *breakglassv1alpha1.DebugSession) {
@@ -1059,6 +1064,12 @@ func TestKubectlDebugHandler_InjectEphemeralContainerFinalSessionFence(t *testin
 
 			hubObject := liveSession.DeepCopy()
 			hubObject.Status.ExpiresAt = &expiresAt
+			if tt.idle {
+				at := metav1.Now()
+				hubObject.Status.LastActivity = &at
+				hubObject.Status.ResolvedTemplate.Constraints = &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m"}
+			}
+			candidate := hubObject.DeepCopy()
 			hubGets := 0
 			hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(hubObject).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).WithInterceptorFuncs(interceptor.Funcs{
 				Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
@@ -1074,7 +1085,7 @@ func TestKubectlDebugHandler_InjectEphemeralContainerFinalSessionFence(t *testin
 			}).Build()
 
 			handler := NewKubectlDebugHandlerWithReader(hubClient, hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
-			err := handler.InjectEphemeralContainer(context.Background(), liveSession.DeepCopy(), "production", "target", "debug", "busybox:latest", nil, nil, "operator@example.com")
+			err := handler.InjectEphemeralContainer(context.Background(), candidate, "production", "target", "debug", "busybox:latest", nil, nil, "operator@example.com")
 			require.Error(t, err)
 			assert.Zero(t, targetUpdates, "denied mutation must not update target Pod")
 		})

@@ -260,7 +260,7 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		if ds.Status.ExpiresAt == nil || ds.Status.ExpiresAt.IsZero() {
 			return c.terminalizeActiveSessionWithoutExpiry(ctx, ds)
 		}
-		if !time.Now().Before(ds.Status.ExpiresAt.Time) {
+		if isDebugSessionExpired(ds, time.Now()) {
 			return c.handleActive(ctx, ds)
 		}
 	}
@@ -269,6 +269,9 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 			if errors.Is(err, quotas.ErrFull) {
 				if ds.Status.State == breakglassv1alpha1.DebugSessionStateActive && ds.Status.ExpiresAt != nil && !ds.Status.ExpiresAt.IsZero() {
 					delay := time.Until(ds.Status.ExpiresAt.Time)
+					if idle, ok := debugSessionIdleDeadline(ds); ok && time.Until(idle) < delay {
+						delay = time.Until(idle)
+					}
 					if delay > 0 {
 						return ctrl.Result{RequeueAfter: delay}, nil
 					}
@@ -469,6 +472,48 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		return c.terminalizeActiveSessionWithoutExpiry(ctx, ds)
 	}
 
+	// Check expiration
+	if isDebugSessionExpired(ds, time.Now().UTC()) {
+		expired := false
+		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+			// Decide from the freshly read status and one post-read timestamp.
+			now := time.Now().UTC()
+			current := &breakglassv1alpha1.DebugSession{Status: *status}
+			if !isDebugSessionExpired(current, now) {
+				return
+			}
+			idleOnly := breakglass.DebugSessionIdleExpired(current, now) && status.ExpiresAt != nil && now.Before(status.ExpiresAt.Time)
+			status.State = breakglassv1alpha1.DebugSessionStateExpired
+			status.Message = "Session expired"
+			if idleOnly {
+				status.Message = "Session expired due to inactivity"
+			}
+			expired = true
+		}); err != nil {
+			if apierrors.IsConflict(err) {
+				log.Debugw("skipping expiration status update after concurrent debug session change", "error", err)
+				return ctrl.Result{}, nil
+			}
+			return ctrl.Result{}, err
+		}
+		if !expired {
+			return ctrl.Result{RequeueAfter: time.Millisecond}, nil
+		}
+		notificationSession := ds.DeepCopy()
+		if notificationSession.Status.ResolvedTemplate != nil && notificationSession.Status.ResolvedTemplate.ExpirationBehavior == "notify-only" {
+			log.Warn("deprecated notify-only expiration still enforces hard expiry")
+			if notificationSession.Status.ResolvedTemplate.Notification == nil {
+				notificationSession.Status.ResolvedTemplate.Notification = &breakglassv1alpha1.DebugSessionNotificationConfig{}
+			}
+			notificationSession.Status.ResolvedTemplate.Notification.Enabled = true
+			notificationSession.Status.ResolvedTemplate.Notification.NotifyOnExpiry = true
+		}
+		c.sendDebugSessionExpiredEmail(*notificationSession)
+		log.Info("Debug session expired")
+		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
+		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	}
+
 	// Emit expiring-soon status message when within grace period
 	if ds.Status.ExpiresAt != nil && ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry != "" {
 		grace, err := breakglassv1alpha1.ParseDuration(ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry)
@@ -488,32 +533,6 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		}
 	}
 
-	// Check expiration
-	if ds.Status.ExpiresAt != nil && time.Now().After(ds.Status.ExpiresAt.Time) {
-		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
-			status.State = breakglassv1alpha1.DebugSessionStateExpired
-			status.Message = "Session expired"
-		}); err != nil {
-			if apierrors.IsConflict(err) {
-				log.Debugw("skipping expiration status update after concurrent debug session change", "error", err)
-				return ctrl.Result{}, nil
-			}
-			return ctrl.Result{}, err
-		}
-		notificationSession := ds.DeepCopy()
-		if notificationSession.Status.ResolvedTemplate != nil && notificationSession.Status.ResolvedTemplate.ExpirationBehavior == "notify-only" {
-			log.Warn("deprecated notify-only expiration still enforces hard expiry")
-			if notificationSession.Status.ResolvedTemplate.Notification == nil {
-				notificationSession.Status.ResolvedTemplate.Notification = &breakglassv1alpha1.DebugSessionNotificationConfig{}
-			}
-			notificationSession.Status.ResolvedTemplate.Notification.Enabled = true
-			notificationSession.Status.ResolvedTemplate.Notification.NotifyOnExpiry = true
-		}
-		c.sendDebugSessionExpiredEmail(*notificationSession)
-		log.Info("Debug session expired")
-		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
-		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
-	}
 	if c.connectionLeases != nil && ds.Status.ConnectionLease != nil {
 		if err := c.connectionLeases.RenewSession(ctx, ds, ds.Status.ExpiresAt.Time); err != nil {
 			log.Warnw("Failed to converge debug session connection lease; will retry", "error", err)
@@ -535,13 +554,24 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 
 	// Calculate next requeue based on expiration
 	if ds.Status.ExpiresAt != nil {
-		until := time.Until(ds.Status.ExpiresAt.Time)
+		now := time.Now()
+		until := ds.Status.ExpiresAt.Sub(now)
+		if idle, ok := debugSessionIdleDeadline(ds); ok && idle.Sub(now) < until {
+			until = idle.Sub(now)
+		}
+		if until <= 0 {
+			return ctrl.Result{RequeueAfter: time.Millisecond}, nil
+		}
 		if until > 0 && until < DefaultDebugSessionRequeue {
 			return ctrl.Result{RequeueAfter: until + time.Second}, nil
 		}
 	}
 
 	return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
+}
+
+func debugSessionIdleDeadline(ds *breakglassv1alpha1.DebugSession) (time.Time, bool) {
+	return breakglass.DebugSessionIdleDeadline(ds)
 }
 
 func (c *DebugSessionController) terminalizeActiveSessionWithoutExpiry(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {

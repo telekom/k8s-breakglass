@@ -244,6 +244,18 @@ type DebugSessionStatus struct {
 	// +optional
 	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
 
+	// LastActivity is the latest successful operation observed by the server.
+	// +optional
+	LastActivity *metav1.Time `json:"lastActivity,omitempty"`
+
+	// ActivityCount counts successful server-observed debug operations.
+	// +optional
+	ActivityCount int64 `json:"activityCount,omitempty"`
+
+	// RetainedUntil is the earliest time this terminal session may be removed.
+	// +optional
+	RetainedUntil *metav1.Time `json:"retainedUntil,omitempty"`
+
 	// renewalCount tracks how many times the session has been renewed.
 	// +optional
 	RenewalCount int32 `json:"renewalCount,omitempty"`
@@ -698,6 +710,14 @@ func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) fie
 	}
 
 	checkTime(oldObj.Status.StartsAt, newObj.Status.StartsAt, statusPath.Child("startsAt"))
+	checkTime(oldObj.Status.LastActivity, newObj.Status.LastActivity, statusPath.Child("lastActivity"))
+	checkTime(oldObj.Status.RetainedUntil, newObj.Status.RetainedUntil, statusPath.Child("retainedUntil"))
+	if newObj.Status.ActivityCount < oldObj.Status.ActivityCount {
+		errs = append(errs, field.Invalid(statusPath.Child("activityCount"), newObj.Status.ActivityCount, "activityCount must not decrease"))
+	}
+	if deadline, configured := DebugSessionIdleDeadline(oldObj); configured && oldObj.Status.State == DebugSessionStateActive && !time.Now().Before(deadline) && !isTerminalDebugSessionState(newObj.Status.State) {
+		errs = append(errs, field.Invalid(statusPath.Child("state"), newObj.Status.State, "an idle-expired debug session must become terminal"))
+	}
 
 	oldExpiry := oldObj.Status.ExpiresAt
 	newExpiry := newObj.Status.ExpiresAt
