@@ -1500,6 +1500,22 @@ func TestDebugSessionValidateUpdateKeepsTerminalStateAndElapsedExpiry(t *testing
 	}
 }
 
+func TestDebugSessionValidateUpdateRejectsRejectedResurrection(t *testing.T) {
+	base := &DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "rejected", Namespace: "breakglass"},
+		Spec:       DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "user@example.com"},
+		Status:     DebugSessionStatus{State: DebugSessionStateRejected},
+	}
+	resurrected := base.DeepCopy()
+	resurrected.Status.State = DebugSessionStateActive
+	expiresAt := metav1.NewTime(time.Now().Add(time.Hour))
+	resurrected.Status.ExpiresAt = &expiresAt
+
+	if _, err := resurrected.ValidateUpdate(context.Background(), base, resurrected); err == nil {
+		t.Fatal("expected rejected DebugSession resurrection to be rejected")
+	}
+}
+
 func TestDebugSessionRejectsActiveStateWithoutExpiry(t *testing.T) {
 	session := &DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "breakglass"},

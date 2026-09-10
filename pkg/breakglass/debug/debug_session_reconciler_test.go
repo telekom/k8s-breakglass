@@ -1829,6 +1829,50 @@ func TestDebugSessionReconciler_InvalidStateTransitions(t *testing.T) {
 	}
 }
 
+func TestDebugSessionController_RejectedCleanupAndLegacyRejectedMetadata(t *testing.T) {
+	scheme := testScheme()
+
+	t.Run("rejected_with_owned_resource_requeues_cleanup", func(t *testing.T) {
+		session := newTestDebugSession("rejected-cleanup", "test-template", "test-cluster", "user@example.com")
+		session.Finalizers = []string{"breakglass.t-caas.telekom.com/debug-session-cleanup"}
+		session.Status.State = breakglassv1alpha1.DebugSessionStateRejected
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "owned-debug-config", Namespace: "breakglass-debug", Source: "pod-template"},
+		}
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+		controller := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil)
+
+		result, err := controller.Reconcile(context.Background(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(session)})
+		require.NoError(t, err)
+		assert.NotEqual(t, reconcile.Result{}, result, "rejected sessions with owned resources must retry cleanup")
+		var stored breakglassv1alpha1.DebugSession
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, stored.Status.State)
+		assert.Equal(t, []string{"breakglass.t-caas.telekom.com/debug-session-cleanup"}, stored.Finalizers)
+	})
+
+	t.Run("legacy_terminated_rejection_metadata_remains_terminal", func(t *testing.T) {
+		rejectedAt := metav1.NewTime(time.Now().Add(-time.Minute))
+		session := newTestDebugSession("legacy-rejected", "test-template", "test-cluster", "user@example.com")
+		session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{RejectedAt: &rejectedAt, RejectedBy: "approver"}
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+		controller := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil)
+
+		result, err := controller.Reconcile(context.Background(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(session)})
+		require.NoError(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
+		var stored breakglassv1alpha1.DebugSession
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, stored.Status.State)
+		assert.NotNil(t, stored.Status.Approval.RejectedAt)
+	})
+}
+
 func TestDebugSessionReconciler_RenewalErrors(t *testing.T) {
 	scheme := testScheme()
 
