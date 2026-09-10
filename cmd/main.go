@@ -260,7 +260,7 @@ func run() error {
 	if closer, ok := terminalRecordingStore.(interface{ Close() error }); ok {
 		defer closer.Close()
 	}
-	terminalRecordingConnections := debug.NewTerminalRecordingConnectionProvider(debug.NewConnectionLeaseService(uncachedClient))
+	terminalRecordingConnections := debug.NewTerminalRecordingConnectionProvider(debug.NewConnectionLeaseService(uncachedClient).WithNamespace(cliConfig.BreakglassNamespace))
 
 	// Reconciler manager runs WITHOUT leader election — reconcilers (e.g. IdentityProvider)
 	// run on all replicas as documented. Leader election is handled separately for background

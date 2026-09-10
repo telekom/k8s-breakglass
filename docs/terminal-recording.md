@@ -10,7 +10,9 @@ controller-owned terminal proxy. The proxy resolves the live target Pod UID,
 acquires a controller-owned connection lease, and streams Kubernetes exec or
 attach bytes through the bounded recorder. A configured artifact backend and
 lease provider are required; missing either dependency rejects activation and
-the API request. This is distinct from the narrated/demo recordings under
+the API request. The lease adapter requires a published credential generation;
+an ownership epoch alone is never accepted as readiness. Claims are created
+only in the configured controller execution namespace. This is distinct from the narrated/demo recordings under
 `e2e/` and `docs/demos/`.
 
 The artifact backend is enabled explicitly with `BREAKGLASS_RECORDING_STORAGE_ENABLED=true`,
