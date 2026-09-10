@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"os"
 	"time"
@@ -670,7 +671,7 @@ func (service *Service) stage(ctx context.Context, source io.Reader, maxBytes in
 		}
 	}()
 	hash := sha256.New()
-	read, err := copyContext(ctx, io.MultiWriter(file, hash), io.LimitReader(source, maxBytes+1))
+	read, err := copyContext(ctx, file, hash, io.LimitReader(source, maxBytes+1))
 	if err != nil {
 		return nil, 0, "", fmt.Errorf("stage diagnostic artifact: %w", err)
 	}
@@ -726,7 +727,7 @@ func (service *Service) reconcileObject(ctx context.Context, record Record, size
 	return service.resolveMetadata(ctx, current)
 }
 
-func copyContext(ctx context.Context, destination io.Writer, source io.Reader) (int64, error) {
+func copyContext(ctx context.Context, destination *os.File, checksum hash.Hash, source io.Reader) (int64, error) {
 	if ctx == nil {
 		return 0, errors.New("artifact staging context is required")
 	}
@@ -747,6 +748,9 @@ func copyContext(ctx context.Context, destination io.Writer, source io.Reader) (
 			}
 			if written != read {
 				return total, io.ErrShortWrite
+			}
+			if _, err := checksum.Write(buffer[:read]); err != nil {
+				return total, err
 			}
 		}
 		if readErr != nil {

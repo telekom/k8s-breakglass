@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject overflowing terminal frame allocations and enforce non-sniffable binary terminal responses while preserving exact output bytes.
+
 - Preserve artifact publication evidence during cleanup races, bound collector reservation concurrency, and recheck requester identity and idle expiry around streamed reads.
 
 - Reserve terminal evidence in the shared artifact backend before execution, preserve incomplete streams after revocation, and replay retained evidence without exposing provider storage details.

@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -183,5 +184,28 @@ func TestTerminalRecorderFailsClosedAtByteLimit(t *testing.T) {
 	}
 	if len(result.Bytes) != terminalRecordingFrameHeaderSize+3 {
 		t.Fatalf("finalized bytes = %d, want %d", len(result.Bytes), terminalRecordingFrameHeaderSize+3)
+	}
+}
+
+func TestTerminalRecordingFrameSizeRejectsNativeIntegerOverflow(t *testing.T) {
+	for _, length := range []int{-1, math.MaxInt - terminalRecordingFrameHeaderSize + 1, math.MaxInt} {
+		size, err := terminalRecordingFrameSize(length)
+		if !errors.Is(err, errTerminalRecordingLimit) || size != 0 {
+			t.Fatalf("length %d: size=%d err=%v", length, size, err)
+		}
+	}
+	size, err := terminalRecordingFrameSize(math.MaxInt - terminalRecordingFrameHeaderSize)
+	if err != nil || size != math.MaxInt {
+		t.Fatalf("largest representable frame: size=%d err=%v", size, err)
+	}
+	for _, limit := range []int64{-1, math.MaxInt64} {
+		recorder := NewTerminalRecorder(limit)
+		err := recorder.Write(TerminalRecordingOutput, []byte("x"))
+		if limit < 0 && !errors.Is(err, errTerminalRecordingLimit) {
+			t.Fatal("negative limit accepted")
+		}
+		if limit > 0 && err != nil {
+			t.Fatalf("large explicit limit: %v", err)
+		}
 	}
 }

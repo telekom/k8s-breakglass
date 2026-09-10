@@ -263,6 +263,7 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	metadata = *reservation.Recording
 	recorder := NewTerminalRecorder(reservation.MaxBytes)
 	ctx.Header("Content-Type", "application/octet-stream")
+	ctx.Header("X-Content-Type-Options", "nosniff")
 	ctx.Header("Trailer", "X-Breakglass-Recording-ID, X-Breakglass-Recording-SHA256, X-Breakglass-Recording-Status")
 	streamWriter := &terminalRecordingFlushWriter{writer: ctx.Writer}
 	guardedInput := authorizedRecordingReader{ctx: apiCtx, reader: ctx.Request.Body, authorize: connection.Validate}
@@ -321,6 +322,8 @@ type terminalRecordingFlushWriter struct {
 func (w *terminalRecordingFlushWriter) Header() http.Header { return w.writer.Header() }
 
 func (w *terminalRecordingFlushWriter) Write(payload []byte) (int, error) {
+	w.writer.Header().Set("Content-Type", "application/octet-stream")
+	w.writer.Header().Set("X-Content-Type-Options", "nosniff")
 	n, err := w.writer.Write(payload)
 	if flusher, ok := w.writer.(http.Flusher); ok {
 		flusher.Flush()
@@ -328,7 +331,11 @@ func (w *terminalRecordingFlushWriter) Write(payload []byte) (int, error) {
 	return n, err
 }
 
-func (w *terminalRecordingFlushWriter) WriteHeader(statusCode int) { w.writer.WriteHeader(statusCode) }
+func (w *terminalRecordingFlushWriter) WriteHeader(statusCode int) {
+	w.writer.Header().Set("Content-Type", "application/octet-stream")
+	w.writer.Header().Set("X-Content-Type-Options", "nosniff")
+	w.writer.WriteHeader(statusCode)
+}
 
 func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingConnection, expiresAt time.Time, executor remotecommand.Executor, stdin io.Reader, stdout, stderr io.Writer, recorder *TerminalRecorder, abortTransport func()) (TerminalRecording, error) {
 	streamCtx, cancel := context.WithCancel(ctx)
@@ -479,10 +486,11 @@ func (c *DebugSessionAPIController) handleReplayTerminalRecording(ctx *gin.Conte
 		}
 		return
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	stopClose := context.AfterFunc(replayCtx, func() { _ = reader.Close() })
 	defer stopClose()
 	ctx.Header("Content-Type", "application/octet-stream")
+	ctx.Header("X-Content-Type-Options", "nosniff")
 	ctx.Header("X-Breakglass-Recording-SHA256", record.SHA256)
 	_, _ = io.CopyN(authorizedRecordingWriter{ctx: replayCtx, writer: ctx.Writer, authorize: authorize}, reader, record.Size)
 }

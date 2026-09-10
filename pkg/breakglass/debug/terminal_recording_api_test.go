@@ -193,7 +193,6 @@ func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
 			require.Equal(t, backend.StateAvailable, durable.State)
 		})
 	}
-
 }
 
 // interactiveTerminalExecutor follows the real protocol order: output first,
@@ -260,4 +259,24 @@ func terminalArtifactFixture(t *testing.T, session *breakglassv1alpha1.DebugSess
 	service, err := backend.New(backend.Config{Repository: repo, Store: store, Authorizer: terminalDenyCollector{}, Tokens: keys, StagingDir: cfg.StagingRoot})
 	require.NoError(t, err)
 	return service, hub
+}
+
+func TestTerminalFlushWriterPreservesUntrustedBytesAsBinary(t *testing.T) {
+	payload := []byte("<script>alert(document.domain)</script>\x00\x1b[31m")
+	for _, explicitHeader := range []bool{false, true} {
+		response := httptest.NewRecorder()
+		response.Header().Set("Content-Type", "text/html")
+		writer := &terminalRecordingFlushWriter{writer: response}
+		if explicitHeader {
+			writer.WriteHeader(http.StatusOK)
+		}
+		n, err := writer.Write(payload)
+		require.NoError(t, err)
+		require.Equal(t, len(payload), n)
+		require.Equal(t, payload, response.Body.Bytes())
+		result := response.Result()
+		defer result.Body.Close()
+		require.Equal(t, "application/octet-stream", result.Header.Get("Content-Type"))
+		require.Equal(t, "nosniff", result.Header.Get("X-Content-Type-Options"))
+	}
 }

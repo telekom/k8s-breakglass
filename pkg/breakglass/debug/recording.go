@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 
 	"k8s.io/client-go/tools/remotecommand"
@@ -91,11 +92,14 @@ func (r *TerminalRecorder) Write(direction TerminalRecordingDirection, payload [
 	if r.maxBytes < 0 {
 		return errTerminalRecordingLimit
 	}
-	frameSize := int64(terminalRecordingFrameHeaderSize) + int64(len(payload))
-	if int64(r.bytes.Len()) > r.maxBytes-frameSize {
+	frameSize, err := terminalRecordingFrameSize(len(payload))
+	if err != nil {
+		return err
+	}
+	if frameSize > math.MaxInt-r.bytes.Len() || int64(r.bytes.Len()) > r.maxBytes-int64(frameSize) {
 		return errTerminalRecordingLimit
 	}
-	frame := make([]byte, terminalRecordingFrameHeaderSize+len(payload))
+	frame := make([]byte, frameSize)
 	frame[0] = terminalRecordingFrameVersion
 	frame[1] = byte(direction)
 	binary.BigEndian.PutUint64(frame[2:10], uint64(len(payload)))
@@ -107,6 +111,14 @@ func (r *TerminalRecorder) Write(direction TerminalRecordingDirection, payload [
 	r.previous = sha256.Sum256(frame)
 	r.frames++
 	return nil
+}
+
+// terminalRecordingFrameSize validates native allocation arithmetic before addition.
+func terminalRecordingFrameSize(payloadLength int) (int, error) {
+	if payloadLength < 0 || payloadLength > math.MaxInt-terminalRecordingFrameHeaderSize {
+		return 0, errTerminalRecordingLimit
+	}
+	return terminalRecordingFrameHeaderSize + payloadLength, nil
 }
 
 // Finalize closes the recorder and returns an immutable copy of the framed

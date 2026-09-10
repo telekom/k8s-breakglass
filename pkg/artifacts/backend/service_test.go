@@ -4,7 +4,10 @@
 package backend
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -274,4 +277,18 @@ func TestDirectMetadataListRechecksAuthorizationAfterRepositoryIO(t *testing.T) 
 	require.ErrorIs(t, err, ErrForbidden)
 	require.Nil(t, records)
 	require.Equal(t, 2, calls)
+}
+
+func TestStagePreservesBinaryPayloadAndDigest(t *testing.T) {
+	service := newServiceForTest(t, &memoryRepository{}, &fakeStore{}, allowAuthorizer{})
+	payload := []byte("<script>alert(1)</script>\x00\x1b[31m")
+	file, size, digest, err := service.stage(context.Background(), bytes.NewReader(payload), int64(len(payload)))
+	require.NoError(t, err)
+	defer file.Close()
+	staged, err := io.ReadAll(file)
+	require.NoError(t, err)
+	require.Equal(t, payload, staged)
+	require.Equal(t, int64(len(payload)), size)
+	expected := sha256.Sum256(payload)
+	require.Equal(t, hex.EncodeToString(expected[:]), digest)
 }

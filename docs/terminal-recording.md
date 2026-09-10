@@ -24,6 +24,11 @@ The default lease adapter does not publish credential generations. Until an
 approved production generation publisher is wired, terminal recording remains
 fail closed even with storage configured.
 
+Terminal stream and replay responses use `application/octet-stream` and
+`X-Content-Type-Options: nosniff`. Terminal bytes, including HTML-like text and
+control sequences, remain unchanged; they are never HTML-escaped. Frame sizes
+are checked against the native allocation limit before arithmetic or allocation.
+
 The recorder uses a bounded framed stream with separate input and output
 directions. Each frame carries the previous frame's SHA-256 digest, so a
 finalized artifact can be verified without placing terminal bytes or
