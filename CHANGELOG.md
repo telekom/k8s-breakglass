@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   images through the signed utility-image release matrix, with their existing
   runtime behavior gates and multi-architecture build contexts.
 
+- Emit structured debug-session audit events for approval, renewal, activation,
+  expiry, validation failure, rejection, and cleanup recovery/failure.
+
 - The debug-session-catalogue Helm chart provides administrator-authored,
   restricted DebugSession profiles for workload, network, storage, dump-access,
   and cluster-validation diagnostics.
@@ -55,6 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ephemeral-container identity, target, actor, digest, and timestamp fields.
 
 - Bind ephemeral-container operation evidence to the authenticated provider identity and cap new distinct injection admissions at 256 identities, including prepared reservations, while retaining existing history and recovery evidence.
+
+- Persist bounded `CleanupFailed` status evidence while tracked resources cannot
+  be removed, and clear it after a retry confirms the inventory is gone.
 
 - Recover tracked resources after bounded create timeouts when session and
   operation markers and requested content match the persisted object.
