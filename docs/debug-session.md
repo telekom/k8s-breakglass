@@ -2072,6 +2072,7 @@ Active accounting uses the CRD selectable `spec.templateRef` field to bound each
 Active-session accounting uses authoritative, paginated template-scoped reads. Lifecycle transitions update counts immediately; periodic repairs are coalesced per template for 30 seconds within each controller and skip unchanged template status writes. Failed accounting retries remain immediate. Optional pod-template usage metadata failures are logged and retried on the next periodic repair without blocking session cleanup.
 
 Accounting scans and gauge publication are serialized per template within each controller, so an older scan cannot overwrite a newer lifecycle count. Completed operations release their locks; bounded periodic bookkeeping evicts only the oldest template instead of resetting other repair intervals.
+
 ### Inactivity and terminal evidence retention
 
 Templates may set `constraints.idleTimeout` to expire an Active session after no successful server-observed debug operation. The initial baseline is the activation `startsAt`; successful API operations advance `lastActivity` and `activityCount`. This records completed server operations, not every byte of a long-running terminal stream. Idle expiry cannot extend the hard session expiry. API actions, kubectl mutations, and the final authorization webhook response reject an elapsed idle deadline, including when it passes during target lookup. Each final access decision uses one freshly sampled timestamp for both hard and idle expiry checks. Controller expiry classification also uses the freshly read status and one post-read timestamp. Missing baseline or invalid configured idle duration fails closed for Active sessions. Pending and PendingApproval requests still count toward binding limits before their activation baseline exists. Job deadline synchronization and allowed-pod refresh recheck live expiry after target reads.
@@ -2098,3 +2099,8 @@ protected. A pending request rejected for unavailable terminal recording first
 resolves effective retention constraints; an existing snapshot or retention
 deadline remains authoritative. Unresolved binding reads still defer failure
 rather than inventing a retention policy or granting access.
+
+Rejected requests are terminal evidence: explicit `retainFor` is stamped on the
+rejection API transition and is not extended by cleanup retries. Periodic cleanup
+honors that deadline and preserves unresolved resource evidence even after it
+elapses. Rejected requests never count as active sessions.
