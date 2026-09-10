@@ -1221,7 +1221,9 @@ template only when the authenticated requester can use the template directly or
 through at least one active matching `DebugSessionClusterBinding`. Cluster
 entries, binding options, scheduling options, and extra deploy variables that
 the requester cannot use at session creation time are omitted from discovery
-responses.
+responses. The primary cluster detail keeps an explicitly empty
+`extraDeployVariables` array when a binding disables every template variable,
+so clients can distinguish that result from a response without the field.
 
 Response includes per-cluster details:
 
