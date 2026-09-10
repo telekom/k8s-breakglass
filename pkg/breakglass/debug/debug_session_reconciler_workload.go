@@ -71,6 +71,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	// Get target cluster client (with or without impersonation)
 	var targetClient ctrlclient.Client
 	var err error
+	namespaceConstraints := effectiveNamespaceConstraints(template, binding)
 
 	// First, resolve the target namespace (needed for per-session SA creation)
 	targetNs := ds.Spec.TargetNamespace
@@ -79,8 +80,8 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	}
 	if targetNs == "" {
 		// Check namespaceConstraints for default
-		if template.Spec.NamespaceConstraints != nil && template.Spec.NamespaceConstraints.DefaultNamespace != "" {
-			targetNs = template.Spec.NamespaceConstraints.DefaultNamespace
+		if namespaceConstraints != nil && namespaceConstraints.DefaultNamespace != "" {
+			targetNs = namespaceConstraints.DefaultNamespace
 		}
 	}
 	if targetNs == "" {
@@ -120,16 +121,12 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	}
 
 	// Ensure target namespace exists
-	ns := &corev1.Namespace{}
-	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: targetNs}, ns); err != nil {
-		if apierrors.IsNotFound(err) {
-			if template.Spec.FailMode == "open" {
-				log.Warnw("Target namespace does not exist, fail-open mode", "namespace", targetNs)
-				return nil
-			}
-			return fmt.Errorf("target namespace %s does not exist", targetNs)
-		}
-		return fmt.Errorf("failed to check namespace: %w", err)
+	ready, err := c.ensureTargetNamespace(ctx, targetClient, targetNs, template.Spec.FailMode, namespaceConstraints)
+	if err != nil {
+		return err
+	}
+	if !ready {
+		return nil
 	}
 
 	// Deploy ResourceQuota if configured
@@ -241,6 +238,38 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	}
 
 	return nil
+}
+
+func effectiveNamespaceConstraints(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *breakglassv1alpha1.NamespaceConstraints {
+	if binding != nil && binding.Spec.NamespaceConstraints != nil {
+		return binding.Spec.NamespaceConstraints
+	}
+	return template.Spec.NamespaceConstraints
+}
+
+func (c *DebugSessionController) ensureTargetNamespace(ctx context.Context, targetClient ctrlclient.Client, targetNs, failMode string, constraints *breakglassv1alpha1.NamespaceConstraints) (bool, error) {
+	ns := &corev1.Namespace{}
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: targetNs}, ns); err == nil {
+		return true, nil
+	} else if !apierrors.IsNotFound(err) {
+		return false, fmt.Errorf("failed to check namespace: %w", err)
+	}
+
+	if constraints != nil && constraints.CreateIfNotExists {
+		ns = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name:   targetNs,
+			Labels: constraints.NamespaceLabels,
+		}}
+		if err := targetClient.Create(ctx, ns); err != nil && !apierrors.IsAlreadyExists(err) {
+			return false, fmt.Errorf("failed to create target namespace %s: %w", targetNs, err)
+		}
+		return true, nil
+	}
+	if failMode == "open" {
+		c.log.Warnw("Target namespace does not exist, fail-open mode", "namespace", targetNs)
+		return false, nil
+	}
+	return false, fmt.Errorf("target namespace %s does not exist", targetNs)
 }
 
 func startAuxiliaryStatusTracking(ds *breakglassv1alpha1.DebugSession, auxiliaryResourcesConfigured bool) []breakglassv1alpha1.AuxiliaryResourceStatus {

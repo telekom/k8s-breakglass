@@ -52,6 +52,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Restrict webhook local-part compatibility to single-at-sign email identities and skip alias lookups for email-form requesters (PR #1326).
+- Filter Breakglass grants used for DebugSession creation by the request issuer unless the grant explicitly allows IDP mismatch (PR #1326).
+- Keep DebugSession creation grant matching exact to authenticated username/email claims; email local-part aliases remain limited to the issuer-scoped webhook compatibility path (PR #1326).
+- Allow the webhook's issuer-scoped email alias fallback when exact sessions are expired or issuer-ineligible, while preserving eligible exact-match precedence and issuer ambiguity rejection (PR #1326).
+- Use indexed BreakglassSession lookups for DebugSession grant checks while retaining a fresh-reader fallback when the cache has no eligible exact grant (PR #1326).
+- Revalidate positive cached DebugSession grants through the fresh reader, rejecting revoked or deleted sessions and stale object identities (PR #1326).
 - Disable trusted raw field output for a complete debug template set when Sprig
   mutation functions can modify requester-visible maps during rendering.
 

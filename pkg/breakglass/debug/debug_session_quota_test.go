@@ -5,21 +5,116 @@ package debug
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"go.uber.org/zap"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+func TestEnsureTargetNamespaceHonorsCreationAndFailMode(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		failMode    string
+		constraints *breakglassv1alpha1.NamespaceConstraints
+		wantError   bool
+		wantCreate  bool
+		wantReady   bool
+	}{
+		{name: "creates missing namespace", constraints: &breakglassv1alpha1.NamespaceConstraints{CreateIfNotExists: true, NamespaceLabels: map[string]string{"owner": "breakglass"}}, wantCreate: true, wantReady: true},
+		{name: "fail open skips missing namespace", failMode: "open"},
+		{name: "fail closed rejects missing namespace", wantError: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
+			controller := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil)
+			ready, err := controller.ensureTargetNamespace(t.Context(), cli, "debug-target", tt.failMode, tt.constraints)
+			if tt.wantError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.wantReady, ready)
+
+			ns := &corev1.Namespace{}
+			err = cli.Get(t.Context(), client.ObjectKey{Name: "debug-target"}, ns)
+			if tt.wantCreate {
+				require.NoError(t, err)
+				assert.Equal(t, map[string]string{"owner": "breakglass"}, ns.Labels)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+}
+
+func TestEffectiveNamespaceConstraintsBindingOverridesTemplate(t *testing.T) {
+	templateConstraints := &breakglassv1alpha1.NamespaceConstraints{DefaultNamespace: "template-debug", NamespaceLabels: map[string]string{"source": "template"}}
+	bindingConstraints := &breakglassv1alpha1.NamespaceConstraints{DefaultNamespace: "binding-debug", CreateIfNotExists: true, NamespaceLabels: map[string]string{"source": "binding"}}
+	template := &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{NamespaceConstraints: templateConstraints}}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{NamespaceConstraints: bindingConstraints}}
+
+	assert.Same(t, bindingConstraints, effectiveNamespaceConstraints(template, binding))
+	assert.Same(t, templateConstraints, effectiveNamespaceConstraints(template, nil))
+	assert.Same(t, templateConstraints, effectiveNamespaceConstraints(template, &breakglassv1alpha1.DebugSessionClusterBinding{}))
+}
+
+func TestDeployDebugResourcesFailOpenSkipsSpokeWrites(t *testing.T) {
+	var writes int
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writes++
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/namespaces/missing-debug" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(metav1.Status{TypeMeta: metav1.TypeMeta{Kind: "Status", APIVersion: "v1"}, Status: metav1.StatusFailure, Reason: metav1.StatusReasonNotFound, Code: http.StatusNotFound})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	server := &httptest.Server{Listener: listener, Config: &http.Server{Handler: handler}}
+	server.Start()
+	defer server.Close()
+	t.Setenv("BREAKGLASS_DISABLE_LOOPBACK_REWRITE", "true")
+
+	kubeconfig, err := clientcmd.Write(clientcmdapi.Config{
+		APIVersion: "v1", Kind: "Config",
+		Clusters:       map[string]*clientcmdapi.Cluster{"spoke": {Server: server.URL}},
+		AuthInfos:      map[string]*clientcmdapi.AuthInfo{"controller": {}},
+		Contexts:       map[string]*clientcmdapi.Context{"default": {Cluster: "spoke", AuthInfo: "controller"}},
+		CurrentContext: "default",
+	})
+	require.NoError(t, err)
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "spoke", Namespace: "default"}, Spec: breakglassv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "spoke-kubeconfig", Namespace: "default"}}}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "spoke-kubeconfig", Namespace: "default"}, Data: map[string][]byte{"value": kubeconfig}}
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{FailMode: "open", TargetNamespace: "missing-debug", ResourceQuota: &breakglassv1alpha1.DebugResourceQuotaConfig{MaxPods: int32Ptr(1)}}}
+	session := newTestDebugSession("fail-open", template.Name, clusterConfig.Name, "user@example.com")
+	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(clusterConfig, secret, template).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, cluster.NewClientProvider(hub, zap.NewNop().Sugar())).WithAPIReader(hub)
+
+	require.NoError(t, controller.deployDebugResources(t.Context(), session, template))
+	assert.Zero(t, writes, "fail-open must stop deployment after a missing namespace")
+}
 
 func TestDebugQuotaScopesAcrossNamespacesAndBindings(t *testing.T) {
 	one := int32(1)

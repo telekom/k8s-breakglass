@@ -797,7 +797,7 @@ When a user creates a debug session:
    - `selectorTerms` on either the allow or the deny side are evaluated against **live namespace labels** read from the target cluster. If those labels cannot be read (spoke API error, namespace missing, no client configured), the request is **rejected** with an error naming the namespace and the offending filter — a selector-based policy is never silently skipped.
    - If a `DebugSessionClusterBinding` is selected, the namespace must satisfy both the template constraints and the binding constraints
 4. **Namespace doesn't exist**: 
-   - `createIfNotExists: true`: Creates namespace with `namespaceLabels`
+   - `createIfNotExists: true`: Creates namespace with `namespaceLabels` from the effective constraints; a binding's namespace constraints take precedence when present
    - `createIfNotExists: false`: Session fails or uses fail-open mode
 
 The web UI validates Kubernetes namespace syntax and glob-style allowed/denied patterns before submitting a debug session request. The API and controller remain the authoritative enforcement points for namespace constraints and cluster state.
@@ -1468,6 +1468,19 @@ List and detail responses require an authenticated caller. A caller can read a
 debug session when they are the requester, an active participant, an invited
 participant, a configured approver, or a recorded approver/rejector for that
 session.
+
+When creating a session, active Breakglass grants are added only when the
+authenticated username or email claim exactly matches `BreakglassSession.spec.user`
+and the issuer matches unless `allowIDPMismatch` is enabled. The API does not
+infer an email address from a username's local part, because the same local part
+can belong to different domains. The authorization webhook has a separate,
+issuer-scoped email-alias compatibility path for SubjectAccessReviews; that path
+does not broaden the DebugSession creation check. Grant lookup uses the cached
+`spec.cluster` and `spec.user` field indexes when available and re-reads positive
+candidates through the fresh reader. If the indexes are unavailable, it performs
+one full-list fallback. If no eligible exact grant remains, it performs a fresh
+full-reader fallback, so newly approved grants are not hidden by cache
+propagation delay and revoked or deleted cached grants are not trusted.
 
 Mutating DebugSession endpoints that accept JSON bodies use strict decoding:
 unknown fields, malformed JSON, and trailing JSON values return `400 Bad

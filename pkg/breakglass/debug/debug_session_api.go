@@ -821,6 +821,13 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
 	authorizationReader := c.reader()
+	sessionGroups, err := c.activeBreakglassGroups(apiCtx, authorizationReader, req.Cluster, currentUserStr, userEmail, ctx.GetString("issuer"))
+	if err != nil {
+		reqLog.Errorw("Failed to load active Breakglass session groups", "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate Breakglass access")
+		return
+	}
+	userGroups = append(userGroups, sessionGroups...)
 
 	if err := authorizationReader.Get(apiCtx, ctrlclient.ObjectKey{Name: req.TemplateRef}, template); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -1378,6 +1385,134 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		reqLog.Infow("Session created with warnings", "warnings", warnings)
 	}
 	ctx.JSON(http.StatusCreated, response)
+}
+
+func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, reader ctrlclient.Reader, cluster, username, email, issuer string) ([]string, error) {
+	indexedReader := reader
+	if c.client != nil {
+		indexedReader = c.client
+	}
+	var sessions breakglassv1alpha1.BreakglassSessionList
+	identities := make([]string, 0, 2)
+	seenIdentities := make(map[string]struct{}, 2)
+	for _, identity := range []string{username, email} {
+		if identity == "" {
+			continue
+		}
+		if _, seen := seenIdentities[identity]; seen {
+			continue
+		}
+		seenIdentities[identity] = struct{}{}
+		identities = append(identities, identity)
+	}
+	appendSession := func(session breakglassv1alpha1.BreakglassSession, seen map[string]struct{}) {
+		key := session.Namespace + "\x00" + session.Name
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		sessions.Items = append(sessions.Items, session)
+	}
+	seenSessions := make(map[string]struct{})
+	if len(identities) == 0 {
+		var all breakglassv1alpha1.BreakglassSessionList
+		if err := reader.List(ctx, &all); err != nil {
+			return nil, err
+		}
+		for _, session := range all.Items {
+			if session.Spec.Cluster == cluster {
+				appendSession(session, seenSessions)
+			}
+		}
+	} else {
+		for _, identity := range identities {
+			var matches breakglassv1alpha1.BreakglassSessionList
+			err := indexedReader.List(ctx, &matches, ctrlclient.MatchingFields{
+				"spec.cluster": cluster,
+				"spec.user":    identity,
+			})
+			if err == nil {
+				for _, session := range matches.Items {
+					appendSession(session, seenSessions)
+				}
+				continue
+			}
+			if !breakglass.IsFieldIndexError(err) {
+				return nil, err
+			}
+			// A missing index invalidates all identity-specific queries. Do one
+			// full read and apply the same cluster filter instead of issuing a
+			// second indexed query for the other identity.
+			var all breakglassv1alpha1.BreakglassSessionList
+			if err := reader.List(ctx, &all); err != nil {
+				return nil, err
+			}
+			for _, session := range all.Items {
+				if session.Spec.Cluster == cluster {
+					appendSession(session, seenSessions)
+				}
+			}
+			break
+		}
+	}
+	now := time.Now()
+	if c.client != nil && c.apiReader != nil {
+		freshCandidates := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessions.Items))
+		for i := range sessions.Items {
+			candidate := sessions.Items[i]
+			if !breakglass.IsSessionAuthorizationEligible(candidate, now) ||
+				(candidate.Spec.User != username && candidate.Spec.User != email) ||
+				(issuer != "" && !candidate.Spec.AllowIDPMismatch &&
+					strings.TrimRight(candidate.Spec.IdentityProviderIssuer, "/") != strings.TrimRight(issuer, "/")) {
+				continue
+			}
+			fresh := &breakglassv1alpha1.BreakglassSession{}
+			if err := reader.Get(ctx, ctrlclient.ObjectKeyFromObject(&candidate), fresh); err != nil {
+				if apierrors.IsNotFound(err) {
+					continue
+				}
+				return nil, err
+			}
+			if candidate.UID != "" && fresh.UID != candidate.UID {
+				continue
+			}
+			freshCandidates = append(freshCandidates, *fresh)
+		}
+		sessions.Items = freshCandidates
+	}
+	collectGroups := func(items []breakglassv1alpha1.BreakglassSession) []string {
+		groups := make([]string, 0, len(items))
+		seen := make(map[string]struct{}, len(items))
+		for _, session := range items {
+			if !breakglass.IsSessionAuthorizationEligible(session, now) ||
+				(session.Spec.User != username && session.Spec.User != email) ||
+				(issuer != "" && !session.Spec.AllowIDPMismatch &&
+					strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") != strings.TrimRight(issuer, "/")) {
+				continue
+			}
+			if _, ok := seen[session.Spec.GrantedGroup]; ok {
+				continue
+			}
+			seen[session.Spec.GrantedGroup] = struct{}{}
+			groups = append(groups, session.Spec.GrantedGroup)
+		}
+		return groups
+	}
+	groups := collectGroups(sessions.Items)
+	if c.client != nil && c.apiReader != nil && len(groups) == 0 {
+		var fresh breakglassv1alpha1.BreakglassSessionList
+		if err := reader.List(ctx, &fresh); err != nil {
+			return nil, err
+		}
+		filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(fresh.Items))
+		for _, session := range fresh.Items {
+			if session.Spec.Cluster == cluster {
+				filtered = append(filtered, session)
+			}
+		}
+		groups = collectGroups(filtered)
+	}
+	return groups, nil
 }
 
 // admitCreatedDebugSession retries only the bounded resource-version race

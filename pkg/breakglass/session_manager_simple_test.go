@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
@@ -86,6 +87,53 @@ func TestSessionManager_LiveFallbackSelectorsAndErrors(t *testing.T) {
 		assert.False(t, refreshed)
 		assert.Equal(t, 1, calls)
 	})
+}
+
+func TestSessionManager_GetClusterBreakglassSessionsRefreshesStaleCache(t *testing.T) {
+	now := time.Now()
+	cachedSession := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "approval"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "cluster-a", User: "alice"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(now.Add(-time.Minute)),
+		},
+	}
+	liveSession := cachedSession.DeepCopy()
+	liveSession.Status.ExpiresAt = metav1.NewTime(now.Add(time.Hour))
+	liveCalls := 0
+	liveReader := stubReader{listFnWithOpts: func(list client.ObjectList, _ []client.ListOption) error {
+		liveCalls++
+		list.(*breakglassv1alpha1.BreakglassSessionList).Items = []breakglassv1alpha1.BreakglassSession{*liveSession}
+		return nil
+	}}
+	cachedClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(cachedSession).WithIndex(
+		&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		},
+	).Build()
+	manager := NewSessionManagerWithClientAndReader(cachedClient, liveReader)
+
+	sessions, err := manager.GetClusterBreakglassSessions(context.Background(), "cluster-a")
+
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.True(t, sessions[0].Status.ExpiresAt.After(now))
+	assert.Equal(t, 1, liveCalls)
+}
+
+func TestSessionManager_GetClusterBreakglassSessionsIncludesClusterOnListError(t *testing.T) {
+	listErr := fmt.Errorf("forbidden")
+	cli := fake.NewClientBuilder().WithScheme(Scheme).WithInterceptorFuncs(interceptor.Funcs{
+		List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+			return listErr
+		},
+	}).Build()
+
+	_, err := (&SessionManager{Client: cli}).GetClusterBreakglassSessions(context.Background(), "tenant-a")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, `failed to list BreakglassSessions for cluster "tenant-a"`)
+	assert.ErrorIs(t, err, listErr)
 }
 
 func TestSessionManager_Simple(t *testing.T) {

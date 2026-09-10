@@ -415,6 +415,7 @@ func (c *SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 		if !refreshed || len(fallback) == 0 {
 			return bsl.Items, nil
 		}
+
 		result := mergeSessionResults(bsl.Items, fallback)
 		log.Infow("Fetched BreakglassSessions from live reader after cache lookup found no eligible session",
 			"count", len(result), "cluster", cluster, "user", user)
@@ -422,6 +423,54 @@ func (c *SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 	}
 	log.Infow("Fetched BreakglassSessions (indexed)", "count", len(bsl.Items), "cluster", cluster, "user", user)
 	return bsl.Items, nil
+}
+
+// GetClusterBreakglassSessions lists sessions for a cluster when the caller
+// needs to resolve an identity alias that cannot be represented by the
+// spec.user field index.
+func (c *SessionManager) GetClusterBreakglassSessions(ctx context.Context,
+	cluster string,
+) ([]breakglassv1alpha1.BreakglassSession, error) {
+	bsl := breakglassv1alpha1.BreakglassSessionList{}
+	if err := c.Client.List(ctx, &bsl, client.MatchingFields{"spec.cluster": cluster}); err != nil {
+		if !IsFieldIndexError(err) {
+			return nil, fmt.Errorf("failed to list BreakglassSessions for cluster %q: %w", cluster, err)
+		}
+		all, err := c.GetAllBreakglassSessions(ctx)
+		if err != nil {
+			return nil, err
+		}
+		filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(all))
+		for _, s := range all {
+			if s.Spec.Cluster == cluster {
+				filtered = append(filtered, s)
+			}
+		}
+		return filtered, nil
+	}
+	if c.liveReader != nil && !hasAuthorizationEligibleSession(bsl.Items, time.Now()) {
+		fallback, refreshed := c.fetchLiveClusterBreakglassSessions(ctx, cluster, "\x00cluster\x00"+cluster, c.getLogger())
+		if !refreshed || len(fallback) == 0 {
+			return bsl.Items, nil
+		}
+
+		result := mergeSessionResults(bsl.Items, fallback)
+		c.getLogger().Infow("Fetched BreakglassSessions from live reader after cluster cache lookup",
+			"count", len(result), "cluster", cluster)
+		return result, nil
+	}
+	return bsl.Items, nil
+}
+
+// RefreshClusterBreakglassSessions refreshes the live cluster list when an
+// alias lookup found no eligible cached session.
+func (c *SessionManager) RefreshClusterBreakglassSessions(ctx context.Context,
+	cluster string,
+) ([]breakglassv1alpha1.BreakglassSession, bool) {
+	if c.liveReader == nil {
+		return nil, false
+	}
+	return c.fetchLiveClusterBreakglassSessions(ctx, cluster, "\x00cluster\x00"+cluster, c.getLogger())
 }
 
 // RefreshClusterUserBreakglassSessions refreshes a cached cluster/user lookup
@@ -491,6 +540,53 @@ func (c *SessionManager) fetchLiveClusterUserBreakglassSessions(ctx context.Cont
 		filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(liveList.Items))
 		for _, s := range liveList.Items {
 			if s.Spec.Cluster == cluster && s.Spec.User == user {
+				filtered = append(filtered, s)
+			}
+		}
+		if hasAuthorizationEligibleSession(filtered, time.Now()) {
+			return liveFallbackResult{sessions: filtered, success: true}, nil
+		}
+		c.recordLiveReaderFallback(fallbackKey, time.Now())
+		return liveFallbackResult{sessions: filtered, success: true}, nil
+	})
+	var value interface{}
+	select {
+	case result := <-resultCh:
+		value = result.Val
+	case <-ctx.Done():
+		return nil, false
+	}
+	fallback, ok := value.(liveFallbackResult)
+	if !ok || !fallback.success {
+		return nil, false
+	}
+	return fallback.sessions, true
+}
+
+func (c *SessionManager) fetchLiveClusterBreakglassSessions(ctx context.Context,
+	cluster string,
+	fallbackKey string,
+	log *zap.SugaredLogger,
+) ([]breakglassv1alpha1.BreakglassSession, bool) {
+	if c.liveReaderFallbackSuppressed(fallbackKey, time.Now()) {
+		return nil, false
+	}
+	resultCh := c.liveFallbackFlight.DoChan(fallbackKey, func() (interface{}, error) {
+		opCtx, cancel := context.WithTimeout(context.Background(), liveReaderRefreshTimeout)
+		defer cancel()
+		var liveList breakglassv1alpha1.BreakglassSessionList
+		err := c.liveReader.List(opCtx, &liveList, client.MatchingFields{"spec.cluster": cluster})
+		if err != nil && IsFieldIndexError(err) {
+			err = c.liveReader.List(opCtx, &liveList)
+		}
+		if err != nil {
+			log.Warnw("Failed to refresh BreakglassSessions from live reader after cluster cache lookup found no eligible session",
+				"cluster", cluster, "error", err)
+			return liveFallbackResult{}, nil
+		}
+		filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(liveList.Items))
+		for _, s := range liveList.Items {
+			if s.Spec.Cluster == cluster {
 				filtered = append(filtered, s)
 			}
 		}
