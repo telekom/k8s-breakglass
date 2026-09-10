@@ -1,0 +1,44 @@
+<!--
+SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# Diagnostic artifact backend
+
+Diagnostic artifacts are created from an immutable, allowlisted recipe. The
+`DebugSessionArtifact` resource binds the artifact to the exact debug-session
+UID, target identity digest, recipe plan digest, redaction policy, bounded
+inputs, size limit, and expiry. Its specification cannot be changed after
+creation.
+
+The controller renders a fixed collector Job. The Job has a private emptyDir,
+fixed collector and uploader commands, a pinned image digest, and the least
+privilege security context required by the selected recipe. The crashdump
+recipe additionally pins the Job to its selected node and mounts only the
+read-only `/var/lib/systemd/coredump` host path. Collector Jobs receive a
+short-lived, one-time controller upload token and route. They never receive
+storage-provider credentials, bucket names, object keys, or provider URLs.
+
+Uploads are staged in a bounded private file and validated against the exact
+recipe manifest, output set, archive framing, size, and SHA-256 digest before
+the configured create-only storage backend is used. S3 requires an
+administrator-provisioned versioned bucket and sentinel identity; local/PVC
+storage remains an explicit configuration choice and is never an automatic
+fallback. Public artifact responses contain only the opaque artifact ID,
+recipe/version, lifecycle state, validated size and digest, and expiry. The
+authenticated API exposes metadata at
+`GET /api/debugSessionArtifacts/:namespace/:session` and streams bytes at
+`GET /api/debugSessionArtifacts/:namespace/:session/:artifactID`. The host
+application supplies the live-session binding resolver and authentication
+middleware; an artifact token is accepted only by the collector upload route.
+
+Every upload, download, expiry, revoke, and cleanup operation checks the live
+session UID, target identity, operation epoch, and retention deadline. Cleanup
+deletes only versions matching the immutable artifact binding. Provider
+ambiguity is retained as `Unknown` until two independent empty inventory
+observations or an exact matching deletion provide evidence. Provider errors
+and credentials are not returned in API responses.
+
+The feature remains disabled until the CRD, controller wiring, RBAC, storage
+configuration, API integration, fault matrix, and exact-head CI gates are
+reviewed together.
