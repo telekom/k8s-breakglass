@@ -1190,6 +1190,17 @@ jobs:
           # Enable audit webhook tests
           AUDIT_WEBHOOK_TEST: "true"
 
+      - name: Provision diagnostic artifact HTTPS and private storage fixture
+        run: bash e2e/fixtures/artifacts/setup.sh
+
+      - name: Run real diagnostic artifact collector E2E
+        run: |
+          set -o pipefail
+          go test -tags=e2e -v ./e2e/api -run '^TestDebugSessionArtifactCollectorE2E$' -count=1 -timeout 15m 2>&1 | tee e2e-artifact-results.txt
+        env:
+          E2E_TEST: "true"
+          E2E_NAMESPACE: "breakglass-system"
+
       - name: Run OIDC E2E tests
         run: |
           set -o pipefail
