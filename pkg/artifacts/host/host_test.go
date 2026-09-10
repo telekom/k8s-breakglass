@@ -18,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/token"
@@ -91,6 +92,36 @@ func TestConnectionLeaseFenceChecksLiveLeaseIdentity(t *testing.T) {
 	require.NoError(t, fence.AuthorizeArtifact(context.Background(), binding))
 	binding.TargetClusterUID = "other-target"
 	require.ErrorIs(t, fence.AuthorizeArtifact(context.Background(), binding), backend.ErrForbidden)
+	binding.TargetClusterUID = string(targetUID)
+	deletingReader := &markDeletingSessionReader{Reader: client, always: true}
+	deletingService := debug.NewConnectionLeaseService(client).WithLiveReader(deletingReader)
+	deletingFence := NewConnectionLeaseFence(deletingReader, deletingService)
+	require.ErrorIs(t, deletingFence.AuthorizeArtifact(context.Background(), binding), backend.ErrForbidden)
+
+	lateClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session.DeepCopy(), lease.DeepCopy()).Build()
+	lateReader := &markDeletingSessionReader{Reader: lateClient}
+	lateService := debug.NewConnectionLeaseService(lateClient).WithLiveReader(lateReader)
+	lateFence := NewConnectionLeaseFence(lateReader, lateService)
+	require.ErrorIs(t, lateFence.AuthorizeArtifact(context.Background(), binding), backend.ErrForbidden)
+}
+
+type markDeletingSessionReader struct {
+	ctrlclient.Reader
+	always    bool
+	leaseSeen bool
+}
+
+func (reader *markDeletingSessionReader) Get(ctx context.Context, key types.NamespacedName, object ctrlclient.Object, options ...ctrlclient.GetOption) error {
+	if err := reader.Reader.Get(ctx, key, object, options...); err != nil {
+		return err
+	}
+	if _, isLease := object.(*coordinationv1.Lease); isLease {
+		reader.leaseSeen = true
+	}
+	if session, isSession := object.(*breakglassv1alpha1.DebugSession); isSession && (reader.always || reader.leaseSeen) {
+		session.DeletionTimestamp = ptrTime(metav1.Now())
+	}
+	return nil
 }
 
 func TestRepositoryBindingSourceUsesImmutableArtifactBinding(t *testing.T) {

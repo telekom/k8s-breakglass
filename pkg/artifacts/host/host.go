@@ -184,7 +184,7 @@ func (fence *connectionLeaseFence) AuthorizeArtifact(ctx context.Context, bindin
 		return backend.ErrForbidden
 	}
 	lease := session.Status.ConnectionLease
-	if lease == nil || string(session.UID) != binding.UID || string(lease.TargetUID) != binding.TargetClusterUID || lease.Epoch != int64(binding.OperationEpoch) || lease.ExpiresAt.IsZero() {
+	if lease == nil || !artifactSessionIsLive(&session, binding, time.Now()) || string(lease.TargetUID) != binding.TargetClusterUID || lease.Epoch != int64(binding.OperationEpoch) || lease.ExpiresAt.IsZero() {
 		return backend.ErrForbidden
 	}
 	ref := debug.ConnectionLeaseRef{
@@ -198,6 +198,10 @@ func (fence *connectionLeaseFence) AuthorizeArtifact(ctx context.Context, bindin
 		ExpiresAt:     lease.ExpiresAt.Time,
 	}
 	if err := fence.leases.Validate(ctx, ref, -1); err != nil {
+		return backend.ErrForbidden
+	}
+	var current breakglassv1alpha1.DebugSession
+	if err := fence.reader.Get(ctx, types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}, &current); err != nil || !artifactSessionIsLive(&current, binding, time.Now()) {
 		return backend.ErrForbidden
 	}
 	return nil
@@ -335,13 +339,21 @@ func (authorizer *liveSessionAuthorizer) AuthorizeArtifact(ctx context.Context, 
 	if err := authorizer.reader.Get(ctx, types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}, &session); err != nil {
 		return backend.ErrForbidden
 	}
-	if string(session.UID) != binding.UID || session.Status.State != breakglassv1alpha1.DebugSessionStateActive || session.Status.ExpiresAt == nil || !authorizer.now().Before(session.Status.ExpiresAt.Time) {
+	if !artifactSessionIsLive(&session, binding, authorizer.now()) {
 		return backend.ErrForbidden
 	}
 	if err := authorizer.lease.AuthorizeArtifact(ctx, binding); err != nil {
 		return backend.ErrForbidden
 	}
+	var current breakglassv1alpha1.DebugSession
+	if err := authorizer.reader.Get(ctx, types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}, &current); err != nil || !artifactSessionIsLive(&current, binding, authorizer.now()) {
+		return backend.ErrForbidden
+	}
 	return nil
+}
+
+func artifactSessionIsLive(session *breakglassv1alpha1.DebugSession, binding backend.SessionBinding, now time.Time) bool {
+	return session != nil && session.DeletionTimestamp == nil && string(session.UID) == binding.UID && session.Status.State == breakglassv1alpha1.DebugSessionStateActive && session.Status.ExpiresAt != nil && now.Before(session.Status.ExpiresAt.Time)
 }
 
 type readBindingResolver struct {
