@@ -81,6 +81,7 @@ watch(
   () => form.cluster,
   () => {
     form.selectedBindingIndex = 0;
+    reconcileExtraDeployValues();
   },
 );
 
@@ -88,6 +89,7 @@ watch(
 watch(
   () => form.selectedBindingIndex,
   () => {
+    reconcileExtraDeployValues();
     const binding = selectedBindingOption.value;
     if (binding) {
       // Reset scheduling option based on new binding's options
@@ -166,6 +168,37 @@ const effectiveExtraDeployVariables = computed(() => {
     []
   );
 });
+
+function reconcileExtraDeployValues() {
+  const variables = new Map(
+    effectiveExtraDeployVariables.value
+      .filter((variable) => !variable.disabled)
+      .map((variable) => [variable.name, variable]),
+  );
+  const values = Object.fromEntries(
+    Object.entries(form.extraDeployValues).flatMap(([name, value]) => {
+      const variable = variables.get(name);
+      if (!variable) return [];
+
+      if (variable.inputType === "select" && variable.options) {
+        return variable.options.some((option) => !option.disabled && option.value === value) ? [[name, value]] : [];
+      }
+      if (variable.inputType === "multiSelect" && Array.isArray(value) && variable.options) {
+        return [
+          [
+            name,
+            value.filter((entry) => variable.options?.some((option) => !option.disabled && option.value === entry)),
+          ],
+        ];
+      }
+      return [[name, value]];
+    }),
+  );
+
+  if (JSON.stringify(values) !== JSON.stringify(form.extraDeployValues)) {
+    form.extraDeployValues = values;
+  }
+}
 
 // Get the selected cluster's detailed info
 const selectedClusterDetail = computed(() => {
@@ -587,6 +620,7 @@ onMounted(async () => {
 });
 
 async function handleSubmit() {
+  reconcileExtraDeployValues();
   if (!isValid.value || submitting.value) return;
 
   submitting.value = true;
