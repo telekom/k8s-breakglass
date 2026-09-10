@@ -483,7 +483,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	}
 
 	// Clean up kubectl-debug resources (if any)
-	kubectlHandler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+	kubectlHandler := c.newKubectlDebugHandler()
 	var cleanupErrors []error
 	if err := kubectlHandler.CleanupKubectlDebugResources(ctx, ds); err != nil {
 		// An unavailable cluster cannot prove that tracked resources are gone.
@@ -741,10 +741,67 @@ func mergeKubectlDebugStatus(baseline, desired, current *breakglassv1alpha1.Kube
 			return fmt.Sprintf("%s|%s|%s|%s|%s", ref.CopyNamespace, ref.CopyName, canonicalCopiedPodUID(ref), ref.OriginalNamespace, ref.OriginalPod)
 		},
 	)
-	if len(merged.EphemeralContainersInjected) == 0 && len(merged.CopiedPods) == 0 {
+	merged.Operations = mergeKubectlDebugOperations(baseline.Operations, desired.Operations, current.Operations)
+	if len(merged.EphemeralContainersInjected) == 0 && len(merged.CopiedPods) == 0 && len(merged.Operations) == 0 {
 		return nil
 	}
 	return merged
+}
+
+// mergeKubectlDebugOperations preserves durable operation evidence while a
+// cleanup attempt races with a target mutation outcome writer. Terminal state
+// always wins over Prepared, and concurrent operations that were added after
+// the cleanup baseline are retained.
+func mergeKubectlDebugOperations(
+	baseline, desired, current []breakglassv1alpha1.KubectlDebugOperation,
+) []breakglassv1alpha1.KubectlDebugOperation {
+	desiredByID := make(map[string]int, len(desired))
+	baselineByID := make(map[string]breakglassv1alpha1.KubectlDebugOperation, len(baseline))
+	for i, operation := range desired {
+		desiredByID[operation.ID] = i
+	}
+	for _, operation := range baseline {
+		baselineByID[operation.ID] = operation
+	}
+	merged := make([]breakglassv1alpha1.KubectlDebugOperation, 0, len(desired)+len(current))
+	deferredFinalized := make([]breakglassv1alpha1.KubectlDebugOperation, 0)
+	currentIDs := make(map[string]struct{}, len(current))
+	for _, operation := range current {
+		currentIDs[operation.ID] = struct{}{}
+		if desiredIndex, ok := desiredByID[operation.ID]; ok {
+			mergedOperation := mergeKubectlDebugOperation(desired[desiredIndex], operation)
+			if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared && mergedOperation.State != breakglassv1alpha1.KubectlDebugOperationPrepared {
+				deferredFinalized = append(deferredFinalized, mergedOperation)
+			} else {
+				merged = append(merged, mergedOperation)
+			}
+			continue
+		}
+		// The current server snapshot owns terminal ordering and retains any
+		// operation that was observed during the cleanup race.
+		merged = append(merged, operation)
+	}
+	merged = append(merged, deferredFinalized...)
+	for _, operation := range desired {
+		if _, exists := currentIDs[operation.ID]; exists {
+			continue
+		}
+		// A terminal record absent from current was compacted by another
+		// writer. Do not reintroduce it from the cleanup's stale desired copy.
+		if _, wasTracked := baselineByID[operation.ID]; wasTracked {
+			continue
+		}
+		merged = append(merged, operation)
+	}
+	merged = terminalKubectlDebugOperations(merged)
+	return merged
+}
+
+func mergeKubectlDebugOperation(desired, current breakglassv1alpha1.KubectlDebugOperation) breakglassv1alpha1.KubectlDebugOperation {
+	if current.State != breakglassv1alpha1.KubectlDebugOperationPrepared || desired.State == breakglassv1alpha1.KubectlDebugOperationPrepared {
+		return current
+	}
+	return desired
 }
 
 func (c *DebugSessionController) cleanupDeployedResources(

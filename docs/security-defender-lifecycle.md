@@ -76,6 +76,28 @@ Verifying named-class defaults requires the spoke credential to have `get` acces
 
 Pod-operation authorization lazily reads one live target Pod snapshot per request and reuses it across recorded references, including failed lookups. Each new request performs a fresh lookup.
 
+New `Prepared` kubectl-debug operations must use the supported
+ephemeral-container kind and include complete target Pod identity, container
+identity and digests, actor, and preparation timestamp fields. Existing legacy
+entries are preserved unchanged for recovery compatibility.
+
+Node-debug creation evaluates exact denied node names, denied label matches,
+and required node affinity, including `metadata.name` field requirements, both
+before constructing the debug Pod and again after the final live Node read.
+Hard pod anti-affinity and `DoNotSchedule` topology-spread constraints are
+rejected for node-debug requests because direct `NodeName` binding cannot
+evaluate those scheduler-wide constraints; soft `ScheduleAnyway` preferences
+remain nonbinding.
+
+Ephemeral-container requests with `allowPrivileged: false` reject explicit
+privilege escalation, Windows host processes, non-default proc mounts,
+unconfined AppArmor or seccomp profiles, and unsafe SELinux user, role, or type
+settings before intent is persisted. `requireNonRoot` also rejects an explicit
+root `runAsUser`. Safe fields are forwarded unchanged; `allowPrivileged: true`
+preserves the existing template policy for these explicit settings. These
+checks cover the listed request fields and do not claim complete Pod Security
+Standards Restricted profile conformance.
+
 ## Debug session namespace selection
 
 The request `namespace` field is a deprecated alias for `targetNamespace`; it

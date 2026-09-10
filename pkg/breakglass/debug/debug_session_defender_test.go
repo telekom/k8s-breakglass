@@ -193,6 +193,105 @@ func TestDefenderNodePolicyRejectsAffinityAndAbsentEmptyLabel(t *testing.T) {
 	}
 }
 
+func TestDefenderNodeDebugEnforcesFullSchedulingConstraints(t *testing.T) {
+	tests := []struct {
+		name        string
+		constraints *breakglassv1alpha1.SchedulingConstraints
+		nodeLabels  map[string]string
+		wantCreate  bool
+	}{
+		{name: "denied exact node", constraints: &breakglassv1alpha1.SchedulingConstraints{DeniedNodes: []string{"node"}}},
+		{name: "denied present empty label wildcard", constraints: &breakglassv1alpha1.SchedulingConstraints{DeniedNodeLabels: map[string]string{"role": "*"}}, nodeLabels: map[string]string{"role": ""}},
+		{name: "required node name field mismatch", constraints: &breakglassv1alpha1.SchedulingConstraints{RequiredNodeAffinity: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchFields: []corev1.NodeSelectorRequirement{{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{"other"}}}}}}}},
+		{name: "unsupported node field fails closed", constraints: &breakglassv1alpha1.SchedulingConstraints{RequiredNodeAffinity: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchFields: []corev1.NodeSelectorRequirement{{Key: "metadata.uid", Operator: corev1.NodeSelectorOpNotIn, Values: []string{"node-uid"}}}}}}}},
+		{name: "required pod anti-affinity is not node-bindable", constraints: &breakglassv1alpha1.SchedulingConstraints{RequiredPodAntiAffinity: []corev1.PodAffinityTerm{{TopologyKey: "kubernetes.io/hostname"}}}},
+		{name: "hard topology spread is not node-bindable", constraints: &breakglassv1alpha1.SchedulingConstraints{TopologySpreadConstraints: []corev1.TopologySpreadConstraint{{TopologyKey: "topology.kubernetes.io/zone", WhenUnsatisfiable: corev1.DoNotSchedule}}}},
+		{name: "soft topology spread remains node-bindable", constraints: &breakglassv1alpha1.SchedulingConstraints{TopologySpreadConstraints: []corev1.TopologySpreadConstraint{{TopologyKey: "topology.kubernetes.io/zone", WhenUnsatisfiable: corev1.ScheduleAnyway}}}, wantCreate: true},
+		{name: "matching alternative with combined requirements", constraints: &breakglassv1alpha1.SchedulingConstraints{RequiredNodeAffinity: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{
+			{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "role", Operator: corev1.NodeSelectorOpIn, Values: []string{"other"}}}},
+			{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "role", Operator: corev1.NodeSelectorOpIn, Values: []string{"worker"}}}, MatchFields: []corev1.NodeSelectorRequirement{{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{"node"}}}},
+		}}}, wantCreate: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "session-12345678", Namespace: "hub", UID: types.UID("session-uid")},
+				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke", RequestedBy: "owner", TargetNamespace: "debug", ResolvedSchedulingConstraints: test.constraints},
+				Status:     breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: defenderExpiry(), ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{TargetNamespace: "debug", KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{NodeDebug: &breakglassv1alpha1.NodeDebugConfig{Enabled: true}}}},
+			}
+			hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(session).WithStatusSubresource(session).Build()
+			labels := test.nodeLabels
+			if labels == nil {
+				labels = map[string]string{"role": "worker"}
+			}
+			creates := 0
+			spoke := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug", UID: types.UID("namespace-uid")}},
+				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", UID: types.UID("node-uid"), Labels: labels}},
+			).WithInterceptorFuncs(interceptor.Funcs{Create: func(ctx context.Context, cl ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.CreateOption) error {
+				if _, ok := obj.(*corev1.Pod); ok {
+					creates++
+				}
+				return cl.Create(ctx, obj, opts...)
+			}}).Build()
+			h := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"spoke": spoke}}).withIdentity(debugSessionReadIdentity{legacyAllowed: true})
+			pod, err := h.CreateNodeDebugPod(context.Background(), session, "node", "owner")
+			if test.wantCreate {
+				require.NoError(t, err)
+				require.NotNil(t, pod)
+				require.Equal(t, 1, creates)
+			} else {
+				require.Error(t, err)
+				require.Zero(t, creates)
+				pods := &corev1.PodList{}
+				require.NoError(t, spoke.List(context.Background(), pods))
+				require.Empty(t, pods.Items)
+			}
+		})
+	}
+}
+
+func TestDefenderNodeDebugFinalFenceRejectsLateDeniedLabel(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-12345678", Namespace: "hub", UID: types.UID("session-uid")},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke", RequestedBy: "owner", TargetNamespace: "debug", ResolvedSchedulingConstraints: &breakglassv1alpha1.SchedulingConstraints{DeniedNodeLabels: map[string]string{"role": "blocked"}}},
+		Status:     breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: defenderExpiry(), ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{TargetNamespace: "debug", KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{NodeDebug: &breakglassv1alpha1.NodeDebugConfig{Enabled: true}}}},
+	}
+	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(session).WithStatusSubresource(session).Build()
+	nodeReads := 0
+	creates := 0
+	spoke := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug", UID: types.UID("namespace-uid")}},
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", UID: types.UID("node-uid"), Labels: map[string]string{"role": "worker"}}},
+	).WithInterceptorFuncs(interceptor.Funcs{Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+		if err := cl.Get(ctx, key, obj, opts...); err != nil {
+			return err
+		}
+		if node, ok := obj.(*corev1.Node); ok {
+			nodeReads++
+			if nodeReads == 2 {
+				node.Labels["role"] = "blocked"
+			}
+		}
+		return nil
+	}, Create: func(ctx context.Context, cl ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.CreateOption) error {
+		if _, ok := obj.(*corev1.Pod); ok {
+			creates++
+		}
+		return cl.Create(ctx, obj, opts...)
+	}}).Build()
+	h := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"spoke": spoke}}).withIdentity(debugSessionReadIdentity{legacyAllowed: true})
+	_, err := h.CreateNodeDebugPod(context.Background(), session, "node", "owner")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "required scheduling constraints")
+	require.Equal(t, 2, nodeReads)
+	require.Zero(t, creates)
+	pods := &corev1.PodList{}
+	require.NoError(t, spoke.List(context.Background(), pods))
+	require.Empty(t, pods.Items)
+}
+
 func TestDefenderOrphanCompensationUsesCreatedUID(t *testing.T) {
 	for _, replacedBeforeRead := range []bool{true, false} {
 		t.Run(fmt.Sprintf("replaced-before-read=%t", replacedBeforeRead), func(t *testing.T) {

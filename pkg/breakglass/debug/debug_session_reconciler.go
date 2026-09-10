@@ -450,6 +450,16 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		return c.terminalizeActiveSessionWithoutExpiry(ctx, ds)
 	}
 
+	// Resolve any target mutation whose status outcome was interrupted by a
+	// controller restart or an ambiguous target API response before handling
+	// expiry. Prepared intent is durable in the session status, so this read-only
+	// recovery either records the exact target result or marks an identity
+	// mismatch unknown without attempting a compensating mutation.
+	kubectlHandler := c.newKubectlDebugHandler()
+	if err := kubectlHandler.RecoverPendingKubectlDebugOperations(ctx, ds); err != nil {
+		log.Warnw("Failed to recover prepared kubectl-debug operations", "error", err)
+	}
+
 	// Check expiration
 	if isDebugSessionExpired(ds, time.Now().UTC()) {
 		expired := false
@@ -644,11 +654,35 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 // hasTrackedSpokeResources reports whether the session status still references
 // anything that was deployed to the spoke cluster.
 func hasTrackedSpokeResources(ds *breakglassv1alpha1.DebugSession) bool {
-	return len(ds.Status.DeployedResources) > 0 ||
+	if len(ds.Status.DeployedResources) > 0 ||
 		hasOutstandingAuxiliaryResources(ds) ||
 		len(ds.Status.PodTemplateResourceStatuses) > 0 ||
-		len(ds.Status.AllowedPods) > 0 ||
-		ds.Status.KubectlDebugStatus != nil
+		len(ds.Status.AllowedPods) > 0 {
+		return true
+	}
+	if status := ds.Status.KubectlDebugStatus; status != nil {
+		if len(status.CopiedPods) > 0 {
+			return true
+		}
+		for _, operation := range status.Operations {
+			if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasPreparedKubectlDebugOperation(ds *breakglassv1alpha1.DebugSession) bool {
+	if ds == nil || ds.Status.KubectlDebugStatus == nil {
+		return false
+	}
+	for _, operation := range ds.Status.KubectlDebugStatus.Operations {
+		if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared {
+			return true
+		}
+	}
+	return false
 }
 
 func hasOutstandingAuxiliaryResources(ds *breakglassv1alpha1.DebugSession) bool {
@@ -679,6 +713,10 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 			log.Errorw("Failed to revoke debug session connection lease", "error", err)
 			return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 		}
+	}
+	if hasPreparedKubectlDebugOperation(ds) {
+		log.Debugw("Prepared kubectl-debug operation remains after cleanup; retrying recovery")
+		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
 
 	// Decrement active gauge for terminated sessions. Expired sessions are
@@ -1265,6 +1303,14 @@ func (c *DebugSessionController) approvalReader() ctrlclient.Reader {
 		return c.reader
 	}
 	return c.client
+}
+
+func (c *DebugSessionController) newKubectlDebugHandler() *KubectlDebugHandler {
+	provider := ClientProviderInterface(&clusterClientAdapter{ccProvider: c.ccProvider})
+	if c.targetClients != nil {
+		provider = c.targetClients
+	}
+	return NewKubectlDebugHandlerWithReader(c.client, c.approvalReader(), provider)
 }
 
 // bindingMatchesTemplate checks if a binding references the given template

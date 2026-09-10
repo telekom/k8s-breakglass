@@ -21,14 +21,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -37,6 +40,10 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 )
+
+func stalePreparedAt() metav1.Time {
+	return metav1.NewTime(time.Now().Add(-ephemeralOperationRecoveryGrace - time.Second))
+}
 
 // mockClientProvider is a test implementation of ClientProviderInterface
 type mockClientProvider struct {
@@ -47,6 +54,30 @@ type mockClientProvider struct {
 	validateCalls int
 	validateErrAt int
 	validateErr   error
+}
+
+type timedOutDebugSessionReader struct {
+	t *testing.T
+	ctrlclient.Reader
+	blockWhen <-chan struct{}
+	blocked   chan struct{}
+	once      sync.Once
+}
+
+func (r *timedOutDebugSessionReader) Get(ctx context.Context, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+	select {
+	case <-r.blockWhen:
+		r.once.Do(func() { close(r.blocked) })
+		deadline, bounded := ctx.Deadline()
+		require.True(r.t, bounded, "post-mutation reads must have a deadline")
+		require.NoError(r.t, ctx.Err(), "request cancellation must not cancel outcome persistence")
+		remaining := time.Until(deadline)
+		require.Positive(r.t, remaining)
+		require.LessOrEqual(r.t, remaining, orphanCleanupTimeout)
+		return context.DeadlineExceeded
+	default:
+	}
+	return r.Reader.Get(ctx, key, obj, opts...)
 }
 
 func (m *mockClientProvider) GetClient(_ context.Context, clusterName string) (ctrlclient.Client, error) {
@@ -789,8 +820,11 @@ func TestKubectlDebugHandler_InjectEphemeralContainer(t *testing.T) {
 			UID:       "session-test-uid",
 		},
 		Spec: breakglassv1alpha1.DebugSessionSpec{
-			Cluster:     "test-cluster",
-			RequestedBy: "test-user@example.com",
+			Cluster:                "test-cluster",
+			RequestedBy:            "subject-123",
+			RequestedByEmail:       "operator@example.com",
+			IdentityProviderName:   "idp-a",
+			IdentityProviderIssuer: "https://idp-a.example",
 		},
 		Status: breakglassv1alpha1.DebugSessionStatus{
 			State: breakglassv1alpha1.DebugSessionStateActive,
@@ -835,7 +869,9 @@ func TestKubectlDebugHandler_InjectEphemeralContainer(t *testing.T) {
 		},
 	}
 
-	handler := NewKubectlDebugHandler(hubClient, mockProvider)
+	handler := NewKubectlDebugHandler(hubClient, mockProvider).withIdentity(debugSessionReadIdentity{
+		username: "subject-123", email: "operator@example.com", provider: "idp-a", issuer: "https://idp-a.example",
+	})
 
 	t.Run("inject ephemeral container", func(t *testing.T) {
 		err := handler.InjectEphemeralContainer(
@@ -847,7 +883,7 @@ func TestKubectlDebugHandler_InjectEphemeralContainer(t *testing.T) {
 			"busybox:latest",
 			[]string{"sh"},
 			nil,
-			"test-user@example.com",
+			"subject-123",
 		)
 
 		require.NoError(t, err)
@@ -855,6 +891,13 @@ func TestKubectlDebugHandler_InjectEphemeralContainer(t *testing.T) {
 		require.NoError(t, targetClient.Get(context.Background(), ctrlclient.ObjectKey{Name: "test-pod", Namespace: "default"}, storedPod))
 		require.Len(t, storedPod.Spec.EphemeralContainers, 1)
 		assert.Equal(t, "debugger", storedPod.Spec.EphemeralContainers[0].Name)
+		var storedSession breakglassv1alpha1.DebugSession
+		require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(testSession), &storedSession))
+		operation := storedSession.Status.KubectlDebugStatus.Operations[0]
+		assert.Equal(t, "subject-123", operation.RequestedBy)
+		assert.Equal(t, "operator@example.com", operation.RequestedByEmail)
+		assert.Equal(t, "idp-a", operation.IdentityProviderName)
+		assert.Equal(t, "https://idp-a.example", operation.IdentityProviderIssuer)
 	})
 
 	t.Run("container already exists", func(t *testing.T) {
@@ -880,7 +923,9 @@ func TestKubectlDebugHandler_InjectEphemeralContainer(t *testing.T) {
 			},
 		}
 
-		handler2 := NewKubectlDebugHandler(hubClient, mockProvider2)
+		handler2 := NewKubectlDebugHandler(hubClient, mockProvider2).withIdentity(debugSessionReadIdentity{
+			username: "subject-123", email: "operator@example.com", provider: "idp-a", issuer: "https://idp-a.example",
+		})
 
 		err := handler2.InjectEphemeralContainer(
 			context.Background(),
@@ -891,12 +936,1293 @@ func TestKubectlDebugHandler_InjectEphemeralContainer(t *testing.T) {
 			"busybox:latest",
 			[]string{"sh"},
 			nil,
-			"test-user@example.com",
+			"subject-123",
 		)
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "already exists")
 	})
+}
+
+func TestKubectlDebugHandler_InjectEphemeralContainerSecurityContextFence(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*breakglassv1alpha1.EphemeralContainersConfig, *corev1.SecurityContext)
+		wantError bool
+	}{
+		{name: "host process", configure: func(_ *breakglassv1alpha1.EphemeralContainersConfig, sc *corev1.SecurityContext) {
+			value := true
+			sc.WindowsOptions = &corev1.WindowsSecurityContextOptions{HostProcess: &value}
+		}, wantError: true},
+		{name: "privilege escalation", configure: func(_ *breakglassv1alpha1.EphemeralContainersConfig, sc *corev1.SecurityContext) {
+			value := true
+			sc.AllowPrivilegeEscalation = &value
+		}, wantError: true},
+		{name: "unmasked proc mount", configure: func(_ *breakglassv1alpha1.EphemeralContainersConfig, sc *corev1.SecurityContext) {
+			value := corev1.UnmaskedProcMount
+			sc.ProcMount = &value
+		}, wantError: true},
+		{name: "unconfined seccomp", configure: func(_ *breakglassv1alpha1.EphemeralContainersConfig, sc *corev1.SecurityContext) {
+			sc.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined}
+		}, wantError: true},
+		{name: "unconfined apparmor", configure: func(_ *breakglassv1alpha1.EphemeralContainersConfig, sc *corev1.SecurityContext) {
+			sc.AppArmorProfile = &corev1.AppArmorProfile{Type: corev1.AppArmorProfileTypeUnconfined}
+		}, wantError: true},
+		{name: "selinux user", configure: func(_ *breakglassv1alpha1.EphemeralContainersConfig, sc *corev1.SecurityContext) {
+			sc.SELinuxOptions = &corev1.SELinuxOptions{User: "unconfined_u"}
+		}, wantError: true},
+		{name: "selinux role", configure: func(_ *breakglassv1alpha1.EphemeralContainersConfig, sc *corev1.SecurityContext) {
+			sc.SELinuxOptions = &corev1.SELinuxOptions{Role: "unconfined_r"}
+		}, wantError: true},
+		{name: "unsafe selinux type", configure: func(_ *breakglassv1alpha1.EphemeralContainersConfig, sc *corev1.SecurityContext) {
+			sc.SELinuxOptions = &corev1.SELinuxOptions{Type: "spc_t"}
+		}, wantError: true},
+		{name: "root user with non-root policy", configure: func(ec *breakglassv1alpha1.EphemeralContainersConfig, sc *corev1.SecurityContext) {
+			ec.RequireNonRoot = true
+			nonRoot := true
+			user := int64(0)
+			sc.RunAsNonRoot = &nonRoot
+			sc.RunAsUser = &user
+		}, wantError: true},
+		{name: "safe fields preserved", configure: func(ec *breakglassv1alpha1.EphemeralContainersConfig, sc *corev1.SecurityContext) {
+			ec.RequireNonRoot = true
+			nonRoot := true
+			noEscalation := false
+			readOnly := true
+			defaultProcMount := corev1.DefaultProcMount
+			sc.RunAsNonRoot = &nonRoot
+			sc.AllowPrivilegeEscalation = &noEscalation
+			sc.ReadOnlyRootFilesystem = &readOnly
+			sc.ProcMount = &defaultProcMount
+			sc.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}
+			sc.AppArmorProfile = &corev1.AppArmorProfile{Type: corev1.AppArmorProfileTypeRuntimeDefault}
+			sc.SELinuxOptions = &corev1.SELinuxOptions{Type: "container_t"}
+		}},
+		{name: "privileged policy allows explicit fields", configure: func(ec *breakglassv1alpha1.EphemeralContainersConfig, sc *corev1.SecurityContext) {
+			ec.AllowPrivileged = true
+			privileged := true
+			escalation := true
+			procMount := corev1.UnmaskedProcMount
+			hostProcess := true
+			sc.Privileged = &privileged
+			sc.AllowPrivilegeEscalation = &escalation
+			sc.ProcMount = &procMount
+			sc.WindowsOptions = &corev1.WindowsSecurityContextOptions{HostProcess: &hostProcess}
+			sc.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined}
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			scheme := newKubectlTestScheme()
+			session := newEphemeralOperationTestSession()
+			securityContext := &corev1.SecurityContext{}
+			test.configure(session.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers, securityContext)
+			updates := 0
+			targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "app:v1"}}},
+			}).WithInterceptorFuncs(interceptor.Funcs{SubResourceUpdate: func(ctx context.Context, cl ctrlclient.Client, name string, obj ctrlclient.Object, opts ...ctrlclient.SubResourceUpdateOption) error {
+				if name == "ephemeralcontainers" {
+					updates++
+				}
+				return cl.Update(ctx, obj)
+			}}).Build()
+			hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+			handler := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+			err := handler.InjectEphemeralContainer(context.Background(), session, "default", "target", "debugger", "busybox:latest", []string{"sh"}, securityContext, "test-user@example.com")
+			if test.wantError {
+				require.Error(t, err)
+				var operationErr *kubectlDebugOperationError
+				require.ErrorAs(t, err, &operationErr)
+				assert.Equal(t, kubectlDebugOperationErrorPolicy, operationErr.kind)
+				assert.Zero(t, updates)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, 1, updates)
+				storedPod := &corev1.Pod{}
+				require.NoError(t, targetClient.Get(context.Background(), ctrlclient.ObjectKey{Name: "target", Namespace: "default"}, storedPod))
+				require.Len(t, storedPod.Spec.EphemeralContainers, 1)
+				assert.Equal(t, securityContext, storedPod.Spec.EphemeralContainers[0].SecurityContext)
+			}
+			stored := &breakglassv1alpha1.DebugSession{}
+			require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), stored))
+			if test.wantError {
+				assert.Nil(t, stored.Status.KubectlDebugStatus)
+			}
+		})
+	}
+}
+
+func newEphemeralOperationTestSession() *breakglassv1alpha1.DebugSession {
+	expiresAt := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	return &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "operation-session",
+			Namespace: "default",
+			UID:       "operation-session-uid",
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "test-user@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &expiresAt,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{Enabled: true},
+				},
+			},
+		},
+	}
+}
+
+func TestKubectlDebugHandler_EphemeralOperationIntentPrecedesTargetMutation(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	statusErr := errors.New("simulated durable intent write failure")
+	updates := 0
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "app:v1"}}},
+	}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourceUpdate: func(ctx context.Context, cl ctrlclient.Client, name string, obj ctrlclient.Object, opts ...ctrlclient.SubResourceUpdateOption) error {
+				if name == "ephemeralcontainers" {
+					updates++
+				}
+				return cl.SubResource(name).Update(ctx, obj, opts...)
+			},
+		}).Build()
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(newEphemeralOperationTestSession()).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(_ context.Context, _ ctrlclient.Client, name string, _ ctrlclient.Object, _ ctrlclient.Patch, _ ...ctrlclient.SubResourcePatchOption) error {
+				if name == "status" {
+					return statusErr
+				}
+				return nil
+			},
+		}).Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+	err := handler.InjectEphemeralContainer(context.Background(), newEphemeralOperationTestSession(), "default", "target", "debugger", "busybox:latest", []string{"sh"}, nil, "test-user@example.com")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "persist ephemeral-container operation intent")
+	assert.Zero(t, updates, "target mutation must not be attempted when durable intent cannot be written")
+
+	storedPod := &corev1.Pod{}
+	require.NoError(t, targetClient.Get(context.Background(), ctrlclient.ObjectKey{Namespace: "default", Name: "target"}, storedPod))
+	assert.Empty(t, storedPod.Spec.EphemeralContainers)
+}
+
+func TestKubectlDebugHandler_DeterministicEphemeralMutationErrorsFailOperation(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "forbidden", err: apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "target", errors.New("denied"))},
+		{name: "invalid", err: apierrors.NewInvalid(schema.GroupKind{Kind: "Pod"}, "target", nil)},
+		{name: "conflict", err: apierrors.NewConflict(schema.GroupResource{Resource: "pods"}, "target", errors.New("conflict"))},
+		{name: "not found", err: apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, "target")},
+		{name: "unauthorized", err: apierrors.NewUnauthorized("unauthorized")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scheme := newKubectlTestScheme()
+			target := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "app:v1"}}}}
+			targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(target).WithInterceptorFuncs(interceptor.Funcs{
+				SubResourceUpdate: func(_ context.Context, _ ctrlclient.Client, name string, _ ctrlclient.Object, _ ...ctrlclient.SubResourceUpdateOption) error {
+					if name == "ephemeralcontainers" {
+						return test.err
+					}
+					return nil
+				},
+			}).Build()
+			session := newEphemeralOperationTestSession()
+			hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).Build()
+			handler := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+			err := handler.InjectEphemeralContainer(context.Background(), session, "default", "target", "debugger", "busybox:latest", []string{"sh"}, nil, "test-user@example.com")
+			require.Error(t, err)
+			stored := &breakglassv1alpha1.DebugSession{}
+			require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), stored))
+			require.NotNil(t, stored.Status.KubectlDebugStatus)
+			require.Len(t, stored.Status.KubectlDebugStatus.Operations, 1)
+			assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationFailed, stored.Status.KubectlDebugStatus.Operations[0].State)
+		})
+	}
+}
+
+func TestKubectlDebugHandler_CanceledPreWritePersistsFailedOutcome(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	session.Spec.TemplateRef = "test-template"
+	targetPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "app:v1"}}},
+	}
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	defer cancelRequest()
+	canceled := false
+	var prepared *breakglassv1alpha1.DebugSession
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			err := cl.Get(ctx, key, obj, opts...)
+			if err == nil && !canceled {
+				if live, ok := obj.(*breakglassv1alpha1.DebugSession); ok && live.Status.KubectlDebugStatus != nil {
+					for _, operation := range live.Status.KubectlDebugStatus.Operations {
+						if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared {
+							prepared = live.DeepCopy()
+							canceled = true
+							cancelRequest()
+							break
+						}
+					}
+				}
+			}
+			return err
+		},
+	}).Build()
+	targetWrites := 0
+	target := fake.NewClientBuilder().WithScheme(scheme).WithObjects(targetPod).WithInterceptorFuncs(interceptor.Funcs{
+		SubResourceUpdate: func(_ context.Context, cl ctrlclient.Client, name string, obj ctrlclient.Object, opts ...ctrlclient.SubResourceUpdateOption) error {
+			if name == "ephemeralcontainers" {
+				targetWrites++
+			}
+			return cl.SubResource(name).Update(context.Background(), obj, opts...)
+		},
+	}).Build()
+	handler := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": target}})
+
+	err := handler.InjectEphemeralContainer(requestCtx, session, "default", "target", "debugger", "busybox:latest", []string{"sh"}, nil, "test-user@example.com")
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Zero(t, targetWrites)
+	stored := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), stored))
+	require.NotNil(t, stored.Status.KubectlDebugStatus)
+	require.Len(t, stored.Status.KubectlDebugStatus.Operations, 1)
+	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationFailed, stored.Status.KubectlDebugStatus.Operations[0].State)
+	require.NotNil(t, prepared)
+	_, validationErr := stored.ValidateUpdate(context.Background(), prepared, stored)
+	require.NoError(t, validationErr)
+}
+
+func TestKubectlDebugHandler_ExpiryAfterIntentFailsOperationWithoutTargetWrite(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	session.Spec.TemplateRef = "template"
+	expiry := metav1.NewTime(time.Now().UTC().Truncate(time.Second).Add(3 * time.Second))
+	session.Status.ExpiresAt = &expiry
+	var preparedBefore *breakglassv1alpha1.DebugSession
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "app:v1"}}},
+	}
+	targetWrites := 0
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).WithInterceptorFuncs(interceptor.Funcs{
+		SubResourceUpdate: func(ctx context.Context, cl ctrlclient.Client, name string, obj ctrlclient.Object, opts ...ctrlclient.SubResourceUpdateOption) error {
+			if name == "ephemeralcontainers" {
+				targetWrites++
+			}
+			return cl.SubResource(name).Update(ctx, obj, opts...)
+		},
+	}).Build()
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+			if err := cl.Get(ctx, key, obj, opts...); err != nil {
+				return err
+			}
+			if live, ok := obj.(*breakglassv1alpha1.DebugSession); ok && live.Status.KubectlDebugStatus != nil {
+				for _, operation := range live.Status.KubectlDebugStatus.Operations {
+					if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared {
+						if preparedBefore == nil {
+							require.True(t, time.Now().Before(expiry.Time), "intent must be persisted before expiry")
+							preparedBefore = live.DeepCopy()
+							time.Sleep(time.Until(expiry.Time) + time.Millisecond)
+						}
+						break
+					}
+				}
+			}
+			return nil
+		},
+	}).Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+	err := handler.InjectEphemeralContainer(context.Background(), session, "default", "target", "debugger", "busybox:latest", []string{"sh"}, nil, "test-user@example.com")
+	require.Error(t, err)
+	require.Zero(t, targetWrites, "expiry after durable intent must prevent the target write")
+
+	after := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), after))
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, after.Status.State)
+	require.NotNil(t, after.Status.KubectlDebugStatus)
+	require.Len(t, after.Status.KubectlDebugStatus.Operations, 1)
+	require.Equal(t, breakglassv1alpha1.KubectlDebugOperationFailed, after.Status.KubectlDebugStatus.Operations[0].State)
+	require.NotNil(t, preparedBefore)
+	require.True(t, after.Status.ExpiresAt.Time.Equal(expiry.Time), "failure evidence must not change persisted expiry")
+	_, validationErr := after.ValidateUpdate(context.Background(), preparedBefore, after)
+	require.NoError(t, validationErr)
+}
+
+func TestDeterministicEphemeralContainerUpdateErrorDoesNotClassifyTransientFailures(t *testing.T) {
+	assert.False(t, isDeterministicEphemeralContainerUpdateError(errors.New("connection reset")))
+	assert.False(t, isDeterministicEphemeralContainerUpdateError(apierrors.NewTooManyRequests("retry later", 1)))
+}
+
+func TestKubectlDebugHandler_PrepareEphemeralOperationRejectsDuplicateTuple(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	hubClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	container := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+	first := newEphemeralContainerOperation(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+	}, container, "test-user@example.com")
+	second := first
+	second.ID = "different-operation"
+
+	existing, err := handler.prepareEphemeralContainerOperation(context.Background(), session, first)
+	require.NoError(t, err)
+	assert.Nil(t, existing)
+	existing, err = handler.prepareEphemeralContainerOperation(context.Background(), session, second)
+	require.NoError(t, err)
+	require.NotNil(t, existing)
+	assert.Equal(t, first.ID, existing.ID)
+
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	require.Len(t, stored.Status.KubectlDebugStatus.Operations, 1)
+	assert.Equal(t, first.ID, stored.Status.KubectlDebugStatus.Operations[0].ID)
+}
+
+func TestKubectlDebugHandler_PrepareEphemeralOperationRejectsPreparedDigestCollision(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	first := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"}}, desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil), "operator@example.com")
+	conflicting := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"}}, desiredEphemeralContainerForIntent("debugger", "alpine:latest", []string{"sh"}, nil), "operator@example.com")
+
+	_, err := handler.prepareEphemeralContainerOperation(context.Background(), session, first)
+	require.NoError(t, err)
+	_, err = handler.prepareEphemeralContainerOperation(context.Background(), session, conflicting)
+	require.ErrorContains(t, err, "already prepared with different content")
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	assert.Len(t, stored.Status.KubectlDebugStatus.Operations, 1)
+}
+
+func TestKubectlDebugHandler_PrepareEphemeralOperationRejectsRetainedUnknownReplay(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	unknown := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"}}, desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil), "operator@example.com")
+	unknown.State = breakglassv1alpha1.KubectlDebugOperationUnknown
+	unknown.ID = "unknown-operation"
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{unknown}}
+	require.NoError(t, hubClient.Status().Update(context.Background(), session))
+
+	conflicting := unknown
+	conflicting.ID = "new-operation"
+	conflicting.State = breakglassv1alpha1.KubectlDebugOperationPrepared
+	conflicting.CompletedAt = nil
+	conflicting.EphemeralContainer.ContainerDigest = "different-digest"
+	_, err := handler.prepareEphemeralContainerOperation(context.Background(), session, conflicting)
+	require.ErrorContains(t, err, "Unknown outcome")
+
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	require.Len(t, stored.Status.KubectlDebugStatus.Operations, 1)
+	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationUnknown, stored.Status.KubectlDebugStatus.Operations[0].State)
+
+	differentPod := conflicting
+	differentPod.ID = "different-pod"
+	differentPod.State = breakglassv1alpha1.KubectlDebugOperationPrepared
+	differentPod.TargetPod.UID = "replacement-uid"
+	_, err = handler.prepareEphemeralContainerOperation(context.Background(), &stored, differentPod)
+	require.NoError(t, err)
+	var afterDifferentPod breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &afterDifferentPod))
+	assert.Len(t, afterDifferentPod.Status.KubectlDebugStatus.Operations, 2)
+	failedSession := newEphemeralOperationTestSession()
+	failedSession.Name = "failed-operation-session"
+	failed := unknown
+	failed.State = breakglassv1alpha1.KubectlDebugOperationFailed
+	completedAt := metav1.Now()
+	failed.CompletedAt = &completedAt
+	failedSession.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{failed}}
+	require.NoError(t, hubClient.Create(context.Background(), failedSession))
+	retry := conflicting
+	retry.ID = "failed-retry"
+	retry.State = breakglassv1alpha1.KubectlDebugOperationPrepared
+	_, err = handler.prepareEphemeralContainerOperation(context.Background(), failedSession, retry)
+	require.NoError(t, err)
+}
+
+func TestKubectlDebugHandler_PrepareEphemeralOperationConflictRejectsUnknownReplay(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	requested := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"}}, desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil), "operator@example.com")
+	requested.ID = "requested"
+	seed := requested
+	seed.ID = "seed"
+	var conflicted bool
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		WithInterceptorFuncs(interceptor.Funcs{SubResourcePatch: func(ctx context.Context, underlying ctrlclient.Client, subResource string, obj ctrlclient.Object, patch ctrlclient.Patch, opts ...ctrlclient.SubResourcePatchOption) error {
+			if !conflicted && subResource == "status" {
+				conflicted = true
+				var current breakglassv1alpha1.DebugSession
+				require.NoError(t, underlying.Get(ctx, ctrlclient.ObjectKeyFromObject(session), &current))
+				// A concurrent writer first persists intent, then records an ambiguous outcome.
+				assertOperationMergeAdmission(t, nil, []breakglassv1alpha1.KubectlDebugOperation{seed})
+				current.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{seed}}
+				require.NoError(t, underlying.Status().Update(ctx, &current))
+				require.NoError(t, underlying.Get(ctx, ctrlclient.ObjectKeyFromObject(session), &current))
+				unknown := current.Status.KubectlDebugStatus.Operations[0]
+				unknown.State = breakglassv1alpha1.KubectlDebugOperationUnknown
+				completedAt := metav1.Now()
+				unknown.CompletedAt = &completedAt
+				assertOperationMergeAdmission(t, current.Status.KubectlDebugStatus.Operations, []breakglassv1alpha1.KubectlDebugOperation{unknown})
+				current.Status.KubectlDebugStatus.Operations = []breakglassv1alpha1.KubectlDebugOperation{unknown}
+				require.NoError(t, underlying.Status().Update(ctx, &current))
+				return apierrors.NewConflict(schema.GroupResource{Group: "breakglass.t-caas.telekom.com", Resource: "debugsessions"}, session.Name, errors.New("raced"))
+			}
+			return underlying.Status().Patch(ctx, obj, patch, opts...)
+		}}).Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	_, err := handler.prepareEphemeralContainerOperation(context.Background(), session, requested)
+	require.ErrorContains(t, err, "Unknown outcome")
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	assert.Len(t, stored.Status.KubectlDebugStatus.Operations, 1)
+	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationUnknown, stored.Status.KubectlDebugStatus.Operations[0].State)
+}
+
+func TestKubectlDebugHandler_PrepareEphemeralOperationRejectsConcurrentPreparedDigestCollision(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	conflicting := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"}}, desiredEphemeralContainerForIntent("debugger", "alpine:latest", []string{"sh"}, nil), "operator@example.com")
+	var conflicted bool
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		WithInterceptorFuncs(interceptor.Funcs{SubResourcePatch: func(ctx context.Context, underlying ctrlclient.Client, subResource string, obj ctrlclient.Object, patch ctrlclient.Patch, opts ...ctrlclient.SubResourcePatchOption) error {
+			if !conflicted && subResource == "status" {
+				conflicted = true
+				var current breakglassv1alpha1.DebugSession
+				require.NoError(t, underlying.Get(ctx, ctrlclient.ObjectKeyFromObject(session), &current))
+				current.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{conflicting}}
+				require.NoError(t, underlying.Status().Update(ctx, &current))
+				return apierrors.NewConflict(schema.GroupResource{Group: "breakglass.t-caas.telekom.com", Resource: "debugsessions"}, session.Name, errors.New("raced"))
+			}
+			return underlying.Status().Patch(ctx, obj, patch, opts...)
+		}}).Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	requested := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"}}, desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil), "operator@example.com")
+
+	_, err := handler.prepareEphemeralContainerOperation(context.Background(), session, requested)
+	require.ErrorContains(t, err, "already prepared with different content")
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	assert.Len(t, stored.Status.KubectlDebugStatus.Operations, 1)
+	assert.Equal(t, conflicting.ID, stored.Status.KubectlDebugStatus.Operations[0].ID)
+}
+
+func TestKubectlDebugHandler_InjectEphemeralContainerRejectsRetainedUnknownWithoutTargetMutation(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	container := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+	unknown := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"}}, container, "test-user@example.com")
+	unknown.State = breakglassv1alpha1.KubectlDebugOperationUnknown
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{unknown}}
+	updates := 0
+	target := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "app:v1"}}}}).
+		WithInterceptorFuncs(interceptor.Funcs{SubResourceUpdate: func(ctx context.Context, cl ctrlclient.Client, name string, obj ctrlclient.Object, opts ...ctrlclient.SubResourceUpdateOption) error {
+			if name == "ephemeralcontainers" {
+				updates++
+			}
+			return cl.SubResource(name).Update(ctx, obj, opts...)
+		}}).Build()
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).Build()
+	handler := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": target}})
+	err := handler.InjectEphemeralContainer(context.Background(), session, "default", "target", "debugger", "busybox:latest", []string{"sh"}, nil, "test-user@example.com")
+	require.ErrorContains(t, err, "Unknown outcome")
+	assert.Zero(t, updates)
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	assert.Len(t, stored.Status.KubectlDebugStatus.Operations, 1)
+}
+
+func TestKubectlDebugHandler_CompactedUnknownStillRequiresLiveAuthorization(t *testing.T) {
+	for _, test := range []struct {
+		name                 string
+		existing, authorized bool
+	}{
+		{"existing container denied", true, true},
+		{"absent container new authorized request", false, true},
+		{"absent container unauthorized request denied", false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scheme := newKubectlTestScheme()
+			session := newEphemeralOperationTestSession()
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "app:v1"}}}}
+			container := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+			unknown := newEphemeralContainerOperation(pod, container, "test-user@example.com")
+			unknown.State = breakglassv1alpha1.KubectlDebugOperationUnknown
+			completedAt := metav1.Now()
+			unknown.CompletedAt = &completedAt
+			history := []breakglassv1alpha1.KubectlDebugOperation{unknown}
+			for i := 0; i < breakglassv1alpha1.MaxKubectlDebugOperationHistory; i++ {
+				completed := newEphemeralContainerOperation(pod, desiredEphemeralContainerForIntent(fmt.Sprintf("later-%d", i), "busybox:latest", []string{"sh"}, nil), "test-user@example.com")
+				completed.State = breakglassv1alpha1.KubectlDebugOperationCompleted
+				completed.CompletedAt = &completedAt
+				history = append(history, completed)
+			}
+			session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: terminalKubectlDebugOperations(history)}
+			require.Nil(t, findKubectlDebugOperation(&session.Status, unknown.ID), "the bounded history must actually have compacted Unknown")
+			if test.existing {
+				pod.Spec.EphemeralContainers = []corev1.EphemeralContainer{container}
+			}
+			updates := 0
+			target := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).WithInterceptorFuncs(interceptor.Funcs{SubResourceUpdate: func(ctx context.Context, cl ctrlclient.Client, name string, obj ctrlclient.Object, opts ...ctrlclient.SubResourceUpdateOption) error {
+				if name == "ephemeralcontainers" {
+					updates++
+				}
+				return cl.Update(ctx, obj)
+			}}).Build()
+			hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).Build()
+			before := &breakglassv1alpha1.DebugSession{}
+			require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), before))
+			handler := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": target}})
+			user := "test-user@example.com"
+			if !test.authorized {
+				user = "unrelated@example.com"
+			}
+			err := handler.InjectEphemeralContainer(context.Background(), session, "default", "target", "debugger", "busybox:latest", []string{"sh"}, nil, user)
+			if test.existing || !test.authorized {
+				require.Error(t, err)
+				if test.existing {
+					require.ErrorContains(t, err, "already exists")
+				}
+				require.Zero(t, updates)
+				stored := &breakglassv1alpha1.DebugSession{}
+				require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), stored))
+				require.Equal(t, before.Status.KubectlDebugStatus.Operations, stored.Status.KubectlDebugStatus.Operations)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, 1, updates)
+				stored := &corev1.Pod{}
+				require.NoError(t, target.Get(context.Background(), ctrlclient.ObjectKeyFromObject(pod), stored))
+				require.Len(t, stored.Spec.EphemeralContainers, 1)
+				require.Equal(t, "debugger", stored.Spec.EphemeralContainers[0].Name)
+			}
+		})
+	}
+}
+
+func TestKubectlDebugHandler_PrepareEphemeralOperationPersistsProviderIdentity(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	container := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+	operation := newEphemeralContainerOperationWithIdentity(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+	}, container, debugSessionReadIdentity{
+		username: "subject-123", email: "operator@example.com", provider: "idp-a", issuer: "https://idp-a.example",
+	})
+
+	_, err := handler.prepareEphemeralContainerOperation(context.Background(), session, operation)
+	require.NoError(t, err)
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	got := stored.Status.KubectlDebugStatus.Operations[0]
+	assert.Equal(t, "subject-123", got.RequestedBy)
+	assert.Equal(t, "operator@example.com", got.RequestedByEmail)
+	assert.Equal(t, "idp-a", got.IdentityProviderName)
+	assert.Equal(t, "https://idp-a.example", got.IdentityProviderIssuer)
+}
+
+func TestKubectlDebugHandler_PrepareEphemeralOperationRejectsNewIdentityAtCapacity(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	refs := make([]breakglassv1alpha1.EphemeralContainerRef, 256)
+	for i := range refs {
+		refs[i] = breakglassv1alpha1.EphemeralContainerRef{Namespace: "default", PodName: fmt.Sprintf("pod-%d", i), PodUID: fmt.Sprintf("uid-%d", i), ContainerName: "debugger"}
+	}
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{EphemeralContainersInjected: refs}
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	container := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+	operation := newEphemeralContainerOperation(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "new-pod", Namespace: "default", UID: "new-uid"},
+	}, container, "operator@example.com")
+
+	_, err := handler.prepareEphemeralContainerOperation(context.Background(), session, operation)
+	require.ErrorContains(t, err, "capacity of 256")
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	assert.Len(t, stored.Status.KubectlDebugStatus.EphemeralContainersInjected, 256)
+	assert.Empty(t, stored.Status.KubectlDebugStatus.Operations)
+}
+
+func TestKubectlDebugHandler_PrepareEphemeralOperationRecomputesCapacityAfterConflict(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	refs := make([]breakglassv1alpha1.EphemeralContainerRef, 255)
+	for i := range refs {
+		refs[i] = breakglassv1alpha1.EphemeralContainerRef{Namespace: "default", PodName: fmt.Sprintf("pod-%d", i), PodUID: fmt.Sprintf("uid-%d", i), ContainerName: "debugger"}
+	}
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{EphemeralContainersInjected: refs}
+	var conflicted bool
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		WithInterceptorFuncs(interceptor.Funcs{SubResourcePatch: func(ctx context.Context, underlying ctrlclient.Client, subResource string, obj ctrlclient.Object, patch ctrlclient.Patch, opts ...ctrlclient.SubResourcePatchOption) error {
+			if !conflicted && subResource == "status" {
+				conflicted = true
+				var current breakglassv1alpha1.DebugSession
+				require.NoError(t, underlying.Get(ctx, ctrlclient.ObjectKeyFromObject(session), &current))
+				current.Status.KubectlDebugStatus.EphemeralContainersInjected = append(current.Status.KubectlDebugStatus.EphemeralContainersInjected, breakglassv1alpha1.EphemeralContainerRef{Namespace: "default", PodName: "racer", PodUID: "racer-uid", ContainerName: "debugger"})
+				require.NoError(t, underlying.Status().Update(ctx, &current))
+				return apierrors.NewConflict(schema.GroupResource{Group: "breakglass.t-caas.telekom.com", Resource: "debugsessions"}, session.Name, errors.New("raced"))
+			}
+			return underlying.Status().Patch(ctx, obj, patch, opts...)
+		}}).Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	container := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+	operation := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "new-pod", Namespace: "default", UID: "new-uid"}}, container, "operator@example.com")
+
+	_, err := handler.prepareEphemeralContainerOperation(context.Background(), session, operation)
+	require.ErrorContains(t, err, "capacity of 256")
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	assert.Len(t, stored.Status.KubectlDebugStatus.EphemeralContainersInjected, 256)
+	assert.Empty(t, stored.Status.KubectlDebugStatus.Operations)
+}
+
+func TestKubectlDebugHandler_PrepareEphemeralOperationCountsPreparedReservations(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	refs := make([]breakglassv1alpha1.EphemeralContainerRef, 255)
+	for i := range refs {
+		refs[i] = breakglassv1alpha1.EphemeralContainerRef{Namespace: "default", PodName: fmt.Sprintf("pod-%d", i), PodUID: fmt.Sprintf("uid-%d", i), ContainerName: "debugger"}
+	}
+	reserved := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "reserved", Namespace: "default", UID: "reserved-uid"}}, desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil), "operator@example.com")
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{EphemeralContainersInjected: refs, Operations: []breakglassv1alpha1.KubectlDebugOperation{reserved}}
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	operation := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "new-pod", Namespace: "default", UID: "new-uid"}}, desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil), "operator@example.com")
+
+	_, err := handler.prepareEphemeralContainerOperation(context.Background(), session, operation)
+	require.ErrorContains(t, err, "capacity of 256")
+}
+
+func TestKubectlDebugHandler_PrepareEphemeralOperationRejectsLegacyOversizedInventory(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	refs := make([]breakglassv1alpha1.EphemeralContainerRef, 257)
+	for i := range refs {
+		refs[i] = breakglassv1alpha1.EphemeralContainerRef{Namespace: "default", PodName: fmt.Sprintf("pod-%d", i), PodUID: fmt.Sprintf("uid-%d", i), ContainerName: "debugger"}
+	}
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{EphemeralContainersInjected: refs}
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	operation := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "new-pod", Namespace: "default", UID: "new-uid"}}, desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil), "operator@example.com")
+
+	_, err := handler.prepareEphemeralContainerOperation(context.Background(), session, operation)
+	require.ErrorContains(t, err, "capacity of 256")
+}
+
+func TestKubectlDebugHandler_RecoveryPreservesProviderIdentity(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	container := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+	operation := newEphemeralContainerOperationWithIdentity(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+	}, container, debugSessionReadIdentity{
+		username: "subject-123", email: "operator@example.com", provider: "idp-b", issuer: "https://idp-b.example",
+	})
+	operation.PreparedAt = stalePreparedAt()
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{operation}}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+		Spec:       corev1.PodSpec{EphemeralContainers: []corev1.EphemeralContainer{container}},
+	}).Build()
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+	require.NoError(t, handler.RecoverPendingKubectlDebugOperations(context.Background(), session))
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	got := stored.Status.KubectlDebugStatus.Operations[0]
+	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationCompleted, got.State)
+	assert.Equal(t, "subject-123", got.RequestedBy)
+	assert.Equal(t, "operator@example.com", got.RequestedByEmail)
+	assert.Equal(t, "idp-b", got.IdentityProviderName)
+	assert.Equal(t, "https://idp-b.example", got.IdentityProviderIssuer)
+}
+
+func TestKubectlDebugHandler_RecoveryCompletesAtAuthorizationCapacity(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	container := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+	operation := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"}}, container, "operator@example.com")
+	operation.PreparedAt = stalePreparedAt()
+	refs := make([]breakglassv1alpha1.EphemeralContainerRef, 256)
+	for i := range refs {
+		refs[i] = breakglassv1alpha1.EphemeralContainerRef{Namespace: "default", PodName: fmt.Sprintf("pod-%d", i), PodUID: fmt.Sprintf("uid-%d", i), ContainerName: "debugger"}
+	}
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{EphemeralContainersInjected: refs, Operations: []breakglassv1alpha1.KubectlDebugOperation{operation}}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+		Spec:       corev1.PodSpec{EphemeralContainers: []corev1.EphemeralContainer{container}},
+	}).Build()
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+	require.NoError(t, handler.RecoverPendingKubectlDebugOperations(context.Background(), session))
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationCompleted, stored.Status.KubectlDebugStatus.Operations[0].State)
+	assert.Len(t, stored.Status.KubectlDebugStatus.EphemeralContainersInjected, 257)
+}
+
+func TestKubectlDebugHandler_RecoverySkipsFreshPreparedOperation(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	container := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+	operation := newEphemeralContainerOperation(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+	}, container, "test-user@example.com")
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{operation}}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+	}).Build()
+	hubClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+	require.NoError(t, handler.RecoverPendingKubectlDebugOperations(context.Background(), session))
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationPrepared, stored.Status.KubectlDebugStatus.Operations[0].State)
+}
+
+func TestKubectlDebugHandler_CompletionReplacesStaleAllowedPodUID(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	container := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+	operation := newEphemeralContainerOperation(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "new-pod-uid"},
+	}, container, "test-user@example.com")
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{operation}}
+	session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
+		{Namespace: "default", Name: "target", UID: "old-pod-uid", NodeName: "old-node", Ready: true},
+		{Namespace: "default", Name: "other", UID: "unrelated-uid"},
+	}
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	ref := &breakglassv1alpha1.EphemeralContainerRef{
+		PodName: "target", Namespace: "default", PodUID: "new-pod-uid",
+		ContainerName: "debugger", Image: "busybox:latest", InjectedAt: operation.PreparedAt, InjectedBy: operation.RequestedBy,
+	}
+
+	require.NoError(t, handler.completeEphemeralContainerOperation(context.Background(), session, operation.ID, breakglassv1alpha1.KubectlDebugOperationCompleted, "", ref))
+
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	require.Len(t, stored.Status.AllowedPods, 2)
+	assert.Equal(t, "new-pod-uid", stored.Status.AllowedPods[0].UID)
+	assert.Empty(t, stored.Status.AllowedPods[0].NodeName, "replacement must not inherit the old Pod node")
+	assert.True(t, stored.Status.AllowedPods[0].Ready)
+	assert.Equal(t, "unrelated-uid", stored.Status.AllowedPods[1].UID)
+}
+
+func TestKubectlDebugHandler_RecoveryReplacesStaleAllowedPodUID(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	container := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+	operation := newEphemeralContainerOperation(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "new-pod-uid"},
+	}, container, "test-user@example.com")
+	operation.PreparedAt = stalePreparedAt()
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{operation}}
+	session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
+		{Namespace: "default", Name: "target", UID: "old-pod-uid", NodeName: "old-node", Ready: true},
+		{Namespace: "default", Name: "other", UID: "unrelated-uid"},
+	}
+	targetPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "new-pod-uid"},
+		Spec:       corev1.PodSpec{EphemeralContainers: []corev1.EphemeralContainer{container}},
+	}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(targetPod).Build()
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+	require.NoError(t, handler.RecoverPendingKubectlDebugOperations(context.Background(), session))
+
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	require.Len(t, stored.Status.AllowedPods, 2)
+	assert.Equal(t, "new-pod-uid", stored.Status.AllowedPods[0].UID)
+	assert.Empty(t, stored.Status.AllowedPods[0].NodeName, "replacement must not inherit the old Pod node")
+	assert.True(t, stored.Status.AllowedPods[0].Ready)
+	assert.Equal(t, "unrelated-uid", stored.Status.AllowedPods[1].UID)
+}
+
+func TestKubectlDebugHandler_EphemeralOperationRecoversAfterOutcomeWriteFailure(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	statusPatches := 0
+	targetUpdates := 0
+	statusErr := errors.New("simulated outcome write failure")
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "app:v1"}}},
+	}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourceUpdate: func(ctx context.Context, cl ctrlclient.Client, name string, obj ctrlclient.Object, opts ...ctrlclient.SubResourceUpdateOption) error {
+				if name == "ephemeralcontainers" {
+					targetUpdates++
+					return cl.Update(ctx, obj)
+				}
+				return cl.SubResource(name).Update(ctx, obj, opts...)
+			},
+		}).Build()
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(newEphemeralOperationTestSession()).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(ctx context.Context, cl ctrlclient.Client, name string, obj ctrlclient.Object, patch ctrlclient.Patch, opts ...ctrlclient.SubResourcePatchOption) error {
+				if name == "status" {
+					statusPatches++
+					if statusPatches == 2 {
+						return statusErr
+					}
+				}
+				return cl.SubResource(name).Patch(ctx, obj, patch, opts...)
+			},
+		}).Build()
+	provider := &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}}
+	handler := NewKubectlDebugHandler(hubClient, provider)
+	session := newEphemeralOperationTestSession()
+
+	err := handler.InjectEphemeralContainer(context.Background(), session, "default", "target", "debugger", "busybox:latest", []string{"sh"}, nil, "test-user@example.com")
+	require.Error(t, err, "the interrupted outcome write must be reported")
+
+	var afterFailure breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &afterFailure))
+	require.NotNil(t, afterFailure.Status.KubectlDebugStatus)
+	require.Len(t, afterFailure.Status.KubectlDebugStatus.Operations, 1)
+	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationPrepared, afterFailure.Status.KubectlDebugStatus.Operations[0].State)
+	var changedPod corev1.Pod
+	require.NoError(t, targetClient.Get(context.Background(), ctrlclient.ObjectKey{Namespace: "default", Name: "target"}, &changedPod))
+	require.Len(t, changedPod.Spec.EphemeralContainers, 1, "the target mutation must remain observable for recovery")
+	afterFailure.Status.KubectlDebugStatus.Operations[0].PreparedAt = stalePreparedAt()
+
+	// A fresh handler models a controller restart. Once the status writer is
+	// healthy again, recovery inspects the exact Pod UID and container request,
+	// then commits the existing operation without re-applying the mutation.
+	statusPatches = 2
+	restarted := NewKubectlDebugHandler(hubClient, provider)
+	require.NoError(t, restarted.RecoverPendingKubectlDebugOperations(context.Background(), &afterFailure))
+
+	var recovered breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &recovered))
+	require.Len(t, recovered.Status.KubectlDebugStatus.Operations, 1)
+	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationCompleted, recovered.Status.KubectlDebugStatus.Operations[0].State)
+	require.Len(t, recovered.Status.KubectlDebugStatus.EphemeralContainersInjected, 1)
+	assert.Equal(t, "debugger", recovered.Status.KubectlDebugStatus.EphemeralContainersInjected[0].ContainerName)
+	assert.Len(t, changedPod.Spec.EphemeralContainers, 1, "recovery must not duplicate the target mutation")
+
+	// Retrying the original API operation after recovery must be an idempotent
+	// success, not an "already exists" error or a second subresource update.
+	require.NoError(t, restarted.InjectEphemeralContainer(context.Background(), &recovered,
+		"default", "target", "debugger", "busybox:latest", []string{"sh"}, nil,
+		"test-user@example.com"))
+	assert.Equal(t, 1, targetUpdates, "an idempotent retry must not update the target twice")
+}
+
+func TestKubectlDebugHandler_CanceledRequestBoundsOutcomePersistence(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	mutationDone := make(chan struct{})
+	targetPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "app:v1"}}},
+	}
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(targetPod).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourceUpdate: func(_ context.Context, cl ctrlclient.Client, name string, obj ctrlclient.Object, opts ...ctrlclient.SubResourceUpdateOption) error {
+				if name == "ephemeralcontainers" {
+					// The target mutation succeeds even though the API request is
+					// canceled immediately afterward.
+					err := cl.Update(context.Background(), obj)
+					close(mutationDone)
+					cancelRequest()
+					return err
+				}
+				return cl.SubResource(name).Update(context.Background(), obj, opts...)
+			},
+		}).Build()
+	session := newEphemeralOperationTestSession()
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	reader := &timedOutDebugSessionReader{
+		t:         t,
+		Reader:    hubClient,
+		blockWhen: mutationDone,
+		blocked:   make(chan struct{}),
+	}
+	handler := NewKubectlDebugHandlerWithReader(hubClient, reader, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+	started := time.Now()
+	err := handler.InjectEphemeralContainer(requestCtx, session, "default", "target", "debugger", "busybox:latest", []string{"sh"}, nil, "test-user@example.com")
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Less(t, time.Since(started), time.Second, "a canceled request must not leave post-mutation reads unbounded")
+	select {
+	case <-reader.blocked:
+	case <-time.After(time.Second):
+		t.Fatal("post-mutation live read was not reached")
+	}
+
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	require.NotNil(t, stored.Status.KubectlDebugStatus)
+	require.Len(t, stored.Status.KubectlDebugStatus.Operations, 1)
+	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationPrepared, stored.Status.KubectlDebugStatus.Operations[0].State, "prepared evidence must remain for recovery when outcome persistence times out")
+	var changedPod corev1.Pod
+	require.NoError(t, targetClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(targetPod), &changedPod))
+	assert.Len(t, changedPod.Spec.EphemeralContainers, 1, "the successful target mutation must remain observable")
+}
+
+func TestKubectlDebugHandler_EphemeralOperationAmbiguousTargetIsNotGuessed(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	prepared := newEphemeralOperationTestSession()
+	desiredContainer := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+	desired := breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{
+		Name:                  "debugger",
+		Image:                 "busybox:latest",
+		Command:               []string{"sh"},
+		ContainerDigest:       ephemeralContainerDigest(&desiredContainer),
+		SecurityContextDigest: securityContextDigest(nil),
+		TTY:                   true,
+		Stdin:                 true,
+	}
+	prepared.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+		ID: "ambiguous-operation", Kind: kubectlDebugOperationKindEphemeralContainer, State: breakglassv1alpha1.KubectlDebugOperationPrepared,
+		TargetPod:          breakglassv1alpha1.KubectlDebugOperationTargetPod{Namespace: "default", Name: "target", UID: "original-uid"},
+		EphemeralContainer: desired, RequestedBy: "test-user@example.com", PreparedAt: stalePreparedAt(),
+	}}}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "replacement-uid"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "app:v1"}}},
+	}).Build()
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(prepared).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+	require.NoError(t, handler.RecoverPendingKubectlDebugOperations(context.Background(), prepared))
+	var recovered breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(prepared), &recovered))
+	require.Len(t, recovered.Status.KubectlDebugStatus.Operations, 1)
+	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationUnknown, recovered.Status.KubectlDebugStatus.Operations[0].State)
+	assert.Empty(t, recovered.Status.KubectlDebugStatus.EphemeralContainersInjected, "an identity mismatch must not be recorded as success")
+}
+
+func TestKubectlDebugHandler_CleanupTerminalizesUnsupportedPreparedOperation(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+		ID: "legacy-operation", Kind: "legacy-debug-mode", State: breakglassv1alpha1.KubectlDebugOperationPrepared,
+		PreparedAt: metav1.Now(),
+	}}}
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).Build()
+	handler := NewKubectlDebugHandler(hub, nil)
+
+	require.NoError(t, handler.CleanupKubectlDebugResources(context.Background(), session))
+	stored := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), stored))
+	require.NotNil(t, stored.Status.KubectlDebugStatus)
+	require.Len(t, stored.Status.KubectlDebugStatus.Operations, 1)
+	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationUnknown, stored.Status.KubectlDebugStatus.Operations[0].State)
+	assert.Empty(t, stored.Status.KubectlDebugStatus.EphemeralContainersInjected)
+}
+
+func TestKubectlDebugHandler_EphemeralOperationRecoveryRequiresTTYAndStdinMatch(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	prepared := newEphemeralOperationTestSession()
+	prepared.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{
+		Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+			ID:    "tty-stdin-mismatch",
+			Kind:  kubectlDebugOperationKindEphemeralContainer,
+			State: breakglassv1alpha1.KubectlDebugOperationPrepared,
+			TargetPod: breakglassv1alpha1.KubectlDebugOperationTargetPod{
+				Namespace: "default",
+				Name:      "target",
+				UID:       "target-uid",
+			},
+			EphemeralContainer: breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{
+				Name:                  "debugger",
+				Image:                 "busybox:latest",
+				Command:               []string{"sh"},
+				ContainerDigest:       ephemeralContainerDigest(&corev1.EphemeralContainer{EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "debugger", Image: "busybox:latest", Command: []string{"sh"}, ImagePullPolicy: corev1.PullIfNotPresent, TTY: true, Stdin: true}}),
+				SecurityContextDigest: securityContextDigest(nil),
+				TTY:                   true,
+				Stdin:                 true,
+			},
+			RequestedBy: "test-user@example.com",
+			PreparedAt:  stalePreparedAt(),
+		}},
+	}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "app", Image: "app:v1"}},
+			EphemeralContainers: []corev1.EphemeralContainer{{
+				EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+					Name:  "debugger",
+					Image: "busybox:latest",
+					TTY:   true,
+					Stdin: false,
+					Command: []string{
+						"sh",
+					},
+				},
+			}},
+		},
+	}).Build()
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(prepared).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+	require.NoError(t, handler.RecoverPendingKubectlDebugOperations(context.Background(), prepared))
+	var recovered breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(prepared), &recovered))
+	require.Len(t, recovered.Status.KubectlDebugStatus.Operations, 1)
+	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationUnknown, recovered.Status.KubectlDebugStatus.Operations[0].State)
+	assert.Empty(t, recovered.Status.KubectlDebugStatus.EphemeralContainersInjected)
+}
+
+func TestKubectlDebugHandler_EphemeralOperationRecoveryRequiresExactContainerDigest(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	prepared := newEphemeralOperationTestSession()
+	requested := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+	prepared.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{
+		Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+			ID:    "digest-mismatch",
+			Kind:  kubectlDebugOperationKindEphemeralContainer,
+			State: breakglassv1alpha1.KubectlDebugOperationPrepared,
+			TargetPod: breakglassv1alpha1.KubectlDebugOperationTargetPod{
+				Namespace: "default",
+				Name:      "target",
+				UID:       "target-uid",
+			},
+			EphemeralContainer: breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{
+				Name:                  "debugger",
+				Image:                 "busybox:latest",
+				Command:               []string{"sh"},
+				ContainerDigest:       ephemeralContainerDigest(&requested),
+				SecurityContextDigest: securityContextDigest(nil),
+				TTY:                   true,
+				Stdin:                 true,
+			},
+			RequestedBy: "test-user@example.com",
+			PreparedAt:  stalePreparedAt(),
+		}},
+	}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "app", Image: "app:v1"}},
+			EphemeralContainers: []corev1.EphemeralContainer{{
+				EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+					Name:            "debugger",
+					Image:           "busybox:other",
+					Command:         []string{"sh"},
+					ImagePullPolicy: corev1.PullIfNotPresent,
+					TTY:             true,
+					Stdin:           true,
+				},
+			}},
+		},
+	}).Build()
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(prepared).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+	require.NoError(t, handler.RecoverPendingKubectlDebugOperations(context.Background(), prepared))
+	var recovered breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(prepared), &recovered))
+	require.Len(t, recovered.Status.KubectlDebugStatus.Operations, 1)
+	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationUnknown, recovered.Status.KubectlDebugStatus.Operations[0].State)
+	assert.Empty(t, recovered.Status.KubectlDebugStatus.EphemeralContainersInjected)
+}
+
+func TestEphemeralContainerDigestIgnoresAPIDefaultedFields(t *testing.T) {
+	requested := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+	readBack := requested
+	readBack.TerminationMessagePath = "/dev/termination-log"
+	readBack.TerminationMessagePolicy = corev1.TerminationMessageReadFile
+	intent := &breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{
+		Name:                  requested.Name,
+		Image:                 requested.Image,
+		Command:               requested.Command,
+		ContainerDigest:       ephemeralContainerDigest(&requested),
+		SecurityContextDigest: securityContextDigest(nil),
+		TTY:                   requested.TTY,
+		Stdin:                 requested.Stdin,
+	}
+
+	assert.True(t, ephemeralContainerIntentEqual(intent, readBack.Name, readBack.Image, readBack.Command, readBack.TTY, readBack.Stdin, readBack.SecurityContext, ephemeralContainerDigest(&readBack)))
+	readBack.ImagePullPolicy = corev1.PullAlways
+	assert.False(t, ephemeralContainerIntentEqual(intent, readBack.Name, readBack.Image, readBack.Command, readBack.TTY, readBack.Stdin, readBack.SecurityContext, ephemeralContainerDigest(&readBack)))
+	readBack.ImagePullPolicy = requested.ImagePullPolicy
+	readBack.Image = "busybox:other"
+	assert.False(t, ephemeralContainerIntentEqual(intent, readBack.Name, readBack.Image, readBack.Command, readBack.TTY, readBack.Stdin, readBack.SecurityContext, ephemeralContainerDigest(&readBack)))
+}
+
+func TestKubectlDebugHandler_InjectEphemeralContainerIdempotentWhenCompletedOperationExists(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{
+		Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+			ID:    "completed-op",
+			Kind:  kubectlDebugOperationKindEphemeralContainer,
+			State: breakglassv1alpha1.KubectlDebugOperationCompleted,
+			TargetPod: breakglassv1alpha1.KubectlDebugOperationTargetPod{
+				Namespace: "default",
+				Name:      "target",
+				UID:       "target-uid",
+			},
+			EphemeralContainer: breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{
+				Name:                  "debugger",
+				Image:                 "busybox:latest",
+				Command:               []string{"sh"},
+				ContainerDigest:       ephemeralContainerDigest(&corev1.EphemeralContainer{EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "debugger", Image: "busybox:latest", Command: []string{"sh"}, ImagePullPolicy: corev1.PullIfNotPresent, TTY: true, Stdin: true}}),
+				SecurityContextDigest: securityContextDigest(nil),
+				TTY:                   true,
+				Stdin:                 true,
+			},
+			RequestedBy: "test-user@example.com",
+			PreparedAt:  stalePreparedAt(),
+		}},
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "app", Image: "app:v1"}},
+			EphemeralContainers: []corev1.EphemeralContainer{{
+				EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+					Name:    "debugger",
+					Image:   "busybox:latest",
+					Command: []string{"sh"},
+					TTY:     true,
+					Stdin:   true,
+				},
+			}},
+		},
+	}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
+	hubClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+	err := handler.InjectEphemeralContainer(
+		context.Background(),
+		session.DeepCopy(),
+		"default",
+		"target",
+		"debugger",
+		"busybox:latest",
+		[]string{"sh"},
+		nil,
+		"test-user@example.com",
+	)
+	require.NoError(t, err)
+
+	var storedPod corev1.Pod
+	require.NoError(t, targetClient.Get(context.Background(), ctrlclient.ObjectKey{Namespace: "default", Name: "target"}, &storedPod))
+	require.Len(t, storedPod.Spec.EphemeralContainers, 1)
+}
+
+func TestKubectlDebugHandler_CompleteEphemeralContainerOperationDoesNotOverwriteTerminalOutcome(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newEphemeralOperationTestSession()
+	requested := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{
+		Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+			ID:    "terminal-op",
+			Kind:  kubectlDebugOperationKindEphemeralContainer,
+			State: breakglassv1alpha1.KubectlDebugOperationCompleted,
+			TargetPod: breakglassv1alpha1.KubectlDebugOperationTargetPod{
+				Namespace: "default",
+				Name:      "target",
+				UID:       "target-uid",
+			},
+			EphemeralContainer: breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{
+				Name:                  "debugger",
+				Image:                 "busybox:latest",
+				Command:               []string{"sh"},
+				ContainerDigest:       ephemeralContainerDigest(&requested),
+				SecurityContextDigest: securityContextDigest(nil),
+				TTY:                   true,
+				Stdin:                 true,
+			},
+			RequestedBy: "test-user@example.com",
+			PreparedAt:  stalePreparedAt(),
+		}},
+	}
+	hubClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+
+	err := handler.completeEphemeralContainerOperation(
+		context.Background(),
+		session.DeepCopy(),
+		"terminal-op",
+		breakglassv1alpha1.KubectlDebugOperationFailed,
+		"should-not-overwrite",
+		nil,
+	)
+	require.NoError(t, err)
+
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	require.NotNil(t, stored.Status.KubectlDebugStatus)
+	require.Len(t, stored.Status.KubectlDebugStatus.Operations, 1)
+	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationCompleted, stored.Status.KubectlDebugStatus.Operations[0].State)
+	assert.Empty(t, stored.Status.KubectlDebugStatus.Operations[0].Message)
 }
 
 func TestKubectlDebugHandler_InjectEphemeralContainerPreservesLiveStatusFromStaleSession(t *testing.T) {
@@ -2340,7 +3666,29 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	t.Run("clears empty status without spoke client", func(t *testing.T) {
+	t.Run("retains terminal operation evidence without spoke client", func(t *testing.T) {
+		requested := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
+		terminalOperation := breakglassv1alpha1.KubectlDebugOperation{
+			ID:    "terminal-op",
+			Kind:  kubectlDebugOperationKindEphemeralContainer,
+			State: breakglassv1alpha1.KubectlDebugOperationUnknown,
+			TargetPod: breakglassv1alpha1.KubectlDebugOperationTargetPod{
+				Namespace: "default",
+				Name:      "app-pod",
+				UID:       "app-pod-uid",
+			},
+			EphemeralContainer: breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{
+				Name:                  "debugger",
+				Image:                 "busybox:latest",
+				Command:               []string{"sh"},
+				ContainerDigest:       ephemeralContainerDigest(&requested),
+				SecurityContextDigest: securityContextDigest(nil),
+				TTY:                   true,
+				Stdin:                 true,
+			},
+			PreparedAt: stalePreparedAt(),
+			Message:    "target Pod disappeared before the prepared operation outcome could be confirmed",
+		}
 		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "ephemeral-only-session",
@@ -2352,6 +3700,7 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 			Status: breakglassv1alpha1.DebugSessionStatus{
 				State: breakglassv1alpha1.DebugSessionStateTerminated,
 				KubectlDebugStatus: &breakglassv1alpha1.KubectlDebugStatus{
+					Operations: []breakglassv1alpha1.KubectlDebugOperation{terminalOperation},
 					EphemeralContainersInjected: []breakglassv1alpha1.EphemeralContainerRef{
 						{
 							PodName:       "app-pod",
@@ -2374,7 +3723,10 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 
 		var stored breakglassv1alpha1.DebugSession
 		require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKey{Namespace: "breakglass", Name: "ephemeral-only-session"}, &stored))
-		assert.Nil(t, stored.Status.KubectlDebugStatus)
+		require.NotNil(t, stored.Status.KubectlDebugStatus)
+		require.Len(t, stored.Status.KubectlDebugStatus.Operations, 1)
+		assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationUnknown, stored.Status.KubectlDebugStatus.Operations[0].State)
+		require.Len(t, stored.Status.KubectlDebugStatus.EphemeralContainersInjected, 1)
 	})
 
 	t.Run("returns error when GetClient fails", func(t *testing.T) {
@@ -2409,7 +3761,8 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 		assert.Contains(t, err.Error(), "failed to get client")
 	})
 
-	t.Run("cleans up copied pods and clears status", func(t *testing.T) {
+	t.Run("cleans up copied pods and retains terminal operation evidence", func(t *testing.T) {
+		requested := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
 		// Create target cluster client with a pod to delete
 		targetClient := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -2433,6 +3786,29 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 			Status: breakglassv1alpha1.DebugSessionStatus{
 				State: breakglassv1alpha1.DebugSessionStateTerminated,
 				KubectlDebugStatus: &breakglassv1alpha1.KubectlDebugStatus{
+					Operations: []breakglassv1alpha1.KubectlDebugOperation{
+						{
+							ID:    "terminal-op",
+							Kind:  kubectlDebugOperationKindEphemeralContainer,
+							State: breakglassv1alpha1.KubectlDebugOperationUnknown,
+							TargetPod: breakglassv1alpha1.KubectlDebugOperationTargetPod{
+								Namespace: "default",
+								Name:      "app-pod",
+								UID:       "app-pod-uid",
+							},
+							EphemeralContainer: breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{
+								Name:                  "debugger",
+								Image:                 "busybox:latest",
+								Command:               []string{"sh"},
+								ContainerDigest:       ephemeralContainerDigest(&requested),
+								SecurityContextDigest: securityContextDigest(nil),
+								TTY:                   true,
+								Stdin:                 true,
+							},
+							PreparedAt: stalePreparedAt(),
+							Message:    "target Pod changed during recovery",
+						},
+					},
 					CopiedPods: []breakglassv1alpha1.CopiedPodRef{
 						{CopyName: "pod-copy", CopyNamespace: "default", UID: "copy-uid"},
 					},
@@ -2457,8 +3833,10 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 		err := handler.CleanupKubectlDebugResources(context.Background(), session)
 		require.NoError(t, err)
 
-		// Verify KubectlDebugStatus is cleared
-		assert.Nil(t, session.Status.KubectlDebugStatus)
+		require.NotNil(t, session.Status.KubectlDebugStatus)
+		require.Len(t, session.Status.KubectlDebugStatus.Operations, 1)
+		assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationUnknown, session.Status.KubectlDebugStatus.Operations[0].State)
+		assert.Empty(t, session.Status.KubectlDebugStatus.CopiedPods)
 	})
 
 	t.Run("cleanup preserves live status from stale session", func(t *testing.T) {
@@ -2772,4 +4150,11 @@ func TestCreatePodCopy_StatusFailureDeletesOrphan(t *testing.T) {
 	// Only the original pod may remain.
 	require.Len(t, pods.Items, 1, "the pod copy must not be orphaned on the spoke cluster")
 	assert.Equal(t, "app-pod", pods.Items[0].Name)
+}
+
+func TestAllowedPodUnknownUIDDoesNotReplaceKnownIdentity(t *testing.T) {
+	original := breakglassv1alpha1.AllowedPodRef{Namespace: "default", Name: "target", UID: "known-uid", NodeName: "node-a", Ready: true}
+	status := &breakglassv1alpha1.DebugSessionStatus{AllowedPods: []breakglassv1alpha1.AllowedPodRef{original}}
+	addAllowedPodIfMissing(status, breakglassv1alpha1.AllowedPodRef{Namespace: "default", Name: "target"})
+	require.Equal(t, []breakglassv1alpha1.AllowedPodRef{original}, status.AllowedPods)
 }

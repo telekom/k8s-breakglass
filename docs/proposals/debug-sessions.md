@@ -911,7 +911,11 @@ are outside Breakglass.
 
 Breakglass exposes these operations through authenticated DebugSession API
 calls; the manager-owned target-cluster calls are subject to live session and
-policy fences:
+policy fences. Ephemeral-container operations additionally persist a durable
+`Prepared` intent containing the target Pod UID and exact container request
+before the target update. The controller records `Completed`, `Failed`, or
+`Unknown` idempotently and recovers prepared intents after restart; it never
+guesses across a replacement Pod or same-named container.
 
 | Breakglass operation | Target resource | Effect |
 |---------------------|-----------------|--------|

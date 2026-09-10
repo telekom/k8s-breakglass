@@ -47,6 +47,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Retry final quota-admission completion after same-UID resource-version
   conflicts, while refusing terminal or replacement sessions.
 
+- If a debug session expires after an ephemeral-container intent is persisted
+  but before the target write, record the operation as Failed without touching
+  the target Pod; the normal expiry reconciler retains ownership of lifecycle
+  effects.
+
+- Persist known pre-write operation failures with a bounded cancellation-independent
+  context, while terminalizing unsupported legacy Prepared records as Unknown
+  during cleanup without target-cluster mutation.
+
+- Block replay of a retained `Unknown` ephemeral-container outcome for the
+  same namespace, Pod UID, and container name, while preserving retries for
+  confirmed `Failed` outcomes and replacements with a different Pod UID.
+
+- Requeue terminal DebugSession cleanup when a fresh prepared kubectl-debug
+  operation remains within its recovery grace period, preventing stranded
+  outbox intent.
+
+- Validate kubectl-debug operation outbox updates so prepared intent remains
+  immutable, terminal evidence cannot be rewritten, and bounded history
+  compaction cannot discard a newly finalized operation.
+
+- Validate newly admitted Prepared operation intent for complete supported
+  ephemeral-container identity, target, actor, digest, and timestamp fields.
+
+- Bind ephemeral-container operation evidence to the authenticated provider identity and cap new distinct injection admissions at 256 identities, including prepared reservations, while retaining existing history and recovery evidence.
+
 - Recover tracked resources after bounded create timeouts when session and
   operation markers and requested content match the persisted object.
 
@@ -55,6 +81,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Repeat debug-session participant issuer and target Pod UID checks at the final
   authorization fence, failing closed when either live identity has changed.
+
+- Enforce node debug denied names, denied labels, and required node affinity,
+  including node-name field matches, at both node authorization fences; reject
+  hard pod anti-affinity and topology-spread constraints that direct binding
+  cannot enforce.
+
+- Enforce explicit ephemeral-container security-context restrictions before
+  recording injection intent or mutating a target Pod.
 
 - Apply provisional quota admission checks in the shared authorization and
   token validity helpers, and preserve concurrently recorded same-name copied
@@ -140,9 +174,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   allowed `workloadType` values.
 - Release-values verification no longer depends on ripgrep and its negative
   fixtures now assert the intended digest and evidence validation failures.
+- Canceled kubectl-debug requests now bound post-mutation status reconciliation,
+  and successful or recovered ephemeral-container operations refresh the
+  allowed-Pod UID used for webhook authorization.
 
 ### Security
 
+- Bound retained terminal kubectl-debug operation evidence while preserving all
+  Prepared intents, so terminal history cannot block ClusterConfig deletion.
+- Preserve serialized debug template variable values exactly, including
+  multiline and Unicode content, during validation.
 - Restrict webhook local-part compatibility to single-at-sign email identities and skip alias lookups for email-form requesters (PR #1326).
 - Filter Breakglass grants used for DebugSession creation by the request issuer unless the grant explicitly allows IDP mismatch (PR #1326).
 - Keep DebugSession creation grant matching exact to authenticated username/email claims; email local-part aliases remain limited to the issuer-scoped webhook compatibility path (PR #1326).
@@ -472,6 +513,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Kubectl-debug operation outcome retention**: Reconciler cleanup now uses
+  live status reads, preserves and monotonically merges concurrent operation
+  evidence, records deterministic target authorization/validation/conflict
+  failures as `Failed`, and retains all inventory and operation states unchanged
+  when their ClusterConfig is deleted. Recovery waits through the full API mutation
+  timeout so slow requests cannot be finalized by a concurrent reconcile.
 - **DebugSession cleanup identity fencing**: Kubectl-debug outcome and cleanup
   status writes now require the original DebugSession UID, captured no-binding
   decisions remain immutable through status admission, and cleanup retries
@@ -519,6 +566,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provider-aware username/email matching used by read authorization, preventing
   valid API-mediated ephemeral-container requests from being denied when the
   username claim differs from the recorded user identifier.
+- **Durable kubectl-debug operation outcomes (PR #1278)**: Ephemeral-container
+  intent is persisted before the target mutation, with exact target/request
+  matching during recovery and terminal evidence retained through cleanup.
 - **Hard expiry and authorization caching**: Authorization now fails closed
   at the exact `expiresAt` boundary, cannot be resurrected by stale writes or
   cached decisions, and shipped Kubernetes 1.34+ examples disable both

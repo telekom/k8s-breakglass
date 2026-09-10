@@ -2,6 +2,7 @@ package breakglass
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -151,6 +152,127 @@ func TestApplyDebugSessionStatusRejectsJoinLeaveAfterExpiry(t *testing.T) {
 	terminal := session.DeepCopy()
 	terminal.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
 	require.NoError(t, ApplyDebugSessionStatus(context.Background(), fakeClient, terminal))
+}
+
+func TestApplyDebugSessionStatusRecordsExpiredPreparedFailure(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	expired := metav1.NewTime(time.Now().Add(-time.Minute))
+	preparedAt := metav1.Now()
+	current := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "expired-operation", Namespace: "default"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "cluster",
+			TemplateRef: "template",
+			RequestedBy: "user@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &expired,
+			KubectlDebugStatus: &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+				ID:    "operation",
+				Kind:  "ephemeral-container",
+				State: breakglassv1alpha1.KubectlDebugOperationPrepared,
+				TargetPod: breakglassv1alpha1.KubectlDebugOperationTargetPod{
+					Namespace: "default", Name: "target", UID: "target-uid",
+				},
+				EphemeralContainer: breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{
+					Name: "debugger", Image: "busybox", ContainerDigest: "digest", SecurityContextDigest: "security",
+				},
+				RequestedBy: "user@example.com", PreparedAt: preparedAt,
+			}}},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(current).
+		WithStatusSubresource(current).Build()
+	stored := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(current), stored))
+	old := stored.DeepCopy()
+	desired := stored.DeepCopy()
+	completedAt := metav1.Now()
+	desired.Status.KubectlDebugStatus.Operations[0].State = breakglassv1alpha1.KubectlDebugOperationFailed
+	desired.Status.KubectlDebugStatus.Operations[0].CompletedAt = &completedAt
+	desired.Status.KubectlDebugStatus.Operations[0].Message = "expired before target write"
+	require.True(t, breakglassv1alpha1.AllowsExpiredActiveEphemeralOperationFailure(old.Status, desired.Status, time.Now()))
+
+	require.NoError(t, ApplyDebugSessionStatus(context.Background(), fakeClient, desired))
+	_, err := desired.ValidateUpdate(context.Background(), old, desired)
+	require.NoError(t, err)
+
+	invalid := desired.DeepCopy()
+	invalid.Status.Message = "unrelated status change"
+	_, err = invalid.ValidateUpdate(context.Background(), old, invalid)
+	require.Error(t, err)
+}
+
+func TestDebugSessionValidateUpdatePreparedOperationCompleteness(t *testing.T) {
+	preparedAt := metav1.Now()
+	valid := breakglassv1alpha1.KubectlDebugOperation{
+		ID:    "operation",
+		Kind:  "ephemeral-container",
+		State: breakglassv1alpha1.KubectlDebugOperationPrepared,
+		TargetPod: breakglassv1alpha1.KubectlDebugOperationTargetPod{
+			Namespace: "default", Name: "target", UID: types.UID("target-uid"),
+		},
+		EphemeralContainer: breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{
+			Name: "debugger", Image: "busybox", ContainerDigest: "container-digest", SecurityContextDigest: "security-digest",
+		},
+		RequestedBy: "operator@example.com", PreparedAt: preparedAt,
+	}
+	newSession := func(operation breakglassv1alpha1.KubectlDebugOperation) (*breakglassv1alpha1.DebugSession, *breakglassv1alpha1.DebugSession) {
+		expiresAt := metav1.NewTime(time.Now().Add(time.Hour))
+		old := &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "operator@example.com"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expiresAt, KubectlDebugStatus: &breakglassv1alpha1.KubectlDebugStatus{}}}
+		newObj := old.DeepCopy()
+		newObj.Status.KubectlDebugStatus.Operations = []breakglassv1alpha1.KubectlDebugOperation{operation}
+		return old, newObj
+	}
+	tests := []struct {
+		name   string
+		mutate func(*breakglassv1alpha1.KubectlDebugOperation)
+	}{
+		{name: "unsupported kind", mutate: func(operation *breakglassv1alpha1.KubectlDebugOperation) { operation.Kind = "pod-copy" }},
+		{name: "missing target namespace", mutate: func(operation *breakglassv1alpha1.KubectlDebugOperation) { operation.TargetPod.Namespace = "" }},
+		{name: "dotted target namespace", mutate: func(operation *breakglassv1alpha1.KubectlDebugOperation) {
+			operation.TargetPod.Namespace = "invalid.namespace"
+		}},
+		{name: "overlong target namespace", mutate: func(operation *breakglassv1alpha1.KubectlDebugOperation) {
+			operation.TargetPod.Namespace = strings.Repeat("a", 64)
+		}},
+		{name: "missing target name", mutate: func(operation *breakglassv1alpha1.KubectlDebugOperation) { operation.TargetPod.Name = "" }},
+		{name: "missing target UID", mutate: func(operation *breakglassv1alpha1.KubectlDebugOperation) { operation.TargetPod.UID = "" }},
+		{name: "missing container name", mutate: func(operation *breakglassv1alpha1.KubectlDebugOperation) { operation.EphemeralContainer.Name = "" }},
+		{name: "missing image", mutate: func(operation *breakglassv1alpha1.KubectlDebugOperation) { operation.EphemeralContainer.Image = "" }},
+		{name: "missing container digest", mutate: func(operation *breakglassv1alpha1.KubectlDebugOperation) {
+			operation.EphemeralContainer.ContainerDigest = ""
+		}},
+		{name: "missing security digest", mutate: func(operation *breakglassv1alpha1.KubectlDebugOperation) {
+			operation.EphemeralContainer.SecurityContextDigest = ""
+		}},
+		{name: "missing actor", mutate: func(operation *breakglassv1alpha1.KubectlDebugOperation) { operation.RequestedBy = "" }},
+		{name: "missing prepared timestamp", mutate: func(operation *breakglassv1alpha1.KubectlDebugOperation) { operation.PreparedAt = metav1.Time{} }},
+		{name: "terminal completion metadata", mutate: func(operation *breakglassv1alpha1.KubectlDebugOperation) {
+			completedAt := metav1.Now()
+			operation.CompletedAt = &completedAt
+		}},
+		{name: "terminal message metadata", mutate: func(operation *breakglassv1alpha1.KubectlDebugOperation) { operation.Message = "completed" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			operation := valid
+			test.mutate(&operation)
+			old, newObj := newSession(operation)
+			_, err := newObj.ValidateUpdate(context.Background(), old, newObj)
+			require.Error(t, err)
+		})
+	}
+	_, unchanged := newSession(breakglassv1alpha1.KubectlDebugOperation{ID: "legacy", State: breakglassv1alpha1.KubectlDebugOperationPrepared})
+	old := unchanged.DeepCopy()
+	unchanged.Status.Message = "legacy operation retained"
+	_, err := unchanged.ValidateUpdate(context.Background(), old, unchanged)
+	require.NoError(t, err)
+	old, accepted := newSession(valid)
+	_, err = accepted.ValidateUpdate(context.Background(), old, accepted)
+	require.NoError(t, err)
 }
 
 func TestApplyDebugSessionStatusRejectsStaleFullSnapshot(t *testing.T) {

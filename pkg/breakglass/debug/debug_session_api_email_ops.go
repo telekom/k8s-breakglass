@@ -469,6 +469,10 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		respondKubectlDebugOperationError(ctx, err, "failed to validate ephemeral container request")
 		return
 	}
+	if err := validateEphemeralContainerSecurityContext(req.SecurityContext, session.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers); err != nil {
+		respondKubectlDebugOperationError(ctx, err, "failed to validate ephemeral container request")
+		return
+	}
 
 	// Inject the ephemeral container
 	if err := handler.InjectEphemeralContainer(apiCtx, session, req.Namespace, req.PodName, req.ContainerName, req.Image, req.Command, req.SecurityContext, username); err != nil {

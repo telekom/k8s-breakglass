@@ -17,6 +17,12 @@ type KubectlDebugStatusApplyConfiguration struct {
 	EphemeralContainersInjected []EphemeralContainerRefApplyConfiguration `json:"ephemeralContainersInjected,omitempty"`
 	// copiedPods lists debug copies of pods.
 	CopiedPods []CopiedPodRefApplyConfiguration `json:"copiedPods,omitempty"`
+	// operations is the durable operation outbox for target-cluster mutations.
+	// An operation is persisted in Prepared state before the target API is
+	// changed and is reconciled to a terminal outcome after a restart or an
+	// ambiguous response. Completed operations are idempotent evidence and are
+	// not re-applied.
+	Operations []KubectlDebugOperationApplyConfiguration `json:"operations,omitempty"`
 }
 
 // KubectlDebugStatusApplyConfiguration constructs a declarative configuration of the KubectlDebugStatus type for use with
@@ -47,6 +53,19 @@ func (b *KubectlDebugStatusApplyConfiguration) WithCopiedPods(values ...*CopiedP
 			panic("nil value passed to WithCopiedPods")
 		}
 		b.CopiedPods = append(b.CopiedPods, *values[i])
+	}
+	return b
+}
+
+// WithOperations adds the given value to the Operations field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Operations field.
+func (b *KubectlDebugStatusApplyConfiguration) WithOperations(values ...*KubectlDebugOperationApplyConfiguration) *KubectlDebugStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithOperations")
+		}
+		b.Operations = append(b.Operations, *values[i])
 	}
 	return b
 }
