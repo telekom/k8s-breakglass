@@ -78,6 +78,8 @@ const (
 	DebugSessionConditionApproved DebugSessionConditionType = "Approved"
 	// DebugSessionConditionResourcesDeployed indicates resources have been deployed.
 	DebugSessionConditionResourcesDeployed DebugSessionConditionType = "ResourcesDeployed"
+	// DebugSessionConditionCleanupFailed indicates cleanup is blocked by residual resources.
+	DebugSessionConditionCleanupFailed DebugSessionConditionType = "CleanupFailed"
 )
 
 // DebugSessionSpec defines the desired state of DebugSession.

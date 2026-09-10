@@ -475,10 +475,31 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	// progress; the status patch below must remove only entries that this
 	// attempt actually retired.
 	cleanupBaseline := ds.Status.DeepCopy()
+	wasCleanupFailed := cleanupConditionFailed(ds)
+	finishCleanup := func(cleanupErr error) error {
+		setCleanupCondition(ds, cleanupErr)
+		patchErr := c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline)
+		if patchErr != nil {
+			cleanupErr = errors.Join(cleanupErr, patchErr)
+		}
+		if c.shouldEmitAudit(ds) {
+			if auditManager := c.currentAuditManager(); auditManager != nil {
+				if cleanupErr != nil {
+					auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, cleanupResidualIdentities(ds))
+				} else if wasCleanupFailed && patchErr == nil && !cleanupConditionFailed(ds) {
+					auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+				}
+			}
+		}
+		return cleanupErr
+	}
 
 	if c.ccProvider == nil {
 		if hasTrackedSpokeResources(ds) {
-			return fmt.Errorf("cannot clean up tracked spoke resources: cluster client provider is unavailable")
+			return finishCleanup(fmt.Errorf("cannot clean up tracked spoke resources: cluster client provider is unavailable"))
+		}
+		if wasCleanupFailed {
+			return finishCleanup(nil)
 		}
 		return nil
 	}
@@ -490,7 +511,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		// An unavailable cluster cannot prove that tracked resources are gone.
 		if errors.Is(err, cluster.ErrClusterConfigNotFound) {
 			log.Warnw("ClusterConfig no longer exists; retaining cleanup inventory for retry", "cluster", ds.Spec.Cluster)
-			return fmt.Errorf("cleanup blocked by missing ClusterConfig: %w", err)
+			return finishCleanup(fmt.Errorf("cleanup blocked by missing ClusterConfig: %w", err))
 		}
 		log.Errorw("Failed to cleanup kubectl-debug resources", "error", err)
 		cleanupErrors = append(cleanupErrors, err)
@@ -502,22 +523,19 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		// AllowedPods are authorization references, not spoke resources. Remove
 		// this attempt's baseline refs while the status merge retains newer refs.
 		ds.Status.AllowedPods = nil
-		if err := c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline); err != nil {
-			cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
-		}
-		return errors.Join(cleanupErrors...)
+		return finishCleanup(errors.Join(cleanupErrors...))
 	}
 
 	// Get spoke cluster client for cleanup
 	restCfg, err := c.ccProvider.GetRESTConfig(ctx, ds.Spec.Cluster)
 	if err != nil {
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to get REST config: %w", err))
-		return errors.Join(cleanupErrors...)
+		return finishCleanup(errors.Join(cleanupErrors...))
 	}
 	targetClient, err := ctrlclient.New(restCfg, ctrlclient.Options{})
 	if err != nil {
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to create client: %w", err))
-		return errors.Join(cleanupErrors...)
+		return finishCleanup(errors.Join(cleanupErrors...))
 	}
 
 	// Cleanup auxiliary resources first using the manager
@@ -540,19 +558,103 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 
 	if len(ds.Status.DeployedResources) == 0 {
 		// Persist any status changes from auxiliary/pod-template cleanup above
-		if err := c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline); err != nil {
-			cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
-		}
-		return errors.Join(cleanupErrors...)
+		return finishCleanup(errors.Join(cleanupErrors...))
 	}
 
 	if err := c.cleanupDeployedResources(ctx, ds, targetClient, auxiliaryCleanupFailed, len(ds.Status.PodTemplateResourceStatuses) > 0); err != nil {
 		cleanupErrors = append(cleanupErrors, err)
 	}
-	if err := c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline); err != nil {
-		cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
+	return finishCleanup(errors.Join(cleanupErrors...))
+}
+
+const (
+	maxCleanupResidualIdentities = 16
+	maxCleanupIdentityLength     = 256
+	maxCleanupConditionMessage   = 1024
+)
+
+func cleanupConditionFailed(ds *breakglassv1alpha1.DebugSession) bool {
+	condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+	return condition != nil && condition.Status == metav1.ConditionTrue
+}
+
+func setCleanupCondition(ds *breakglassv1alpha1.DebugSession, cleanupErr error) {
+	conditionType := string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)
+	condition := metav1.Condition{
+		Type:               conditionType,
+		ObservedGeneration: ds.Generation,
+		LastTransitionTime: metav1.Now(),
 	}
-	return errors.Join(cleanupErrors...)
+	if cleanupErr != nil {
+		condition.Status = metav1.ConditionTrue
+		condition.Reason = "CleanupFailed"
+		condition.Message = boundedCleanupConditionMessage(ds)
+	} else {
+		condition.Status = metav1.ConditionFalse
+		condition.Reason = "CleanupRecovered"
+		condition.Message = "Cleanup completed; no residual resources remain."
+	}
+	ds.SetCondition(condition)
+}
+
+func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
+	identities := make([]string, 0, maxCleanupResidualIdentities)
+	add := func(kind, namespace, name, uid string) {
+		if len(identities) >= maxCleanupResidualIdentities || name == "" {
+			return
+		}
+		identity := kind + "/" + name
+		if namespace != "" {
+			identity = namespace + "/" + identity
+		}
+		if uid != "" {
+			identity += " (uid=" + uid + ")"
+		}
+		if len(identity) > maxCleanupIdentityLength {
+			identity = identity[:maxCleanupIdentityLength-len("...")] + "..."
+		}
+		identities = append(identities, identity)
+	}
+	for _, ref := range ds.Status.DeployedResources {
+		add(ref.Kind, ref.Namespace, ref.Name, ref.UID)
+	}
+	for _, status := range ds.Status.AuxiliaryResourceStatuses {
+		if status.Created && !status.Deleted {
+			add(status.Kind, status.Namespace, status.ResourceName, status.UID)
+		}
+		for _, ref := range status.AdditionalResources {
+			if !ref.Deleted {
+				add(ref.Kind, ref.Namespace, ref.ResourceName, ref.UID)
+			}
+		}
+	}
+	for _, status := range ds.Status.PodTemplateResourceStatuses {
+		if status.Created && !status.Deleted {
+			add(status.Kind, status.Namespace, status.ResourceName, status.UID)
+		}
+	}
+	if status := ds.Status.KubectlDebugStatus; status != nil {
+		for _, ref := range status.CopiedPods {
+			add("Pod", ref.CopyNamespace, ref.CopyName, canonicalCopiedPodUID(ref))
+		}
+		for _, ref := range status.EphemeralContainersInjected {
+			add("EphemeralContainer", ref.Namespace, ref.PodName+"/"+ref.ContainerName, ref.PodUID)
+		}
+	}
+	return identities
+}
+
+func boundedCleanupConditionMessage(ds *breakglassv1alpha1.DebugSession) string {
+	const prefix = "Cleanup failed; residual resources: "
+	identities := cleanupResidualIdentities(ds)
+	if len(identities) == 0 {
+		return "Cleanup failed; residual resources remain in the durable inventory."
+	}
+	message := prefix + strings.Join(identities, ", ")
+	if len(message) <= maxCleanupConditionMessage {
+		return message
+	}
+	return message[:maxCleanupConditionMessage-len("...")] + "..."
 }
 
 func residualResourceIdentities(refs []breakglassv1alpha1.DeployedResourceRef) string {
@@ -611,6 +713,15 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 		current.Status.KubectlDebugStatus = mergeKubectlDebugStatus(
 			cleanupBaseline.KubectlDebugStatus, desiredStatus.KubectlDebugStatus, current.Status.KubectlDebugStatus,
 		)
+		if condition := desiredCleanupCondition(desiredStatus.Conditions); condition != nil {
+			mergedCondition := condition.DeepCopy()
+			if mergedCondition.Status == metav1.ConditionFalse && cleanupStatusHasResiduals(current.Status) {
+				mergedCondition.Status = metav1.ConditionTrue
+				mergedCondition.Reason = "CleanupFailed"
+				mergedCondition.Message = boundedCleanupConditionMessage(current)
+			}
+			current.SetCondition(*mergedCondition)
+		}
 		if current.Generation > 0 {
 			current.Status.ObservedGeneration = current.Generation
 		}
@@ -628,6 +739,38 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 
 	ds.Status = patchedStatus
 	ds.ResourceVersion = patchedResourceVersion
+	return nil
+}
+
+func cleanupStatusHasResiduals(status breakglassv1alpha1.DebugSessionStatus) bool {
+	if len(status.DeployedResources) > 0 {
+		return true
+	}
+	for _, resource := range status.AuxiliaryResourceStatuses {
+		if resource.Created && !resource.Deleted {
+			return true
+		}
+		for _, child := range resource.AdditionalResources {
+			if !child.Deleted {
+				return true
+			}
+		}
+	}
+	for _, resource := range status.PodTemplateResourceStatuses {
+		if resource.Created && !resource.Deleted {
+			return true
+		}
+	}
+	return status.KubectlDebugStatus != nil &&
+		(len(status.KubectlDebugStatus.CopiedPods) > 0 || len(status.KubectlDebugStatus.EphemeralContainersInjected) > 0)
+}
+
+func desiredCleanupCondition(conditions []metav1.Condition) *metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == string(breakglassv1alpha1.DebugSessionConditionCleanupFailed) {
+			return &conditions[i]
+		}
+	}
 	return nil
 }
 
