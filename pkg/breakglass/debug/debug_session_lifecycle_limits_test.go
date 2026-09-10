@@ -5,6 +5,7 @@ package debug
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,8 +17,10 @@ import (
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"go.uber.org/zap"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -269,4 +272,75 @@ func TestIdleExpiryDuringTargetReadPreventsJobDeadlineMutation(t *testing.T) {
 	live := &breakglassv1alpha1.DebugSession{}
 	require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), live))
 	require.Empty(t, live.Status.AllowedPods)
+}
+
+func TestIdleExpiryDuringEphemeralTargetUpdatePreservesOutcome(t *testing.T) {
+	for _, interrupted := range []bool{false, true} {
+		t.Run(fmt.Sprint(interrupted), func(t *testing.T) {
+			session := newEphemeralOperationTestSession()
+			session.Status.ExpiresAt.Time = session.Status.ExpiresAt.Time.Truncate(time.Second)
+			activity := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
+			session.Status.LastActivity = &activity
+			session.Status.ResolvedTemplate.Constraints = &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "5s"}
+			deadline := activity.Add(5 * time.Second)
+			patches, updates := 0, 0
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "app:v1"}}}}
+			target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(pod).WithInterceptorFuncs(interceptor.Funcs{SubResourceUpdate: func(ctx context.Context, cl ctrlclient.Client, name string, obj ctrlclient.Object, opts ...ctrlclient.SubResourceUpdateOption) error {
+				if name == "ephemeralcontainers" {
+					updates++
+					require.True(t, time.Now().Before(deadline))
+					time.Sleep(time.Until(deadline) + time.Millisecond)
+					return cl.Update(ctx, obj)
+				}
+				return cl.SubResource(name).Update(ctx, obj, opts...)
+			}}).Build()
+			hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).WithStatusSubresource(session).WithInterceptorFuncs(interceptor.Funcs{SubResourcePatch: func(ctx context.Context, cl ctrlclient.Client, name string, obj ctrlclient.Object, patch ctrlclient.Patch, opts ...ctrlclient.SubResourcePatchOption) error {
+				if name == "status" {
+					patches++
+					if interrupted && patches == 2 {
+						return fmt.Errorf("transient outcome persistence failure")
+					}
+				}
+				return cl.SubResource(name).Patch(ctx, obj, patch, opts...)
+			}}).Build()
+			provider := &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": target}}
+			handler := NewKubectlDebugHandler(hub, provider)
+			require.Error(t, handler.InjectEphemeralContainer(context.Background(), session, "default", "target", "debugger", "busybox:latest", []string{"sh"}, nil, session.Spec.RequestedBy))
+			live := &breakglassv1alpha1.DebugSession{}
+			require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), live))
+			require.Equal(t, 1, updates)
+			require.Empty(t, live.Status.AllowedPods)
+			require.Empty(t, live.Status.KubectlDebugStatus.EphemeralContainersInjected)
+			require.True(t, live.Status.LastActivity.Equal(&activity))
+			require.Zero(t, live.Status.ActivityCount)
+			require.True(t, live.Status.ExpiresAt.Equal(session.Status.ExpiresAt))
+			require.Len(t, live.Status.KubectlDebugStatus.Operations, 1)
+			if !interrupted {
+				require.Equal(t, breakglassv1alpha1.KubectlDebugOperationCompleted, live.Status.KubectlDebugStatus.Operations[0].State)
+				return
+			}
+			require.Equal(t, breakglassv1alpha1.KubectlDebugOperationPrepared, live.Status.KubectlDebugStatus.Operations[0].State)
+			require.NoError(t, breakglass.PatchDebugSessionStatusWithOptimisticLock(context.Background(), hub, live, func(status *breakglassv1alpha1.DebugSessionStatus) {
+				status.State = breakglassv1alpha1.DebugSessionStateExpired
+			}))
+			controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, cluster.NewClientProvider(hub, zap.NewNop().Sugar()))
+			controller.targetClients = provider
+			result, err := controller.handleCleanup(context.Background(), live)
+			require.NoError(t, err)
+			require.Equal(t, ExpiredSessionRequeue, result.RequeueAfter, "fresh Prepared evidence stays queued during recovery grace")
+			// Model the later recovery candidate without changing the persisted immutable intent.
+			live.Status.KubectlDebugStatus.Operations[0].PreparedAt = stalePreparedAt()
+			result, err = controller.handleCleanup(context.Background(), live)
+			require.NoError(t, err)
+			require.Zero(t, result.RequeueAfter)
+			require.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, live.Status.State)
+			require.Equal(t, breakglassv1alpha1.KubectlDebugOperationCompleted, live.Status.KubectlDebugStatus.Operations[0].State)
+			require.Empty(t, live.Status.AllowedPods)
+			require.Len(t, live.Status.KubectlDebugStatus.EphemeralContainersInjected, 1, "terminal recovery retains exact non-authorizing injection evidence")
+			require.Equal(t, "target-uid", live.Status.KubectlDebugStatus.EphemeralContainersInjected[0].PodUID)
+			require.True(t, live.Status.LastActivity.Equal(&activity))
+			require.Zero(t, live.Status.ActivityCount)
+			require.Equal(t, 1, updates, "recovery must not reapply target mutation")
+		})
+	}
 }
