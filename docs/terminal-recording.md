@@ -48,10 +48,13 @@ client disconnect or a remote stream failure, preserving any bytes already
 captured, and closes the lease in a separate bounded context. A lease expiry or
 revocation cancels the stream before publication. Direct
 target `pods/exec` and `pods/attach` authorization is denied while recording is
-required; clients must use the controller endpoint. Retention metadata is
+required for an authorized current participant; unrelated or former participants
+do not cause another user’s access to be denied. Clients subject to recording
+must use the controller endpoint. Retention metadata is
 stored in an independent `DebugSessionArtifact` before target execution. Captured
 bytes and final metadata are published through that reservation even after
-stream expiry or revocation; incomplete streams are marked `complete: false`.
+stream expiry or revocation; incomplete streams are marked `complete: false`. A final live-authority check
+classifies completion without discarding evidence after revocation.
 The shared artifact controller recovers ambiguous publication and performs
 exact-version cleanup without depending on the session status or its lifetime.
 Replay permits retained terminal sessions, but requires the original live session

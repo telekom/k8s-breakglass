@@ -689,7 +689,7 @@ func TestDebugSessionStatusFromPreservesAuthorizationAndResourceFields(t *testin
 	deletedAt := "2026-06-27T18:02:00Z"
 	status := &breakglassv1alpha1.DebugSessionStatus{
 		ConnectionLease: &breakglassv1alpha1.DebugSessionConnectionLease{
-			Namespace: "hub", Name: "lease", UID: "lease-uid", ResourceVersion: "7",
+			Namespace: "hub", Name: "lease", UID: "lease-uid",
 			HolderUID: "session-uid", TargetUID: "cluster-uid", ProfileDigest: "digest", Epoch: 3,
 			ExpiresAt: metav1.Now(),
 		},

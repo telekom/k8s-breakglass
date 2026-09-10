@@ -55,8 +55,9 @@ func (terminalRecordingRouteProvider) AcquireTerminalRecordingConnection(_ conte
 }
 
 func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
-	for _, incomplete := range []bool{false, true} {
-		t.Run(fmt.Sprint("incomplete=", incomplete), func(t *testing.T) {
+	for _, outcome := range []string{"complete", "failed", "revoked", "disconnect"} {
+		t.Run(outcome, func(t *testing.T) {
+			incomplete := outcome != "complete"
 			gin.SetMode(gin.TestMode)
 			now := metav1.Now()
 			expiresAt := metav1.NewTime(now.Add(time.Hour))
@@ -101,7 +102,10 @@ func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
 						if err := cli.Status().Update(context.Background(), &live); err != nil {
 							return err
 						}
-						return io.ErrUnexpectedEOF
+						if outcome == "failed" {
+							return io.ErrUnexpectedEOF
+						}
+						return nil
 					}
 					return nil
 				}}, nil
@@ -112,7 +116,9 @@ func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
 			input, inputWriter := io.Pipe()
 			defer input.Close()
 			defer inputWriter.Close()
-			req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/debugSessions/session/terminal?namespace=hub&podNamespace=target&podName=pod&operation=exec&command=sh", input)
+			requestCtx, requestCancel := context.WithCancel(context.Background())
+			defer requestCancel()
+			req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, server.URL+"/api/v1/debugSessions/session/terminal?namespace=hub&podNamespace=target&podName=pod&operation=exec&command=sh", input)
 			require.NoError(t, err)
 			httpClient := &http.Client{Timeout: 5 * time.Second}
 			response, err := httpClient.Do(req)
@@ -123,18 +129,34 @@ func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
 			_, err = io.ReadFull(response.Body, prompt)
 			require.NoError(t, err)
 			require.Equal(t, "prompt", string(prompt))
-			// The prompt must arrive before the request body is supplied or closed.
-			_, err = io.WriteString(inputWriter, "input")
-			require.NoError(t, err)
-			require.NoError(t, inputWriter.Close())
-			rest, err := io.ReadAll(response.Body)
-			require.NoError(t, err)
-			require.Equal(t, "input", string(rest))
-			require.NotEmpty(t, response.Trailer.Get("X-Breakglass-Recording-ID"))
+			artifactID := ""
+			if outcome == "disconnect" {
+				requestCancel()
+				_ = inputWriter.Close()
+				_ = response.Body.Close()
+				require.Eventually(t, func() bool {
+					records, err := service.Recordings(context.Background(), session.Namespace, session.Name, string(session.UID), func(context.Context) error { return nil })
+					if err != nil || len(records) != 1 {
+						return false
+					}
+					artifactID = records[0].ArtifactID
+					return true
+				}, 5*time.Second, 20*time.Millisecond)
+			} else {
+				// The prompt must arrive before request input is supplied or closed.
+				_, err = io.WriteString(inputWriter, "input")
+				require.NoError(t, err)
+				require.NoError(t, inputWriter.Close())
+				rest, err := io.ReadAll(response.Body)
+				require.NoError(t, err)
+				require.Equal(t, "input", string(rest))
+				artifactID = response.Trailer.Get("X-Breakglass-Recording-ID")
+				require.NotEmpty(t, artifactID)
+			}
 			stored := &breakglassv1alpha1.DebugSession{}
 			require.NoError(t, cli.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), stored))
 			require.Nil(t, stored.Status.KubectlDebugStatus)
-			record, err := service.Recording(context.Background(), session.Namespace, session.Name, response.Trailer.Get("X-Breakglass-Recording-ID"))
+			record, err := service.Recording(context.Background(), session.Namespace, session.Name, artifactID)
 			require.NoError(t, err)
 			require.Equal(t, backend.StateAvailable, record.State)
 			require.Equal(t, "pod-uid", record.Recording.PodUID)
@@ -149,7 +171,9 @@ func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
 			require.Equal(t, http.StatusOK, replay.StatusCode)
 			require.Equal(t, record.SHA256, sha256Hex(string(replayed)))
 			require.Contains(t, string(replayed), "prompt")
-			require.Contains(t, string(replayed), "input")
+			if outcome != "disconnect" {
+				require.Contains(t, string(replayed), "input")
+			}
 			listing, err := httpClient.Get(server.URL + "/api/v1/debugSessions/session/terminal?namespace=hub")
 			require.NoError(t, err)
 			listed, err := io.ReadAll(listing.Body)

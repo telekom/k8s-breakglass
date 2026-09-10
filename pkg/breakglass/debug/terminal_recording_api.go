@@ -53,8 +53,8 @@ type TerminalRecordingConnectionBinding struct {
 	RuntimeBindingDigest string
 }
 
-// TerminalRecordingConnection is validated before stream creation and again
-// before publication. Close must revoke the target connection lease.
+// TerminalRecordingConnection fences stream access and final completion classification.
+// Evidence publication survives revocation; Close revokes the target connection lease.
 type TerminalRecordingConnection interface {
 	Binding() TerminalRecordingConnectionBinding
 	Validate(context.Context) error
@@ -283,6 +283,11 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	defer finalizeCancel()
 	metadata.FinishedAt = time.Now().UTC()
 	metadata.Complete = streamErr == nil && apiCtx.Err() == nil && metadata.FinishedAt.Before(binding.ExpiresAt)
+	if metadata.Complete {
+		checkCtx, checkCancel := context.WithTimeout(finalizeCtx, 2*time.Second)
+		metadata.Complete = connection.Validate(checkCtx) == nil
+		checkCancel()
+	}
 	metadata.Frames = recording.Frames
 	// Publication preserves already-admitted evidence after disconnection or expiry.
 	// The durable reservation, not a now-revoked stream lease, fences this write.

@@ -427,11 +427,6 @@ func (wc *WebhookController) findDebugSessionAccessForIssuerInNamespace(ctx cont
 				"operation", ra.Subresource)
 			continue
 		}
-		if terminalRecordingRequired(ds, ra.Subresource) {
-			reason := fmt.Sprintf("direct pod %s is denied because terminal recording is required; use the Breakglass terminal endpoint", ra.Subresource)
-			reqLog.Debugw("Direct debug-session pod operation denied because recording is required", "session", ds.Name, "operation", ra.Subresource)
-			return ds, reason
-		}
 
 		// Check if the user is a participant of this session
 		for _, p := range ds.Status.Participants {
@@ -451,6 +446,19 @@ func (wc *WebhookController) findDebugSessionAccessForIssuerInNamespace(ctx cont
 					"role", p.Role,
 					"operation", ra.Subresource)
 				continue
+			}
+			if terminalRecordingRequired(ds, ra.Subresource) {
+				var latest breakglassv1alpha1.DebugSession
+				if err := reader.Get(ctx, client.ObjectKeyFromObject(ds), &latest); err != nil || latest.UID != ds.UID || latest.ResourceVersion != ds.ResourceVersion {
+					continue
+				}
+				checkedAt := time.Now().UTC()
+				if !checkedAt.Before(ds.Status.ExpiresAt.Time) || breakglass.DebugSessionIdleExpired(ds, checkedAt) {
+					continue
+				}
+				reason := fmt.Sprintf("direct pod %s is denied because terminal recording is required; use the Breakglass terminal endpoint", ra.Subresource)
+				reqLog.Debugw("Direct debug-session pod operation denied because recording is required", "session", ds.Name, "operation", ra.Subresource)
+				return ds, reason
 			}
 			reason := fmt.Sprintf("Allowed by debug session %s (role: %s, operation: %s)", ds.Name, p.Role, ra.Subresource)
 			reqLog.Infow("Debug session pod operation allowed",

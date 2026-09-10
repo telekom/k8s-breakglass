@@ -65,7 +65,7 @@ type TerminalRecorder struct {
 }
 
 // NewTerminalRecorder creates a bounded recorder. A zero limit uses the
-// reviewed 512 MiB default; negative limits are rejected by Write.
+// 512 MiB default; negative limits are rejected by Write.
 func NewTerminalRecorder(maxBytes int64) *TerminalRecorder {
 	if maxBytes == 0 {
 		maxBytes = defaultTerminalRecordingMaxBytes
