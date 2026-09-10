@@ -53,6 +53,7 @@ matrix() {
 		(.context|contains("..")|not) and (.context|contains("//")|not) and
 		($buildContext|test("^(\\.|utils/[A-Za-z0-9._/-]+)$")) and
 		($buildContext|contains("..")|not) and ($buildContext|contains("//")|not) and
+		((.buildContext == null) or (.name == "cluster-validator" and .buildContext == ".")) and
         (.file == (.context + "/Dockerfile")) and
 		(.smokeCommand|type=="array" and length>0 and all(.[]; type=="string" and length>0)) and
 		(.smokeOutput|type=="string" and length>0) and
@@ -60,6 +61,7 @@ matrix() {
 		(.behaviorWorkflows|type=="array" and length>0 and all(.[]; type=="string" and test("^\\.github/workflows/[A-Za-z0-9._-]+\\.yml$")))) and
 		(([.images[].requiredChecks[]]|length) == ([.images[].requiredChecks[]]|unique|length))' "${manifest}" >/dev/null || die 'invalid utility image manifest'
 	while IFS= read -r path; do [[ -d "${root}/${path}" ]] || die "manifest context does not exist: ${path}"; done < <(jq -r '.images[].context' "${manifest}")
+	while IFS= read -r path; do [[ -d "${root}/${path}" ]] || die "manifest build context does not exist: ${path}"; done < <(jq -r '.images[] | (.buildContext // .context)' "${manifest}")
 	while IFS= read -r path; do [[ -f "${root}/${path}" ]] || die "manifest Dockerfile does not exist: ${path}"; done < <(jq -r '.images[].file' "${manifest}")
 	while IFS= read -r path; do [[ -f "${root}/${path}" ]] || die "behavior workflow does not exist: ${path}"; done < <(jq -r '.images[].behaviorWorkflows[]' "${manifest}")
 	jq -cS --arg prefix "${prefix}" '[.images[] | . + {image:($prefix+"/"+.name)}] | sort_by(.name)' "${manifest}"

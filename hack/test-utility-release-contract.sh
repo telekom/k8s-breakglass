@@ -80,5 +80,9 @@ jq -e 'sort == ["Core CI","Future behavior"]' <<<"${checks}" >/dev/null
 printf '%s\n' '{"schemaVersion":1,"images":[{"name":"future-tool","context":"utils/images/future-tool","file":"utils/images/future-tool/Dockerfile","smokeCommand":["help"],"smokeOutput":"future help","requiredChecks":["Future behavior"],"behaviorWorkflows":[".github/workflows/future-tool.yml"]},{"name":"future-tool","context":"utils/images/future-tool","file":"utils/images/future-tool/Dockerfile","smokeCommand":["help"],"smokeOutput":"future help","requiredChecks":["Future duplicate behavior"],"behaviorWorkflows":[".github/workflows/future-tool.yml"]}]}' >"${fixture}/hack/utility-image-matrix.json"
 expect_fail "${contract}" matrix "${fixture}"
 expect_fail env UTILITY_IMAGE_PREFIX=ghcr.io/example/acme/other-utils "${contract}" matrix "${fixture}"
+printf '%s\n' '{"schemaVersion":1,"images":[{"name":"future-tool","context":"utils/images/future-tool","buildContext":"utils/images/missing","file":"utils/images/future-tool/Dockerfile","smokeCommand":["help"],"smokeOutput":"future help","requiredChecks":["Future behavior"],"behaviorWorkflows":[".github/workflows/future-tool.yml"]}]}' >"${fixture}/hack/utility-image-matrix.json"
+expect_fail "${contract}" matrix "${fixture}"
+printf '%s\n' '{"schemaVersion":1,"images":[{"name":"future-tool","context":"utils/images/future-tool","buildContext":".","file":"utils/images/future-tool/Dockerfile","smokeCommand":["help"],"smokeOutput":"future help","requiredChecks":["Future behavior"],"behaviorWorkflows":[".github/workflows/future-tool.yml"]}]}' >"${fixture}/hack/utility-image-matrix.json"
+expect_fail "${contract}" matrix "${fixture}"
 
 printf '%s\n' 'utility release contract behavioral tests passed'
