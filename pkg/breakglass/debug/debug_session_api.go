@@ -2143,7 +2143,6 @@ func stringInSlice(value string, values []string) bool {
 	return false
 }
 
-<<<<<<< HEAD
 // AuthorizeArtifactCollection returns the exact active session only to a
 // participant who may operate its debug resources. Read-only approvers do not
 // gain permission to start collectors.
