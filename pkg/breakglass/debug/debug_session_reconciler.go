@@ -284,9 +284,6 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		log.Errorw("Failed to get DebugSessionTemplate", "template", ds.Spec.TemplateRef, "error", err)
 		return c.failSession(ctx, ds, fmt.Sprintf("template not found: %s", ds.Spec.TemplateRef))
 	}
-	if err := rejectUnsupportedTerminalRecording(template); err != nil {
-		return c.failSession(ctx, ds, err.Error())
-	}
 
 	// Find binding early so we can check its approvers for the approval decision
 	// This ensures bindings with approvers properly trigger approval workflow.
@@ -319,6 +316,14 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	// Cache the resolved template in status after applying binding-level duration overrides.
 	resolvedTemplate := template.Spec.DeepCopy()
 	resolvedTemplate.Constraints = effectiveDebugSessionConstraints(template, binding)
+	// Failure retention uses an existing approved snapshot, or the effective
+	// constraints just resolved for a request that has no snapshot yet.
+	if err := rejectUnsupportedTerminalRecording(template); err != nil {
+		if ds.Status.ResolvedTemplate == nil {
+			ds.Status.ResolvedTemplate = resolvedTemplate
+		}
+		return c.failSession(ctx, ds, err.Error())
+	}
 	ds.Status.ResolvedTemplate = resolvedTemplate
 	ds.Status.ResolvedBindingSnapshotCaptured = true
 	if binding != nil {

@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve explicit retention on early debug-session rejection and use consistent cleanup evidence for deleted pod-template history and unresolved auxiliary identities.
+
 - Preserve prepared operation outcomes after inactivity or hard expiry without granting access, and release cluster cleanup for confirmed retained auxiliary resources.
 
 - Preserve pending binding quotas and explicit retention during cluster deletion, reject renewal without a live deadline, and fence idle expiry after workload reads.
