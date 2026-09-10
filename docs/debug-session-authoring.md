@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 # DebugSession authoring guide
 
 This guide is for platform administrators who publish a safe, reusable
-`DebugSessionTemplate`. It describes the upstream CRDs and the five utility
+`DebugSessionTemplate`. It describes the upstream CRDs and the seven utility
 images in this repository. It is deliberately provider-neutral: cluster
 admission, image publication, storage classes, and any organization-specific
 profiles remain deployment responsibilities.

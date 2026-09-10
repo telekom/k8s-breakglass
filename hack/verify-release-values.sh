@@ -19,7 +19,9 @@ for record in \
   "network|ghcr.io/telekom/k8s-breakglass/utils/network-debug|${digest}" \
   "storage|ghcr.io/telekom/k8s-breakglass/utils/storage-debug|${digest}" \
   "node|ghcr.io/telekom/k8s-breakglass/utils/node-maintenance|${digest}" \
-  "diagnostic-artifact-collector|ghcr.io/telekom/k8s-breakglass/utils/diagnostic-artifact-collector|${digest}"; do
+  "diagnostic-artifact-collector|ghcr.io/telekom/k8s-breakglass/utils/diagnostic-artifact-collector|${digest}" \
+  "dump-reader|ghcr.io/telekom/k8s-breakglass/utils/dump-reader|${digest}" \
+  "cluster-validator|ghcr.io/telekom/k8s-breakglass/utils/cluster-validator|${digest}"; do
   name="${record%%|*}"
   printf '%s|verified|verified|verified\n' "${record}" >"${test_dir}/refs/${name}.ref"
 done
@@ -46,7 +48,7 @@ ruby -ryaml -e '
 helm lint "${script_dir}/../charts/debug-session-catalogue" --strict --values "${render_values}" >/dev/null
 helm template release-proof "${script_dir}/../charts/debug-session-catalogue" --values "${render_values}" >/dev/null
 "${script_dir}/extract-catalogue-image-refs.sh" "${render_values}" "${refs_output}"
-[ "$(wc -l <"${refs_output}" | tr -d ' ')" -eq 5 ] || { echo "unexpected public utility image count" >&2; exit 1; }
+[ "$(wc -l <"${refs_output}" | tr -d ' ')" -eq 7 ] || { echo "unexpected public utility image count" >&2; exit 1; }
 if grep -Eq 'example\.invalid|:0\.1\.0$' "${refs_output}"; then
   echo "non-public placeholder or mutable image leaked into supply-chain refs" >&2
   exit 1
