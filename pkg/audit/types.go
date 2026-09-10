@@ -25,8 +25,8 @@ const (
 	EventSessionExtended    EventType = "session.extended"
 	EventSessionValidated   EventType = "session.validated"
 	EventSessionInvalidated EventType = "session.invalidated"
-	// EventSessionTerminationIntent records a durable terminal decision before
-	// the corresponding session status transition is committed.
+	// EventSessionTerminationIntent records the terminal decision alongside the
+	// corresponding session status transition in one durable status update.
 	EventSessionTerminationIntent EventType = "session.termination_intent"
 	// EventSessionApprovalUnverifiedGroups records that an approval authorization
 	// decision was made using unverified (JWT-claim) approver groups because the
