@@ -335,6 +335,9 @@ func (service *Service) Upload(ctx context.Context, encodedToken string, route s
 		cleanupRecord := record
 		cleanupRecord.Size, cleanupRecord.SHA256, cleanupRecord.Metadata = size, digest, metadata
 		if latest, getErr := service.repository.Get(ctx, claims.SessionNamespace, claims.SessionName, claims.ArtifactID); getErr == nil {
+			if latest.ArtifactUID != record.ArtifactUID {
+				return PublicRecord{}, errors.Join(checkErr, ErrConflict)
+			}
 			cleanupRecord = latest
 			cleanupRecord.Size, cleanupRecord.SHA256, cleanupRecord.Metadata = size, digest, metadata
 		}
@@ -381,7 +384,7 @@ func (service *Service) recheckUpload(ctx context.Context, encodedToken string, 
 	if err != nil {
 		return Record{}, ErrConflict
 	}
-	if current.Generation != expected.Generation || current.State != StateUploading {
+	if current.ArtifactUID != expected.ArtifactUID || current.Generation != expected.Generation || current.State != StateUploading {
 		return Record{}, ErrConflict
 	}
 	if err := service.authorize(ctx, current, claims.SessionUID, claims.TargetIdentityDigest, claims.OperationEpoch); err != nil {

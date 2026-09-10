@@ -94,15 +94,40 @@ func (service *Service) reserve(ctx context.Context, record Record, authorize fu
 			return Record{}, err
 		}
 		if err := authorize(ctx); err != nil {
-			return Record{}, err
+			return Record{}, errors.Join(err, service.cancelReservation(ctx, created, StateRevoked))
 		}
 		if !service.now().Before(created.ExpiresAt) {
-			return Record{}, ErrExpired
+			return Record{}, errors.Join(ErrExpired, service.cancelReservation(ctx, created, StateExpired))
 		}
 		return created, nil
 	}
 	return Record{}, fmt.Errorf("session artifact reservation limit reached: %w", ErrConflict)
 }
+
+// cancelReservation retains a durable cleanup state even if the admission request
+// was canceled. A fresh UID and CAS prevent cleanup of a reused reservation slot.
+func (service *Service) cancelReservation(ctx context.Context, created Record, terminal State) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	for attempt := 0; attempt < 3; attempt++ {
+		current, err := service.repository.Get(cleanupCtx, created.Namespace, created.SessionName, created.ArtifactID)
+		if err != nil {
+			return fmt.Errorf("read rejected artifact reservation: %w", err)
+		}
+		if created.ArtifactUID == "" || current.ArtifactUID != created.ArtifactUID {
+			return ErrConflict
+		}
+		if current.State == StateRevoked || current.State == StateExpired || current.State == StateDeleted {
+			return nil
+		}
+		err = service.Cleanup(cleanupCtx, current, terminal)
+		if !errors.Is(err, ErrConflict) {
+			return err
+		}
+	}
+	return ErrConflict
+}
+
 func digestValid(value string) bool {
 	decoded, err := hex.DecodeString(value)
 	return err == nil && len(decoded) == sha256.Size && len(value) == 64

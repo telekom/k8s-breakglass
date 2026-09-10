@@ -14,7 +14,8 @@ import (
 )
 
 // terminalRecordingAuthority keeps identity from authenticated middleware, never
-// from query parameters, and rechecks live authorization at every byte boundary.
+// from query parameters, and rechecks live authorization around transport operations. An admitted write can complete during remote
+// revocation; the transport watcher aborts blocked I/O after detecting it.
 func (c *DebugSessionAPIController) terminalRecordingAuthority(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity, namespace, podName, podUID, operation string, target func(context.Context) error) func(context.Context) error {
 	expectedProfile, profileErr := ProfileDigestForSession(session)
 	checkSession := func(live *breakglassv1alpha1.DebugSession) error {

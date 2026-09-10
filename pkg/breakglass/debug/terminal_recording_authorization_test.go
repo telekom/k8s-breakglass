@@ -96,3 +96,34 @@ func TestEmptyTerminalProducesBoundedEvidence(t *testing.T) {
 	_, err = NewTerminalRecorder(terminalRecordingFrameHeaderSize - 1).Finalize()
 	require.Error(t, err)
 }
+
+// Remote revocation cannot retract a write already admitted to the transport.
+// This deterministic interleaving documents the bound: the next write is denied.
+func TestRecordingWriterRevocationDuringAdmittedWrite(t *testing.T) {
+	allowed := true
+	sink := &revokingRecordingWriter{revoke: func() { allowed = false }}
+	writer := authorizedRecordingWriter{ctx: context.Background(), writer: sink, authorize: func(context.Context) error {
+		if !allowed {
+			return context.Canceled
+		}
+		return nil
+	}}
+	n, err := writer.Write([]byte("in-flight"))
+	require.NoError(t, err)
+	require.Equal(t, len("in-flight"), n)
+	n, err = writer.Write([]byte("denied"))
+	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, n)
+	require.Equal(t, "in-flight", sink.bytes)
+}
+
+type revokingRecordingWriter struct {
+	revoke func()
+	bytes  string
+}
+
+func (w *revokingRecordingWriter) Write(p []byte) (int, error) {
+	w.revoke()
+	w.bytes += string(p)
+	return len(p), nil
+}

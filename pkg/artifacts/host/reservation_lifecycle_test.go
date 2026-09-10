@@ -256,6 +256,12 @@ func TestRegisteredCollectorAdmissionCreatesJobWithReservedToken(t *testing.T) {
 	expires := metav1.NewTime(now.Add(time.Hour))
 	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: "session-uid"}, Spec: breakglassv1alpha1.DebugSessionSpec{RequestedBy: "owner", Cluster: "spoke", TargetNamespace: "target"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expires, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{ArtifactCollection: &breakglassv1alpha1.DebugSessionArtifactCollection{AllowedRecipes: []string{archive.SystemSummaryRecipe}}}, AllowedPods: []breakglassv1alpha1.AllowedPodRef{{Namespace: "target", Name: "approved", UID: "pod-uid"}}, ConnectionLease: &breakglassv1alpha1.DebugSessionConnectionLease{UID: "lease-uid", TargetUID: "cluster-uid", Epoch: 1}}}
 	require.NoError(t, hub.Create(ctx, session))
+	require.NoError(t, coordinationv1.AddToScheme(hub.Scheme()))
+	leaseRef, leaseErr := debug.NewConnectionLeaseService(hub).WithLiveReader(hub).AcquireForSession(ctx, session, "cluster-uid")
+	require.NoError(t, leaseErr)
+	session.Status.ConnectionLease = &leaseRef
+	require.NoError(t, hub.Update(ctx, session))
+
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "approved", Namespace: "target", UID: "pod-uid"}}
 	spoke := interceptor.NewClient(fake.NewClientBuilder().WithScheme(hub.Scheme()).WithObjects(pod).Build(), interceptor.Funcs{Create: func(ctx context.Context, c client.WithWatch, o client.Object, opts ...client.CreateOption) error {
 		o.SetUID(types.UID("target-" + o.GetName()))
@@ -498,4 +504,254 @@ func TestCollectorLeaseRecreationDeniesOldUploadTokenAndDownload(t *testing.T) {
 	require.ErrorIs(t, err, backend.ErrForbidden)
 	_, _, err = service.Download(ctx, "hub", "session", record.ArtifactID, binding)
 	require.ErrorIs(t, err, backend.ErrForbidden)
+}
+
+func TestRejectedRecordingReservationIsDurablyCanceled(t *testing.T) {
+	for _, reason := range []string{"authorization", "canceled request", "expiry"} {
+		t.Run(reason, func(t *testing.T) {
+			svc, repo, _, _, now, _ := lifecycleFixture(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			record := lifecycleRecord(*now)
+			record.Recording = &backend.RecordingMetadata{FormatVersion: 1, StartedAt: *now, StreamExpiresAt: now.Add(time.Minute), PodNamespace: "target", PodName: "debug", PodUID: "pod-uid", Operation: "exec", LeaseUID: "lease-uid", LeaseEpoch: "1", Generation: "1"}
+			calls := 0
+			_, err := svc.ReserveRecording(ctx, record, func(context.Context) error {
+				calls++
+				if calls == 1 {
+					return nil
+				}
+				if reason == "expiry" {
+					*now = record.ExpiresAt
+					return nil
+				}
+				if reason == "canceled request" {
+					cancel()
+					return context.Canceled
+				}
+				return backend.ErrForbidden
+			})
+			require.Error(t, err)
+			if reason == "expiry" {
+				require.ErrorIs(t, err, backend.ErrExpired)
+			}
+			records, err := repo.ListBySession(context.Background(), record.Namespace, record.SessionName, record.SessionUID)
+			require.NoError(t, err)
+			require.Len(t, records, 1)
+			require.NotEmpty(t, records[0].ArtifactUID)
+			expected := backend.StateRevoked
+			if reason == "expiry" {
+				expected = backend.StateExpired
+			}
+			require.Equal(t, expected, records[0].State)
+			require.Zero(t, records[0].Size)
+		})
+	}
+}
+
+func TestCollectorReconcileCleansDefinitiveRevocation(t *testing.T) {
+	for _, scenario := range []string{"terminal before create", "terminal after secret create", "terminal after lost UID", "lease revoked", "lease holder changed", "lease epoch changed", "lease expired", "lease target changed", "lease profile changed", "transient session read", "transient lease read"} {
+		t.Run(scenario, func(t *testing.T) {
+			svc, repo, _, keys, now, hub := lifecycleFixture(t)
+			ctx := context.Background()
+			require.NoError(t, corev1.AddToScheme(hub.Scheme()))
+			require.NoError(t, batchv1.AddToScheme(hub.Scheme()))
+			require.NoError(t, coordinationv1.AddToScheme(hub.Scheme()))
+			expires := metav1.NewTime(now.Add(time.Hour))
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: "session-uid"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke", TargetNamespace: "target"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expires, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{}}}
+			require.NoError(t, hub.Create(ctx, session))
+			leaseRef, err := debug.NewConnectionLeaseService(hub).WithLiveReader(hub).AcquireForSession(ctx, session, "cluster-uid")
+			require.NoError(t, err)
+			session.Status.ConnectionLease = &leaseRef
+			require.NoError(t, hub.Update(ctx, session))
+			record := lifecycleRecord(*now)
+			record.ConnectionLeaseUID = string(leaseRef.UID)
+			reserved, err := svc.Reserve(ctx, record)
+			require.NoError(t, err)
+			revoke := func() {
+				require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(session), session))
+				session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+				require.NoError(t, hub.Update(ctx, session))
+			}
+			spoke := interceptor.NewClient(fake.NewClientBuilder().WithScheme(hub.Scheme()).Build(), interceptor.Funcs{Create: func(ctx context.Context, c client.WithWatch, o client.Object, opts ...client.CreateOption) error {
+				o.SetUID(types.UID("target-" + o.GetName()))
+				if err := c.Create(ctx, o, opts...); err != nil {
+					return err
+				}
+				if scenario == "terminal after secret create" || scenario == "terminal after lost UID" {
+					revoke()
+				}
+				return nil
+			}})
+			provider := lifecycleTarget{client: spoke, config: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: "cluster-uid"}}}
+			reconciler := &artifactcontroller.Reconciler{Client: hub, LiveReader: hub, Service: svc, TokenIssuer: &uploadTokenIssuer{keyring: keys, now: func() time.Time { return *now }}, Image: "registry.example/collector@sha256:" + strings.Repeat("c", 64), ControllerURL: "https://breakglass.example", ClusterProvider: provider}
+			if scenario == "terminal after lost UID" {
+				reconciler.Client = interceptor.NewClient(hub.(client.WithWatch), interceptor.Funcs{SubResourceUpdate: func(ctx context.Context, c client.Client, sub string, o client.Object, opts ...client.SubResourceUpdateOption) error {
+					if a, ok := o.(*breakglassv1alpha1.DebugSessionArtifact); ok {
+						for _, resource := range a.Status.Resources {
+							if resource.UID != "" {
+								return errors.New("lost UID outcome")
+							}
+						}
+					}
+					return c.SubResource(sub).Update(ctx, o, opts...)
+				}})
+			}
+			request := ctrl.Request{NamespacedName: client.ObjectKey{Namespace: "controller", Name: reserved.ArtifactID}}
+			_, err = reconciler.Reconcile(ctx, request)
+			require.NoError(t, err)
+			switch scenario {
+			case "terminal before create":
+				revoke()
+			case "lease revoked":
+				require.NoError(t, hub.Delete(ctx, &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Namespace: leaseRef.Namespace, Name: leaseRef.Name}}))
+			case "lease holder changed", "lease epoch changed", "lease expired", "lease target changed", "lease profile changed":
+				var lease coordinationv1.Lease
+				require.NoError(t, hub.Get(ctx, client.ObjectKey{Namespace: leaseRef.Namespace, Name: leaseRef.Name}, &lease))
+				switch scenario {
+				case "lease holder changed":
+					holder := "other-session"
+					lease.Spec.HolderIdentity = &holder
+				case "lease epoch changed":
+					lease.Annotations["breakglass.telekom.com/connection-epoch"] = "99"
+				case "lease expired":
+					lease.Spec.RenewTime = &metav1.MicroTime{Time: now.Add(-2 * time.Hour)}
+				case "lease target changed":
+					lease.Annotations["breakglass.telekom.com/connection-target-uid"] = "replacement-target"
+				case "lease profile changed":
+					lease.Annotations["breakglass.telekom.com/connection-profile-digest"] = "replacement-profile"
+				}
+				require.NoError(t, hub.Update(ctx, &lease))
+			case "transient session read", "transient lease read":
+				reconciler.LiveReader = interceptor.NewClient(hub.(client.WithWatch), interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, o client.Object, opts ...client.GetOption) error {
+					_, sessionRead := o.(*breakglassv1alpha1.DebugSession)
+					_, leaseRead := o.(*coordinationv1.Lease)
+					if sessionRead && scenario == "transient session read" || leaseRead && scenario == "transient lease read" {
+						return errors.New("temporary API outage")
+					}
+					return c.Get(ctx, key, o, opts...)
+				}})
+			}
+			_, err = reconciler.Reconcile(ctx, request)
+			if strings.HasPrefix(scenario, "transient") {
+				require.ErrorContains(t, err, "temporary API outage")
+			} else if scenario == "terminal after lost UID" {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			persisted, getErr := repo.Get(ctx, record.Namespace, record.SessionName, reserved.ArtifactID)
+			require.NoError(t, getErr)
+			require.Equal(t, reserved.ArtifactUID, persisted.ArtifactUID)
+			if strings.HasPrefix(scenario, "transient") {
+				require.Equal(t, backend.StatePending, persisted.State)
+			} else {
+				require.Equal(t, backend.StateRevoked, persisted.State)
+			}
+			var secrets corev1.SecretList
+			var jobs batchv1.JobList
+			require.NoError(t, spoke.List(ctx, &secrets))
+			require.NoError(t, spoke.List(ctx, &jobs))
+			if scenario == "terminal after lost UID" {
+				require.Len(t, secrets.Items, 1)
+				var retained breakglassv1alpha1.DebugSessionArtifact
+				require.NoError(t, hub.Get(ctx, request.NamespacedName, &retained))
+				require.Len(t, retained.Status.Resources, 1)
+				require.Empty(t, retained.Status.Resources[0].UID)
+				require.NotEmpty(t, retained.Finalizers)
+				_, err = reconciler.Reconcile(ctx, request)
+				require.Error(t, err)
+				require.NoError(t, hub.Get(ctx, request.NamespacedName, &retained))
+				return
+			}
+			require.Empty(t, secrets.Items)
+			require.Empty(t, jobs.Items)
+			if !strings.HasPrefix(scenario, "transient") {
+				_, err = reconciler.Reconcile(ctx, request)
+				require.NoError(t, err)
+				var deleted breakglassv1alpha1.DebugSessionArtifact
+				require.True(t, apierrors.IsNotFound(hub.Get(ctx, request.NamespacedName, &deleted)))
+			}
+		})
+	}
+}
+
+func TestUploadReplacementDuringProviderPutCannotMutateReplacement(t *testing.T) {
+	svc, _, store, keys, now, hub := lifecycleFixture(t)
+	ctx := context.Background()
+	reserved, err := svc.Reserve(ctx, lifecycleRecord(*now))
+	require.NoError(t, err)
+	route := "/api/debugSessionArtifactUploads/" + reserved.Namespace + "/" + reserved.SessionName + "/" + reserved.ArtifactID
+	signed, err := backend.ReservationToken(keys, reserved, route, *now, 15*time.Minute)
+	require.NoError(t, err)
+	body := validLocalArchive(t, reserved.Expected)
+	var replacement breakglassv1alpha1.DebugSessionArtifact
+	var replacementKey string
+	store.beforePut = func() {
+		var original breakglassv1alpha1.DebugSessionArtifact
+		key := client.ObjectKey{Namespace: "controller", Name: reserved.ArtifactID}
+		require.NoError(t, hub.Get(ctx, key, &original))
+		require.NoError(t, hub.Delete(ctx, &original))
+		replacement = *original.DeepCopy()
+		replacement.UID = "replacement-artifact"
+		replacement.ResourceVersion = ""
+		require.NoError(t, hub.Create(ctx, &replacement))
+		require.NoError(t, hub.Get(ctx, key, &replacement))
+		hash := sha256.Sum256([]byte("breakglass-artifact-v1:" + string(replacement.UID)))
+		replacementKey = hex.EncodeToString(hash[:])
+		digest := sha256.Sum256(body)
+		_, putErr := store.Store.PutIfAbsent(ctx, storage.Object{Key: replacementKey, RuntimeBindingDigest: reserved.RuntimeBindingDigest, Size: int64(len(body)), SHA256: hex.EncodeToString(digest[:])}, bytes.NewReader(body))
+		require.NoError(t, putErr)
+	}
+	_, err = svc.Upload(ctx, signed, route, bytes.NewReader(body))
+	require.ErrorIs(t, err, backend.ErrConflict)
+	var current breakglassv1alpha1.DebugSessionArtifact
+	require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(&replacement), &current))
+	require.Equal(t, replacement, current, "old upload must not publish or clean a replacement")
+	versions, err := store.InventoryKey(ctx, replacementKey)
+	require.NoError(t, err)
+	require.Len(t, versions, 1)
+}
+
+type conflictingReservationRepository struct {
+	*kube.Repository
+	injected bool
+}
+
+func (r *conflictingReservationRepository) Update(ctx context.Context, record backend.Record, expected int64) error {
+	if !r.injected {
+		r.injected = true
+		concurrent, err := r.Get(ctx, record.Namespace, record.SessionName, record.ArtifactID)
+		if err != nil {
+			return err
+		}
+		concurrent.Generation++
+		if err := r.Repository.Update(ctx, concurrent, concurrent.Generation-1); err != nil {
+			return err
+		}
+	}
+	return r.Repository.Update(ctx, record, expected)
+}
+func TestRejectedReservationRetriesActualDurableConflict(t *testing.T) {
+	_, repo, store, keys, now, _ := lifecycleFixture(t)
+	conflicting := &conflictingReservationRepository{Repository: repo}
+	svc, err := backend.New(backend.Config{Repository: conflicting, Store: store, Authorizer: allowLifecycle{}, Tokens: keys, StagingDir: t.TempDir(), Now: func() time.Time { return *now }})
+	require.NoError(t, err)
+	record := lifecycleRecord(*now)
+	record.Recording = &backend.RecordingMetadata{FormatVersion: 1, StartedAt: *now, StreamExpiresAt: now.Add(time.Minute), PodNamespace: "target", PodName: "debug", PodUID: "pod-uid", Operation: "exec", LeaseUID: "lease-uid", LeaseEpoch: "1", Generation: "1"}
+	calls := 0
+	_, err = svc.ReserveRecording(context.Background(), record, func(context.Context) error {
+		calls++
+		if calls == 2 {
+			return backend.ErrForbidden
+		}
+		return nil
+	})
+	require.ErrorIs(t, err, backend.ErrForbidden)
+	require.NotErrorIs(t, err, backend.ErrConflict)
+	require.True(t, conflicting.injected)
+	records, err := repo.ListBySession(context.Background(), record.Namespace, record.SessionName, record.SessionUID)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	require.Equal(t, backend.StateRevoked, records[0].State)
+	require.GreaterOrEqual(t, records[0].Generation, int64(3))
 }

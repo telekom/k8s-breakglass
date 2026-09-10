@@ -44,17 +44,18 @@ from a numeric generation. Finalized framing records its actual frame count.
 The bounded artifact volume is 512 MiB (`defaultTerminalRecordingMaxBytes`),
 with at most two concurrent streams per serving process. The HTTP transport
 requires full duplex: output is flushed before further input is supplied.
-Expiry or revocation also closes blocked HTTP input/output so a slow client
-cannot keep a revoked transport alive.
-Every input/output boundary rechecks the live session identity, participant
+Detection of expiry or revocation also aborts blocked HTTP input/output;
+see the in-flight output limits below.
+Each input/output call rechecks the live session identity, participant
 issuer, allowed target Pod UID, profile, expiry, and connection lease. Target
 lookup is bracketed by live session checks. Rejected input is never forwarded
 to the target. Replay similarly rechecks live reader authorization and artifact
 retention before and after backend reads.
 The controller finalizes publication with a bounded detached context after a
 client disconnect or a remote stream failure, preserving any bytes already
-captured, and closes the lease in a separate bounded context. A lease expiry or
-revocation cancels the stream before publication. Direct
+captured, and closes the lease in a separate bounded context. Detected lease
+expiry or revocation cancels active capture; reserved partial evidence can still
+be finalized afterward. Direct
 target `pods/exec` and `pods/attach` authorization is denied while recording is
 required for an authorized current participant; unrelated or former participants
 do not cause another user’s access to be denied. Clients subject to recording
@@ -84,3 +85,14 @@ audit details, or failure messages.
 The server assigns the `terminal-recording.v1` metadata policy and version 1 to
 recording reservations. This identifies framing and metadata; it does not redact
 or alter the authorized terminal stream bytes.
+
+### Revocation and in-flight output
+
+Authorization is checked before each transport write. Kubernetes revocation and
+an irreversible socket write cannot form one atomic operation: bytes already
+admitted to a write may complete while revocation is being detected. The next
+write is denied after a failed check. The stream also checks authorization every
+500 milliseconds (each check has a two-second timeout) and aborts blocked I/O;
+these are detection intervals, not a guaranteed end-to-end delivery bound under
+scheduler or network delays. Hard expiry sets transport deadlines. Buffering or
+a post-write check cannot retract bytes already delivered to the client.

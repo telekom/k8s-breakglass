@@ -88,6 +88,9 @@ func TestActiveReconciliationRepairsFailedAccountingWithoutChangingSession(t *te
 		return cl.Status().Patch(ctx, obj, p, opts...)
 	}})
 	c.WithAPIReader(hub)
+	// Activation normally receives the durable profile captured by handlePending.
+	ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+	require.NoError(t, hub.Status().Update(ctx, ds))
 	_, err := c.activateSession(ctx, ds, template, nil)
 	require.ErrorContains(t, err, "injected accounting outage")
 	require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(ds), ds))

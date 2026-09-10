@@ -330,15 +330,30 @@ func (s *ConnectionLeaseService) validatedLease(ctx context.Context, ref Connect
 	if err := s.liveReader().Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, lease); err != nil {
 		return nil, fmt.Errorf("read connection lease: %w", err)
 	}
-	epoch, err := leaseEpoch(lease)
-	if err != nil {
+	if err := ValidateConnectionLease(lease, ref, time.Now().UTC()); err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC()
-	if lease.DeletionTimestamp != nil || lease.UID != ref.UID || lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != string(ref.HolderUID) || epoch != ref.Epoch || lease.Annotations[connectionLeaseTargetUIDAnnotation] != string(ref.TargetUID) || lease.Annotations[connectionLeaseProfileAnnotation] != ref.ProfileDigest || !leaseActive(lease, now) || !now.Before(ref.ExpiresAt) {
-		return nil, fmt.Errorf("connection lease is stale or expired")
-	}
 	return lease, nil
+}
+
+// ValidateConnectionLease checks an already observed Lease without performing I/O.
+// Callers must obtain a live read and sample now after that read. This separates
+// definite capability revocation from a transient failure to read the Lease.
+func ValidateConnectionLease(lease *coordinationv1.Lease, ref ConnectionLeaseRef, now time.Time) error {
+	if lease == nil {
+		return fmt.Errorf("connection lease is missing")
+	}
+	if err := validateLeaseRef(ref); err != nil {
+		return err
+	}
+	epoch, err := leaseEpoch(lease)
+	if err != nil {
+		return err
+	}
+	if lease.DeletionTimestamp != nil || lease.UID != ref.UID || lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != string(ref.HolderUID) || epoch != ref.Epoch || lease.Annotations[connectionLeaseTargetUIDAnnotation] != string(ref.TargetUID) || lease.Annotations[connectionLeaseProfileAnnotation] != ref.ProfileDigest || !leaseActive(lease, now) || !now.Before(ref.ExpiresAt) {
+		return fmt.Errorf("connection lease is stale or expired")
+	}
+	return nil
 }
 
 func (s *ConnectionLeaseService) Revoke(ctx context.Context, ref ConnectionLeaseRef) error {

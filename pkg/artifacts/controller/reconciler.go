@@ -15,6 +15,7 @@ import (
 
 	"go.uber.org/zap"
 	batchv1 "k8s.io/api/batch/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,6 +30,7 @@ import (
 	artifactjob "github.com/telekom/k8s-breakglass/pkg/artifacts/job"
 	artifactkube "github.com/telekom/k8s-breakglass/pkg/artifacts/kube"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
 	"github.com/telekom/k8s-breakglass/pkg/quotas"
 )
 
@@ -120,8 +122,22 @@ func (reconciler *Reconciler) Reconcile(ctx context.Context, request ctrl.Reques
 		return ctrl.Result{RequeueAfter: min(30*time.Second, time.Until(record.ExpiresAt))}, nil
 	}
 	if object.DeletionTimestamp.IsZero() && (record.State == backend.StatePending || record.State == backend.StateUploading) {
-		if err := reconciler.ensureUploadResources(ctx, object, record); err != nil {
+		revoked, err := reconciler.collectionRevoked(ctx, &object, now)
+		if err != nil {
 			return ctrl.Result{}, err
+		}
+		if revoked {
+			return ctrl.Result{Requeue: true}, reconciler.cleanupRevokedCollection(ctx, &object)
+		}
+		if writeErr := reconciler.ensureUploadResources(ctx, object, record); writeErr != nil {
+			revoked, readErr := reconciler.collectionRevoked(ctx, &object, now)
+			if readErr != nil {
+				return ctrl.Result{}, errors.Join(writeErr, readErr)
+			}
+			if revoked {
+				return ctrl.Result{Requeue: true}, reconciler.cleanupRevokedCollection(ctx, &object)
+			}
+			return ctrl.Result{}, writeErr
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
@@ -163,6 +179,64 @@ func (reconciler *Reconciler) Reconcile(ctx context.Context, request ctrl.Reques
 		return ctrl.Result{RequeueAfter: max(time.Second, time.Until(record.ExpiresAt))}, nil
 	}
 	return ctrl.Result{}, nil
+}
+
+// collectionRevoked distinguishes definitive live revocation from transient read
+// failures. A broad authorization error is not proof that cleanup is required.
+func (reconciler *Reconciler) collectionRevoked(ctx context.Context, object *breakglassv1alpha1.DebugSessionArtifact, now func() time.Time) (bool, error) {
+	var session breakglassv1alpha1.DebugSession
+	err := reconciler.hubGet(ctx, types.NamespacedName{Namespace: object.Spec.SessionRef.Namespace, Name: object.Spec.SessionRef.Name}, &session)
+	if apierrors.IsNotFound(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read collector session revocation: %w", err)
+	}
+	decisionTime := now()
+	if string(session.UID) != object.Spec.SessionRef.UID || !session.DeletionTimestamp.IsZero() || session.Status.State != breakglassv1alpha1.DebugSessionStateActive || session.Status.ExpiresAt == nil || !decisionTime.Before(session.Status.ExpiresAt.Time) || breakglass.DebugSessionIdleExpired(&session, decisionTime) || session.Annotations[quotas.AdmissionAnnotation] == quotas.Pending {
+		return true, nil
+	}
+	if object.Spec.ConnectionLeaseUID != "" {
+		ref := session.Status.ConnectionLease
+		if ref == nil || string(ref.UID) != object.Spec.ConnectionLeaseUID || ref.Epoch <= 0 || uint64(ref.Epoch) != object.Spec.OperationEpoch {
+			return true, nil
+		}
+		var lease coordinationv1.Lease
+		err := reconciler.hubGet(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, &lease)
+		if apierrors.IsNotFound(err) {
+			return true, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("read collector lease revocation: %w", err)
+		}
+		decisionTime = now()
+		if err := debug.ValidateConnectionLease(&lease, debug.ConnectionLeaseRef{Namespace: ref.Namespace, Name: ref.Name, UID: ref.UID, HolderUID: ref.HolderUID, TargetUID: ref.TargetUID, ProfileDigest: ref.ProfileDigest, Epoch: ref.Epoch, ExpiresAt: ref.ExpiresAt.Time}, decisionTime); err != nil {
+			return true, nil
+		}
+		if !decisionTime.Before(session.Status.ExpiresAt.Time) || breakglass.DebugSessionIdleExpired(&session, decisionTime) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (reconciler *Reconciler) cleanupRevokedCollection(ctx context.Context, expected *breakglassv1alpha1.DebugSessionArtifact) error {
+	var current breakglassv1alpha1.DebugSessionArtifact
+	if err := reconciler.hubGet(ctx, ctrlclient.ObjectKeyFromObject(expected), &current); err != nil {
+		return err
+	}
+	if expected.UID == "" || current.UID != expected.UID {
+		return backend.ErrConflict
+	}
+	// Revoke provider access first, but do not leave an existing collector Job
+	// running merely because provider cleanup is temporarily unavailable.
+	record := artifactkube.Record(&current)
+	var providerErr error
+	if record.State != backend.StateRevoked && record.State != backend.StateExpired && record.State != backend.StateDeleted {
+		providerErr = reconciler.Service.Cleanup(ctx, record, backend.StateRevoked)
+	}
+	spokeErr := reconciler.cleanupSpokeResources(ctx, &current)
+	return errors.Join(providerErr, spokeErr)
 }
 
 func (reconciler *Reconciler) ensureUploadResources(ctx context.Context, object breakglassv1alpha1.DebugSessionArtifact, record backend.Record) error {

@@ -149,3 +149,11 @@ DebugSession routes. Collector uploads use only their reserved upload token.
 Artifact-enabled processes require controllers enabled so admitted work and
 retention cleanup are reconciled. Binding expiry is inclusive: a binding is no
 longer active at its exact deadline.
+
+A reservation that loses authorization before admission completes is moved through
+durable cleanup even when the HTTP request was canceled. Collector reconciliation
+also cleans up jobs and credentials when a live session is deleted, replaced,
+terminal, or expired, or its recorded Lease is revoked. Transient live-read errors
+remain retryable and do not themselves prove revocation. Cleanup retains unknown
+resource identities and ambiguous provider writes until they can be resolved;
+slot reuse never authorizes cleanup of a replacement artifact UID.
