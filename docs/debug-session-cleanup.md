@@ -43,6 +43,10 @@ Concurrent cleanup retries preserve the live `CleanupFailed` condition's
 transition metadata when residual inventory wins a recovery race; recovery
 metadata advances only when the condition actually changes.
 
+If cleanup succeeds but persisting its status fails, the controller returns the
+status error for retry without emitting a cleanup-failure audit event. That
+event is reserved for an operation that could not be completed or verified.
+
 When no spoke resources remain, cleanup removes the session's completed pod
 authorization references. References added concurrently after cleanup started
 are retained by the baseline-aware status merge.

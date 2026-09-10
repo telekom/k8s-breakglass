@@ -93,6 +93,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Include the DebugSession namespace in activation audit targets and make audit
   manager helper tests drain asynchronously queued events through `Close`.
 
+- Keep cleanup status-patch errors separate from cleanup-operation failures in
+  audit events, and include the cluster in activation event details.
+
 - Redact structured diagnostic authorization headers and remove obsolete variable-sanitization warnings; template serialization remains mandatory.
 
 - Align template and cluster-binding duration schemas with supported week, year, and fractional sub-day values.
