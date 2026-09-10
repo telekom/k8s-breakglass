@@ -115,7 +115,6 @@ func TestConnectionLeaseFenceChecksLiveLeaseIdentity(t *testing.T) {
 	require.ErrorIs(t, fence.AuthorizeArtifact(context.Background(), binding), backend.ErrForbidden)
 	binding.ConnectionLeaseUID = string(replacement.UID)
 	require.NoError(t, fence.AuthorizeArtifact(context.Background(), binding))
-
 }
 
 type markDeletingSessionReader struct {
