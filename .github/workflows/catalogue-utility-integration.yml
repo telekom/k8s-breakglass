@@ -83,10 +83,11 @@ jobs:
       - name: Remove and verify disposable cluster
         if: always()
         run: |
-          set +e
+          set -euo pipefail
           # The integration script owns and deletes its uniquely named kind
           # cluster. This step catches an orphaned proof cluster on the runner.
-          if kind get clusters | grep -E '^network-debug-proof-' >/dev/null; then
+          clusters="$(kind get clusters)"
+          if grep -E '^network-debug-proof-' <<<"${clusters}" >/dev/null; then
             echo "network-debug proof cluster survived cleanup" >&2
             exit 1
           fi
@@ -169,6 +170,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.ref || github.event.pull_request.head.sha || github.sha }}
       - name: Set up QEMU
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
       - name: Set up Buildx

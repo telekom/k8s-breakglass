@@ -1108,6 +1108,37 @@ func TestDebugSessionReconciler_HandleActiveDoesNotMarkRenewedSessionExpiringSoo
 	assert.Empty(t, updated.Status.Message)
 }
 
+func TestDebugSessionReconciler_HandleActiveUsesExtendedGracePeriod(t *testing.T) {
+	scheme := testScheme()
+	expiresAt := metav1.NewTime(time.Now().Add(12 * time.Hour))
+	session := newTestDebugSession("extended-grace-session", "test-template", "test-cluster", "user@example.com")
+	session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	session.Status.ExpiresAt = &expiresAt
+	session.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{
+		GracePeriodBeforeExpiry: "1d",
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	controller := &DebugSessionController{
+		log:    zap.NewNop().Sugar(),
+		client: fakeClient,
+	}
+
+	_, err := controller.handleActive(context.Background(), session.DeepCopy())
+	require.NoError(t, err)
+
+	var updated breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{
+		Name: session.Name, Namespace: session.Namespace,
+	}, &updated))
+	assert.Equal(t, "Session expiring soon", updated.Status.Message)
+}
+
 func TestDebugSessionReconciler_KubectlDebugStatus(t *testing.T) {
 	scheme := testScheme()
 

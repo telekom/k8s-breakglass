@@ -367,7 +367,7 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 
 	// Emit expiring-soon status message when within grace period
 	if ds.Status.ExpiresAt != nil && ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry != "" {
-		grace, err := time.ParseDuration(ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry)
+		grace, err := breakglassv1alpha1.ParseDuration(ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry)
 		if err == nil {
 			until := time.Until(ds.Status.ExpiresAt.Time)
 			if until > 0 && until <= grace && ds.Status.Message != "Session expiring soon" {

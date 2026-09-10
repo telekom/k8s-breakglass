@@ -337,6 +337,9 @@ spec:
     portForward: true # kubectl port-forward
 ```
 
+`gracePeriodBeforeExpiry` uses the same shared duration parser as the other
+session timing fields, including extended day, week, and year units.
+
 The controller updates `DebugSessionTemplate.status` with readiness conditions,
 the observed generation, pod-template reference resolution, active session
 usage, and clusters made available through active

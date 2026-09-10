@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recording retention, Keycloak timeouts, and breakglass session/escalation limits,
   with the supported duration syntax.
 
+- Verify SLSA provenance for both published reference image and catalogue chart,
+  preserve reference namespaces safely during EXIT cleanup, and keep catalogue
+  integration checks on the requested workflow ref.
+
+- Parse debug-session expiry grace periods with the shared duration parser.
+
 - Omit disabled deployment variables from requester template discovery.
 
 - Retry deadline synchronization quietly while tracked Jobs are waiting to start.
