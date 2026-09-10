@@ -20,6 +20,9 @@ including its administrator-configured local or S3 store, keyring, staging
 limits, and independent artifact controller. No separate recording environment
 variables or store are used. The connection provider must also have a published
 credential generation; configuring storage alone does not establish readiness.
+The default lease adapter does not publish credential generations. Until an
+approved production generation publisher is wired, terminal recording remains
+fail closed even with storage configured.
 
 The recorder uses a bounded framed stream with separate input and output
 directions. Each frame carries the previous frame's SHA-256 digest, so a

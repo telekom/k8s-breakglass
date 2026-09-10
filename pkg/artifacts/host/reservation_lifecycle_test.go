@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	artifactapi "github.com/telekom/k8s-breakglass/pkg/artifacts/api"
 	artifactcontroller "github.com/telekom/k8s-breakglass/pkg/artifacts/controller"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
 	"go.uber.org/zap"
@@ -297,6 +298,21 @@ func TestRegisteredCollectorAdmissionCreatesJobWithReservedToken(t *testing.T) {
 	result, err := svc.Upload(ctx, string(secret.Data["token"]), route, bytes.NewReader(body))
 	require.NoError(t, err)
 	require.Equal(t, backend.StateAvailable, result.State)
+
+	readController, err := artifactapi.NewReadController(svc, newReadBindingResolver(debugAPI, repositoryBindingSource{repository: repo}))
+	require.NoError(t, err)
+	require.NoError(t, readController.Register(router.Group("/artifacts")))
+	listed := httptest.NewRecorder()
+	router.ServeHTTP(listed, httptest.NewRequest(http.MethodGet, "/artifacts/hub/session", nil))
+	require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
+	var listedArtifacts []backend.PublicRecord
+	require.NoError(t, json.Unmarshal(listed.Body.Bytes(), &listedArtifacts))
+	require.Len(t, listedArtifacts, 1)
+	require.Equal(t, record.ArtifactID, listedArtifacts[0].ArtifactID)
+	downloaded := httptest.NewRecorder()
+	router.ServeHTTP(downloaded, httptest.NewRequest(http.MethodGet, "/artifacts/hub/session/"+record.ArtifactID, nil))
+	require.Equal(t, http.StatusOK, downloaded.Code, downloaded.Body.String())
+	require.Equal(t, body, downloaded.Body.Bytes())
 
 	second := send(`{"recipe":"system-summary.v1","podNamespace":"target","podName":"approved"}`)
 	require.Equal(t, http.StatusCreated, second.Code, second.Body.String())
