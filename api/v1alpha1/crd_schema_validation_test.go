@@ -14,13 +14,16 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	apiextensionsinternal "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextensionsinstall "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/install"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsvalidation "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/validation"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
 
@@ -185,4 +188,103 @@ func TestCRDInstallation(t *testing.T) {
 	}
 
 	t.Logf("envtest API server started — all %d CRDs installed successfully", crdCount)
+
+	t.Run("template and binding duration admission", func(t *testing.T) {
+		scheme := runtime.NewScheme()
+		require.NoError(t, corev1.AddToScheme(scheme))
+		require.NoError(t, AddToScheme(scheme))
+		apiClient, err := client.New(cfg, client.Options{Scheme: scheme})
+		require.NoError(t, err)
+		ctx := context.Background()
+		namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "duration-schema-"}}
+		require.NoError(t, apiClient.Create(ctx, namespace))
+		for _, value := range []string{"1w", "1y", "1.5h", ".5h", "1d1.5h", "500µs", "500μs", "1d500µs", "-1h", "1.5d", "1.5w", "1d.5h", "1d500μs"} {
+			t.Run(value, func(t *testing.T) {
+				valid := value != "-1h" && value != "1.5d" && value != "1.5w" && value != "1d.5h" && value != "1d500μs"
+				constraints := &DebugSessionConstraints{MaxDuration: value, DefaultDuration: value}
+				template := &DebugSessionTemplate{
+					ObjectMeta: metav1.ObjectMeta{GenerateName: "duration-template-"},
+					Spec:       DebugSessionTemplateSpec{PodTemplateRef: &DebugPodTemplateReference{Name: "debug-pod"}, Constraints: constraints},
+				}
+				result := ValidateDebugSessionTemplate(template)
+				require.Equal(t, valid, result.IsValid(), result.ErrorMessage())
+				binding := &DebugSessionClusterBinding{
+					ObjectMeta: metav1.ObjectMeta{GenerateName: "duration-binding-", Namespace: namespace.Name},
+					Spec:       DebugSessionClusterBindingSpec{TemplateRef: &TemplateReference{Name: "debug-template"}, Clusters: []string{"test-cluster"}, Constraints: constraints},
+				}
+				for _, object := range []client.Object{template, binding} {
+					err := apiClient.Create(ctx, object)
+					if valid {
+						require.NoError(t, err)
+					} else {
+						require.Error(t, err)
+						require.Contains(t, err.Error(), "constraints")
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("shared duration syntax is accepted across resources", func(t *testing.T) {
+		scheme := runtime.NewScheme()
+		require.NoError(t, corev1.AddToScheme(scheme))
+		require.NoError(t, AddToScheme(scheme))
+		apiClient, err := client.New(cfg, client.Options{Scheme: scheme})
+		require.NoError(t, err)
+		ctx := context.Background()
+		namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "duration-parity-"}}
+		require.NoError(t, apiClient.Create(ctx, namespace))
+
+		// "1w" is accepted by ParseDuration but was rejected by the narrower
+		// per-resource schemas. Exercise the real API server validation for every
+		// affected resource family.
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{GenerateName: "duration-template-"},
+			Spec: DebugSessionTemplateSpec{
+				PodTemplateRef: &DebugPodTemplateReference{Name: "debug-pod"},
+				KubectlDebug:   &KubectlDebugConfig{PodCopy: &PodCopyConfig{TTL: "1w"}},
+				Audit:          &DebugSessionAuditConfig{RecordingRetention: "1w"},
+			},
+		}
+		require.NoError(t, apiClient.Create(ctx, template))
+
+		debugSession := &DebugSession{
+			ObjectMeta: metav1.ObjectMeta{GenerateName: "duration-session-", Namespace: namespace.Name},
+			Spec:       DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "user", RequestedDuration: "1w"},
+		}
+		require.NoError(t, apiClient.Create(ctx, debugSession))
+
+		identityProvider := &IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{GenerateName: "duration-idp-"},
+			Spec: IdentityProviderSpec{
+				OIDC:              OIDCConfig{Authority: "https://issuer.example", ClientID: "client", ExpectedAudience: "audience"},
+				GroupSyncProvider: GroupSyncProviderKeycloak,
+				Keycloak: &KeycloakGroupSync{
+					BaseURL: "https://keycloak.example", Realm: "realm", ClientID: "client",
+					ClientSecretRef: SecretKeyReference{Name: "secret", Namespace: namespace.Name, Key: "client-secret"},
+					CacheTTL:        "1w", RequestTimeout: "1w",
+				},
+			},
+		}
+		require.NoError(t, apiClient.Create(ctx, identityProvider))
+
+		escalation := &BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{GenerateName: "duration-escalation-", Namespace: namespace.Name},
+			Spec: BreakglassEscalationSpec{
+				Allowed:     BreakglassEscalationAllowed{Clusters: []string{"cluster"}},
+				Approvers:   BreakglassEscalationApprovers{Groups: []string{"approvers"}},
+				MaxValidFor: "1w", IdleTimeout: "1w", RetainFor: "1w", ApprovalTimeout: "1w",
+			},
+		}
+		require.NoError(t, apiClient.Create(ctx, escalation))
+
+		session := &BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{GenerateName: "duration-breakglass-session-", Namespace: namespace.Name},
+			Spec: BreakglassSessionSpec{
+				Cluster: "cluster", User: "user", GrantedGroup: "group",
+				MaxValidFor: "1w", IdleTimeout: "1w", RetainFor: "1w",
+			},
+		}
+		require.NoError(t, apiClient.Create(ctx, session))
+	})
 }

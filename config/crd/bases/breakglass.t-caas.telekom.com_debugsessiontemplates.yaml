@@ -1235,7 +1235,7 @@ spec:
                     default: 90d
                     description: recordingRetention specifies how long recordings
                       are kept.
-                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+$
+                    pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                     type: string
                 type: object
               auxiliaryResourceDefaults:
@@ -1327,7 +1327,7 @@ spec:
                     default: 1h
                     description: defaultDuration is the default session duration if
                       not specified.
-                    pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
+                    pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                     type: string
                   maxConcurrentSessions:
                     default: 2
@@ -1338,7 +1338,7 @@ spec:
                   maxDuration:
                     default: 4h
                     description: maxDuration is the maximum allowed session duration.
-                    pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
+                    pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                     type: string
                   maxRenewals:
                     description: |-
@@ -2064,7 +2064,7 @@ spec:
                         default: 2h
                         description: ttl specifies how long copied pods live before
                           auto-deletion.
-                        pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
+                        pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                         type: string
                     type: object
                 type: object

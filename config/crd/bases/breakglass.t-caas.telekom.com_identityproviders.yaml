@@ -99,7 +99,7 @@ spec:
                   cacheTTL:
                     description: 'CacheTTL is the duration to cache user/group memberships
                       (default: 10m)'
-                    pattern: ^([0-9]+(ns|us|µs|ms|s|m|h))+$
+                    pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                     type: string
                   certificateAuthority:
                     description: CertificateAuthority contains a PEM encoded CA certificate
@@ -147,7 +147,7 @@ spec:
                   requestTimeout:
                     description: 'RequestTimeout is the timeout for Keycloak API requests
                       (default: 10s)'
-                    pattern: ^([0-9]+(ns|us|µs|ms|s|m|h))+$
+                    pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                     type: string
                 required:
                 - baseURL

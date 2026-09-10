@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Report invalid terminal-recording retention only once.
+
+- Align all shared `ParseDuration` CRD fields, including debug sessions, pod-copy TTL,
+  recording retention, Keycloak timeouts, and breakglass session/escalation limits,
+  with the supported duration syntax.
+
 - Omit disabled deployment variables from requester template discovery.
 
 - Retry deadline synchronization quietly while tracked Jobs are waiting to start.
