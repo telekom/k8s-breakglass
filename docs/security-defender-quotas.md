@@ -11,7 +11,9 @@ UID. The controller records that UID in the shared
 One resource-version compare-and-swap reserves every applicable scope together.
 Only then does the API complete admission and send successful creation responses
 or request notifications. Provisional objects are visible but cannot grant
-breakglass access or progress to debug workloads without admission.
+breakglass access or progress to debug workloads without admission; this guard
+is applied in the shared clock-injected validity and token checks used by the
+authorization webhook as well as the ordinary wrappers.
 
 The ledger covers regular-session tuple uniqueness (user, cluster, granted
 group), global per-user limits, escalation-UID totals, debug template-UID totals,

@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Apply provisional quota admission checks in the shared authorization and
+  token validity helpers, and preserve concurrently recorded same-name copied
+  pod replacements by merging on the persisted UID with legacy fallback.
+
 - Reject approval or rejection when the authorized session was replaced under the same name, and clear completed debug-session pod authorization references while retaining concurrent additions.
 
 - Redact structured diagnostic authorization headers and remove obsolete variable-sanitization warnings; template serialization remains mandatory.

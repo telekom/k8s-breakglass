@@ -707,6 +707,13 @@ func podTemplateResourceStatusKey(status breakglassv1alpha1.PodTemplateResourceS
 	return fmt.Sprintf("%s|%s|%s|%s|%s|%s", status.APIVersion, status.Kind, status.Namespace, status.ResourceName, status.Source, status.UID)
 }
 
+func canonicalCopiedPodUID(ref breakglassv1alpha1.CopiedPodRef) string {
+	if ref.UID != "" {
+		return ref.UID
+	}
+	return ref.CopyUID
+}
+
 func mergeKubectlDebugStatus(baseline, desired, current *breakglassv1alpha1.KubectlDebugStatus) *breakglassv1alpha1.KubectlDebugStatus {
 	if baseline == nil && desired == nil {
 		return current.DeepCopy()
@@ -731,7 +738,7 @@ func mergeKubectlDebugStatus(baseline, desired, current *breakglassv1alpha1.Kube
 	merged.CopiedPods = mergeCleanupInventory(
 		baseline.CopiedPods, desired.CopiedPods, current.CopiedPods,
 		func(ref breakglassv1alpha1.CopiedPodRef) string {
-			return fmt.Sprintf("%s|%s|%s|%s|%s", ref.CopyNamespace, ref.CopyName, ref.CopyUID, ref.OriginalNamespace, ref.OriginalPod)
+			return fmt.Sprintf("%s|%s|%s|%s|%s", ref.CopyNamespace, ref.CopyName, canonicalCopiedPodUID(ref), ref.OriginalNamespace, ref.OriginalPod)
 		},
 	)
 	if len(merged.EphemeralContainersInjected) == 0 && len(merged.CopiedPods) == 0 {

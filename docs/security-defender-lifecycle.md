@@ -5,6 +5,11 @@ Deletion uses UID preconditions. A same-name replacement is preserved, while
 inventory for the original is retired. Auxiliary readiness evaluates the same
 UID-checked object snapshot, rather than fetching by name again.
 
+Copied-pod inventory uses the persisted `status.copiedPods[].uid` as its
+canonical merge identity, with the historical `copyUID` field as a legacy
+fallback. This preserves a same-name replacement recorded concurrently while
+cleanup still handles sessions written by older versions.
+
 Pod labels are discovery hints. Direct debug Pods require their recorded UID.
 DaemonSet and Deployment children require a live, UID-matched controller chain
 (including the Deployment's ReplicaSet) and matching immutable workload

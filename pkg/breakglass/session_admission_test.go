@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -74,6 +75,21 @@ func TestProvisionalSessionCannotGrantAccessOrApproval(t *testing.T) {
 		assert.False(t, IsSessionAccessActive(s))
 		assert.False(t, isSessionTokenValid(s))
 	}
+}
+
+func TestClockInjectedAuthorizationRejectsPendingQuotaAdmission(t *testing.T) {
+	now := time.Now()
+	expiresAt := metav1.NewTime(now.Add(time.Hour))
+	session := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: expiresAt},
+	}
+	assert.False(t, IsSessionAccessActiveAt(session, now))
+	assert.False(t, isSessionTokenValidAt(session, now))
+
+	session.Annotations[quotas.AdmissionAnnotation] = quotas.Ready
+	assert.True(t, IsSessionAccessActiveAt(session, now))
+	assert.True(t, isSessionTokenValidAt(session, now))
 }
 
 func TestReservationRejectsTerminalOrRecreatedSession(t *testing.T) {

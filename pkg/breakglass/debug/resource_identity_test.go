@@ -83,6 +83,27 @@ func TestCleanupDeployedResourcesRetiresLegacyReplacement(t *testing.T) {
 	require.Equal(t, types.UID("replacement-uid"), retained.UID)
 }
 
+func TestMergeKubectlDebugStatusUsesPersistedUIDAndLegacyFallback(t *testing.T) {
+	ref := func(uid, copyUID string) breakglassv1alpha1.CopiedPodRef {
+		return breakglassv1alpha1.CopiedPodRef{CopyNamespace: "ns", CopyName: "copy", UID: uid, CopyUID: copyUID}
+	}
+
+	merged := mergeKubectlDebugStatus(
+		&breakglassv1alpha1.KubectlDebugStatus{CopiedPods: []breakglassv1alpha1.CopiedPodRef{ref("old", "")}},
+		&breakglassv1alpha1.KubectlDebugStatus{},
+		&breakglassv1alpha1.KubectlDebugStatus{CopiedPods: []breakglassv1alpha1.CopiedPodRef{ref("new", "")}},
+	)
+	require.Len(t, merged.CopiedPods, 1)
+	require.Equal(t, "new", merged.CopiedPods[0].UID)
+
+	merged = mergeKubectlDebugStatus(
+		&breakglassv1alpha1.KubectlDebugStatus{CopiedPods: []breakglassv1alpha1.CopiedPodRef{ref("", "legacy")}},
+		&breakglassv1alpha1.KubectlDebugStatus{},
+		&breakglassv1alpha1.KubectlDebugStatus{CopiedPods: []breakglassv1alpha1.CopiedPodRef{ref("", "legacy")}},
+	)
+	require.Nil(t, merged)
+}
+
 func TestDeleteTrackedResourceUsesUIDPrecondition(t *testing.T) {
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns", UID: "original"}}
 	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(pod).WithInterceptorFuncs(interceptor.Funcs{

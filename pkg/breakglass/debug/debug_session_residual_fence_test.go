@@ -111,6 +111,44 @@ func TestDebugSessionCleanupMergesConcurrentSameUIDInventory(t *testing.T) {
 	}
 }
 
+func TestDebugSessionCleanupMergesConcurrentCopiedPodReplacementAfterConflict(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	old := breakglassv1alpha1.CopiedPodRef{CopyNamespace: "target", CopyName: "copy", UID: "old-uid"}
+	live := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session-uid", ResourceVersion: "2"},
+		Status:     breakglassv1alpha1.DebugSessionStatus{KubectlDebugStatus: &breakglassv1alpha1.KubectlDebugStatus{CopiedPods: []breakglassv1alpha1.CopiedPodRef{old}}},
+	}
+	injected := false
+	hub := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).WithObjects(live).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(ctx context.Context, underlying client.Client, subResource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+				if !injected && subResource == "status" {
+					injected = true
+					var concurrent breakglassv1alpha1.DebugSession
+					if err := underlying.Get(ctx, client.ObjectKeyFromObject(live), &concurrent); err != nil {
+						return err
+					}
+					concurrent.Status.KubectlDebugStatus.CopiedPods = []breakglassv1alpha1.CopiedPodRef{{CopyNamespace: "target", CopyName: "copy", UID: "new-uid"}}
+					if err := underlying.Status().Update(ctx, &concurrent); err != nil {
+						return err
+					}
+				}
+				return underlying.Status().Patch(ctx, obj, patch, opts...)
+			},
+		}).Build()
+	stale := live.DeepCopy()
+	stale.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{}
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+
+	require.NoError(t, controller.patchDebugSessionCleanupStatus(context.Background(), stale, live.Status.DeepCopy()))
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(live), &stored))
+	require.Len(t, stored.Status.KubectlDebugStatus.CopiedPods, 1)
+	assert.Equal(t, "new-uid", stored.Status.KubectlDebugStatus.CopiedPods[0].UID)
+}
+
 func TestDebugSessionCleanupClearsAllowedPodsAndRetainsConcurrentRefs(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))

@@ -603,13 +603,13 @@ func IsSessionTerminalState(state breakglassv1alpha1.BreakglassSessionState) boo
 }
 
 func IsSessionValid(session breakglassv1alpha1.BreakglassSession) bool {
-	if session.Annotations[quotas.AdmissionAnnotation] == quotas.Pending {
-		return false
-	}
 	return isSessionValidAt(session, time.Now())
 }
 
 func isSessionValidAt(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
+	if session.Annotations[quotas.AdmissionAnnotation] == quotas.Pending {
+		return false
+	}
 	if session.Status.State == "" {
 		return false
 	}
@@ -700,13 +700,13 @@ func isSessionAccessActiveAt(session breakglassv1alpha1.BreakglassSession, now t
 }
 
 func isSessionTokenValid(session breakglassv1alpha1.BreakglassSession) bool {
-	if session.Annotations[quotas.AdmissionAnnotation] == quotas.Pending {
-		return false
-	}
 	return isSessionTokenValidAt(session, time.Now())
 }
 
 func isSessionTokenValidAt(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
+	if session.Annotations[quotas.AdmissionAnnotation] == quotas.Pending {
+		return false
+	}
 	if session.Status.State == "" {
 		return false
 	}
