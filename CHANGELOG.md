@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   immutable `DebugSessionArtifact` contract, bounded archive upload service,
   versioned S3 adapter, and fixed least-privilege collector Job renderer.
 
+- Add durable controller-owned DebugSession connection leases with target and
+  session fencing, opaque epochs, absolute expiry, and UID-preconditioned
+  terminal revocation.
+
 - The debug-session-catalogue Helm chart provides administrator-authored,
   restricted DebugSession profiles for workload, network, storage, dump-access,
   and cluster-validation diagnostics.

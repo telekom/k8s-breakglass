@@ -29,11 +29,17 @@ func (c *DebugSessionController) quotaReader() ctrlclient.Reader {
 func (c *DebugSessionController) WithQuotaNamespace(namespace string) *DebugSessionController {
 	c.quotaNamespace = namespace
 	c.quotaEnabled = true
+	if c.connectionLeases != nil {
+		c.connectionLeases.WithNamespace(namespace)
+	}
 	return c
 }
 func (c *DebugSessionAPIController) WithQuotaNamespace(namespace string) *DebugSessionAPIController {
 	c.quotaNamespace = namespace
 	c.quotaEnabled = true
+	if c.connectionLeases != nil {
+		c.connectionLeases.WithNamespace(namespace)
+	}
 	return c
 }
 

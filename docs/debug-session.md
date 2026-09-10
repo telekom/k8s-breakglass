@@ -18,6 +18,17 @@ inaccessible target-Pod state after the session ends.
 
 **Type Definitions:**
 - [`DebugSession`](../api/v1alpha1/debug_session_types.go)
+
+## Connection lease fencing
+
+When a configured target is activated, the controller acquires one
+controller-owned `coordination.k8s.io/v1 Lease` per target. The lease binds the
+session and live target identity to an opaque fencing epoch and absolute
+expiry. Attach, exec, and future connection consumers must validate the lease
+UID incarnation, holder, target identity, epoch, and expiry before use. Lease
+status contains no Secret name, credential, endpoint, or provider location.
+Terminal cleanup revokes the lease with a UID precondition and retries while
+cleanup is ambiguous.
 - [`DebugSessionTemplate`](../api/v1alpha1/debug_session_template_types.go)
 - [`DebugPodTemplate`](../api/v1alpha1/debug_pod_template_types.go)
 
