@@ -1182,7 +1182,7 @@ func TestDebugSessionAPITerminate(t *testing.T) {
 		assert.True(t, status == http.StatusOK || status == http.StatusNoContent,
 			"Owner should be able to terminate")
 
-		// Verify session is rejected
+		// Verify session is terminated
 		if status == http.StatusOK || status == http.StatusNoContent {
 			time.Sleep(helpers.CachePropagationDelay)
 			var updated breakglassv1alpha1.DebugSession
