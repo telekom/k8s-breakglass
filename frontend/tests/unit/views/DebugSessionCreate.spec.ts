@@ -1240,6 +1240,68 @@ describe("DebugSessionCreate", () => {
 
       expect(mockCreateSession).not.toHaveBeenCalled();
     });
+
+    it("reconciles single and multi-select values when the binding changes", async () => {
+      const templates = defaultTemplates();
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            bindingOptions: [
+              {
+                bindingRef: { name: "power", namespace: "default" },
+                extraDeployVariables: [
+                  {
+                    name: "mode",
+                    inputType: "select",
+                    options: [
+                      { value: "power", displayName: "Power" },
+                      { value: "safe", displayName: "Safe" },
+                    ],
+                  },
+                  {
+                    name: "targets",
+                    inputType: "multiSelect",
+                    options: [
+                      { value: "debug", displayName: "Debug" },
+                      { value: "safe", displayName: "Safe" },
+                    ],
+                  },
+                  { name: "reasonCode", inputType: "text" },
+                ],
+              },
+              {
+                bindingRef: { name: "safe", namespace: "default" },
+                extraDeployVariables: [
+                  { name: "mode", inputType: "select", options: [{ value: "safe", displayName: "Safe" }] },
+                  { name: "targets", inputType: "multiSelect", options: [{ value: "safe", displayName: "Safe" }] },
+                  { name: "reasonCode", inputType: "text" },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper(templates);
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string; extraDeployValues: Record<string, unknown> };
+      };
+      vm.goToStep2();
+      await flushPromises();
+      vm.form.cluster = "prod-east";
+      vm.form.extraDeployValues = { mode: "power", targets: ["debug", "safe"], reasonCode: "typed" };
+      await flushPromises();
+
+      await wrapper.findAll('[data-testid="binding-option-card"]')[1]!.trigger("click");
+      await flushPromises();
+
+      expect(vm.form.extraDeployValues).toEqual({ targets: ["safe"], reasonCode: "typed" });
+    });
   });
 
   describe("submit validation", () => {
