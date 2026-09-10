@@ -71,7 +71,8 @@ end
 labels = []
 matrix.each do |image|
   platforms.each do |platform|
-    abort "utility matrix expansion: context mapping does not resolve" unless resolve_field(build_env.fetch("CONTEXT"), image, platform) == image.fetch("context")
+    expected_context = image.fetch("buildContext", image.fetch("context"))
+    abort "utility matrix expansion: context mapping does not resolve" unless resolve_field(build_env.fetch("CONTEXT"), image, platform) == expected_context
     abort "utility matrix expansion: Dockerfile mapping does not resolve" unless resolve_field(build_env.fetch("DOCKERFILE"), image, platform) == image.fetch("file")
     abort "utility matrix expansion: platform mapping does not resolve" unless resolve_field(build_env.fetch("PLATFORM"), image, platform) == platform
     labels << render_label(scan.fetch("name"), image, platform)
