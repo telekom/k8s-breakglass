@@ -106,6 +106,9 @@ type DebugSessionController struct {
 
 func (c *DebugSessionController) WithAPIReader(reader ctrlclient.Reader) *DebugSessionController {
 	c.apiReader = reader
+	if c.connectionLeases != nil {
+		c.connectionLeases.WithLiveReader(reader)
+	}
 	return c
 }
 
@@ -127,6 +130,9 @@ func (c *DebugSessionController) WithLiveReader(reader ctrlclient.Reader) *Debug
 	if reader != nil {
 		c.reader = reader
 		c.apiReader = reader
+		if c.connectionLeases != nil {
+			c.connectionLeases.WithLiveReader(reader)
+		}
 	}
 	return c
 }

@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Add durable controller-owned DebugSession connection leases with target and
-  session fencing, opaque epochs, absolute expiry, and UID-preconditioned
-  terminal revocation.
+  session fencing, opaque epochs, absolute expiry, live-reader checks, and
+  UID-preconditioned terminal revocation.
 
 - The debug-session-catalogue Helm chart provides administrator-authored,
   restricted DebugSession profiles for workload, network, storage, dump-access,

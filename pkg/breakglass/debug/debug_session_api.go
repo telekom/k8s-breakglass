@@ -127,6 +127,9 @@ func (c *DebugSessionAPIController) WithClusterClients(provider ClientProviderIn
 // If not set, the controller falls back to the cached client for reads.
 func (c *DebugSessionAPIController) WithAPIReader(reader ctrlclient.Reader) *DebugSessionAPIController {
 	c.apiReader = reader
+	if c.connectionLeases != nil {
+		c.connectionLeases.WithLiveReader(reader)
+	}
 	return c
 }
 
