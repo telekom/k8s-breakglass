@@ -62,7 +62,16 @@ func TestBindingOptionEmitsEmptyVariablesWhenAllDisabled(t *testing.T) {
 	assert.Contains(t, string(payload), `"extraDeployVariables":[]`)
 	payload, err = json.Marshal(detail)
 	require.NoError(t, err)
-	assert.Contains(t, string(payload), `"extraDeployVariables":[]`)
+	var encoded map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(payload, &encoded))
+	assert.Equal(t, "[]", string(encoded["extraDeployVariables"]), "primary binding result must serialize an explicit empty array")
+
+	noBinding := controller.buildClusterDetailWithBindings(template, nil, &breakglassv1alpha1.ClusterConfig{}, debugTemplateRequester{})
+	payload, err = json.Marshal(noBinding)
+	require.NoError(t, err)
+	encoded = nil
+	require.NoError(t, json.Unmarshal(payload, &encoded))
+	assert.Equal(t, "null", string(encoded["extraDeployVariables"]), "no-binding fallback must retain the absent-variable result")
 }
 
 type stagedDebugSessionReader struct {
