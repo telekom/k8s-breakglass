@@ -26,6 +26,10 @@ func (service *Service) ReserveRecording(ctx context.Context, record Record, aut
 	}
 	record.Recipe = TerminalRecordingRecipe
 	record.RecipeVersion = 1
+	// Terminal evidence preserves authorized stream bytes; this version identifies
+	// its framing/metadata policy, not collector credential redaction.
+	record.Expected.RedactionProfile = TerminalRecordingRecipe
+	record.Expected.RedactionVersion = 1
 	copyMetadata := *record.Recording
 	copyMetadata.StartedAt = copyMetadata.StartedAt.UTC().Truncate(time.Second)
 	copyMetadata.StreamExpiresAt = copyMetadata.StreamExpiresAt.UTC().Truncate(time.Second)

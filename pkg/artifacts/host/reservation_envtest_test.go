@@ -52,6 +52,9 @@ func TestArtifactReservationRealAPIAdmission(t *testing.T) {
 	object.Spec.ReservationNonce = "0123456789abcdef0123456789abcdef"
 	require.Error(t, live.Update(ctx, &object), "immutable reservation nonce must reject mutation")
 	recording := lifecycleRecord(*now)
+	// The actual terminal route supplies no collector metadata policy.
+	recording.Expected.RedactionProfile = ""
+	recording.Expected.RedactionVersion = 0
 	recording.Recording = &backend.RecordingMetadata{FormatVersion: 1, StartedAt: *now, StreamExpiresAt: now.Add(time.Minute), PodNamespace: "target", PodName: "debug", PodUID: "pod-uid", Operation: "exec", LeaseUID: "lease-uid", LeaseEpoch: "1", Generation: "1"}
 	reservedRecording, err := service.ReserveRecording(ctx, recording, func(context.Context) error { return nil })
 	require.NoError(t, err)
@@ -60,6 +63,8 @@ func TestArtifactReservationRealAPIAdmission(t *testing.T) {
 	realRecording, err := repository.Create(ctx, reservedRecording)
 	require.NoError(t, err)
 	require.Equal(t, "pod-uid", realRecording.Recording.PodUID)
+	require.Equal(t, backend.TerminalRecordingRecipe, realRecording.Expected.RedactionProfile)
+	require.Equal(t, 1, realRecording.Expected.RedactionVersion)
 	require.NoError(t, live.Get(ctx, client.ObjectKey{Namespace: "controller", Name: realRecording.ArtifactID}, &object))
 	object.Spec.Recording.PodUID = "replacement"
 	require.Error(t, live.Update(ctx, &object), "recording target capability must remain immutable")

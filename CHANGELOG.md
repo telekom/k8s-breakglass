@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Reject overflowing artifact frame lengths, lease epochs and schema versions; update AWS SDK dependencies for GO-2026-5764.
 
+- Assign the terminal recording metadata policy before durable reservation so recorded streams satisfy real API admission.
+
 - Recheck live session authorization after connection Lease reads and clamp renewals to the committed deadline.
 
 - Reject overflowing terminal frame allocations and enforce non-sniffable binary terminal responses while preserving exact output bytes.
