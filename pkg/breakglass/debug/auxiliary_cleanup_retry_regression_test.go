@@ -192,7 +192,7 @@ func TestCleanupAuxiliaryResourcesRetriesUnresolvedCreateIntent(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "breakglass-system", UID: types.UID("session-uid")},
 		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "prod"},
 		Status: breakglassv1alpha1.DebugSessionStatus{AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{
-			Name: "primary", Kind: "ConfigMap", APIVersion: "v1", ResourceName: "primary", Namespace: "debug-ns", CreateOperationID: "create-primary",
+			Name: "primary", Created: true, Kind: "ConfigMap", APIVersion: "v1", ResourceName: "primary", Namespace: "debug-ns", CreateOperationID: "create-primary",
 		}}},
 	}
 
