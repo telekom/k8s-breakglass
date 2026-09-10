@@ -6,6 +6,8 @@ package debug
 import (
 	"context"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -254,4 +256,73 @@ func TestPeriodicAccountingDoesNotSerializeDifferentTemplates(t *testing.T) {
 	for _, ds := range []*breakglassv1alpha1.DebugSession{first, second} {
 		t.Cleanup(func() { metrics.DebugSessionsActive.DeleteLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef) })
 	}
+}
+
+func TestPeriodicAccountingEvictsOnlyOldestTemplate(t *testing.T) {
+	ds := newTestDebugSession("new-session", "new-template", "cluster", "user")
+	ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(ds).Build()
+	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithAPIReader(hub)
+	c.accountingLast = map[string]time.Time{"oldest": time.Now().Add(-time.Hour)}
+	for i := range 1023 {
+		c.accountingLast[fmt.Sprint(i)] = time.Now()
+	}
+	require.NoError(t, c.reconcilePeriodicActiveAccounting(t.Context(), ds))
+	require.Len(t, c.accountingLast, 1024)
+	require.NotContains(t, c.accountingLast, "oldest")
+	for i := range 1023 {
+		require.Contains(t, c.accountingLast, fmt.Sprint(i))
+	}
+	require.Contains(t, c.accountingLast, ds.Spec.TemplateRef)
+	t.Cleanup(func() { metrics.DebugSessionsActive.DeleteLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef) })
+}
+
+func TestActiveAccountingSerializesOlderScanWithTerminalPublication(t *testing.T) {
+	ctx := t.Context()
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "publication-order"}, Status: breakglassv1alpha1.DebugSessionTemplateStatus{ActiveSessionCount: 1}}
+	ds := newTestDebugSession("session", template.Name, "cluster", "user")
+	ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(template, ds).WithStatusSubresource(template, ds).Build()
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	var scans atomic.Int32
+	reader := interceptor.NewClient(hub, interceptor.Funcs{List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+		err := cl.List(ctx, list, opts...)
+		if scans.Add(1) == 1 {
+			close(entered)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return err
+	}})
+	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithAPIReader(reader)
+	oldDone := make(chan error, 1)
+	go func() { oldDone <- c.reconcileActiveAccounting(ctx, ds.DeepCopy(), true) }()
+	<-entered
+	terminal := ds.DeepCopy()
+	terminal.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+	require.NoError(t, hub.Status().Update(ctx, terminal))
+	newDone := make(chan error, 1)
+	go func() { newDone <- c.reconcileActiveAccounting(ctx, terminal, false) }()
+	// Without serialization the terminal scan completes before the old snapshot
+	// is released, letting that older snapshot overwrite the zero gauge.
+	select {
+	case err := <-newDone:
+		require.NoError(t, err)
+		unblock()
+	case <-time.After(100 * time.Millisecond):
+		unblock()
+		require.NoError(t, <-newDone)
+	}
+	require.NoError(t, <-oldDone)
+	require.Equal(t, float64(0), testutil.ToFloat64(metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, template.Name)))
+	require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(template), template))
+	require.Zero(t, template.Status.ActiveSessionCount)
+	require.Empty(t, c.accountingLocks, "completed operations release keyed lock entries")
+	t.Cleanup(func() { metrics.DebugSessionsActive.DeleteLabelValues(ds.Spec.Cluster, template.Name) })
 }

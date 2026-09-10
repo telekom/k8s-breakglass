@@ -2070,3 +2070,5 @@ Active accounting is recomputed from live session state: template counts include
 Active accounting uses the CRD selectable `spec.templateRef` field to bound each authoritative paginated list to the affected template, rather than scanning unrelated session history.
 
 Active-session accounting uses authoritative, paginated template-scoped reads. Lifecycle transitions update counts immediately; periodic repairs are coalesced per template for 30 seconds within each controller and skip unchanged template status writes. Failed accounting retries remain immediate. Optional pod-template usage metadata failures are logged and retried on the next periodic repair without blocking session cleanup.
+
+Accounting scans and gauge publication are serialized per template within each controller, so an older scan cannot overwrite a newer lifecycle count. Completed operations release their locks; bounded periodic bookkeeping evicts only the oldest template instead of resetting other repair intervals.

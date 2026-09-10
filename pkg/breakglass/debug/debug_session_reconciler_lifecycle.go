@@ -1233,8 +1233,17 @@ func (c *DebugSessionController) reconcilePeriodicActiveAccounting(ctx context.C
 			return nil, nil
 		}
 		// Bound process-local repair bookkeeping; eviction only adds a repair.
-		if c.accountingLast == nil || len(c.accountingLast) >= 1024 {
+		if c.accountingLast == nil {
 			c.accountingLast = make(map[string]time.Time)
+		}
+		if _, exists := c.accountingLast[ds.Spec.TemplateRef]; !exists && len(c.accountingLast) >= 1024 {
+			var oldest string
+			for name, repaired := range c.accountingLast {
+				if oldest == "" || repaired.Before(c.accountingLast[oldest]) {
+					oldest = name
+				}
+			}
+			delete(c.accountingLast, oldest)
 		}
 		c.accountingLast[ds.Spec.TemplateRef] = time.Now()
 		return nil, nil
@@ -1242,10 +1251,38 @@ func (c *DebugSessionController) reconcilePeriodicActiveAccounting(ctx context.C
 	return err
 }
 
+// lockActiveAccounting serializes scans and metric publication for one template.
+// Entries exist only while workers are using or waiting for that template.
+func (c *DebugSessionController) lockActiveAccounting(template string) func() {
+	c.accountingMu.Lock()
+	if c.accountingLocks == nil {
+		c.accountingLocks = make(map[string]*accountingLock)
+	}
+	entry := c.accountingLocks[template]
+	if entry == nil {
+		entry = &accountingLock{}
+		c.accountingLocks[template] = entry
+	}
+	entry.users++
+	c.accountingMu.Unlock()
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		c.accountingMu.Lock()
+		entry.users--
+		if entry.users == 0 {
+			delete(c.accountingLocks, template)
+		}
+		c.accountingMu.Unlock()
+	}
+}
+
 // reconcileActiveAccounting derives aggregates from authoritative session state.
 // Template CAS retries repeat the list; periodic Active reconciliation repairs
 // snapshots raced by a session transition without replaying increment/decrement.
 func (c *DebugSessionController) reconcileActiveAccounting(ctx context.Context, ds *breakglassv1alpha1.DebugSession, markUsed bool) (resultErr error) {
+	unlock := c.lockActiveAccounting(ds.Spec.TemplateRef)
+	defer unlock()
 	defer func() {
 		if resultErr != nil {
 			c.accountingMu.Lock()

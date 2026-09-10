@@ -80,10 +80,16 @@ func debugSessionIdentity(ds *breakglassv1alpha1.DebugSession) string {
 	return ds.Name
 }
 
+type accountingLock struct {
+	mu    sync.Mutex
+	users int
+}
+
 // DebugSessionController manages DebugSession lifecycle
 type DebugSessionController struct {
 	accountingMu             sync.Mutex
 	accountingLast           map[string]time.Time
+	accountingLocks          map[string]*accountingLock
 	accountingFlight         singleflight.Group
 	accountingFailureVersion uint64
 	quotaNamespace           string

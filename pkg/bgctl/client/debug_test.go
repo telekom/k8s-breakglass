@@ -223,7 +223,7 @@ func TestDebugSessionsReject(t *testing.T) {
 			DebugSession: breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{Name: "debug-session-123"},
 				Status: breakglassv1alpha1.DebugSessionStatus{
-					State: breakglassv1alpha1.DebugSessionStateTerminated,
+					State: breakglassv1alpha1.DebugSessionStateRejected,
 				},
 			},
 		}
@@ -237,7 +237,7 @@ func TestDebugSessionsReject(t *testing.T) {
 
 	result, err := client.DebugSessions().Reject(context.Background(), "debug-session-123", "not needed", "")
 	require.NoError(t, err)
-	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, result.Status.State)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, result.Status.State)
 }
 
 func TestDebugSessionsJoin(t *testing.T) {
