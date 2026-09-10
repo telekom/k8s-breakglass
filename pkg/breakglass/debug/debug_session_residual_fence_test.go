@@ -286,7 +286,7 @@ func TestDebugSessionCleanupClearsAllowedPodsAndRetainsConcurrentRefs(t *testing
 		}).Build()
 		controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, cluster.NewClientProvider(hub, zap.NewNop().Sugar()))
 
-		require.NoError(t, controller.cleanupResources(context.Background(), session))
+		require.ErrorContains(t, controller.cleanupResources(context.Background(), session), "inventory remains unresolved")
 		var stored breakglassv1alpha1.DebugSession
 		require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
 		require.Len(t, stored.Status.AllowedPods, 1)

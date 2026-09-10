@@ -156,3 +156,22 @@ func TestLifecycleAuditEmitterRespectsTemplateOptOut(t *testing.T) {
 		})
 	}
 }
+
+func TestLifecycleAuditBeforeSnapshotUsesLivePolicy(t *testing.T) {
+	for _, eventType := range []audit.EventType{audit.EventDebugSessionCreated, audit.EventDebugSessionApproved, audit.EventDebugSessionRejected, audit.EventDebugSessionRenewed, audit.EventDebugSessionTerminated, audit.EventDebugSessionApprovalTimeout} {
+		template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "policy"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Audit: &breakglassv1alpha1.DebugSessionAuditConfig{Enabled: false}}}
+		hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(template).Build()
+		emitter := NewMockAuditEmitter(true)
+		controller := NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), hub, nil, nil).WithAuditService(emitter)
+		session := &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{TemplateRef: "policy"}}
+		controller.emitDebugSessionAuditEvent(context.Background(), eventType, session, "user", "transition")
+		require.Empty(t, emitter.GetEvents())
+		session.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{Audit: &breakglassv1alpha1.DebugSessionAuditConfig{Enabled: true}}
+		controller.emitDebugSessionAuditEvent(context.Background(), eventType, session, "user", "transition")
+		require.Len(t, emitter.GetEvents(), 1)
+		session.Status.ResolvedTemplate = nil
+		require.NoError(t, hub.Delete(context.Background(), template))
+		controller.emitDebugSessionAuditEvent(context.Background(), eventType, session, "user", "transition")
+		require.Len(t, emitter.GetEvents(), 1)
+	}
+}
