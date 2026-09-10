@@ -7,11 +7,14 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	artifactstorage "github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
@@ -19,6 +22,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/remotecommand"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -28,6 +33,23 @@ type terminalRecordingTestStore struct {
 	data     map[string][]byte
 	metadata map[string]artifactstorage.Metadata
 	deleted  []string
+}
+
+type terminalRecordingRouteConnection struct {
+	binding TerminalRecordingConnectionBinding
+}
+
+func (c terminalRecordingRouteConnection) Binding() TerminalRecordingConnectionBinding {
+	return c.binding
+}
+func (terminalRecordingRouteConnection) Validate(context.Context) error { return nil }
+func (terminalRecordingRouteConnection) Close(context.Context) error    { return nil }
+
+type terminalRecordingRouteProvider struct{}
+
+func (terminalRecordingRouteProvider) AcquireTerminalRecordingConnection(_ context.Context, binding TerminalRecordingConnectionBinding) (TerminalRecordingConnection, error) {
+	binding.Epoch, binding.Generation = "epoch", "generation"
+	return terminalRecordingRouteConnection{binding: binding}, nil
 }
 
 func newTerminalRecordingTestStore() *terminalRecordingTestStore {
@@ -103,6 +125,48 @@ func TestPersistTerminalRecordingPinsStoreAndLeaseMetadata(t *testing.T) {
 	require.Equal(t, recording.Bytes, got)
 }
 
+func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := newTerminalRecordingTestStore()
+	now := metav1.Now()
+	expiresAt := metav1.NewTime(now.Add(time.Hour))
+	execAllowed := true
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: types.UID("session-uid")},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke", RequestedBy: "owner"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:                breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt:            &expiresAt,
+			ResolvedTemplate:     &breakglassv1alpha1.DebugSessionTemplateSpec{Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: true}},
+			Participants:         []breakglassv1alpha1.DebugSessionParticipant{{User: "alice", Role: breakglassv1alpha1.ParticipantRoleParticipant, JoinedAt: now}},
+			AllowedPods:          []breakglassv1alpha1.AllowedPodRef{{Namespace: "target", Name: "pod", UID: "pod-uid"}},
+			AllowedPodOperations: &breakglassv1alpha1.AllowedPodOperations{Exec: &execAllowed},
+		},
+	}
+	cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(session).WithObjects(session).Build()
+	controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil).
+		WithAPIReader(cli).
+		WithTerminalRecordingStore(store).
+		WithTerminalRecordingConnections(terminalRecordingRouteProvider{})
+	controller.terminalTargetResolver = func(context.Context, *breakglassv1alpha1.DebugSession, string, string, string) (*rest.Config, *corev1.Pod, error) {
+		return &rest.Config{}, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "target", Name: "pod", UID: types.UID("pod-uid")}}, nil
+	}
+	controller.terminalExecutorFactory = func(*rest.Config, string, string, string, string, []string) (remotecommand.Executor, error) {
+		return &testTerminalExecutor{output: []byte("prompt")}, nil
+	}
+	router := debugSessionAPITestRouter(t, controller, "alice", "", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/session/terminal?namespace=hub&podNamespace=target&podName=pod&operation=exec&command=sh", strings.NewReader("input"))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Equal(t, "prompt", response.Body.String())
+	require.NotEmpty(t, response.Header().Get("X-Breakglass-Recording-ID"))
+	stored := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, cli.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), stored))
+	require.Len(t, stored.Status.KubectlDebugStatus.TerminalRecordings, 1)
+	require.Equal(t, "pod-uid", stored.Status.KubectlDebugStatus.TerminalRecordings[0].PodUID)
+}
+
 func TestCleanupExpiredTerminalRecordingsDeletesExactVersionAndKeepsLive(t *testing.T) {
 	store := newTerminalRecordingTestStore()
 	old := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: types.UID("session-uid")}, Status: breakglassv1alpha1.DebugSessionStatus{KubectlDebugStatus: &breakglassv1alpha1.KubectlDebugStatus{}}}
@@ -132,9 +196,37 @@ func TestCleanupExpiredTerminalRecordingsDeletesExactVersionAndKeepsLive(t *test
 	require.Len(t, store.deleted, 1)
 }
 
+func TestCleanupExpiredTerminalRecordingsConvergesAfterPriorDelete(t *testing.T) {
+	store := newTerminalRecordingTestStore()
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: types.UID("session-uid")}, Status: breakglassv1alpha1.DebugSessionStatus{KubectlDebugStatus: &breakglassv1alpha1.KubectlDebugStatus{}}}
+	ref, _, err := persistTerminalRecording(context.Background(), store, session, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "target", Name: "pod", UID: types.UID("pod-uid")}}, "exec", "shell", TerminalRecordingConnectionBinding{RuntimeBindingDigest: strings.Repeat("d", 64)}, time.Now().Add(-time.Hour), TerminalRecording{Bytes: []byte("evidence"), SHA256: sha256Hex("evidence")})
+	require.NoError(t, err)
+	ref.ExpiresAt = metav1.NewTime(time.Now().Add(-time.Minute))
+	version := artifactstorage.Version{VersionID: ref.VersionID, RuntimeBindingDigest: ref.RuntimeBindingDigest, Size: ref.Size, SHA256: ref.SHA256}
+	require.NoError(t, store.DeleteVersion(context.Background(), terminalRecordingObject(ref), version))
+	session.Status.KubectlDebugStatus.TerminalRecordings = []breakglassv1alpha1.TerminalRecordingRef{ref}
+	cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(session).WithObjects(session).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).WithLiveReader(cli).WithTerminalRecordingStore(store)
+	require.NoError(t, controller.cleanupExpiredTerminalRecordings(context.Background(), session))
+	stored := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, cli.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), stored))
+	require.Empty(t, stored.Status.KubectlDebugStatus)
+}
+
 func TestMergeKubectlDebugStatusRetainsTerminalRecordings(t *testing.T) {
 	ref := breakglassv1alpha1.TerminalRecordingRef{ID: "recording", SHA256: strings.Repeat("c", 64)}
 	merged := mergeKubectlDebugStatus(&breakglassv1alpha1.KubectlDebugStatus{}, &breakglassv1alpha1.KubectlDebugStatus{}, &breakglassv1alpha1.KubectlDebugStatus{TerminalRecordings: []breakglassv1alpha1.TerminalRecordingRef{ref}})
 	require.Len(t, merged.TerminalRecordings, 1)
 	require.Equal(t, ref.ID, merged.TerminalRecordings[0].ID)
+}
+
+func TestClearKubectlDebugResourcesRetainsRecordingInventory(t *testing.T) {
+	status := &breakglassv1alpha1.DebugSessionStatus{KubectlDebugStatus: &breakglassv1alpha1.KubectlDebugStatus{
+		EphemeralContainersInjected: []breakglassv1alpha1.EphemeralContainerRef{{PodName: "pod"}},
+		TerminalRecordings:          []breakglassv1alpha1.TerminalRecordingRef{{ID: "recording"}},
+	}}
+	clearKubectlDebugResources(status)
+	require.NotNil(t, status.KubectlDebugStatus)
+	require.Len(t, status.KubectlDebugStatus.TerminalRecordings, 1)
+	require.Empty(t, status.KubectlDebugStatus.EphemeralContainersInjected)
 }

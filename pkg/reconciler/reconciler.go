@@ -10,6 +10,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/api"
+	artifactstorage "github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
@@ -34,6 +35,16 @@ import (
 
 func boolPtr(val bool) *bool {
 	return &val
+}
+
+type ManagerOption func(*debug.DebugSessionController)
+
+func WithTerminalRecordingStore(store artifactstorage.Store) ManagerOption {
+	return func(controller *debug.DebugSessionController) { controller.WithTerminalRecordingStore(store) }
+}
+
+func WithTerminalRecordingConnections(provider debug.TerminalRecordingConnectionProvider) ManagerOption {
+	return func(controller *debug.DebugSessionController) { controller.WithTerminalRecordingConnections(provider) }
 }
 
 func NewManager(
@@ -147,6 +158,7 @@ func Setup(
 	escalationManager *escalation.EscalationManager,
 	enableControllers bool,
 	log *zap.SugaredLogger,
+	options ...ManagerOption,
 ) error {
 	plan := newControllerSetupPlan(enableControllers)
 
@@ -320,6 +332,9 @@ func Setup(
 			WithQuotaNamespace(quotaNamespace).
 			WithAuditService(auditService).
 			WithMailService(mailService, frontendConfig.BrandingName, frontendConfig.BaseURL, disableEmail)
+		for _, option := range options {
+			option(debugSessionReconciler)
+		}
 		if err := debugSessionReconciler.SetupWithManager(mgr); err != nil {
 			return fmt.Errorf("failed to setup DebugSession reconciler with manager: %w", err)
 		}

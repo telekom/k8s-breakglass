@@ -1299,6 +1299,54 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              connectionLease:
+                description: |-
+                  connectionLease is the opaque controller-owned target lease capability.
+                  It contains no Secret name or credential material.
+                properties:
+                  epoch:
+                    format: int64
+                    type: integer
+                  expiresAt:
+                    format: date-time
+                    type: string
+                  holderUID:
+                    description: |-
+                      UID is a type that holds unique ID values, including UUIDs.  Because we
+                      don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                      intent and helps make sure that UIDs and names do not get conflated.
+                    type: string
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                  profileDigest:
+                    type: string
+                  resourceVersion:
+                    type: string
+                  targetUID:
+                    description: |-
+                      UID is a type that holds unique ID values, including UUIDs.  Because we
+                      don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                      intent and helps make sure that UIDs and names do not get conflated.
+                    type: string
+                  uid:
+                    description: |-
+                      UID is a type that holds unique ID values, including UUIDs.  Because we
+                      don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                      intent and helps make sure that UIDs and names do not get conflated.
+                    type: string
+                required:
+                - epoch
+                - expiresAt
+                - holderUID
+                - name
+                - namespace
+                - profileDigest
+                - resourceVersion
+                - targetUID
+                - uid
+                type: object
               deployedResources:
                 description: deployedResources lists resources created on the target
                   cluster.

@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-logr/zapr"
 	"github.com/telekom/k8s-breakglass/pkg/api"
+	artifactstorage "github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/clusterconfig"
@@ -252,6 +253,14 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("create uncached kubernetes client: %w", err)
 	}
+	terminalRecordingStore, err := terminalRecordingStoreFromEnvironment()
+	if err != nil {
+		return err
+	}
+	if closer, ok := terminalRecordingStore.(interface{ Close() error }); ok {
+		defer closer.Close()
+	}
+	terminalRecordingConnections := debug.NewTerminalRecordingConnectionProvider(debug.NewConnectionLeaseService(uncachedClient))
 
 	// Reconciler manager runs WITHOUT leader election — reconcilers (e.g. IdentityProvider)
 	// run on all replicas as documented. Leader election is handled separately for background
@@ -264,7 +273,7 @@ func run() error {
 		return fmt.Errorf("create controller-runtime manager: %w", err)
 	}
 
-	svcs, err := setupServices(context.Background(), cliConfig, cfg, reconcilerMgr, uncachedClient, scheme, zapLogger, auth, server)
+	svcs, err := setupServices(context.Background(), cliConfig, cfg, reconcilerMgr, uncachedClient, scheme, zapLogger, auth, server, terminalRecordingStore, terminalRecordingConnections)
 	if err != nil {
 		return err
 	}
@@ -323,22 +332,24 @@ func run() error {
 	defer cancel()
 
 	startBackgroundRoutines(managerCtx, &wg, errCh, leaderElectedCh, &backgroundDeps{
-		cliConfig:         cliConfig,
-		cfg:               cfg,
-		log:               log,
-		sessionManager:    svcs.sessionManager,
-		escalationManager: svcs.escalationManager,
-		reconcilerMgr:     reconcilerMgr,
-		mailService:       svcs.mailService,
-		auditService:      svcs.auditService,
-		ccProvider:        svcs.ccProvider,
-		idpLoader:         svcs.idpLoader,
-		eventsRecorder:    eventsRecorder,
-		server:            server,
-		scheme:            scheme,
-		resourceLock:      resourceLock,
-		hostname:          hostname,
-		webhookCtrl:       svcs.webhookCtrl,
+		cliConfig:                    cliConfig,
+		cfg:                          cfg,
+		log:                          log,
+		sessionManager:               svcs.sessionManager,
+		escalationManager:            svcs.escalationManager,
+		reconcilerMgr:                reconcilerMgr,
+		mailService:                  svcs.mailService,
+		auditService:                 svcs.auditService,
+		ccProvider:                   svcs.ccProvider,
+		idpLoader:                    svcs.idpLoader,
+		eventsRecorder:               eventsRecorder,
+		server:                       server,
+		scheme:                       scheme,
+		resourceLock:                 resourceLock,
+		hostname:                     hostname,
+		webhookCtrl:                  svcs.webhookCtrl,
+		terminalRecordingStore:       terminalRecordingStore,
+		terminalRecordingConnections: terminalRecordingConnections,
 	})
 
 	// Optionally setup webhooks if enabled (webhooks are optional, reconcilers are not)
@@ -403,6 +414,7 @@ type services struct {
 func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config,
 	reconcilerMgr ctrl.Manager, uncachedClient client.Client, scheme *runtime.Scheme,
 	zapLogger *zap.Logger, auth *api.AuthHandler, server *api.Server,
+	terminalRecordingStore artifactstorage.Store, terminalRecordingConnections debug.TerminalRecordingConnectionProvider,
 ) (*services, error) {
 	log := zapLogger.Sugar()
 
@@ -496,6 +508,10 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 		WithMailService(mailService, cfg.Frontend.BrandingName, cfg.Frontend.BaseURL).
 		WithAuditService(auditService).
 		WithDisableEmail(cliConfig.DisableEmail)
+	if terminalRecordingStore != nil {
+		debugSessionAPICtrl.WithTerminalRecordingStore(terminalRecordingStore)
+	}
+	debugSessionAPICtrl.WithTerminalRecordingConnections(terminalRecordingConnections)
 
 	// Only supply an operational resolver; SetupResolver's no-op fallback cannot
 	// distinguish an empty group from unavailable group synchronization.
@@ -595,22 +611,24 @@ func createLeaderElectionLock(kubeClientset kubernetes.Interface, scheme *runtim
 
 // backgroundDeps holds the dependencies needed by background goroutines.
 type backgroundDeps struct {
-	cliConfig         *cli.Config
-	cfg               config.Config
-	log               *zap.SugaredLogger
-	sessionManager    *breakglass.SessionManager
-	escalationManager *escalation.EscalationManager
-	reconcilerMgr     ctrl.Manager
-	mailService       *mail.Service
-	auditService      *audit.Service
-	ccProvider        *cluster.ClientProvider
-	idpLoader         *config.IdentityProviderLoader
-	eventsRecorder    *eventrecorder.K8sEventRecorder
-	server            *api.Server
-	scheme            *runtime.Scheme
-	resourceLock      resourcelock.Interface
-	hostname          string
-	webhookCtrl       *webhook.WebhookController
+	cliConfig                    *cli.Config
+	cfg                          config.Config
+	log                          *zap.SugaredLogger
+	sessionManager               *breakglass.SessionManager
+	escalationManager            *escalation.EscalationManager
+	reconcilerMgr                ctrl.Manager
+	mailService                  *mail.Service
+	auditService                 *audit.Service
+	ccProvider                   *cluster.ClientProvider
+	idpLoader                    *config.IdentityProviderLoader
+	eventsRecorder               *eventrecorder.K8sEventRecorder
+	server                       *api.Server
+	scheme                       *runtime.Scheme
+	resourceLock                 resourcelock.Interface
+	hostname                     string
+	webhookCtrl                  *webhook.WebhookController
+	terminalRecordingStore       artifactstorage.Store
+	terminalRecordingConnections debug.TerminalRecordingConnectionProvider
 }
 
 // startBackgroundRoutines launches all leader-gated background goroutines: cleanup,
@@ -705,7 +723,9 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 		if err := reconciler.Setup(ctx, deps.reconcilerMgr, deps.idpLoader, deps.server,
 			deps.ccProvider, deps.auditService, deps.mailService, deps.cfg.Frontend,
 			deps.cliConfig.BreakglassNamespace, deps.cliConfig.DisableEmail,
-			deps.escalationManager, deps.cliConfig.EnableControllers, log); err != nil {
+			deps.escalationManager, deps.cliConfig.EnableControllers, log,
+			reconciler.WithTerminalRecordingStore(deps.terminalRecordingStore),
+			reconciler.WithTerminalRecordingConnections(deps.terminalRecordingConnections)); err != nil {
 			errCh <- fmt.Errorf("reconciler manager failed: %w", err)
 		}
 	}()

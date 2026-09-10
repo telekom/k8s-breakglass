@@ -36,6 +36,7 @@ const terminalRecordingFinalizeTimeout = 10 * time.Second
 // TerminalRecordingConnectionBinding is the immutable authorization tuple
 // supplied by the connection-lease service for one target stream.
 type TerminalRecordingConnectionBinding struct {
+	Namespace            string
 	SessionUID           string
 	TargetPodUID         string
 	Epoch                string
@@ -58,6 +59,10 @@ type TerminalRecordingConnectionProvider interface {
 	AcquireTerminalRecordingConnection(context.Context, TerminalRecordingConnectionBinding) (TerminalRecordingConnection, error)
 }
 
+type terminalTargetResolver func(context.Context, *breakglassv1alpha1.DebugSession, string, string, string) (*rest.Config, *corev1.Pod, error)
+
+type terminalExecutorFactory func(*rest.Config, string, string, string, string, []string) (remotecommand.Executor, error)
+
 func (c *DebugSessionAPIController) WithTerminalRecordingStore(store artifactstorage.Store) *DebugSessionAPIController {
 	c.recordingStore = store
 	return c
@@ -69,7 +74,7 @@ func (c *DebugSessionAPIController) WithTerminalRecordingConnections(provider Te
 }
 
 func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
-	if c.recordingStore == nil || c.recordingConnections == nil || c.ccProvider == nil {
+	if c.recordingStore == nil || c.recordingConnections == nil || (c.ccProvider == nil && c.terminalTargetResolver == nil) {
 		apiresponses.RespondServiceUnavailable(ctx, "terminal recording transport is not configured")
 		return
 	}
@@ -116,24 +121,38 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		return
 	}
 
-	restConfig, configured, err := c.ccProvider.GetRESTConfigForPrivilegedOperation(apiCtx, session.Spec.Cluster)
+	var restConfig *rest.Config
+	var pod *corev1.Pod
+	if c.terminalTargetResolver != nil {
+		restConfig, pod, err = c.terminalTargetResolver(apiCtx, session, namespace, podName, targetUID)
+	} else {
+		var configured *breakglassv1alpha1.ClusterConfig
+		restConfig, configured, err = c.ccProvider.GetRESTConfigForPrivilegedOperation(apiCtx, session.Spec.Cluster)
+		if err == nil {
+			defer c.ccProvider.ReleasePrivilegedOperationClusterConfig(configured)
+			kubeClient, clientErr := kubernetes.NewForConfig(restConfig)
+			if clientErr != nil {
+				err = clientErr
+			} else {
+				pod, err = kubeClient.CoreV1().Pods(namespace).Get(apiCtx, podName, metav1.GetOptions{})
+			}
+		}
+	}
 	if err != nil {
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to resolve target cluster")
 		return
 	}
-	defer c.ccProvider.ReleasePrivilegedOperationClusterConfig(configured)
-	kubeClient, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to create target cluster client")
-		return
-	}
-	pod, err := kubeClient.CoreV1().Pods(namespace).Get(apiCtx, podName, metav1.GetOptions{})
-	if err != nil || pod == nil || string(pod.UID) != targetUID {
+	if pod == nil || string(pod.UID) != targetUID {
 		apiresponses.RespondForbidden(ctx, "target Pod identity changed")
 		return
 	}
 
-	binding := TerminalRecordingConnectionBinding{SessionUID: string(session.UID), TargetPodUID: targetUID, ExpiresAt: session.Status.ExpiresAt.Time}
+	profileDigest, err := ProfileDigestForSession(session)
+	if err != nil {
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to resolve terminal recording profile")
+		return
+	}
+	binding := TerminalRecordingConnectionBinding{Namespace: session.Namespace, SessionUID: string(session.UID), TargetPodUID: targetUID, RuntimeBindingDigest: strings.TrimPrefix(profileDigest, "sha256:"), ExpiresAt: session.Status.ExpiresAt.Time}
 	connection, err := c.recordingConnections.AcquireTerminalRecordingConnection(apiCtx, binding)
 	if err != nil {
 		apiresponses.RespondForbidden(ctx, "terminal recording connection is not available")
@@ -154,29 +173,37 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		return
 	}
 
-	executor, err := newTerminalRecordingExecutor(restConfig, namespace, podName, operation, ctx.Query("container"), ctx.QueryArray("command"))
+	executorFactory := c.terminalExecutorFactory
+	if executorFactory == nil {
+		executorFactory = newTerminalRecordingExecutor
+	}
+	executor, err := executorFactory(restConfig, namespace, podName, operation, ctx.Query("container"), ctx.QueryArray("command"))
 	if err != nil {
 		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}
 	startedAt := time.Now().UTC()
 	recorder := NewTerminalRecorder(defaultTerminalRecordingMaxBytes)
-	ctx.Header("Content-Type", "application/octet-stream")
-	ctx.Header("Trailer", "X-Breakglass-Recording-ID, X-Breakglass-Recording-SHA256")
-	recording, streamErr := StreamTerminal(apiCtx, executor, ctx.Request.Body, ctx.Writer, ctx.Writer, recorder)
-	if streamErr != nil {
-		apiresponses.RespondBadGateway(ctx, "terminal stream failed")
-		return
+	if err := http.NewResponseController(ctx.Writer).EnableFullDuplex(); err != nil {
+		// ResponseRecorder and a few reverse proxies do not expose full-duplex
+		// support. Streaming still works through their ordinary ResponseWriter.
+		ctx.Header("X-Breakglass-Recording-Transport", "buffered")
 	}
+	ctx.Header("Content-Type", "application/octet-stream")
+	ctx.Header("Trailer", "X-Breakglass-Recording-ID, X-Breakglass-Recording-SHA256, X-Breakglass-Recording-Status")
+	streamWriter := &terminalRecordingFlushWriter{writer: ctx.Writer}
+	recording, streamErr := streamTerminalWithLease(apiCtx, connection, binding.ExpiresAt, executor, ctx.Request.Body, streamWriter, streamWriter, recorder)
 	finalizeCtx, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx.Request.Context()), terminalRecordingFinalizeTimeout)
 	defer finalizeCancel()
 	validatedBinding := connection.Binding()
 	if err := connection.Validate(finalizeCtx); err != nil || !terminalRecordingBindingMatches(validatedBinding, session, targetUID) || !terminalRecordingBindingsEqual(validatedBinding, binding) {
+		ctx.Header("X-Breakglass-Recording-Status", "rejected")
 		apiresponses.RespondForbidden(ctx, "terminal recording connection expired")
 		return
 	}
-	ref, metadata, err := persistTerminalRecording(finalizeCtx, c.recordingStore, session, pod, operation, ctx.Query("container"), binding, startedAt, recording)
+	ref, _, err := persistTerminalRecording(finalizeCtx, c.recordingStore, session, pod, operation, ctx.Query("container"), binding, startedAt, recording)
 	if err != nil {
+		ctx.Header("X-Breakglass-Recording-Status", "failed")
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to finalize terminal recording")
 		return
 	}
@@ -184,12 +211,81 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		kubectlStatus := ensureKubectlDebugStatus(status)
 		kubectlStatus.TerminalRecordings = append(kubectlStatus.TerminalRecordings, ref)
 	}); err != nil {
-		_ = c.recordingStore.DeleteVersion(finalizeCtx, terminalRecordingObject(ref), artifactstorage.Version{VersionID: metadata.VersionID, RuntimeBindingDigest: metadata.RuntimeBindingDigest, Size: metadata.Size, SHA256: metadata.SHA256, ETag: metadata.ETag, ProviderChecksum: metadata.ProviderChecksum, ModifiedAt: metadata.ModifiedAt})
+		// The immutable artifact is the evidence of the operation. Keep it when
+		// status publication conflicts so a later reconciliation can inventory it.
+		ctx.Header("X-Breakglass-Recording-Status", "published-status-pending")
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to record terminal metadata")
 		return
 	}
 	ctx.Header("X-Breakglass-Recording-ID", ref.ID)
 	ctx.Header("X-Breakglass-Recording-SHA256", ref.SHA256)
+	if streamErr != nil {
+		ctx.Header("X-Breakglass-Recording-Status", "failed")
+		return
+	}
+	ctx.Header("X-Breakglass-Recording-Status", "completed")
+}
+
+// terminalRecordingFlushWriter keeps interactive exec/attach output flowing
+// through the HTTP response while retaining compatibility with buffered test
+// writers and proxies that do not implement http.Flusher.
+type terminalRecordingFlushWriter struct {
+	writer http.ResponseWriter
+}
+
+func (w *terminalRecordingFlushWriter) Header() http.Header { return w.writer.Header() }
+
+func (w *terminalRecordingFlushWriter) Write(payload []byte) (int, error) {
+	n, err := w.writer.Write(payload)
+	if flusher, ok := w.writer.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	return n, err
+}
+
+func (w *terminalRecordingFlushWriter) WriteHeader(statusCode int) { w.writer.WriteHeader(statusCode) }
+
+func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingConnection, expiresAt time.Time, executor remotecommand.Executor, stdin io.Reader, stdout, stderr io.Writer, recorder *TerminalRecorder) (TerminalRecording, error) {
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if !expiresAt.IsZero() {
+		timer := time.AfterFunc(time.Until(expiresAt), cancel)
+		defer timer.Stop()
+	}
+	validationErr := make(chan error, 1)
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-streamCtx.Done():
+				return
+			case <-ticker.C:
+				validateCtx, validateCancel := context.WithTimeout(streamCtx, 2*time.Second)
+				err := connection.Validate(validateCtx)
+				validateCancel()
+				if err != nil {
+					select {
+					case validationErr <- fmt.Errorf("terminal recording connection validation failed: %w", err):
+					default:
+					}
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	recording, streamErr := StreamTerminal(streamCtx, executor, stdin, stdout, stderr, recorder)
+	cancel()
+	<-watchDone
+	select {
+	case err := <-validationErr:
+		return recording, err
+	default:
+		return recording, streamErr
+	}
 }
 
 func terminalRecordingBindingMatches(binding TerminalRecordingConnectionBinding, session *breakglassv1alpha1.DebugSession, targetUID string) bool {
@@ -259,6 +355,10 @@ func (c *DebugSessionAPIController) handleReplayTerminalRecording(ctx *gin.Conte
 		apiresponses.RespondServiceUnavailable(ctx, "terminal recording metadata changed")
 		return
 	}
+	if !time.Now().Before(ref.ExpiresAt.Time) {
+		ctx.Status(http.StatusGone)
+		return
+	}
 	ctx.Header("Content-Type", "application/octet-stream")
 	ctx.Header("X-Breakglass-Recording-SHA256", metadata.SHA256)
 	if _, err := io.CopyN(ctx.Writer, reader, ref.Size); err != nil && !errors.Is(err, io.EOF) {
@@ -322,7 +422,7 @@ func persistTerminalRecording(ctx context.Context, store artifactstorage.Store, 
 		}
 	}
 	completedAt := time.Now().UTC()
-	return breakglassv1alpha1.TerminalRecordingRef{ID: artifactID, Namespace: pod.Namespace, PodName: pod.Name, ContainerName: container, Operation: operation, SHA256: recording.SHA256, Size: int64(len(recording.Bytes)), Backend: store.Backend(), BackendInstanceID: store.BackendInstanceID(), RuntimeBindingDigest: binding.RuntimeBindingDigest, VersionID: metadata.VersionID, StartedAt: metav1.NewTime(startedAt), CompletedAt: metav1.NewTime(completedAt), ExpiresAt: metav1.NewTime(completedAt.Add(retention))}, metadata, nil
+	return breakglassv1alpha1.TerminalRecordingRef{ID: artifactID, Namespace: pod.Namespace, PodName: pod.Name, PodUID: string(pod.UID), ContainerName: container, Operation: operation, SHA256: recording.SHA256, Size: int64(len(recording.Bytes)), Backend: store.Backend(), BackendInstanceID: store.BackendInstanceID(), RuntimeBindingDigest: binding.RuntimeBindingDigest, VersionID: metadata.VersionID, StartedAt: metav1.NewTime(startedAt), CompletedAt: metav1.NewTime(completedAt), ExpiresAt: metav1.NewTime(completedAt.Add(retention))}, metadata, nil
 }
 
 func terminalRecordingObject(ref breakglassv1alpha1.TerminalRecordingRef) artifactstorage.Object {

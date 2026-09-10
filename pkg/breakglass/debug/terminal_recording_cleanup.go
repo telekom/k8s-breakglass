@@ -5,6 +5,7 @@ package debug
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -38,6 +39,13 @@ func (c *DebugSessionController) cleanupExpiredTerminalRecordings(ctx context.Co
 			RuntimeBindingDigest: ref.RuntimeBindingDigest, Size: ref.Size, SHA256: ref.SHA256,
 		})
 		if err != nil {
+			if errors.Is(err, artifactstorage.ErrNotFound) {
+				// A prior cleanup may have deleted the exact version before its
+				// status update conflicted. Drop the stale reference and let the
+				// status patch converge on the next retry.
+				changed = true
+				continue
+			}
 			return fmt.Errorf("stat expired terminal recording %s: %w", ref.ID, err)
 		}
 		if err := c.recordingStore.DeleteVersion(ctx, object, artifactstorage.Version{

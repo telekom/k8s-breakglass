@@ -59,34 +59,40 @@ const (
 
 // DebugSessionAPIController provides REST API endpoints for debug sessions
 type DebugSessionAPIController struct {
-	quotaNamespace string
-	quotaEnabled   bool
-	log            *zap.SugaredLogger
-	client         ctrlclient.Client
-	apiReader      ctrlclient.Reader // Uncached reader for consistent reads
-	ccProvider     *cluster.ClientProvider
+	quotaNamespace   string
+	quotaEnabled     bool
+	log              *zap.SugaredLogger
+	client           ctrlclient.Client
+	apiReader        ctrlclient.Reader // Uncached reader for consistent reads
+	ccProvider       *cluster.ClientProvider
+	connectionLeases *ConnectionLeaseService
 	// clusterClients optionally overrides how target-cluster clients are
 	// obtained. When nil, ccProvider is used. Tests set this to evaluate
 	// namespace selectorTerms without a live spoke cluster.
-	clusterClients       ClientProviderInterface
-	middleware           gin.HandlerFunc
-	mailService          breakglass.MailEnqueuer
-	groupMemberResolver  breakglass.GroupMemberResolver
-	auditService         breakglass.AuditEmitter
-	disableEmail         bool
-	brandingName         string
-	baseURL              string
-	recordingStore       artifactstorage.Store
-	recordingConnections TerminalRecordingConnectionProvider
+	clusterClients          ClientProviderInterface
+	middleware              gin.HandlerFunc
+	mailService             breakglass.MailEnqueuer
+	groupMemberResolver     breakglass.GroupMemberResolver
+	auditService            breakglass.AuditEmitter
+	disableEmail            bool
+	brandingName            string
+	baseURL                 string
+	recordingStore          artifactstorage.Store
+	recordingConnections    TerminalRecordingConnectionProvider
+	terminalTargetResolver  terminalTargetResolver
+	terminalExecutorFactory terminalExecutorFactory
 }
 
 // NewDebugSessionAPIController creates a new debug session API controller
 func NewDebugSessionAPIController(log *zap.SugaredLogger, client ctrlclient.Client, ccProvider *cluster.ClientProvider, middleware gin.HandlerFunc) *DebugSessionAPIController {
+	connectionLeases := NewConnectionLeaseService(client)
 	return &DebugSessionAPIController{
-		log:        log,
-		client:     client,
-		ccProvider: ccProvider,
-		middleware: middleware,
+		log:                  log,
+		client:               client,
+		ccProvider:           ccProvider,
+		connectionLeases:     connectionLeases,
+		recordingConnections: NewTerminalRecordingConnectionProvider(connectionLeases),
+		middleware:           middleware,
 	}
 }
 

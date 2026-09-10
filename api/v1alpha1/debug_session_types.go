@@ -26,6 +26,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -193,6 +194,10 @@ type BindingReference struct {
 
 // DebugSessionStatus defines the observed state of DebugSession.
 type DebugSessionStatus struct {
+	// connectionLease is the opaque controller-owned target lease capability.
+	// It contains no Secret name or credential material.
+	// +optional
+	ConnectionLease *DebugSessionConnectionLease `json:"connectionLease,omitempty"`
 	// ObservedGeneration reflects the generation of the most recently observed DebugSession.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -286,6 +291,20 @@ type DebugSessionStatus struct {
 	// documents of a pod templateString (first document is always the PodSpec).
 	// +optional
 	PodTemplateResourceStatuses []PodTemplateResourceStatus `json:"podTemplateResourceStatuses,omitempty"`
+}
+
+// DebugSessionConnectionLease records the durable fencing identity for a
+// controller-owned target connection.
+type DebugSessionConnectionLease struct {
+	Namespace       string      `json:"namespace"`
+	Name            string      `json:"name"`
+	UID             types.UID   `json:"uid"`
+	ResourceVersion string      `json:"resourceVersion"`
+	HolderUID       types.UID   `json:"holderUID"`
+	TargetUID       types.UID   `json:"targetUID"`
+	ProfileDigest   string      `json:"profileDigest"`
+	Epoch           int64       `json:"epoch"`
+	ExpiresAt       metav1.Time `json:"expiresAt"`
 }
 
 // PodTemplateResourceStatus tracks the state of resources deployed from multi-doc pod templates.

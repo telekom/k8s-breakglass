@@ -7,9 +7,11 @@ package debug
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
@@ -23,6 +25,26 @@ type testTerminalExecutor struct {
 	output []byte
 	err    error
 }
+
+type blockingTerminalExecutor struct{}
+
+func (blockingTerminalExecutor) Stream(remotecommand.StreamOptions) error { return nil }
+
+func (blockingTerminalExecutor) StreamWithContext(ctx context.Context, options remotecommand.StreamOptions) error {
+	if _, err := options.Stdout.Write([]byte("before-expiry")); err != nil {
+		return err
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+type testTerminalRecordingConnection struct{}
+
+func (testTerminalRecordingConnection) Binding() TerminalRecordingConnectionBinding {
+	return TerminalRecordingConnectionBinding{SessionUID: "session", TargetPodUID: "pod", Epoch: "epoch", Generation: "generation", RuntimeBindingDigest: strings.Repeat("a", 64), ExpiresAt: time.Now().Add(time.Second)}
+}
+func (testTerminalRecordingConnection) Validate(context.Context) error { return nil }
+func (testTerminalRecordingConnection) Close(context.Context) error    { return nil }
 
 func (e *testTerminalExecutor) Stream(_ remotecommand.StreamOptions) error { return nil }
 
@@ -109,6 +131,35 @@ func TestStreamTerminalRecordsBothDirectionsAndFinalizesHashChain(t *testing.T) 
 	}
 	if err := recorder.Write(TerminalRecordingOutput, []byte("late")); err == nil {
 		t.Fatal("Write() after Finalize() succeeded")
+	}
+}
+
+func TestStreamTerminalPreservesPartialRecordingWhenExecutorFails(t *testing.T) {
+	executor := &testTerminalExecutor{output: []byte("partial-output"), err: errors.New("remote command failed")}
+	recorder := NewTerminalRecorder(1024)
+	var stdout bytes.Buffer
+
+	result, err := StreamTerminal(context.Background(), executor, strings.NewReader("input"), &stdout, nil, recorder)
+	if err == nil || !strings.Contains(err.Error(), "remote command failed") {
+		t.Fatalf("StreamTerminal() error = %v, want executor failure", err)
+	}
+	if stdout.String() != "partial-output" {
+		t.Fatalf("stdout = %q, want partial-output", stdout.String())
+	}
+	if len(result.Bytes) == 0 || result.SHA256 == "" {
+		t.Fatalf("partial recording was discarded: %#v", result)
+	}
+}
+
+func TestStreamTerminalWithLeaseStopsAtBindingExpiryAndKeepsEvidence(t *testing.T) {
+	recorder := NewTerminalRecorder(1024)
+	var stdout bytes.Buffer
+	recording, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now().Add(20*time.Millisecond), blockingTerminalExecutor{}, nil, &stdout, &stdout, recorder)
+	if err == nil || !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("streamTerminalWithLease() error = %v, want expiry cancellation", err)
+	}
+	if stdout.String() != "before-expiry" || len(recording.Bytes) == 0 {
+		t.Fatalf("expiry discarded partial output: stdout=%q recording=%d", stdout.String(), len(recording.Bytes))
 	}
 }
 

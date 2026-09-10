@@ -1229,7 +1229,7 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 		// Ephemeral containers cannot be removed; without copied pods there is
 		// no spoke-cluster cleanup to perform.
 		return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
-			status.KubectlDebugStatus = nil
+			clearKubectlDebugResources(status)
 		})
 	}
 
@@ -1274,8 +1274,20 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 	}
 
 	return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
-		status.KubectlDebugStatus = nil
+		clearKubectlDebugResources(status)
 	})
+}
+
+// clearKubectlDebugResources removes spoke-resource inventory while retaining
+// durable terminal-recording references for their independent retention cycle.
+func clearKubectlDebugResources(status *breakglassv1alpha1.DebugSessionStatus) {
+	if status.KubectlDebugStatus == nil || len(status.KubectlDebugStatus.TerminalRecordings) == 0 {
+		status.KubectlDebugStatus = nil
+		return
+	}
+	status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{
+		TerminalRecordings: append([]breakglassv1alpha1.TerminalRecordingRef(nil), status.KubectlDebugStatus.TerminalRecordings...),
+	}
 }
 
 // Helper functions

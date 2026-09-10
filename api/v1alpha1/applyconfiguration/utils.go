@@ -124,6 +124,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.DebugSessionClusterBindingSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionClusterBindingStatus"):
 		return &apiv1alpha1.DebugSessionClusterBindingStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionConnectionLease"):
+		return &apiv1alpha1.DebugSessionConnectionLeaseApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionConstraints"):
 		return &apiv1alpha1.DebugSessionConstraintsApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionNotificationConfig"):

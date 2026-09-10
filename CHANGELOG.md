@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exec/attach recorder, pin finalized artifacts to their live Pod UID and
   lease binding, and deny direct target exec/attach authorization.
 
+- Preserve partial terminal evidence across stream failures, keep artifact
+  publication when status updates conflict, and retry retention cleanup after
+  backend or already-deleted-object races.
+
 - Recover tracked resources after bounded create timeouts when session and
   operation markers and requested content match the persisted object.
 
