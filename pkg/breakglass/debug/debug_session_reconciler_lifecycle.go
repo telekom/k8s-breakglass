@@ -1143,8 +1143,13 @@ func (c *DebugSessionController) cleanupDeployedResources(
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("deployed resource %s/%s creation outcome is unresolved", ref.Namespace, ref.Name))
 			continue
 		}
-		// Skip auxiliary resources - already cleaned up by manager
-		if strings.HasPrefix(ref.Source, "auxiliary:") {
+		// Confirm retention before any generic target deletion, including legacy
+		// references whose source was not persisted.
+		if utils.DebugSessionResourceIntentionallyRetained(ds, ref) {
+			continue
+		}
+		// Skip auxiliary resources - already cleaned up by manager.
+		if strings.HasPrefix(ref.Source, "auxiliary:") || (ref.Source == "" && auxiliaryResourceCoordinatesKnown(ds, ref)) {
 			if keepAuxiliaryRefs {
 				remainingDeployedResources = append(remainingDeployedResources, ref)
 				continue
@@ -1280,12 +1285,12 @@ func captureResourceUID(_ context.Context, _ ctrlclient.Client, obj ctrlclient.O
 
 func auxiliaryResourceDeleted(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
-		if status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
+		if ref.UID != "" && status.UID == ref.UID && (ref.Source == "" || ref.Source == "auxiliary:"+status.Name) && status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
 			status.ResourceName == ref.Name && status.Namespace == ref.Namespace {
 			return status.Deleted
 		}
 		for _, additional := range status.AdditionalResources {
-			if additional.Kind == ref.Kind && additional.APIVersion == ref.APIVersion &&
+			if ref.UID != "" && additional.UID == ref.UID && (ref.Source == "" || ref.Source == "auxiliary:"+status.Name) && additional.Kind == ref.Kind && additional.APIVersion == ref.APIVersion &&
 				additional.ResourceName == ref.Name && additional.Namespace == ref.Namespace {
 				return additional.Deleted
 			}
@@ -1296,12 +1301,12 @@ func auxiliaryResourceDeleted(ds *breakglassv1alpha1.DebugSession, ref breakglas
 
 func auxiliaryResourceRequiresCleanup(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
-		if status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
+		if ref.UID != "" && status.UID == ref.UID && (ref.Source == "" || ref.Source == "auxiliary:"+status.Name) && status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
 			status.ResourceName == ref.Name && status.Namespace == ref.Namespace {
 			return shouldDeleteAuxiliaryResource(ds, status.Name)
 		}
 		for _, additional := range status.AdditionalResources {
-			if additional.Kind == ref.Kind && additional.APIVersion == ref.APIVersion &&
+			if ref.UID != "" && additional.UID == ref.UID && (ref.Source == "" || ref.Source == "auxiliary:"+status.Name) && additional.Kind == ref.Kind && additional.APIVersion == ref.APIVersion &&
 				additional.ResourceName == ref.Name && additional.Namespace == ref.Namespace {
 				return shouldDeleteAuxiliaryResource(ds, status.Name)
 			}
@@ -1315,12 +1320,12 @@ func auxiliaryResourceRequiresCleanup(ds *breakglassv1alpha1.DebugSession, ref b
 
 func auxiliaryResourceStatusKnown(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
-		if status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
+		if ref.UID != "" && status.UID == ref.UID && (ref.Source == "" || ref.Source == "auxiliary:"+status.Name) && status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
 			status.ResourceName == ref.Name && status.Namespace == ref.Namespace {
 			return true
 		}
 		for _, additional := range status.AdditionalResources {
-			if additional.Kind == ref.Kind && additional.APIVersion == ref.APIVersion &&
+			if ref.UID != "" && additional.UID == ref.UID && (ref.Source == "" || ref.Source == "auxiliary:"+status.Name) && additional.Kind == ref.Kind && additional.APIVersion == ref.APIVersion &&
 				additional.ResourceName == ref.Name && additional.Namespace == ref.Namespace {
 				return true
 			}
@@ -1738,3 +1743,19 @@ func (c *DebugSessionController) updatePodTemplateUsedBy(ctx context.Context, po
 var _ interface {
 	GetRESTConfig(ctx context.Context, name string) (*rest.Config, error)
 } = (*cluster.ClientProvider)(nil)
+
+// Legacy source-less references still need auxiliary policy resolution before
+// generic deletion. Coordinates select the policy lane, never deletion authority.
+func auxiliaryResourceCoordinatesKnown(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
+	for _, status := range ds.Status.AuxiliaryResourceStatuses {
+		if status.Kind == ref.Kind && status.APIVersion == ref.APIVersion && status.ResourceName == ref.Name && status.Namespace == ref.Namespace {
+			return true
+		}
+		for _, child := range status.AdditionalResources {
+			if child.Kind == ref.Kind && child.APIVersion == ref.APIVersion && child.ResourceName == ref.Name && child.Namespace == ref.Namespace {
+				return true
+			}
+		}
+	}
+	return false
+}

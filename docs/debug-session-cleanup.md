@@ -67,3 +67,8 @@ Cleanup retention checks share the same policy across session reconciliation and
 ClusterConfig deletion. Partial auxiliary identities and UID-less children remain
 outstanding; only confirmed retained identities and confirmed deleted pod-template
 entries are exempt. Rejected sessions retain terminal accounting behavior.
+
+Legacy deployed references without a source still honor auxiliary retention when
+the full API version, kind, namespace, name, and UID match. Coordinate matches
+alone select conservative policy review; mismatched UIDs remain durable residuals
+and cannot be retired using another object's deleted status.

@@ -241,8 +241,9 @@ These capture access to non-API endpoints:
 - `debug_session.binding_unresolved`
 - `debug_session.command` / `debug_session.file_access`
 
-Debug-session audit targets include the session namespace so namespaced sessions
-remain unambiguous when events from multiple namespaces share a sink.
+New lifecycle and API audit producers include the session namespace. Legacy
+`DebugSessionCreated` and `DebugSessionTerminated` manager helpers omit it;
+consumers of those helpers cannot disambiguate equal names across namespaces.
 
 ### Authentication Events
 - `auth.attempt` / `auth.success` / `auth.failure`
