@@ -87,3 +87,14 @@ func TestValidateExtraDeployValueNamesRejectsUnknownAndDisabledWhenBound(t *test
 		t.Fatalf("expected unknown and disabled values to be rejected, got %v", errs)
 	}
 }
+
+func TestBindingPatternErrorBelongsToNarrowPattern(t *testing.T) {
+	vars, err := EffectiveExtraDeployVariables([]ExtraDeployVariable{{Name: "value", InputType: InputTypeText, Validation: &VariableValidation{Pattern: "^safe-", PatternError: "template error"}}}, []ExtraDeployVariableConstraint{{Name: "value", Validation: &VariableValidation{Pattern: "-prod$", PatternError: "binding error"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	errors := ValidateExtraDeployValuesWithGroups(map[string]apiextensionsv1.JSON{"value": {Raw: []byte(`"safe-dev"`)}}, vars, nil, field.NewPath("values"))
+	if len(errors) != 1 || errors[0].Detail != "binding error" {
+		t.Fatalf("unexpected errors: %v", errors)
+	}
+}

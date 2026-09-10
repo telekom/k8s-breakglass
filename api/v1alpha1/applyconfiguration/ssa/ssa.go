@@ -928,6 +928,9 @@ func DebugSessionTemplateSpecFrom(t *breakglassv1alpha1.DebugSessionTemplateSpec
 	if t.Mode != "" {
 		result.WithMode(t.Mode)
 	}
+	if t.PodTemplateString != "" {
+		result.WithPodTemplateString(t.PodTemplateString)
+	}
 	if t.PodTemplateRef != nil {
 		result.WithPodTemplateRef(DebugPodTemplateReferenceFrom(t.PodTemplateRef))
 	}
@@ -982,6 +985,9 @@ func ExtraDeployVariableFrom(v *breakglassv1alpha1.ExtraDeployVariable) *ac.Extr
 		return nil
 	}
 	result := ac.ExtraDeployVariable().WithName(v.Name)
+	if v.Disabled {
+		result.WithDisabled(true)
+	}
 	if v.DisplayName != "" {
 		result.WithDisplayName(v.DisplayName)
 	}
