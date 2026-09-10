@@ -1644,6 +1644,7 @@ var validDebugSessionStates = map[string]struct{}{
 	string(breakglassv1alpha1.DebugSessionStatePending):         {},
 	string(breakglassv1alpha1.DebugSessionStatePendingApproval): {},
 	string(breakglassv1alpha1.DebugSessionStateActive):          {},
+	string(breakglassv1alpha1.DebugSessionStateRejected):        {},
 	string(breakglassv1alpha1.DebugSessionStateExpired):         {},
 	string(breakglassv1alpha1.DebugSessionStateTerminated):      {},
 	string(breakglassv1alpha1.DebugSessionStateFailed):          {},

@@ -82,8 +82,7 @@ func (c *SessionManager) reserveSession(ctx context.Context, s *breakglassv1alph
 			if err != nil {
 				return false, err
 			}
-			terminal := current.Status.State == breakglassv1alpha1.DebugSessionStateTerminated || current.Status.State == breakglassv1alpha1.DebugSessionStateExpired || current.Status.State == breakglassv1alpha1.DebugSessionStateFailed
-			return string(current.UID) == entry.UID && !terminal, nil
+			return string(current.UID) == entry.UID && !isTerminalDebugSessionState(current.Status.State), nil
 		}
 		if entry.Kind != "BreakglassSession" {
 			return false, fmt.Errorf("unsupported quota entry kind")

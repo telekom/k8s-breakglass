@@ -421,7 +421,8 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 	}
 
 	// Check session can be terminated
-	if session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
+	if session.Status.State == breakglassv1alpha1.DebugSessionStateRejected ||
+		session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
 		session.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
 		session.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is already in terminal state '%s'", session.Status.State))
@@ -655,7 +656,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 
 	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.Approval = approval
-		status.State = breakglassv1alpha1.DebugSessionStateTerminated
+		status.State = breakglassv1alpha1.DebugSessionStateRejected
 		status.Message = fmt.Sprintf("Rejected by %s: %s", currentUser, sanitizedReason)
 	}); err != nil {
 		respondDebugSessionStatusPatchError(ctx, reqLog, "reject session", "failed to reject session", name, err)
@@ -666,7 +667,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	c.sendDebugSessionRejectionEmail(apiCtx, session)
 
 	// Emit audit event for session rejection
-	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionTerminated, session, currentUser, fmt.Sprintf("Debug session rejected: %s", req.Reason))
+	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionRejected, session, currentUser, fmt.Sprintf("Debug session rejected: %s", req.Reason))
 
 	reqLog.Infow("Debug session rejected", "session", name, "rejector", currentUser, "reason", req.Reason)
 	metrics.DebugSessionRejected.WithLabelValues(session.Spec.Cluster, "user_rejected").Inc()

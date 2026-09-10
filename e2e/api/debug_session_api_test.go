@@ -2116,8 +2116,8 @@ func TestDebugSessionAPIApproveReject(t *testing.T) {
 		time.Sleep(helpers.CachePropagationDelay)
 		updatedSession, err := requesterClient.GetDebugSession(ctx, t, session.Name)
 		require.NoError(t, err)
-		assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, updatedSession.Status.State,
-			"Session should be terminated after rejection")
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, updatedSession.Status.State,
+			"Session should be rejected after rejection")
 	})
 
 	t.Run("ApproveNonPendingSession", func(t *testing.T) {

@@ -339,8 +339,9 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 		routine.Log.Debugw("Checking debug session for expiration",
 			system.NamespacedFields(ds.Name, ds.Namespace)...)
 
-		// Skip sessions that are already in terminal states (Expired, Terminated, Failed)
+		// Skip sessions that are already in terminal states (Rejected, Expired, Terminated, Failed)
 		if ds.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
+			ds.Status.State == breakglassv1alpha1.DebugSessionStateRejected ||
 			ds.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
 			ds.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
 			if debugSessionCleanupOutstanding(&ds) {

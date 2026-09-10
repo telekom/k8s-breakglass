@@ -88,6 +88,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Retry final quota-admission completion after same-UID resource-version
   conflicts, while refusing terminal or replacement sessions.
+- Preserve per-template accounting repair intervals and metric publication order; align the built-in rejected mock session and CLI rejection test with `Rejected`.
+
+- Align rejection API, mock, E2E, and audit contracts with `Rejected`; coalesce periodic active accounting while preserving immediate lifecycle and failure repair.
+
+- Reconcile debug-session active counts from live state across clusters, retrying template conflicts without duplicate decrements.
+
+- Persist DebugSession rejection as a terminal `Rejected` state across API,
+  reconciliation, cleanup, CLI filters, and the frontend.
+- Make terminal cleanup accounting idempotent and avoid decrementing active
+  counts for sessions rejected before activation.
 
 - If a debug session expires after an ephemeral-container intent is persisted
   but before the target write, record the operation as Failed without touching

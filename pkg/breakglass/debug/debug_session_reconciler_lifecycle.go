@@ -18,6 +18,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -1211,47 +1212,163 @@ func IsPodInDebugSession(namespace, name string, allowedPods []breakglassv1alpha
 	return false
 }
 
-// updateTemplateStatus updates the DebugSessionTemplate and DebugPodTemplate status
-// to reflect active session counts and usage tracking.
-// incrementActive: true when activating a session, false when deactivating (cleanup/expiry)
-func (c *DebugSessionController) updateTemplateStatus(ctx context.Context, template *breakglassv1alpha1.DebugSessionTemplate, incrementActive bool) error {
-	log := c.log.With("template", template.Name)
+// reconcilePeriodicActiveAccounting coalesces periodic repairs per template.
+// Lifecycle transitions bypass this throttle, and failed repairs remain retryable.
+func (c *DebugSessionController) reconcilePeriodicActiveAccounting(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	_, err, _ := c.accountingFlight.Do(ds.Spec.TemplateRef, func() (any, error) {
+		c.accountingMu.Lock()
+		last := c.accountingLast[ds.Spec.TemplateRef]
+		failureVersion := c.accountingFailureVersion
+		c.accountingMu.Unlock()
+		if time.Since(last) < DefaultDebugSessionRequeue {
+			return nil, nil
+		}
+		if err := c.reconcileActiveAccounting(ctx, ds, true); err != nil {
+			return nil, err
+		}
+		c.accountingMu.Lock()
+		defer c.accountingMu.Unlock()
+		// A lifecycle failure racing this scan must still get an immediate retry.
+		if failureVersion != c.accountingFailureVersion {
+			return nil, nil
+		}
+		// Bound process-local repair bookkeeping; eviction only adds a repair.
+		if c.accountingLast == nil {
+			c.accountingLast = make(map[string]time.Time)
+		}
+		if _, exists := c.accountingLast[ds.Spec.TemplateRef]; !exists && len(c.accountingLast) >= 1024 {
+			var oldest string
+			for name, repaired := range c.accountingLast {
+				if oldest == "" || repaired.Before(c.accountingLast[oldest]) {
+					oldest = name
+				}
+			}
+			delete(c.accountingLast, oldest)
+		}
+		c.accountingLast[ds.Spec.TemplateRef] = time.Now()
+		return nil, nil
+	})
+	return err
+}
 
-	// Re-fetch template to get latest version
-	currentTemplate := &breakglassv1alpha1.DebugSessionTemplate{}
-	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: template.Name}, currentTemplate); err != nil {
-		return fmt.Errorf("failed to get template: %w", err)
+// lockActiveAccounting serializes scans and metric publication for one template.
+// Entries exist only while workers are using or waiting for that template.
+func (c *DebugSessionController) lockActiveAccounting(template string) func() {
+	c.accountingMu.Lock()
+	if c.accountingLocks == nil {
+		c.accountingLocks = make(map[string]*accountingLock)
 	}
+	entry := c.accountingLocks[template]
+	if entry == nil {
+		entry = &accountingLock{}
+		c.accountingLocks[template] = entry
+	}
+	entry.users++
+	c.accountingMu.Unlock()
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		c.accountingMu.Lock()
+		entry.users--
+		if entry.users == 0 {
+			delete(c.accountingLocks, template)
+		}
+		c.accountingMu.Unlock()
+	}
+}
 
-	// Update active session count
-	if incrementActive {
-		currentTemplate.Status.ActiveSessionCount++
-		now := metav1.Now()
-		currentTemplate.Status.LastUsedAt = &now
-	} else {
-		if currentTemplate.Status.ActiveSessionCount > 0 {
-			currentTemplate.Status.ActiveSessionCount--
+// reconcileActiveAccounting derives aggregates from authoritative session state.
+// Template CAS retries repeat the list; periodic Active reconciliation repairs
+// snapshots raced by a session transition without replaying increment/decrement.
+func (c *DebugSessionController) reconcileActiveAccounting(ctx context.Context, ds *breakglassv1alpha1.DebugSession, markUsed bool) (resultErr error) {
+	unlock := c.lockActiveAccounting(ds.Spec.TemplateRef)
+	defer unlock()
+	defer func() {
+		if resultErr != nil {
+			c.accountingMu.Lock()
+			delete(c.accountingLast, ds.Spec.TemplateRef)
+			c.accountingFailureVersion++
+			c.accountingMu.Unlock()
+		}
+	}()
+	reader := c.approvalReader()
+	var templateUID types.UID
+	var podTemplateName string
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		template := &breakglassv1alpha1.DebugSessionTemplate{}
+		templateExists := ds.Spec.TemplateRef != ""
+		if templateExists {
+			if err := reader.Get(ctx, ctrlclient.ObjectKey{Name: ds.Spec.TemplateRef}, template); err != nil {
+				if !apierrors.IsNotFound(err) {
+					return fmt.Errorf("read accounting template: %w", err)
+				}
+				templateExists = false
+			}
+			if templateExists {
+				if templateUID != "" && template.UID != templateUID {
+					return fmt.Errorf("accounting template identity changed")
+				}
+				templateUID = template.UID
+			}
+		}
+		var total int32
+		clusterCounts := map[string]int32{ds.Spec.Cluster: 0}
+		var latestStart *metav1.Time
+		continuation := ""
+		for {
+			var sessions breakglassv1alpha1.DebugSessionList
+			if err := reader.List(ctx, &sessions, &ctrlclient.ListOptions{Limit: 500, Continue: continuation, Raw: &metav1.ListOptions{FieldSelector: fields.OneTermEqualSelector("spec.templateRef", ds.Spec.TemplateRef).String()}}); err != nil {
+				return fmt.Errorf("list accounting sessions: %w", err)
+			}
+			for i := range sessions.Items {
+				session := &sessions.Items[i]
+				if session.Spec.TemplateRef != ds.Spec.TemplateRef {
+					continue
+				}
+				if _, ok := clusterCounts[session.Spec.Cluster]; !ok {
+					clusterCounts[session.Spec.Cluster] = 0
+				}
+				if session.Status.State == breakglassv1alpha1.DebugSessionStateActive {
+					total++
+					clusterCounts[session.Spec.Cluster]++
+				}
+				if session.Status.StartsAt != nil && (latestStart == nil || latestStart.Before(session.Status.StartsAt)) {
+					latestStart = session.Status.StartsAt.DeepCopy()
+				}
+			}
+			continuation = sessions.Continue
+			if continuation == "" {
+				break
+			}
+		}
+		if templateExists {
+			base := template.DeepCopy()
+			template.Status.ActiveSessionCount = total
+			if latestStart != nil && (template.Status.LastUsedAt == nil || template.Status.LastUsedAt.Before(latestStart)) {
+				template.Status.LastUsedAt = latestStart
+			}
+			if base.Status.ActiveSessionCount != template.Status.ActiveSessionCount || !base.Status.LastUsedAt.Equal(template.Status.LastUsedAt) {
+				if err := c.client.Status().Patch(ctx, template, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
+					return fmt.Errorf("patch accounting template: %w", err)
+				}
+			}
+			if (markUsed || latestStart != nil) && template.Spec.PodTemplateRef != nil {
+				podTemplateName = template.Spec.PodTemplateRef.Name
+			}
+		}
+		for clusterName, count := range clusterCounts {
+			metrics.DebugSessionsActive.WithLabelValues(clusterName, ds.Spec.TemplateRef).Set(float64(count))
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if podTemplateName != "" {
+		if err := c.updatePodTemplateUsedBy(ctx, podTemplateName, ds.Spec.TemplateRef); err != nil {
+			c.log.Warnw("Failed to repair optional pod template usage; periodic reconciliation will retry", "podTemplate", podTemplateName, "error", err)
 		}
 	}
-
-	// Update the template status using SSA
-	if err := ssa.ApplyDebugSessionTemplateStatus(ctx, c.client, currentTemplate); err != nil {
-		return fmt.Errorf("failed to update template status: %w", err)
-	}
-
-	log.Debugw("Updated template status",
-		"activeSessionCount", currentTemplate.Status.ActiveSessionCount,
-		"lastUsedAt", currentTemplate.Status.LastUsedAt,
-		"incrementActive", incrementActive)
-
-	// Also update the DebugPodTemplate.status.usedBy if a pod template is referenced
-	if currentTemplate.Spec.PodTemplateRef != nil && currentTemplate.Spec.PodTemplateRef.Name != "" {
-		if err := c.updatePodTemplateUsedBy(ctx, currentTemplate.Spec.PodTemplateRef.Name, template.Name); err != nil {
-			log.Warnw("Failed to update pod template usedBy", "podTemplate", currentTemplate.Spec.PodTemplateRef.Name, "error", err)
-			// Non-fatal
-		}
-	}
-
 	return nil
 }
 

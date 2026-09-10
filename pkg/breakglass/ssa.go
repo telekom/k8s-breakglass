@@ -198,6 +198,7 @@ func validateDebugSessionStatusMutation(oldStatus, newStatus breakglassv1alpha1.
 func isTerminalDebugSessionState(state breakglassv1alpha1.DebugSessionState) bool {
 	return state == breakglassv1alpha1.DebugSessionStateExpired ||
 		state == breakglassv1alpha1.DebugSessionStateTerminated ||
+		state == breakglassv1alpha1.DebugSessionStateRejected ||
 		state == breakglassv1alpha1.DebugSessionStateFailed
 }
 

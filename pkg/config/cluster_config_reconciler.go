@@ -393,7 +393,7 @@ func debugSessionHasOutstandingAuxiliaryResources(session *breakglassv1alpha1.De
 }
 
 func isDebugSessionTerminal(state breakglassv1alpha1.DebugSessionState) bool {
-	return state == breakglassv1alpha1.DebugSessionStateTerminated ||
+	return state == breakglassv1alpha1.DebugSessionStateRejected || state == breakglassv1alpha1.DebugSessionStateTerminated ||
 		state == breakglassv1alpha1.DebugSessionStateExpired ||
 		state == breakglassv1alpha1.DebugSessionStateFailed
 }

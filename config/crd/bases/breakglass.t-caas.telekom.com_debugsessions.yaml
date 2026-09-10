@@ -6328,6 +6328,7 @@ spec:
                 - Pending
                 - PendingApproval
                 - Active
+                - Rejected
                 - Expired
                 - Terminated
                 - Failed

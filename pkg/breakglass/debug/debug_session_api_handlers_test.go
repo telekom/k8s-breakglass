@@ -32,6 +32,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"go.uber.org/zap/zaptest"
 	corev1 "k8s.io/api/core/v1"
@@ -2848,7 +2849,8 @@ func TestHandleRejectDebugSession_Success(t *testing.T) {
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
 
-	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+	emitter := NewMockAuditEmitter(true)
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).WithAuditService(emitter)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -2872,8 +2874,18 @@ func TestHandleRejectDebugSession_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 	// Response now returns the session object, verify it contains expected fields
 	assert.Contains(t, rr.Body.String(), "pending-session")
-	assert.Contains(t, rr.Body.String(), "Terminated")
+	assert.Contains(t, rr.Body.String(), "Rejected")
 	assert.Contains(t, rr.Body.String(), "Rejected by approver@example.com")
+	var updated breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "pending-session"}, &updated))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, updated.Status.State)
+
+	events := emitter.GetEvents()
+	require.Len(t, events, 1)
+	assert.Equal(t, audit.EventDebugSessionRejected, events[0].Type)
+	assert.Equal(t, "pending-session", events[0].Target.Name)
+	assert.Equal(t, "default", events[0].Target.Namespace)
+	assert.Equal(t, "approver@example.com", events[0].Actor.User)
 }
 
 func TestHandleRejectDebugSession_RejectsTrailingJSON(t *testing.T) {

@@ -55,31 +55,6 @@ describe("Debug Session Types", () => {
   });
 });
 
-describe("Debug Session State Mapping", () => {
-  const stateColors: Record<string, string> = {
-    Pending: "warning",
-    PendingApproval: "warning",
-    Active: "success",
-    Expired: "error",
-    Terminated: "error",
-    Failed: "error",
-  };
-
-  it("maps Pending state to warning color", () => {
-    expect(stateColors["Pending"]).toBe("warning");
-  });
-
-  it("maps Active state to success color", () => {
-    expect(stateColors["Active"]).toBe("success");
-  });
-
-  it("maps terminal states to error color", () => {
-    expect(stateColors["Expired"]).toBe("error");
-    expect(stateColors["Terminated"]).toBe("error");
-    expect(stateColors["Failed"]).toBe("error");
-  });
-});
-
 describe("Debug Session Actions", () => {
   const canJoin = (state: string, isOwner: boolean, isParticipant: boolean) =>
     state === "Active" && !isOwner && !isParticipant;

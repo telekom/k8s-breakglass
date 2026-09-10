@@ -77,7 +77,7 @@ func newDeploymentFenceFixture(t *testing.T) (*DebugSessionController, *breakgla
 	hub := fake.NewClientBuilder().
 		WithScheme(s).
 		WithObjects(cc, secret, ds, template).
-		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).
 		WithInterceptorFuncs(interceptor.Funcs{Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 			if obj.GetUID() == "" {
 				obj.SetUID("created-hub-resource-uid")

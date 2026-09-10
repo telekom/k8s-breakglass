@@ -99,6 +99,7 @@ var canonicalDebugSessionStates = map[string]string{
 	strings.ToLower(string(breakglassv1alpha1.DebugSessionStatePending)):         string(breakglassv1alpha1.DebugSessionStatePending),
 	strings.ToLower(string(breakglassv1alpha1.DebugSessionStatePendingApproval)): string(breakglassv1alpha1.DebugSessionStatePendingApproval),
 	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateActive)):          string(breakglassv1alpha1.DebugSessionStateActive),
+	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateRejected)):        string(breakglassv1alpha1.DebugSessionStateRejected),
 	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateExpired)):         string(breakglassv1alpha1.DebugSessionStateExpired),
 	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateTerminated)):      string(breakglassv1alpha1.DebugSessionStateTerminated),
 	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateFailed)):          string(breakglassv1alpha1.DebugSessionStateFailed),
@@ -107,7 +108,7 @@ var canonicalDebugSessionStates = map[string]string{
 func validateDebugSessionState(state string) (string, error) {
 	canonical, ok := canonicalDebugSessionStates[strings.ToLower(state)]
 	if !ok {
-		return "", fmt.Errorf("unknown debug session state %q: supported values are Pending, PendingApproval, Active, Expired, Terminated, Failed", state)
+		return "", fmt.Errorf("unknown debug session state %q: supported values are Pending, PendingApproval, Active, Rejected, Expired, Terminated, Failed", state)
 	}
 	return canonical, nil
 }

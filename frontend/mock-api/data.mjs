@@ -735,7 +735,7 @@ const mockDebugSessions = [
     name: "debug-rejected-001",
     templateRef: "node-debug",
     cluster: "production-critical",
-    state: "Failed",
+    state: "Rejected",
     reason: "Requested node access without proper justification",
     rejectedBy: "security-lead@breakglass.dev",
     rejectionReason: "Insufficient justification for node-level access",
@@ -1827,6 +1827,13 @@ export function createSessionFromRequest(body = {}) {
   });
   sessions.set(name, session);
   return cloneSession(session);
+}
+
+export function rejectDebugSession(name, reason) {
+  return updateDebugSessionState(name, "Rejected", {
+    rejectedBy: CURRENT_USER_EMAIL,
+    reason: reason || "Rejected",
+  });
 }
 
 export function findSession(name) {

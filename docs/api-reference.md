@@ -1161,7 +1161,7 @@ configured `minLength` after sanitization.
 If the session changes concurrently while recording rejection status, the
 endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
 
-**Response:** Updated `DebugSession` object with `state: Terminated`.
+**Response:** Updated `DebugSession` object with `state: Rejected`.
 
 ### List Debug Session Templates
 

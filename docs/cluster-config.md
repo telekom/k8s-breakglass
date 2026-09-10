@@ -33,7 +33,7 @@ This ensures that:
 
 **Terminal states that are preserved:**
 - BreakglassSessions in `Expired`, `Rejected`, `Withdrawn`, `IdleExpired`, or `ApprovalTimeout` states are not modified
-- DebugSessions in `Terminated` or `Expired` states are not modified; `Failed` sessions are transitioned to `Terminated` so cleanup can remove any remaining debug resources.
+- DebugSessions in `Rejected`, `Terminated`, `Expired`, or `Failed` states are not modified; their controller cleanup removes any remaining tracked debug resources.
 
 ### Metrics
 
