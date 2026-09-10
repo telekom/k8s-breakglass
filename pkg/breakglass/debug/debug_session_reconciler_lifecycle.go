@@ -741,7 +741,11 @@ func mergeKubectlDebugStatus(baseline, desired, current *breakglassv1alpha1.Kube
 			return fmt.Sprintf("%s|%s|%s|%s|%s", ref.CopyNamespace, ref.CopyName, canonicalCopiedPodUID(ref), ref.OriginalNamespace, ref.OriginalPod)
 		},
 	)
-	if len(merged.EphemeralContainersInjected) == 0 && len(merged.CopiedPods) == 0 {
+	merged.TerminalRecordings = mergeCleanupInventory(
+		baseline.TerminalRecordings, desired.TerminalRecordings, current.TerminalRecordings,
+		func(ref breakglassv1alpha1.TerminalRecordingRef) string { return ref.ID },
+	)
+	if len(merged.EphemeralContainersInjected) == 0 && len(merged.CopiedPods) == 0 && len(merged.TerminalRecordings) == 0 {
 		return nil
 	}
 	return merged

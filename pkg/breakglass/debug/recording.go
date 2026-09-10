@@ -199,3 +199,13 @@ func rejectUnsupportedTerminalRecording(template *breakglassv1alpha1.DebugSessio
 	}
 	return nil
 }
+
+func (c *DebugSessionController) ensureTerminalRecordingConfigured(template *breakglassv1alpha1.DebugSessionTemplate) error {
+	if template == nil || template.Spec.Audit == nil || !template.Spec.Audit.EnableTerminalRecording {
+		return nil
+	}
+	if !c.terminalRecordingConfigured() {
+		return rejectUnsupportedTerminalRecording(template)
+	}
+	return nil
+}

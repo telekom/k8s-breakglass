@@ -30,6 +30,7 @@ import (
 	"github.com/gin-gonic/gin"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
+	artifactstorage "github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/jsonutil"
@@ -67,14 +68,16 @@ type DebugSessionAPIController struct {
 	// clusterClients optionally overrides how target-cluster clients are
 	// obtained. When nil, ccProvider is used. Tests set this to evaluate
 	// namespace selectorTerms without a live spoke cluster.
-	clusterClients      ClientProviderInterface
-	middleware          gin.HandlerFunc
-	mailService         breakglass.MailEnqueuer
-	groupMemberResolver breakglass.GroupMemberResolver
-	auditService        breakglass.AuditEmitter
-	disableEmail        bool
-	brandingName        string
-	baseURL             string
+	clusterClients       ClientProviderInterface
+	middleware           gin.HandlerFunc
+	mailService          breakglass.MailEnqueuer
+	groupMemberResolver  breakglass.GroupMemberResolver
+	auditService         breakglass.AuditEmitter
+	disableEmail         bool
+	brandingName         string
+	baseURL              string
+	recordingStore       artifactstorage.Store
+	recordingConnections TerminalRecordingConnectionProvider
 }
 
 // NewDebugSessionAPIController creates a new debug session API controller
@@ -163,6 +166,8 @@ func (c *DebugSessionAPIController) Register(rg *gin.RouterGroup) error {
 	rg.POST("/:name/reject", breakglass.InstrumentedHandler("handleRejectDebugSession", c.handleRejectDebugSession))
 
 	// Kubectl-debug mode endpoints
+	rg.POST("/:name/terminal", breakglass.InstrumentedHandler("handleTerminalRecording", c.handleTerminalRecording))
+	rg.GET("/:name/terminal/:id", breakglass.InstrumentedHandler("handleReplayTerminalRecording", c.handleReplayTerminalRecording))
 	rg.POST("/:name/injectEphemeralContainer", breakglass.InstrumentedHandler("handleInjectEphemeralContainer", c.handleInjectEphemeralContainer))
 	rg.POST("/:name/createPodCopy", breakglass.InstrumentedHandler("handleCreatePodCopy", c.handleCreatePodCopy))
 	rg.POST("/:name/createNodeDebugPod", breakglass.InstrumentedHandler("handleCreateNodeDebugPod", c.handleCreateNodeDebugPod))

@@ -425,6 +425,11 @@ func (wc *WebhookController) findDebugSessionAccessForIssuerInNamespace(ctx cont
 				"operation", ra.Subresource)
 			continue
 		}
+		if terminalRecordingRequired(ds, ra.Subresource) {
+			reason := fmt.Sprintf("direct pod %s is denied because terminal recording is required; use the Breakglass terminal endpoint", ra.Subresource)
+			reqLog.Debugw("Direct debug-session pod operation denied because recording is required", "session", ds.Name, "operation", ra.Subresource)
+			return ds, reason
+		}
 
 		// Check if the user is a participant of this session
 		for _, p := range ds.Status.Participants {
@@ -457,6 +462,12 @@ func (wc *WebhookController) findDebugSessionAccessForIssuerInNamespace(ctx cont
 	}
 
 	return nil, ""
+}
+
+func terminalRecordingRequired(session *breakglassv1alpha1.DebugSession, operation string) bool {
+	return session != nil && (operation == "exec" || operation == "attach") &&
+		session.Status.ResolvedTemplate != nil && session.Status.ResolvedTemplate.Audit != nil &&
+		session.Status.ResolvedTemplate.Audit.EnableTerminalRecording
 }
 
 func (wc *WebhookController) listLiveDebugSessionsForAuthorization(ctx context.Context, username, clusterName, sessionNamespace string) ([]breakglassv1alpha1.DebugSession, error) {
@@ -539,6 +550,9 @@ func (wc *WebhookController) liveDebugSessionAccess(ctx context.Context, usernam
 		}
 	}
 	if !podAllowed || !ds.Status.AllowedPodOperations.IsOperationAllowed(ra.Subresource) {
+		return false, ""
+	}
+	if terminalRecordingRequired(&ds, ra.Subresource) {
 		return false, ""
 	}
 	targetPod, err := wc.fetchPodFromCluster(ctx, clusterName, ra.Namespace, ra.Name)

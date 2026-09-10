@@ -17,6 +17,9 @@ type KubectlDebugStatusApplyConfiguration struct {
 	EphemeralContainersInjected []EphemeralContainerRefApplyConfiguration `json:"ephemeralContainersInjected,omitempty"`
 	// copiedPods lists debug copies of pods.
 	CopiedPods []CopiedPodRefApplyConfiguration `json:"copiedPods,omitempty"`
+	// terminalRecordings lists finalized controller-owned terminal recordings.
+	// Raw terminal bytes are stored only in the configured artifact backend.
+	TerminalRecordings []TerminalRecordingRefApplyConfiguration `json:"terminalRecordings,omitempty"`
 }
 
 // KubectlDebugStatusApplyConfiguration constructs a declarative configuration of the KubectlDebugStatus type for use with
@@ -47,6 +50,19 @@ func (b *KubectlDebugStatusApplyConfiguration) WithCopiedPods(values ...*CopiedP
 			panic("nil value passed to WithCopiedPods")
 		}
 		b.CopiedPods = append(b.CopiedPods, *values[i])
+	}
+	return b
+}
+
+// WithTerminalRecordings adds the given value to the TerminalRecordings field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the TerminalRecordings field.
+func (b *KubectlDebugStatusApplyConfiguration) WithTerminalRecordings(values ...*TerminalRecordingRefApplyConfiguration) *KubectlDebugStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithTerminalRecordings")
+		}
+		b.TerminalRecordings = append(b.TerminalRecordings, *values[i])
 	}
 	return b
 }

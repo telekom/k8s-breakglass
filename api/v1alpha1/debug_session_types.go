@@ -542,6 +542,76 @@ type KubectlDebugStatus struct {
 	// copiedPods lists debug copies of pods.
 	// +optional
 	CopiedPods []CopiedPodRef `json:"copiedPods,omitempty"`
+
+	// terminalRecordings lists finalized controller-owned terminal recordings.
+	// Raw terminal bytes are stored only in the configured artifact backend.
+	// +optional
+	TerminalRecordings []TerminalRecordingRef `json:"terminalRecordings,omitempty"`
+}
+
+// TerminalRecordingRef identifies one finalized terminal recording artifact.
+// It contains correlation metadata only; terminal bytes never enter status.
+type TerminalRecordingRef struct {
+	// id is the immutable artifact key.
+	// +required
+	ID string `json:"id"`
+
+	// namespace is the target Pod namespace.
+	// +required
+	Namespace string `json:"namespace"`
+
+	// podName is the target Pod name.
+	// +required
+	PodName string `json:"podName"`
+
+	// podUID is the immutable target Pod identity.
+	// +required
+	PodUID string `json:"podUID"`
+
+	// containerName is the target container, when specified.
+	// +optional
+	ContainerName string `json:"containerName,omitempty"`
+
+	// operation is exec or attach.
+	// +required
+	Operation string `json:"operation"`
+
+	// sha256 is the digest of the finalized framed bytes.
+	// +required
+	SHA256 string `json:"sha256"`
+
+	// size is the finalized framed byte count.
+	// +required
+	Size int64 `json:"size"`
+
+	// backend identifies the explicitly configured artifact backend.
+	// +required
+	Backend string `json:"backend"`
+
+	// backendInstanceID pins the exact storage instance that published the artifact.
+	// +required
+	BackendInstanceID string `json:"backendInstanceID"`
+
+	// runtimeBindingDigest binds reads and deletes to the immutable session/target
+	// authorization tuple used when the artifact was published.
+	// +required
+	RuntimeBindingDigest string `json:"runtimeBindingDigest"`
+
+	// versionID identifies the exact durable artifact version.
+	// +required
+	VersionID string `json:"versionID"`
+
+	// startedAt is when the stream began.
+	// +required
+	StartedAt metav1.Time `json:"startedAt"`
+
+	// completedAt is when the stream was finalized.
+	// +required
+	CompletedAt metav1.Time `json:"completedAt"`
+
+	// expiresAt is when retention cleanup may remove the artifact.
+	// +required
+	ExpiresAt metav1.Time `json:"expiresAt"`
 }
 
 // EphemeralContainerRef tracks an injected ephemeral container.

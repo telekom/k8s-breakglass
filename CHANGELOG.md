@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   terminal recording fail closed until the controller proxy and durable store
   are configured.
 
+- Route enabled terminal sessions through the controller-owned bounded
+  exec/attach recorder, pin finalized artifacts to their live Pod UID and
+  lease binding, and deny direct target exec/attach authorization.
+
 - Recover tracked resources after bounded create timeouts when session and
   operation markers and requested content match the persisted object.
 

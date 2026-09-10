@@ -31,6 +31,7 @@ import (
 	"unicode"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	artifactstorage "github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
@@ -101,6 +102,26 @@ type DebugSessionController struct {
 	// preparation and before the next authorization fence.
 	targetClientFactory    func(*rest.Config) (ctrlclient.Client, error)
 	beforeDebugTargetWrite func(string)
+	recordingStore         artifactstorage.Store
+	recordingConnections   TerminalRecordingConnectionProvider
+}
+
+// WithTerminalRecordingStore configures the explicit artifact backend used by
+// controller-owned terminal recording. A nil store keeps recording disabled.
+func (c *DebugSessionController) WithTerminalRecordingStore(store artifactstorage.Store) *DebugSessionController {
+	c.recordingStore = store
+	return c
+}
+
+// WithTerminalRecordingConnections configures the controller-owned lease
+// service that fences target identity and connection lifetime.
+func (c *DebugSessionController) WithTerminalRecordingConnections(provider TerminalRecordingConnectionProvider) *DebugSessionController {
+	c.recordingConnections = provider
+	return c
+}
+
+func (c *DebugSessionController) terminalRecordingConfigured() bool {
+	return c.recordingStore != nil && c.recordingConnections != nil
 }
 
 func (c *DebugSessionController) WithAPIReader(reader ctrlclient.Reader) *DebugSessionController {
@@ -224,6 +245,9 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		// Return nil error to skip requeue - malformed resource won't fix itself
 		return ctrl.Result{}, nil
 	}
+	if err := c.cleanupExpiredTerminalRecordings(ctx, ds); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	log = log.With("state", ds.Status.State, "cluster", ds.Spec.Cluster)
 	if ds.Status.State == breakglassv1alpha1.DebugSessionStateActive {
@@ -283,7 +307,7 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		log.Errorw("Failed to get DebugSessionTemplate", "template", ds.Spec.TemplateRef, "error", err)
 		return c.failSession(ctx, ds, fmt.Sprintf("template not found: %s", ds.Spec.TemplateRef))
 	}
-	if err := rejectUnsupportedTerminalRecording(template); err != nil {
+	if err := c.ensureTerminalRecordingConfigured(template); err != nil {
 		return c.failSession(ctx, ds, err.Error())
 	}
 
@@ -728,7 +752,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := rejectUnsupportedTerminalRecording(template); err != nil {
+	if err := c.ensureTerminalRecordingConfigured(template); err != nil {
 		return c.failSession(ctx, ds, err.Error())
 	}
 	// Only deploy workloads for workload or hybrid mode

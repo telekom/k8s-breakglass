@@ -2533,6 +2533,12 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.EphemeralContainerRef
           elementRelationship: atomic
+    - name: terminalRecordings
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TerminalRecordingRef
+          elementRelationship: atomic
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubernetesSinkSpec
   map:
     fields:
@@ -3363,6 +3369,54 @@ var schemaYAML = typed.YAMLObject(`types:
   map:
     fields:
     - name: name
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.TerminalRecordingRef
+  map:
+    fields:
+    - name: backend
+      type:
+        scalar: string
+    - name: backendInstanceID
+      type:
+        scalar: string
+    - name: completedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: containerName
+      type:
+        scalar: string
+    - name: expiresAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: id
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+    - name: operation
+      type:
+        scalar: string
+    - name: podName
+      type:
+        scalar: string
+    - name: podUID
+      type:
+        scalar: string
+    - name: runtimeBindingDigest
+      type:
+        scalar: string
+    - name: sha256
+      type:
+        scalar: string
+    - name: size
+      type:
+        scalar: numeric
+    - name: startedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: versionID
       type:
         scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.TerminalSharingConfig

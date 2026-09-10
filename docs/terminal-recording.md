@@ -5,27 +5,34 @@ SPDX-License-Identifier: Apache-2.0
 
 # DebugSession terminal recording
 
-`DebugSessionTemplate.spec.audit.enableTerminalRecording` is reserved for a
-future terminal-byte transport. The controller currently rejects a template
-that enables it because the workload I/O hooks are not wired; it never creates
-a metadata-only sidecar that could be mistaken for a recording. This is
-distinct from the narrated/demo recordings under `e2e/` and `docs/demos/`.
+`DebugSessionTemplate.spec.audit.enableTerminalRecording` is served through the
+controller-owned terminal proxy. The proxy resolves the live target Pod UID,
+acquires a controller-owned connection lease, and streams Kubernetes exec or
+attach bytes through the bounded recorder. A configured artifact backend and
+lease provider are required; missing either dependency rejects activation and
+the API request. This is distinct from the narrated/demo recordings under
+`e2e/` and `docs/demos/`.
 
 `BREAKGLASS_TERMINAL_RECORDING_IMAGE` is reserved for the future transport and
 is currently ignored; setting it does not select an image or change the
 fail-closed behavior.
 
-The recorder implementation uses a bounded framed stream with separate input
-and output directions. Each frame carries the previous frame's SHA-256 digest,
-so a finalized artifact can be verified without placing terminal bytes or
-credentials in DebugSession status or audit details. The recorder is only a
-streaming primitive; the controller still requires an explicitly configured
-target proxy and durable artifact store before enabling the template field.
+The recorder uses a bounded framed stream with separate input and output
+directions. Each frame carries the previous frame's SHA-256 digest, so a
+finalized artifact can be verified without placing terminal bytes or
+credentials in DebugSession status or audit details. `POST
+/debugSessions/:name/terminal` is the only recording transport and
+`GET /debugSessions/:name/terminal/:id` replays an unexpired exact artifact
+version for an authorized session reader. The replay path pins backend
+identity, runtime binding digest, and version ID.
 
-When the transport is implemented, its planned bounded artifact volume will
-use `BREAKGLASS_RECORDING_MAX_BYTES=536870912` (512 MiB). Until then, no
-recording image, artifact route, replay route, or external cleanup contract is
-provided by this repository.
+The bounded artifact volume is 512 MiB (`defaultTerminalRecordingMaxBytes`).
+The controller finalizes publication with a bounded detached context after a
+client disconnect, and closes the lease in a separate bounded context. Direct
+target `pods/exec` and `pods/attach` authorization is denied while recording is
+required; clients must use the controller endpoint. Retention metadata is
+stored with the exact artifact reference and expired objects are eligible for
+exact-version cleanup by the configured backend.
 
 When terminal recording is enabled, a supplied retention value is validated as
 a positive duration at admission. The controller does not copy template
