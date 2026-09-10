@@ -721,7 +721,11 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 				// live condition when it already records that same failure; its
 				// transition metadata describes the actual persisted state.
 				if liveCondition := current.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)); liveCondition != nil && liveCondition.Status == metav1.ConditionTrue {
-					mergedCondition = liveCondition.DeepCopy()
+					mergedCondition.Status = metav1.ConditionTrue
+					mergedCondition.ObservedGeneration = liveCondition.ObservedGeneration
+					mergedCondition.LastTransitionTime = liveCondition.LastTransitionTime
+					mergedCondition.Reason = "CleanupFailed"
+					mergedCondition.Message = boundedCleanupConditionMessage(current)
 				} else {
 					mergedCondition.Status = metav1.ConditionTrue
 					mergedCondition.ObservedGeneration = current.Generation
