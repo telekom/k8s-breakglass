@@ -62,6 +62,11 @@ expected_helpers.each do |workflow_name, required|
   unexpected = (paths & all_helpers) - required
   abort "#{workflow_name} has unrelated shared-helper path filters: #{unexpected.join(', ')}" unless unexpected.empty?
 end
+
+catalogue = YAML.safe_load(File.read(File.join(root, ".github/workflows/catalogue-utility-integration.yml")), aliases: false)
+push = catalogue.fetch(true).fetch("push")
+abort "catalogue utility behavior must run on every main push" unless push.fetch("branches").sort == %w[deployment-testing main]
+abort "catalogue utility behavior push must not be path filtered" if push.key?("paths")
 RUBY
 
 printf '%s\n' 'utility workflow path filters cover shared ownership and security contracts'

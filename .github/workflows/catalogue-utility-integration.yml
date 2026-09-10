@@ -29,21 +29,6 @@ on:
       - ".github/workflows/catalogue-utility-integration.yml"
   push:
     branches: [main, deployment-testing]
-    paths:
-      - "charts/debug-session-catalogue/**"
-      - "cmd/cluster-validator/**"
-      - "pkg/clustervalidator/**"
-      - "hack/cluster-validator-**"
-      - "Dockerfile.validator"
-      - "utils/cluster-validator/**"
-      # Dump-reader has no dedicated workflow; retain its shared runtime gate.
-      - "utils/images/dump-reader/**"
-      - "utils/images/tests/**"
-      - "utils/images/Makefile"
-      - "hack/utility-image-matrix.json"
-      - ".github/workflows/utility-release.yml"
-      - ".github/workflows/release.yml"
-      - ".github/workflows/catalogue-utility-integration.yml"
 
 permissions:
   contents: read
