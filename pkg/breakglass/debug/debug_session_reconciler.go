@@ -232,6 +232,11 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		if statusErr := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); statusErr != nil {
 			log.Errorw("Failed to update DebugSession status after validation failure", "error", statusErr)
 		}
+		if c.shouldEmitAudit(ds) {
+			if auditManager := c.currentAuditManager(); auditManager != nil {
+				auditManager.DebugSessionValidationFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, breakglass.SanitizeReasonText(validationResult.ErrorMessage()))
+			}
+		}
 
 		// Return nil error to skip requeue - malformed resource won't fix itself
 		return ctrl.Result{}, nil
@@ -502,6 +507,11 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 			notificationSession.Status.ResolvedTemplate.Notification.NotifyOnExpiry = true
 		}
 		c.sendDebugSessionExpiredEmail(*notificationSession)
+		if c.shouldEmitAudit(ds) {
+			if auditManager := c.currentAuditManager(); auditManager != nil {
+				auditManager.DebugSessionExpired(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+			}
+		}
 		log.Info("Debug session expired")
 		if err := c.reconcileActiveAccounting(ctx, ds, false); err != nil {
 			return ctrl.Result{}, err
@@ -811,6 +821,11 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	}
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
+	}
+	if c.shouldEmitAudit(ds) {
+		if auditManager := c.currentAuditManager(); auditManager != nil {
+			auditManager.DebugSessionStarted(ctx, ds.Name, ds.Spec.RequestedBy, ds.Spec.Cluster, ds.Spec.TemplateRef)
+		}
 	}
 
 	metrics.DebugSessionsCreated.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()

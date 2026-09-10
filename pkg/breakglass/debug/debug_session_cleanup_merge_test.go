@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -44,4 +45,37 @@ func TestReviewFailedCleanupCompletesDeletedHistory(t *testing.T) {
 	result, err := controller.handleFailedCleanup(context.Background(), session)
 	require.NoError(t, err)
 	require.Zero(t, result.RequeueAfter)
+}
+
+func TestCleanupStatusPatchRetainsFailureWhenConcurrentResourceArrives(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	condition := metav1.Condition{
+		Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionTrue,
+		Reason: "CleanupFailed", Message: "residual resource",
+	}
+	live := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session-uid"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "v1", Kind: "Pod", Namespace: "target", Name: "late"}},
+			Conditions:        []metav1.Condition{condition},
+		},
+	}
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(live).WithStatusSubresource(live).Build()
+	stale := live.DeepCopy()
+	stale.Status.DeployedResources = nil
+	stale.Status.Conditions = []metav1.Condition{{
+		Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionFalse,
+		Reason: "CleanupRecovered", Message: "Cleanup completed; no residual resources remain.",
+	}}
+	baseline := live.Status.DeepCopy()
+	baseline.DeployedResources = nil
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+	require.NoError(t, controller.patchDebugSessionCleanupStatus(context.Background(), stale, baseline))
+	stored := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(live), stored))
+	require.Len(t, stored.Status.DeployedResources, 1)
+	storedCondition := stored.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+	require.NotNil(t, storedCondition)
+	require.Equal(t, metav1.ConditionTrue, storedCondition.Status)
 }
