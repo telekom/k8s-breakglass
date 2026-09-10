@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add durable controller-owned DebugSession connection leases with target and
   session fencing, opaque epochs, absolute expiry, live-reader checks, and
   UID-preconditioned terminal revocation.
+- Track artifact collector resources by exact spoke UID and resource version,
+  with target-cluster writes fenced by the live session and expiry deadline.
 
 - The debug-session-catalogue Helm chart provides administrator-authored,
   restricted DebugSession profiles for workload, network, storage, dump-access,

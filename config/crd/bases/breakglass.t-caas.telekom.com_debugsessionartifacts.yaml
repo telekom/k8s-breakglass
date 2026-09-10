@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: (devel)
+    controller-gen.kubebuilder.io/version: v0.21.0
   name: debugsessionartifacts.breakglass.t-caas.telekom.com
 spec:
   group: breakglass.t-caas.telekom.com
@@ -320,6 +320,46 @@ spec:
                 - attempt
                 - kind
                 type: object
+              resources:
+                description: |-
+                  resources records the exact spoke Secret and Job inventory for restart
+                  cleanup. It is bounded to the controller's fixed resource set.
+                items:
+                  description: |-
+                    ArtifactResourceReference identifies one spoke resource created for this
+                    artifact. UID and resourceVersion make restart cleanup safe against name
+                    reuse and replacement; this is intentionally not an owner reference because
+                    the artifact and resource live in different clusters.
+                  properties:
+                    kind:
+                      description: kind is the Kubernetes resource kind.
+                      type: string
+                    name:
+                      description: name is the spoke resource name.
+                      type: string
+                    namespace:
+                      description: namespace is the spoke namespace.
+                      type: string
+                    operationID:
+                      description: operationID is the persisted create intent marker
+                        used for recovery.
+                      type: string
+                    resourceVersion:
+                      description: resourceVersion is the version observed after creation.
+                      type: string
+                    uid:
+                      description: uid is the exact UID observed after creation.
+                      type: string
+                  required:
+                  - kind
+                  - name
+                  - namespace
+                  - operationID
+                  - resourceVersion
+                  - uid
+                  type: object
+                maxItems: 2
+                type: array
               sha256:
                 description: sha256 is the validated compressed archive digest.
                 pattern: ^[0-9a-f]{64}$
@@ -340,6 +380,14 @@ spec:
                 - Expired
                 - Revoked
                 - Unknown
+                type: string
+              targetCluster:
+                description: targetCluster is the immutable ClusterConfig name used
+                  for spoke cleanup.
+                type: string
+              targetNamespace:
+                description: targetNamespace is the approved spoke namespace used
+                  for collection.
                 type: string
             type: object
         required:

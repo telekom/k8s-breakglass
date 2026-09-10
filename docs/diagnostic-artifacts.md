@@ -19,6 +19,15 @@ read-only `/var/lib/systemd/coredump` host path. Collector Jobs receive a
 short-lived, one-time controller upload token and route. They never receive
 storage-provider credentials, bucket names, object keys, or provider URLs.
 
+The artifact record is stored in the hub, while its upload Secret and collector
+Job are created in the live session's target spoke namespace through the
+target-cluster client. The controller rechecks the session, target UID, and
+expiry before each spoke write. Because Kubernetes owner references do not
+perform garbage collection across clusters, the hub status stores the exact
+spoke resource UIDs and resource versions. Cleanup deletes only those exact
+objects and leaves a replacement with the same name untouched; an outage or
+resource finalizer keeps the artifact finalizer pending for retry.
+
 Uploads are staged in a bounded private file and validated against the exact
 recipe manifest, output set, archive framing, size, and SHA-256 digest before
 the configured create-only storage backend is used. S3 requires an

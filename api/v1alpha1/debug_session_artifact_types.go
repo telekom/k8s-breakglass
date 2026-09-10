@@ -182,10 +182,41 @@ type ArtifactOutboxStatus struct {
 	LastError string `json:"lastError,omitempty"`
 }
 
+// ArtifactResourceReference identifies one spoke resource created for this
+// artifact. UID and resourceVersion make restart cleanup safe against name
+// reuse and replacement; this is intentionally not an owner reference because
+// the artifact and resource live in different clusters.
+type ArtifactResourceReference struct {
+	// kind is the Kubernetes resource kind.
+	// +required
+	Kind string `json:"kind"`
+	// namespace is the spoke namespace.
+	// +required
+	Namespace string `json:"namespace"`
+	// name is the spoke resource name.
+	// +required
+	Name string `json:"name"`
+	// uid is the exact UID observed after creation.
+	// +required
+	UID string `json:"uid"`
+	// resourceVersion is the version observed after creation.
+	// +required
+	ResourceVersion string `json:"resourceVersion"`
+	// operationID is the persisted create intent marker used for recovery.
+	// +required
+	OperationID string `json:"operationID"`
+}
+
 // DebugSessionArtifactStatus is safe to expose to API readers. Provider
 // object keys, URLs, version IDs, credentials, and secret references are not
 // persisted here.
 type DebugSessionArtifactStatus struct {
+	// targetCluster is the immutable ClusterConfig name used for spoke cleanup.
+	// +optional
+	TargetCluster string `json:"targetCluster,omitempty"`
+	// targetNamespace is the approved spoke namespace used for collection.
+	// +optional
+	TargetNamespace string `json:"targetNamespace,omitempty"`
 	// state is the monotonic lifecycle state.
 	// +optional
 	State ArtifactLifecycleState `json:"state,omitempty"`
@@ -216,6 +247,11 @@ type DebugSessionArtifactStatus struct {
 	// outbox is the bounded provider operation state.
 	// +optional
 	Outbox *ArtifactOutboxStatus `json:"outbox,omitempty"`
+	// resources records the exact spoke Secret and Job inventory for restart
+	// cleanup. It is bounded to the controller's fixed resource set.
+	// +kubebuilder:validation:MaxItems=2
+	// +optional
+	Resources []ArtifactResourceReference `json:"resources,omitempty"`
 	// cleanupAmbiguous requires operator/reconciler evidence before finalization.
 	// +optional
 	CleanupAmbiguous bool `json:"cleanupAmbiguous,omitempty"`

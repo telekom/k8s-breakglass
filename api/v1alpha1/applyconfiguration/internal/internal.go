@@ -139,6 +139,27 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: leaseOwner
       type:
         scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ArtifactResourceReference
+  map:
+    fields:
+    - name: kind
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+    - name: operationID
+      type:
+        scalar: string
+    - name: resourceVersion
+      type:
+        scalar: string
+    - name: uid
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.ArtifactSessionReference
   map:
     fields:
@@ -1465,6 +1486,12 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: outbox
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ArtifactOutboxStatus
+    - name: resources
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ArtifactResourceReference
+          elementRelationship: atomic
     - name: sha256
       type:
         scalar: string
@@ -1474,6 +1501,12 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: state
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ArtifactLifecycleState
+    - name: targetCluster
+      type:
+        scalar: string
+    - name: targetNamespace
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionAuditConfig
   map:
     fields:
