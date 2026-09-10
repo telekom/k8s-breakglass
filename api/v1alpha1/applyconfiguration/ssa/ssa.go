@@ -977,6 +977,58 @@ func DebugSessionTemplateSpecFrom(t *breakglassv1alpha1.DebugSessionTemplateSpec
 		result.WithExtraDeployVariables(ExtraDeployVariableFrom(&t.ExtraDeployVariables[i]))
 	}
 
+	result.WithPodOverridesTemplate(t.PodOverridesTemplate)
+	if t.SchedulingConstraints != nil {
+		result.WithSchedulingConstraints(SchedulingConstraintsFrom(t.SchedulingConstraints))
+	}
+	if t.SchedulingOptions != nil {
+		result.WithSchedulingOptions(SchedulingOptionsFrom(t.SchedulingOptions))
+	}
+	if t.NamespaceConstraints != nil {
+		result.WithNamespaceConstraints(NamespaceConstraintsFrom(t.NamespaceConstraints))
+	}
+	if t.Impersonation != nil {
+		result.WithImpersonation(ImpersonationConfigFrom(t.Impersonation))
+	}
+	for i := range t.AuxiliaryResources {
+		result.WithAuxiliaryResources(AuxiliaryResourceFrom(&t.AuxiliaryResources[i]))
+	}
+	if t.AuxiliaryResourceDefaults != nil {
+		result.WithAuxiliaryResourceDefaults(t.AuxiliaryResourceDefaults)
+	}
+	if t.RequiredAuxiliaryResourceCategories != nil {
+		result.WithRequiredAuxiliaryResourceCategories(t.RequiredAuxiliaryResourceCategories...)
+	}
+	if t.Notification != nil {
+		result.WithNotification(DebugSessionNotificationConfigFrom(t.Notification))
+	}
+	if t.RequestReason != nil {
+		result.WithRequestReason(DebugRequestReasonConfigFrom(t.RequestReason))
+	}
+	if t.ApprovalReason != nil {
+		result.WithApprovalReason(DebugApprovalReasonConfigFrom(t.ApprovalReason))
+	}
+	if t.ResourceQuota != nil {
+		result.WithResourceQuota(DebugResourceQuotaConfigFrom(t.ResourceQuota))
+	}
+	if t.PodDisruptionBudget != nil {
+		result.WithPodDisruptionBudget(DebugPDBConfigFrom(t.PodDisruptionBudget))
+	}
+	if t.Labels != nil {
+		result.WithLabels(t.Labels)
+	}
+	if t.Annotations != nil {
+		result.WithAnnotations(t.Annotations)
+	}
+	result.WithPriority(t.Priority)
+	result.WithHidden(t.Hidden)
+	result.WithDeprecated(t.Deprecated)
+	result.WithDeprecationMessage(t.DeprecationMessage)
+	result.WithExpirationBehavior(t.ExpirationBehavior)
+	result.WithGracePeriodBeforeExpiry(t.GracePeriodBeforeExpiry)
+	if t.AllowedPodOperations != nil {
+		result.WithAllowedPodOperations(AllowedPodOperationsFrom(t.AllowedPodOperations))
+	}
 	return result
 }
 
@@ -1306,6 +1358,9 @@ func DebugSessionAllowedFrom(a *breakglassv1alpha1.DebugSessionAllowed) *ac.Debu
 	if len(a.Clusters) > 0 {
 		result.WithClusters(a.Clusters...)
 	}
+	if a.ClusterSelector != nil {
+		result.WithClusterSelector(labelSelectorSnapshot(a.ClusterSelector))
+	}
 	return result
 }
 
@@ -1363,6 +1418,7 @@ func DebugSessionConstraintsFrom(c *breakglassv1alpha1.DebugSessionConstraints) 
 	if c.MaxConcurrentSessions > 0 {
 		result.WithMaxConcurrentSessions(c.MaxConcurrentSessions)
 	}
+	result.WithRenewalLimit(c.RenewalLimit)
 	return result
 }
 
@@ -1411,6 +1467,14 @@ func AuditDestinationFrom(d *breakglassv1alpha1.AuditDestination) *ac.AuditDesti
 	}
 	if len(d.Headers) > 0 {
 		result.WithHeaders(d.Headers)
+	}
+	return result
+}
+
+func labelSelectorSnapshot(selector *metav1.LabelSelector) *metav1ac.LabelSelectorApplyConfiguration {
+	result := metav1ac.LabelSelector().WithMatchLabels(selector.MatchLabels)
+	for _, expression := range selector.MatchExpressions {
+		result.WithMatchExpressions(metav1ac.LabelSelectorRequirement().WithKey(expression.Key).WithOperator(expression.Operator).WithValues(expression.Values...))
 	}
 	return result
 }

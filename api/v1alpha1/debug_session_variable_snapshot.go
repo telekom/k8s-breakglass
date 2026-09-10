@@ -41,5 +41,5 @@ func HasCompleteResolvedBindingSnapshot(status DebugSessionStatus) bool {
 		return false
 	}
 	var binding DebugSessionClusterBindingSpec
-	return json.Unmarshal(status.ResolvedBindingSpec.Raw, &binding) == nil
+	return json.Unmarshal(status.ResolvedBindingSpec.Raw, &binding) == nil && len(ValidateDebugSessionClusterBinding(&DebugSessionClusterBinding{Spec: binding}).Errors) == 0
 }

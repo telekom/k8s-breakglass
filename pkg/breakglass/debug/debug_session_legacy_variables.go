@@ -17,7 +17,7 @@ func (c *DebugSessionController) resumePersistedPending(ctx context.Context, ds 
 	if !breakglassv1alpha1.HasCompleteResolvedBindingSnapshot(ds.Status) {
 		return c.failSession(ctx, ds, "legacy approval provenance is incomplete; recreate this session")
 	}
-	if ds.Status.ResolvedTemplateVariablePolicy == nil && len(ds.Status.ResolvedTemplate.ExtraDeployVariables) != 0 {
+	if ds.Status.ResolvedTemplateVariablePolicy == nil {
 		policy := ds.Status.ResolvedTemplate.DeepCopy().ExtraDeployVariables
 		if !breakglassv1alpha1.CanInitializeLegacyVariablePolicy(ds.Status, policy) {
 			return c.failSession(ctx, ds, "legacy binding variable provenance is unavailable; recreate this session")
