@@ -240,6 +240,11 @@ type DebugSessionStatus struct {
 	// +optional
 	StartsAt *metav1.Time `json:"startsAt,omitempty"`
 
+	// activeResourcesReleased records that terminal cleanup has accounted for
+	// resources from an active session and prevents repeated decrements.
+	// +optional
+	ActiveResourcesReleased bool `json:"activeResourcesReleased,omitempty"`
+
 	// expiresAt is when the session will expire.
 	// +optional
 	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`

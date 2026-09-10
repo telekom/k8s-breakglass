@@ -1875,6 +1875,10 @@ spec:
 4. **Investigate cleanup retries**: Failed debug-resource deletes and resources held by finalizers keep their status tracking entries so the controller can retry cleanup on the next reconciliation
 5. **Bound Job lifetimes**: Job workloads reconcile their active deadline against the committed session expiry after a delayed start
 
+Terminal cleanup records whether active-resource accounting has completed. This
+keeps repeated reconciliation idempotent and leaves never-active rejected or
+pre-activation terminated sessions out of active template and metric counts.
+
 Template and cluster-binding `constraints.maxDuration` and `defaultDuration`
 accept weeks (`1w`), years (`1y`), and fractional sub-day values (`1.5h`),
 consistent with runtime duration parsing. Day, week, and year terms must be integers.

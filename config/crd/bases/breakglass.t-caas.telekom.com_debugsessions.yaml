@@ -1002,6 +1002,11 @@ spec:
           status:
             description: DebugSessionStatus defines the observed state of DebugSession.
             properties:
+              activeResourcesReleased:
+                description: |-
+                  activeResourcesReleased records that terminal cleanup has accounted for
+                  resources from an active session and prevents repeated decrements.
+                type: boolean
               allowedPodOperations:
                 description: |-
                   allowedPodOperations caches the resolved pod operations from the template.

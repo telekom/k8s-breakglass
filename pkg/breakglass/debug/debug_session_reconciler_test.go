@@ -1873,6 +1873,52 @@ func TestDebugSessionController_RejectedCleanupAndLegacyRejectedMetadata(t *test
 	})
 }
 
+func TestDebugSessionController_CleanupAccountingOnlyReleasesActiveSessionsOnce(t *testing.T) {
+	scheme := testScheme()
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "accounting-template"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+		},
+		Status: breakglassv1alpha1.DebugSessionTemplateStatus{ActiveSessionCount: 1},
+	}
+	startedAt := metav1.NewTime(time.Now().Add(-time.Minute))
+	activeTerminated := newTestDebugSession("accounted-terminated", template.Name, "test-cluster", "user@example.com")
+	activeTerminated.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+	activeTerminated.Status.StartsAt = &startedAt
+	rejected := newTestDebugSession("never-active-rejected", template.Name, "test-cluster", "user@example.com")
+	rejected.Spec.Cluster = "other-cluster"
+	rejected.Status.State = breakglassv1alpha1.DebugSessionStateRejected
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(template, activeTerminated, rejected).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil)
+	activeMetric := metrics.DebugSessionsActive.WithLabelValues(activeTerminated.Spec.Cluster, activeTerminated.Spec.TemplateRef)
+	rejectedMetric := metrics.DebugSessionsActive.WithLabelValues(rejected.Spec.Cluster, rejected.Spec.TemplateRef)
+	activeBaseline := testutil.ToFloat64(activeMetric)
+	rejectedBaseline := testutil.ToFloat64(rejectedMetric)
+	activeMetric.Set(activeBaseline + 1)
+	rejectedMetric.Set(rejectedBaseline + 3)
+	t.Cleanup(func() {
+		metrics.DebugSessionsActive.DeleteLabelValues(activeTerminated.Spec.Cluster, activeTerminated.Spec.TemplateRef)
+		metrics.DebugSessionsActive.DeleteLabelValues(rejected.Spec.Cluster, rejected.Spec.TemplateRef)
+	})
+
+	_, err := controller.handleCleanup(context.Background(), activeTerminated)
+	require.NoError(t, err)
+	assert.Equal(t, activeBaseline, testutil.ToFloat64(activeMetric))
+	assert.True(t, activeTerminated.Status.ActiveResourcesReleased)
+
+	_, err = controller.handleCleanup(context.Background(), activeTerminated)
+	require.NoError(t, err)
+	assert.Equal(t, activeBaseline, testutil.ToFloat64(activeMetric))
+
+	_, err = controller.handleCleanup(context.Background(), rejected)
+	require.NoError(t, err)
+	assert.Equal(t, rejectedBaseline+3, testutil.ToFloat64(rejectedMetric), "never-active rejection must not decrement active metrics")
+}
+
 func TestDebugSessionReconciler_RenewalErrors(t *testing.T) {
 	scheme := testScheme()
 

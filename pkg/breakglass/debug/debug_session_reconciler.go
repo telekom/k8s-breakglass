@@ -658,26 +658,28 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
 
-	// Decrement active gauge for terminated sessions. Expired sessions are
-	// already decremented in handleActive before entering cleanup.
-	if ds.Status.State == breakglassv1alpha1.DebugSessionStateTerminated {
-		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
-	}
-
-	// Record metrics
-	if ds.Status.StartsAt != nil {
-		duration := time.Since(ds.Status.StartsAt.Time).Seconds()
-		metrics.DebugSessionDuration.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Observe(duration)
-	}
-
-	// Update template status to decrement active session count
-	if ds.Spec.TemplateRef != "" {
-		template, err := c.getTemplate(ctx, ds.Spec.TemplateRef)
-		if err == nil {
-			if err := c.updateTemplateStatus(ctx, template, false); err != nil {
-				log.Warnw("Failed to update template status during cleanup", "template", ds.Spec.TemplateRef, "error", err)
-				// Non-fatal: cleanup still succeeds
+	// Account for active resources only once. Rejected and pre-activation
+	// Terminated sessions have no active gauge or template count to release.
+	if !ds.Status.ActiveResourcesReleased {
+		if ds.Status.StartsAt != nil {
+			if ds.Status.State == breakglassv1alpha1.DebugSessionStateTerminated {
+				metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
 			}
+			duration := time.Since(ds.Status.StartsAt.Time).Seconds()
+			metrics.DebugSessionDuration.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Observe(duration)
+			if ds.Spec.TemplateRef != "" {
+				template, err := c.getTemplate(ctx, ds.Spec.TemplateRef)
+				if err == nil {
+					if err := c.updateTemplateStatus(ctx, template, false); err != nil {
+						log.Warnw("Failed to update template status during cleanup", "template", ds.Spec.TemplateRef, "error", err)
+					}
+				}
+			}
+		}
+		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+			status.ActiveResourcesReleased = true
+		}); err != nil {
+			return ctrl.Result{}, fmt.Errorf("record debug session cleanup accounting: %w", err)
 		}
 	}
 
