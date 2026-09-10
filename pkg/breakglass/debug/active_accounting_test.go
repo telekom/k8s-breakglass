@@ -148,3 +148,110 @@ func TestActiveAccountingConflictDoesNotRetainClearedPodTemplate(t *testing.T) {
 	require.EqualValues(t, 1, template.Status.ActiveSessionCount)
 	t.Cleanup(func() { metrics.DebugSessionsActive.DeleteLabelValues(ds.Spec.Cluster, template.Name) })
 }
+
+func TestPeriodicAccountingCoalescesButTransitionsAndFailuresRepair(t *testing.T) {
+	ctx := t.Context()
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "coalesced"}}
+	first := newTestDebugSession("first", template.Name, "one", "user")
+	second := newTestDebugSession("second", template.Name, "two", "user")
+	first.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	second.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(template, first, second).WithStatusSubresource(template, first, second).Build()
+	lists, patches := 0, 0
+	fail := true
+	wrapped := interceptor.NewClient(hub, interceptor.Funcs{
+		List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			lists++
+			if fail {
+				return fmt.Errorf("accounting unavailable")
+			}
+			return cl.List(ctx, list, opts...)
+		},
+		SubResourcePatch: func(ctx context.Context, cl client.Client, sub string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+			patches++
+			return cl.Status().Patch(ctx, obj, patch, opts...)
+		},
+	})
+	c := NewDebugSessionController(zap.NewNop().Sugar(), wrapped, nil).WithAPIReader(wrapped)
+	require.ErrorContains(t, c.reconcilePeriodicActiveAccounting(ctx, first), "accounting unavailable")
+	fail = false
+	require.NoError(t, c.reconcilePeriodicActiveAccounting(ctx, first))
+	require.NoError(t, c.reconcilePeriodicActiveAccounting(ctx, second))
+	require.Equal(t, 2, lists, "failed repair must retry, successful template repair must coalesce")
+	require.Equal(t, 1, patches)
+	for _, cluster := range []string{"one", "two"} {
+		require.Equal(t, float64(1), testutil.ToFloat64(metrics.DebugSessionsActive.WithLabelValues(cluster, template.Name)))
+		t.Cleanup(func() { metrics.DebugSessionsActive.DeleteLabelValues(cluster, template.Name) })
+	}
+	second.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+	require.NoError(t, hub.Status().Update(ctx, second))
+	require.NoError(t, c.reconcileActiveAccounting(ctx, second, false))
+	require.Equal(t, 3, lists, "terminal transition bypasses periodic throttle")
+	require.Equal(t, float64(0), testutil.ToFloat64(metrics.DebugSessionsActive.WithLabelValues("two", template.Name)))
+	c.accountingLast[template.Name] = time.Now().Add(-DefaultDebugSessionRequeue)
+	require.NoError(t, c.reconcilePeriodicActiveAccounting(ctx, first))
+	require.Equal(t, 4, lists, "next interval repairs again")
+	require.Equal(t, 2, patches, "unchanged aggregate must not write")
+	fail = true
+	require.ErrorContains(t, c.reconcileActiveAccounting(ctx, second, false), "accounting unavailable")
+	fail = false
+	require.NoError(t, c.reconcilePeriodicActiveAccounting(ctx, first))
+	require.Equal(t, 6, lists, "transition failure must invalidate a recent successful periodic repair")
+}
+
+func TestAccountingOptionalPodTemplateFailureDoesNotBlockAndRepairs(t *testing.T) {
+	ctx := t.Context()
+	pod := &breakglassv1alpha1.DebugPodTemplate{ObjectMeta: metav1.ObjectMeta{Name: "missing-usage"}}
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "optional-usage"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{Name: pod.Name}}}
+	ds := newTestDebugSession("used", template.Name, "one", "user")
+	ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(template, ds).WithStatusSubresource(template, ds, pod).Build()
+	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithAPIReader(hub)
+	require.NoError(t, c.reconcilePeriodicActiveAccounting(ctx, ds), "missing optional pod template must not block lifecycle")
+	require.NoError(t, hub.Create(ctx, pod))
+	c.accountingLast[template.Name] = time.Now().Add(-DefaultDebugSessionRequeue)
+	require.NoError(t, c.reconcilePeriodicActiveAccounting(ctx, ds))
+	require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(pod), pod))
+	require.Contains(t, pod.Status.UsedBy, template.Name)
+	t.Cleanup(func() { metrics.DebugSessionsActive.DeleteLabelValues("one", template.Name) })
+}
+
+func TestPeriodicAccountingDoesNotSerializeDifferentTemplates(t *testing.T) {
+	ctx := t.Context()
+	first := newTestDebugSession("first", "blocked-template", "one", "user")
+	second := newTestDebugSession("second", "other-template", "two", "user")
+	first.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	second.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(first, second).Build()
+	entered, release := make(chan struct{}), make(chan struct{})
+	reader := interceptor.NewClient(hub, interceptor.Funcs{List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+		options := (&client.ListOptions{}).ApplyOptions(opts)
+		if options.AsListOptions().FieldSelector == "spec.templateRef=blocked-template" {
+			close(entered)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return cl.List(ctx, list, opts...)
+	}})
+	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithAPIReader(reader)
+	done := make(chan error, 1)
+	go func() { done <- c.reconcilePeriodicActiveAccounting(ctx, first) }()
+	<-entered
+	other := make(chan error, 1)
+	go func() { other <- c.reconcilePeriodicActiveAccounting(ctx, second) }()
+	select {
+	case err := <-other:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("unrelated template blocked behind network I/O")
+	}
+	close(release)
+	require.NoError(t, <-done)
+	for _, ds := range []*breakglassv1alpha1.DebugSession{first, second} {
+		t.Cleanup(func() { metrics.DebugSessionsActive.DeleteLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef) })
+	}
+}

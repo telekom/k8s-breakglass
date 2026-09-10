@@ -6,7 +6,7 @@ test("bounds mock scale allocation", () => {
   assert.equal(listSessions({ mockScale: "999999999" }).length, 1000);
 });
 
-test("rejects a debug session through the mock API route handler", () => {
+test("rejects a debug session through the mock rejection operation", () => {
   const session = createDebugSession({ reason: "needs approval" });
   const rejected = rejectDebugSession(session.metadata.name, "policy");
 

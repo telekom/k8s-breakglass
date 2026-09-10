@@ -2068,3 +2068,5 @@ transport errors do not trigger adoption.
 Active accounting is recomputed from live session state: template counts include all clusters, while active gauges remain per cluster and template. Optimistic template conflicts repeat the live list, and Active reconciliation repairs accounting after a transient publication failure. Accounting failures do not prevent spoke resource cleanup.
 
 Active accounting uses the CRD selectable `spec.templateRef` field to bound each authoritative paginated list to the affected template, rather than scanning unrelated session history.
+
+Active-session accounting uses authoritative, paginated template-scoped reads. Lifecycle transitions update counts immediately; periodic repairs are coalesced per template for 30 seconds within each controller and skip unchanged template status writes. Failed accounting retries remain immediate. Optional pod-template usage metadata failures are logged and retried on the next periodic repair without blocking session cleanup.

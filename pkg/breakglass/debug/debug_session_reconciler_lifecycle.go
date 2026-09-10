@@ -1212,10 +1212,48 @@ func IsPodInDebugSession(namespace, name string, allowedPods []breakglassv1alpha
 	return false
 }
 
+// reconcilePeriodicActiveAccounting coalesces periodic repairs per template.
+// Lifecycle transitions bypass this throttle, and failed repairs remain retryable.
+func (c *DebugSessionController) reconcilePeriodicActiveAccounting(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	_, err, _ := c.accountingFlight.Do(ds.Spec.TemplateRef, func() (any, error) {
+		c.accountingMu.Lock()
+		last := c.accountingLast[ds.Spec.TemplateRef]
+		failureVersion := c.accountingFailureVersion
+		c.accountingMu.Unlock()
+		if time.Since(last) < DefaultDebugSessionRequeue {
+			return nil, nil
+		}
+		if err := c.reconcileActiveAccounting(ctx, ds, true); err != nil {
+			return nil, err
+		}
+		c.accountingMu.Lock()
+		defer c.accountingMu.Unlock()
+		// A lifecycle failure racing this scan must still get an immediate retry.
+		if failureVersion != c.accountingFailureVersion {
+			return nil, nil
+		}
+		// Bound process-local repair bookkeeping; eviction only adds a repair.
+		if c.accountingLast == nil || len(c.accountingLast) >= 1024 {
+			c.accountingLast = make(map[string]time.Time)
+		}
+		c.accountingLast[ds.Spec.TemplateRef] = time.Now()
+		return nil, nil
+	})
+	return err
+}
+
 // reconcileActiveAccounting derives aggregates from authoritative session state.
 // Template CAS retries repeat the list; periodic Active reconciliation repairs
 // snapshots raced by a session transition without replaying increment/decrement.
-func (c *DebugSessionController) reconcileActiveAccounting(ctx context.Context, ds *breakglassv1alpha1.DebugSession, markUsed bool) error {
+func (c *DebugSessionController) reconcileActiveAccounting(ctx context.Context, ds *breakglassv1alpha1.DebugSession, markUsed bool) (resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			c.accountingMu.Lock()
+			delete(c.accountingLast, ds.Spec.TemplateRef)
+			c.accountingFailureVersion++
+			c.accountingMu.Unlock()
+		}
+	}()
 	reader := c.approvalReader()
 	var templateUID types.UID
 	var podTemplateName string
@@ -1236,7 +1274,8 @@ func (c *DebugSessionController) reconcileActiveAccounting(ctx context.Context, 
 				templateUID = template.UID
 			}
 		}
-		var total, clusterCount int32
+		var total int32
+		clusterCounts := map[string]int32{ds.Spec.Cluster: 0}
 		var latestStart *metav1.Time
 		continuation := ""
 		for {
@@ -1249,11 +1288,12 @@ func (c *DebugSessionController) reconcileActiveAccounting(ctx context.Context, 
 				if session.Spec.TemplateRef != ds.Spec.TemplateRef {
 					continue
 				}
+				if _, ok := clusterCounts[session.Spec.Cluster]; !ok {
+					clusterCounts[session.Spec.Cluster] = 0
+				}
 				if session.Status.State == breakglassv1alpha1.DebugSessionStateActive {
 					total++
-					if session.Spec.Cluster == ds.Spec.Cluster {
-						clusterCount++
-					}
+					clusterCounts[session.Spec.Cluster]++
 				}
 				if session.Status.StartsAt != nil && (latestStart == nil || latestStart.Before(session.Status.StartsAt)) {
 					latestStart = session.Status.StartsAt.DeepCopy()
@@ -1270,14 +1310,18 @@ func (c *DebugSessionController) reconcileActiveAccounting(ctx context.Context, 
 			if latestStart != nil && (template.Status.LastUsedAt == nil || template.Status.LastUsedAt.Before(latestStart)) {
 				template.Status.LastUsedAt = latestStart
 			}
-			if err := c.client.Status().Patch(ctx, template, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
-				return fmt.Errorf("patch accounting template: %w", err)
+			if base.Status.ActiveSessionCount != template.Status.ActiveSessionCount || !base.Status.LastUsedAt.Equal(template.Status.LastUsedAt) {
+				if err := c.client.Status().Patch(ctx, template, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
+					return fmt.Errorf("patch accounting template: %w", err)
+				}
 			}
 			if (markUsed || latestStart != nil) && template.Spec.PodTemplateRef != nil {
 				podTemplateName = template.Spec.PodTemplateRef.Name
 			}
 		}
-		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Set(float64(clusterCount))
+		for clusterName, count := range clusterCounts {
+			metrics.DebugSessionsActive.WithLabelValues(clusterName, ds.Spec.TemplateRef).Set(float64(count))
+		}
 		return nil
 	})
 	if err != nil {
@@ -1285,7 +1329,7 @@ func (c *DebugSessionController) reconcileActiveAccounting(ctx context.Context, 
 	}
 	if podTemplateName != "" {
 		if err := c.updatePodTemplateUsedBy(ctx, podTemplateName, ds.Spec.TemplateRef); err != nil {
-			return fmt.Errorf("update pod template usage: %w", err)
+			c.log.Warnw("Failed to repair optional pod template usage; periodic reconciliation will retry", "podTemplate", podTemplateName, "error", err)
 		}
 	}
 	return nil

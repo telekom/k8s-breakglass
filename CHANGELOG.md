@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Align rejection API, mock, E2E, and audit contracts with `Rejected`; coalesce periodic active accounting while preserving immediate lifecycle and failure repair.
+
 - Reconcile debug-session active counts from live state across clusters, retrying template conflicts without duplicate decrements.
 
 - Persist DebugSession rejection as a terminal `Rejected` state across API,

@@ -27,6 +27,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -39,6 +40,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -80,21 +82,25 @@ func debugSessionIdentity(ds *breakglassv1alpha1.DebugSession) string {
 
 // DebugSessionController manages DebugSession lifecycle
 type DebugSessionController struct {
-	quotaNamespace string
-	quotaEnabled   bool
-	log            *zap.SugaredLogger
-	client         ctrlclient.Client
-	reader         ctrlclient.Reader
-	apiReader      ctrlclient.Reader
-	ccProvider     *cluster.ClientProvider
-	targetClients  ClientProviderInterface
-	auditService   *audit.Service
-	auditManager   *audit.Manager
-	mailService    breakglass.MailEnqueuer
-	auxiliaryMgr   *AuxiliaryResourceManager
-	brandingName   string
-	baseURL        string
-	disableEmail   bool
+	accountingMu             sync.Mutex
+	accountingLast           map[string]time.Time
+	accountingFlight         singleflight.Group
+	accountingFailureVersion uint64
+	quotaNamespace           string
+	quotaEnabled             bool
+	log                      *zap.SugaredLogger
+	client                   ctrlclient.Client
+	reader                   ctrlclient.Reader
+	apiReader                ctrlclient.Reader
+	ccProvider               *cluster.ClientProvider
+	targetClients            ClientProviderInterface
+	auditService             *audit.Service
+	auditManager             *audit.Manager
+	mailService              breakglass.MailEnqueuer
+	auxiliaryMgr             *AuxiliaryResourceManager
+	brandingName             string
+	baseURL                  string
+	disableEmail             bool
 	// targetClientFactory and beforeDebugTargetWrite are nil in production. They
 	// are narrow seams for deployment fence tests: the former keeps tests from
 	// needing a live spoke API, while the latter injects a hub-side change after
@@ -497,7 +503,7 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
 
-	if err := c.reconcileActiveAccounting(ctx, ds, true); err != nil {
+	if err := c.reconcilePeriodicActiveAccounting(ctx, ds); err != nil {
 		return ctrl.Result{}, err
 	}
 
