@@ -379,6 +379,8 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	}
 
 	// Persist the complete approval decision before starting any activation work.
+	// Fresh API-created sessions have an empty status state until this write.
+	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -738,9 +740,6 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		}
 	}
 
-	if template.Spec.PodTemplateRef != nil && ds.Status.ResolvedPodTemplate == nil {
-		return c.failSession(ctx, ds, "approved pod-template snapshot is missing")
-	}
 	if binding != nil && ds.Status.ResolvedBindingSpec == nil {
 		return c.failSession(ctx, ds, "approved binding snapshot is missing")
 	}
@@ -748,6 +747,9 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		approvedTemplate := template.DeepCopy()
 		approvedTemplate.Spec = *ds.Status.ResolvedTemplate.DeepCopy()
 		template = approvedTemplate
+	}
+	if template.Spec.PodTemplateRef != nil && ds.Status.ResolvedPodTemplate == nil {
+		return c.failSession(ctx, ds, "approved pod-template snapshot is missing")
 	}
 	if ds.Status.ResolvedBindingSpec != nil {
 		approvedBinding := binding
@@ -765,7 +767,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		}
 		binding = approvedBinding
 	}
-	if len(ds.Status.ResolvedTemplateVariablePolicy) > 0 && binding != nil {
+	if binding != nil {
 		effectiveVariables, err := breakglassv1alpha1.EffectiveExtraDeployVariables(ds.Status.ResolvedTemplateVariablePolicy, binding.Spec.ExtraDeployVariables)
 		if err != nil {
 			return c.failSession(ctx, ds, "invalid approved binding variable snapshot")
@@ -1277,6 +1279,15 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 	}
 
 	if invalidPolicy != nil {
+		// Match API discovery: an invalid binding must not shadow a direct
+		// template grant. Valid bindings still take precedence above.
+		if template.Spec.Allowed != nil {
+			for _, pattern := range template.Spec.Allowed.Clusters {
+				if matchPattern(pattern, clusterName) {
+					return nil, nil
+				}
+			}
+		}
 		return nil, invalidPolicy
 	}
 	return nil, nil // No matching binding found (not an error)

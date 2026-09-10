@@ -19,6 +19,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -295,4 +296,94 @@ func TestSessionDetailHidesRecoveryVariablePolicy(t *testing.T) {
 	require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), ds))
 	require.Len(t, ds.Status.ResolvedTemplateVariablePolicy, 1)
 	require.JSONEq(t, `"private-policy-value"`, string(ds.Status.ResolvedTemplateVariablePolicy[0].Default.Raw))
+}
+
+func TestActivationUsesApprovedPodReferenceBeforeLiveTemplate(t *testing.T) {
+	c, ds, template, target := newDeploymentFenceFixture(t)
+	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
+	ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+	ds.Status.ResolvedBindingSnapshotCaptured = true
+	require.NoError(t, c.client.Status().Update(t.Context(), ds))
+	template.Spec.PodTemplateRef = &breakglassv1alpha1.DebugPodTemplateReference{Name: "unapproved-live-reference"}
+	require.NoError(t, c.client.Update(t.Context(), template))
+	_, err := c.activateSession(t.Context(), ds, template, nil)
+	require.NoError(t, err)
+	deployment := &appsv1.Deployment{}
+	require.NoError(t, target.Get(t.Context(), client.ObjectKey{Namespace: "breakglass-debug", Name: ds.Name}, deployment))
+	require.Equal(t, "busybox", deployment.Spec.Template.Spec.Containers[0].Image)
+}
+
+func TestEmptyApprovedPolicyCannotSkipBindingConstraints(t *testing.T) {
+	c, ds, template, target := newDeploymentFenceFixture(t)
+	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
+	ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+	ds.Status.ResolvedBindingSnapshotCaptured = true
+	ds.Status.ResolvedBinding = &breakglassv1alpha1.ResolvedBindingRef{Name: "binding", Namespace: "default"}
+	ds.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: []byte(`{"templateRef":{"name":"template"},"clusters":["spoke"],"extraDeployVariables":[{"name":"missing","disabled":true}]}`)}
+	ds.Status.ResolvedTemplateVariablePolicy = []breakglassv1alpha1.ExtraDeployVariable{}
+	require.NoError(t, c.client.Status().Update(t.Context(), ds))
+	// Preserve the explicitly empty in-memory slice as well as persisted provenance.
+	ds.Status.ResolvedTemplateVariablePolicy = []breakglassv1alpha1.ExtraDeployVariable{}
+	_, err := c.activateSession(t.Context(), ds, template, nil)
+	require.NoError(t, err)
+	require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), ds))
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, ds.Status.State)
+	var deployments appsv1.DeploymentList
+	require.NoError(t, target.List(t.Context(), &deployments))
+	require.Empty(t, deployments.Items)
+}
+
+func TestNewNoVariableSessionAPIActivation(t *testing.T) {
+	for _, mode := range []breakglassv1alpha1.DebugSessionTemplateMode{breakglassv1alpha1.DebugSessionModeWorkload, breakglassv1alpha1.DebugSessionModeKubectlDebug} {
+		t.Run(string(mode), func(t *testing.T) {
+			c, prior, template, target := newDeploymentFenceFixture(t)
+			require.NoError(t, c.client.Delete(t.Context(), prior))
+			template.Spec.Mode = mode
+			template.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Users: []string{"alice@example.com"}}
+			if mode == breakglassv1alpha1.DebugSessionModeKubectlDebug {
+				template.Spec.PodTemplateString = ""
+				template.Spec.WorkloadType = ""
+				template.Spec.KubectlDebug = &breakglassv1alpha1.KubectlDebugConfig{EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{Enabled: true, AllowedImages: []string{"busybox:*"}}}
+			}
+			require.NoError(t, c.client.Update(t.Context(), template))
+			cc := &breakglassv1alpha1.ClusterConfig{}
+			require.NoError(t, c.client.Get(t.Context(), client.ObjectKey{Name: "spoke", Namespace: "default"}, cc))
+			cc.Status.Conditions = []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Verified"}}
+			require.NoError(t, c.client.Update(t.Context(), cc))
+			// Invalid matching policy must not shadow this direct template grant.
+			invalid := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "invalid", Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name}, Clusters: []string{"spoke"}, ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariableConstraint{{Name: "absent", Disabled: ptr.To(true)}}}}
+			if mode == breakglassv1alpha1.DebugSessionModeWorkload {
+				require.NoError(t, c.client.Create(t.Context(), invalid))
+			}
+			api := NewDebugSessionAPIController(zap.NewNop().Sugar(), c.client, nil, nil)
+			router := gin.New()
+			router.Use(func(ctx *gin.Context) {
+				ctx.Set("legacy_identity_allowed", true)
+				ctx.Set("username", "alice@example.com")
+				ctx.Next()
+			})
+			require.NoError(t, api.Register(router.Group("/api/v1/"+api.BasePath())))
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(`{"templateRef":"template","cluster":"spoke"}`))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+			sessions := &breakglassv1alpha1.DebugSessionList{}
+			require.NoError(t, c.client.List(t.Context(), sessions))
+			require.Len(t, sessions.Items, 1)
+			ds := &sessions.Items[0]
+			require.Empty(t, ds.Status.State)
+			require.Nil(t, ds.Spec.BindingRef)
+			_, err := c.handlePending(t.Context(), ds)
+			require.NoError(t, err)
+			require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), ds))
+			require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, ds.Status.State, ds.Status.Message)
+			require.Nil(t, ds.Status.ResolvedBinding)
+			if mode == breakglassv1alpha1.DebugSessionModeWorkload {
+				deployment := &appsv1.Deployment{}
+				require.NoError(t, target.Get(t.Context(), client.ObjectKey{Namespace: "breakglass-debug", Name: ds.Name}, deployment))
+				require.Equal(t, "busybox", deployment.Spec.Template.Spec.Containers[0].Image)
+			}
+		})
+	}
 }
