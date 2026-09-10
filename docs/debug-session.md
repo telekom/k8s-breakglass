@@ -1421,7 +1421,13 @@ If a create response is interrupted before its UID is recorded, cleanup retains
 the intent and retries without adopting a same-name replacement. Resources with
 `deleteAfter: false` remain intentionally retained and do not create a cleanup
 failure condition when their recorded UID and resource identity match the
-retained inventory. Unknown creation outcomes remain protected. Structural validation failures emit one audit event for the
+retained inventory. Unknown creation outcomes remain protected. Cleanup decisions and failure
+evidence use the inventory after concurrent status merges; any remaining
+actionable resource keeps cleanup queued. Failure and recovery audit events
+follow a successful status write, and status-only errors do not imply a
+resource-cleanup failure. Repeated recovery preserves the condition transition
+time. A render failure with no create intent or observed UID never triggers a
+target lookup during cleanup. Structural validation failures emit one audit event for the
 persisted failure; later reconciles preserve the status without repeating it.
 Auxiliary documents continue to be retried after their primary resource is
 deleted; once the primary and every child are deleted, their history no longer

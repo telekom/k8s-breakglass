@@ -49,6 +49,7 @@ func TestCleanupStatusPatchFailureDoesNotEmitCleanupFailureAudit(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session-uid"},
 		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
+		Status:     breakglassv1alpha1.DebugSessionStatus{DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "v1", Kind: "ConfigMap", Namespace: "target", Name: "residual", UID: "residual-uid"}}},
 	}
 	hub := fake.NewClientBuilder().WithScheme(Scheme).
 		WithObjects(session).
@@ -123,4 +124,24 @@ func TestInvalidDebugSessionValidationAuditWaitsForStatusPersistence(t *testing.
 	assert.Error(t, secondErr)
 	require.NoError(t, auditManager.Close())
 	assert.Empty(t, sink.Events(), "validation failure is audited only after status persistence")
+}
+
+func TestCleanupStatusOnlyErrorHasNoResidualFailureAudit(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "status-only", Namespace: "ns", UID: "uid"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateTerminated, KubectlDebugStatus: &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{{ID: "done", State: breakglassv1alpha1.KubectlDebugOperationCompleted}}}}}
+	patches := 0
+	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(session).WithStatusSubresource(session).WithInterceptorFuncs(interceptor.Funcs{SubResourcePatch: func(ctx context.Context, cl client.Client, sub string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+		patches++
+		if patches == 1 {
+			return errors.New("bookkeeping unavailable")
+		}
+		return cl.SubResource(sub).Patch(ctx, obj, patch, opts...)
+	}}).Build()
+	sink := &cleanupAuditCaptureSink{}
+	manager := audit.NewManager(sink, audit.ManagerConfig{QueueSize: 8, WorkerCount: 1}, zap.NewNop())
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, cluster.NewClientProvider(hub, zap.NewNop().Sugar())).WithAuditManager(manager)
+	require.ErrorContains(t, controller.cleanupResources(context.Background(), session), "bookkeeping unavailable")
+	require.GreaterOrEqual(t, patches, 2)
+	require.False(t, cleanupConditionFailed(session))
+	require.NoError(t, manager.Close())
+	require.Empty(t, sink.Events())
 }
