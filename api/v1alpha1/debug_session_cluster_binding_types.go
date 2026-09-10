@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -483,6 +484,15 @@ func ValidateDebugSessionClusterBinding(binding *DebugSessionClusterBinding) *Va
 			specPath.Child("templateRef"),
 			"either templateRef or templateSelector must be specified",
 		))
+	}
+
+	if spec.TemplateRef != nil && strings.TrimSpace(spec.TemplateRef.Name) == "" {
+		result.Errors = append(result.Errors, field.Required(specPath.Child("templateRef", "name"), "template name must not be empty"))
+	}
+	for i, name := range spec.Clusters {
+		if strings.TrimSpace(name) == "" {
+			result.Errors = append(result.Errors, field.Required(specPath.Child("clusters").Index(i), "cluster name must not be empty"))
+		}
 	}
 
 	// At least one cluster reference method must be specified
