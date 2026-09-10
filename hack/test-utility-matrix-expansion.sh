@@ -47,6 +47,8 @@ def resolve_field(expression, image, platform)
     image.fetch("name")
   when "${{ matrix.image.context }}"
     image.fetch("context")
+  when "${{ matrix.image.buildContext || matrix.image.context }}"
+    image.fetch("buildContext", image.fetch("context"))
   when "${{ matrix.image.file }}"
     image.fetch("file")
   when "${{ matrix.platform }}"

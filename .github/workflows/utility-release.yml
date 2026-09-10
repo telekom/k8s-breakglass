@@ -112,7 +112,7 @@ jobs:
           tag="utility-contract-${name}:${PLATFORM##*/}"
           timeout 45m docker buildx build --platform "${PLATFORM}" --load \
             --file "$(jq -r .file <<<"${ENTRY}")" --tag "${tag}" \
-            "$(jq -r .context <<<"${ENTRY}")"
+            "$(jq -r '.buildContext // .context' <<<"${ENTRY}")"
           test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${tag}")" = "${PLATFORM}"
           smoke_command=()
           while IFS= read -r -d '' argument; do smoke_command+=("${argument}"); done < <(jq -j '.smokeCommand[] + "\u0000"' <<<"${ENTRY}")
@@ -223,7 +223,7 @@ jobs:
           IMAGE: ${{ matrix.image }}
           TAG: ${{ needs.discover.outputs.tag }}
           PUBLICATION_TAG: ${{ needs.discover.outputs.publication_tag }}
-          CONTEXT: ${{ matrix.context }}
+          CONTEXT: ${{ matrix.buildContext || matrix.context }}
           DOCKERFILE: ${{ matrix.file }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
