@@ -178,7 +178,7 @@ func TestDebugSessionCleanupMergesConcurrentCreateOperationInventoryAfterConflic
 	assert.Equal(t, metav1.ConditionTrue, storedCleanupCondition.Status)
 	assert.Equal(t, liveCleanupCondition.ObservedGeneration, storedCleanupCondition.ObservedGeneration)
 	assert.True(t, storedCleanupCondition.LastTransitionTime.Equal(&liveCleanupCondition.LastTransitionTime))
-	assert.Equal(t, liveCleanupCondition.Message, storedCleanupCondition.Message)
+	assert.Equal(t, boundedCleanupConditionMessage(stored.DeepCopy()), storedCleanupCondition.Message)
 	require.Len(t, stored.Status.DeployedResources, 1)
 	assert.Equal(t, "op-b", stored.Status.DeployedResources[0].CreateOperationID)
 	require.Len(t, stored.Status.PodTemplateResourceStatuses, 1)

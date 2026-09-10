@@ -598,7 +598,6 @@ func TestManager(t *testing.T) {
 		assert.False(t, event.Timestamp.IsZero())
 	}
 	mu.Unlock()
-
 }
 
 func TestManagerEmitSync(t *testing.T) {
@@ -1963,8 +1962,7 @@ func TestManager_DebugSessionEvents(t *testing.T) {
 	// Test DebugSessionResourceCleanup
 	manager.DebugSessionResourceCleanup(ctx, "ds4", "ns1", "cluster1", "Pod", "debug-pod", "debug-ns")
 
-	time.Sleep(100 * time.Millisecond)
-
+	require.NoError(t, manager.Close())
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -2025,8 +2023,6 @@ func TestManager_DebugSessionEvents(t *testing.T) {
 	require.Len(t, cleanupEvents, 1)
 	assert.Equal(t, SeverityInfo, cleanupEvents[0].Severity)
 	assert.Equal(t, "Pod", cleanupEvents[0].Target.Kind)
-
-	_ = manager.Close()
 }
 
 func TestDebugSessionCleanupAuditEvents(t *testing.T) {
@@ -2043,7 +2039,6 @@ func TestDebugSessionCleanupAuditEvents(t *testing.T) {
 	manager := NewManager(sink, DefaultManagerConfig(), zap.NewNop())
 	manager.DebugSessionCleanupFailed(context.Background(), "ds", "ns", "cluster", []string{"target/Pod/debug (uid=pod-uid)"})
 	manager.DebugSessionCleanupRecovered(context.Background(), "ds", "ns", "cluster")
-	time.Sleep(100 * time.Millisecond)
 	require.NoError(t, manager.Close())
 
 	mu.Lock()
