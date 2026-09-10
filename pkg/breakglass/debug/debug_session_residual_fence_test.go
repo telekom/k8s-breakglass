@@ -136,7 +136,7 @@ func TestDebugSessionCleanupMergesConcurrentCreateOperationInventoryAfterConflic
 	nestedA.AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{{APIVersion: "v1", Kind: "Secret", Namespace: "target", ResourceName: "nested", CreateOperationID: "op-a"}}
 	nestedB := nestedA.DeepCopy()
 	nestedB.AdditionalResources[0].CreateOperationID = "op-b"
-	live := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session-uid"}, Status: breakglassv1alpha1.DebugSessionStatus{
+	live := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session-uid", Generation: 11}, Status: breakglassv1alpha1.DebugSessionStatus{
 		DeployedResources:           []breakglassv1alpha1.DeployedResourceRef{deployedA},
 		PodTemplateResourceStatuses: []breakglassv1alpha1.PodTemplateResourceStatus{podTemplateA},
 		AuxiliaryResourceStatuses:   []breakglassv1alpha1.AuxiliaryResourceStatus{mainA, nestedA},

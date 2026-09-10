@@ -217,12 +217,10 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 	for i, status := range session.Status.AuxiliaryResourceStatuses {
 		deleteAfter := shouldDeleteAuxiliaryResource(session, status.Name)
 		if !status.Deleted && status.UID == "" && status.CreateOperationID != "" {
-			if status.CreateOperationID != "" {
-				err := fmt.Errorf("auxiliary resource %q creation outcome is unresolved", status.Name)
-				cleanupErrors = append(cleanupErrors, err)
-				session.Status.AuxiliaryResourceStatuses[i].Error = err.Error()
-			}
-		} else if !status.Deleted && deleteAfter {
+			err := fmt.Errorf("auxiliary resource %q creation outcome is unresolved", status.Name)
+			cleanupErrors = append(cleanupErrors, err)
+			session.Status.AuxiliaryResourceStatuses[i].Error = err.Error()
+		} else if !status.Deleted && deleteAfter && (status.Created || status.UID != "") {
 			// A recorded UID is sufficient to delete safely even when the create
 			// response was interrupted before Created could be persisted.
 			err := m.deleteResource(ctx, targetClient, status, session)
@@ -301,15 +299,7 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 }
 
 func shouldDeleteAuxiliaryResource(session *breakglassv1alpha1.DebugSession, name string) bool {
-	if session.Status.ResolvedTemplate == nil {
-		return true
-	}
-	for _, auxRes := range session.Status.ResolvedTemplate.AuxiliaryResources {
-		if auxRes.Name == name {
-			return auxRes.DeleteAfter
-		}
-	}
-	return true
+	return utils.DebugSessionDeletesAuxiliaryResource(session, name)
 }
 
 // filterEnabledResources determines which auxiliary resources should be deployed.

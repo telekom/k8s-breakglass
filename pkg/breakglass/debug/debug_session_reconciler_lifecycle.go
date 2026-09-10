@@ -11,6 +11,7 @@ import (
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -477,16 +478,19 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	cleanupBaseline := ds.Status.DeepCopy()
 	wasCleanupFailed := cleanupConditionFailed(ds)
 	finishCleanup := func(operationErr error) error {
-		setCleanupCondition(ds, operationErr)
+		setCleanupCondition(ds)
 		patchErr := c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline)
-		if c.shouldEmitAudit(ds) {
+		if patchErr == nil && c.shouldEmitAudit(ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
-				if operationErr != nil {
+				if cleanupConditionFailed(ds) {
 					auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, cleanupResidualIdentities(ds))
-				} else if wasCleanupFailed && patchErr == nil && !cleanupConditionFailed(ds) {
+				} else if wasCleanupFailed {
 					auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
 				}
 			}
+		}
+		if patchErr == nil && cleanupStatusHasResiduals(ds) {
+			operationErr = errors.Join(operationErr, errors.New("cleanup inventory remains unresolved"))
 		}
 		return errors.Join(operationErr, patchErr)
 	}
@@ -579,14 +583,14 @@ func cleanupConditionFailed(ds *breakglassv1alpha1.DebugSession) bool {
 	return condition != nil && condition.Status == metav1.ConditionTrue
 }
 
-func setCleanupCondition(ds *breakglassv1alpha1.DebugSession, cleanupErr error) {
+func setCleanupCondition(ds *breakglassv1alpha1.DebugSession) {
 	conditionType := string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)
 	condition := metav1.Condition{
 		Type:               conditionType,
 		ObservedGeneration: ds.Generation,
 		LastTransitionTime: metav1.Now(),
 	}
-	if cleanupErr != nil {
+	if cleanupStatusHasResiduals(ds) {
 		condition.Status = metav1.ConditionTrue
 		condition.Reason = "CleanupFailed"
 		condition.Message = boundedCleanupConditionMessage(ds)
@@ -594,6 +598,9 @@ func setCleanupCondition(ds *breakglassv1alpha1.DebugSession, cleanupErr error) 
 		condition.Status = metav1.ConditionFalse
 		condition.Reason = "CleanupRecovered"
 		condition.Message = "Cleanup completed; no residual resources remain."
+	}
+	if previous := ds.GetCondition(conditionType); previous != nil && previous.Status == condition.Status {
+		condition.LastTransitionTime = previous.LastTransitionTime
 	}
 	ds.SetCondition(condition)
 }
@@ -625,14 +632,16 @@ func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 		identities = append(identities, identity)
 	}
 	for _, ref := range ds.Status.DeployedResources {
-		add(ref.Kind, ref.Namespace, ref.Name, ref.UID)
+		if !utils.DebugSessionResourceIntentionallyRetained(ds, ref) {
+			add(ref.Kind, ref.Namespace, ref.Name, ref.UID)
+		}
 	}
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
 		if auxiliaryStatusHasCleanupResidual(ds, status) {
 			add(status.Kind, status.Namespace, status.ResourceName, status.UID)
 		}
 		for _, ref := range status.AdditionalResources {
-			if !ref.Deleted && ((ref.UID == "" && ref.CreateOperationID != "") || shouldDeleteAuxiliaryResource(ds, status.Name)) {
+			if utils.DebugSessionAuxiliaryChildHasCleanupResidual(ds, status.Name, ref) {
 				add(ref.Kind, ref.Namespace, ref.ResourceName, ref.UID)
 			}
 		}
@@ -729,42 +738,11 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 		current.Status.KubectlDebugStatus = mergeKubectlDebugStatus(
 			cleanupBaseline.KubectlDebugStatus, desiredStatus.KubectlDebugStatus, current.Status.KubectlDebugStatus,
 		)
-		if condition := desiredCleanupCondition(desiredStatus.Conditions); condition != nil {
-			mergedCondition := condition.DeepCopy()
-			if mergedCondition.Status == metav1.ConditionFalse && cleanupStatusHasResiduals(current) {
-				// A stale recovery attempt must not rewrite the live failure
-				// condition after a concurrent resource was retained. Preserve the
-				// live condition when it already records that same failure; its
-				// transition metadata describes the actual persisted state.
-				if liveCondition := current.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)); liveCondition != nil && liveCondition.Status == metav1.ConditionTrue {
-					mergedCondition.Status = metav1.ConditionTrue
-					mergedCondition.ObservedGeneration = current.Generation
-					mergedCondition.LastTransitionTime = liveCondition.LastTransitionTime
-					mergedCondition.Reason = "CleanupFailed"
-					mergedCondition.Message = boundedCleanupConditionMessage(current)
-				} else {
-					mergedCondition.Status = metav1.ConditionTrue
-					mergedCondition.ObservedGeneration = current.Generation
-					mergedCondition.LastTransitionTime = metav1.Now()
-					mergedCondition.Reason = "CleanupFailed"
-					mergedCondition.Message = boundedCleanupConditionMessage(current)
-				}
-			} else if mergedCondition.Status == metav1.ConditionTrue {
-				// A cleanup attempt can race with a writer that adds or removes
-				// inventory. Keep the live transition timestamp when the failure
-				// remains true, but recompute generation and bounded identities from
-				// the merged status rather than persisting stale cleanup evidence.
-				if liveCondition := current.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)); liveCondition != nil && liveCondition.Status == metav1.ConditionTrue {
-					mergedCondition.LastTransitionTime = liveCondition.LastTransitionTime
-				} else {
-					mergedCondition.LastTransitionTime = metav1.Now()
-				}
-				mergedCondition.ObservedGeneration = current.Generation
-				mergedCondition.Reason = "CleanupFailed"
-				mergedCondition.Message = boundedCleanupConditionMessage(current)
-			}
-			current.SetCondition(*mergedCondition)
+		if desiredCleanupCondition(desiredStatus.Conditions) != nil {
+			// Classify the fresh merged inventory, not the operation or status-write error.
+			setCleanupCondition(current)
 		}
+
 		if current.Generation > 0 {
 			current.Status.ObservedGeneration = current.Generation
 		}
@@ -787,7 +765,7 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 
 func cleanupStatusHasResiduals(session *breakglassv1alpha1.DebugSession) bool {
 	status := session.Status
-	if len(status.DeployedResources) > 0 {
+	if utils.DebugSessionHasActionableDeployedResources(session) {
 		return true
 	}
 	for _, resource := range status.AuxiliaryResourceStatuses {
@@ -795,7 +773,7 @@ func cleanupStatusHasResiduals(session *breakglassv1alpha1.DebugSession) bool {
 			return true
 		}
 		for _, child := range resource.AdditionalResources {
-			if !child.Deleted && ((child.UID == "" && child.CreateOperationID != "") || shouldDeleteAuxiliaryResource(session, resource.Name)) {
+			if utils.DebugSessionAuxiliaryChildHasCleanupResidual(session, resource.Name, child) {
 				return true
 			}
 		}
@@ -814,7 +792,7 @@ func cleanupStatusHasResiduals(session *breakglassv1alpha1.DebugSession) bool {
 
 func cleanupNeedsTargetCluster(session *breakglassv1alpha1.DebugSession) bool {
 	status := session.Status
-	if len(status.DeployedResources) > 0 {
+	if utils.DebugSessionHasActionableDeployedResources(session) {
 		return true
 	}
 	for _, resource := range status.AuxiliaryResourceStatuses {
@@ -863,13 +841,7 @@ func hasUnresolvedCleanupIntent(session *breakglassv1alpha1.DebugSession) bool {
 }
 
 func auxiliaryStatusHasCleanupResidual(session *breakglassv1alpha1.DebugSession, status breakglassv1alpha1.AuxiliaryResourceStatus) bool {
-	if status.Deleted {
-		return false
-	}
-	if !status.Created && status.UID == "" && status.CreateOperationID != "" {
-		return true
-	}
-	return shouldDeleteAuxiliaryResource(session, status.Name) && (status.Created || status.UID != "")
+	return utils.DebugSessionAuxiliaryStatusHasCleanupResidual(session, status)
 }
 
 func desiredCleanupCondition(conditions []metav1.Condition) *metav1.Condition {

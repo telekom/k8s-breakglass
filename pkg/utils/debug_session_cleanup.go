@@ -31,3 +31,35 @@ func DebugSessionResourceIntentionallyRetained(ds *breakglassv1alpha1.DebugSessi
 	}
 	return false
 }
+
+// DebugSessionHasActionableDeployedResources excludes only confirmed policy-retained identities.
+func DebugSessionHasActionableDeployedResources(ds *breakglassv1alpha1.DebugSession) bool {
+	for _, ref := range ds.Status.DeployedResources {
+		if !DebugSessionResourceIntentionallyRetained(ds, ref) {
+			return true
+		}
+	}
+	return false
+}
+
+// DebugSessionDeletesAuxiliaryResource returns the resolved cleanup policy.
+func DebugSessionDeletesAuxiliaryResource(session *breakglassv1alpha1.DebugSession, name string) bool {
+	if session.Status.ResolvedTemplate != nil {
+		for _, resource := range session.Status.ResolvedTemplate.AuxiliaryResources {
+			if resource.Name == name {
+				return resource.DeleteAfter
+			}
+		}
+	}
+	return true
+}
+
+// DebugSessionAuxiliaryStatusHasCleanupResidual preserves unknown outcomes even for retained resources.
+func DebugSessionAuxiliaryStatusHasCleanupResidual(session *breakglassv1alpha1.DebugSession, status breakglassv1alpha1.AuxiliaryResourceStatus) bool {
+	return !status.Deleted && ((status.UID == "" && status.CreateOperationID != "") || (DebugSessionDeletesAuxiliaryResource(session, status.Name) && (status.Created || status.UID != "")))
+}
+
+// DebugSessionAuxiliaryChildHasCleanupResidual preserves unknown child outcomes independently of its parent.
+func DebugSessionAuxiliaryChildHasCleanupResidual(session *breakglassv1alpha1.DebugSession, parent string, child breakglassv1alpha1.AdditionalResourceRef) bool {
+	return !child.Deleted && ((child.UID == "" && child.CreateOperationID != "") || DebugSessionDeletesAuxiliaryResource(session, parent))
+}

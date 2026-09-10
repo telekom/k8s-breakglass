@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestDebugSessionCleanupPreservesConcurrentAuxiliaryDocument(t *testing.T) {
@@ -198,7 +199,8 @@ func TestCleanupRetainedAuxiliaryResourceSkipsTargetConfig(t *testing.T) {
 		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "missing-cluster"},
 		Status: breakglassv1alpha1.DebugSessionStatus{
 			ResolvedTemplate:          &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "kept", DeleteAfter: false}}},
-			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "kept", Created: true, UID: "kept-uid"}},
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "kept", Created: true, UID: "kept-uid", Kind: "ConfigMap", APIVersion: "v1", Namespace: "ns", ResourceName: "kept"}},
+			DeployedResources:         []breakglassv1alpha1.DeployedResourceRef{{Source: "auxiliary:kept", Kind: "ConfigMap", APIVersion: "v1", Namespace: "ns", Name: "kept", UID: "kept-uid"}},
 			Conditions:                []metav1.Condition{{Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionTrue, Reason: "CleanupFailed", Message: "retry"}},
 		},
 	}
@@ -209,4 +211,43 @@ func TestCleanupRetainedAuxiliaryResourceSkipsTargetConfig(t *testing.T) {
 	condition := session.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
 	require.NotNil(t, condition)
 	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	session.Status.AuxiliaryResourceStatuses = append(session.Status.AuxiliaryResourceStatuses, breakglassv1alpha1.AuxiliaryResourceStatus{Name: "unknown", Kind: "ConfigMap", Namespace: "ns", ResourceName: "unknown", CreateOperationID: "unknown-operation"})
+	require.NoError(t, hub.Status().Update(context.Background(), session))
+	require.ErrorContains(t, controller.cleanupResources(context.Background(), session), "cleanup intent remains unresolved")
+	condition = session.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+	require.Equal(t, metav1.ConditionTrue, condition.Status)
+	require.Contains(t, condition.Message, "ns/ConfigMap/unknown")
+	require.NotContains(t, condition.Message, "kept-uid")
+	require.Len(t, session.Status.DeployedResources, 1, "retained identity stays durable while another cleanup fails")
+}
+
+func TestCleanupRequeuesMergedConcurrentResidual(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "concurrent-residual", Namespace: "ns", UID: "uid", Generation: 3}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateTerminated, Conditions: []metav1.Condition{{Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionTrue, Reason: "CleanupFailed", Message: "prior"}}}}
+	injected := false
+	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(session).WithStatusSubresource(session).WithInterceptorFuncs(interceptor.Funcs{Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+		if !injected {
+			injected = true
+			live := &breakglassv1alpha1.DebugSession{}
+			require.NoError(t, cl.Get(ctx, key, live))
+			live.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "v1", Kind: "ConfigMap", Name: "concurrent", Namespace: "target", UID: "new-uid"}}
+			require.NoError(t, cl.Status().Update(ctx, live))
+		}
+		return cl.Get(ctx, key, obj, opts...)
+	}}).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+	result, err := controller.handleCleanup(context.Background(), session)
+	require.NoError(t, err)
+	require.Equal(t, ExpiredSessionRequeue, result.RequeueAfter)
+	require.True(t, cleanupConditionFailed(session))
+	require.Contains(t, cleanupResidualIdentities(session), "target/ConfigMap/concurrent (uid=new-uid)")
+}
+
+func TestCleanupRepeatedRecoveryPreservesTransition(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "recovered", Namespace: "ns", UID: "uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateTerminated}}
+	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(session).WithStatusSubresource(session).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, cluster.NewClientProvider(hub, zap.NewNop().Sugar()))
+	require.NoError(t, controller.cleanupResources(context.Background(), session))
+	before := session.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)).DeepCopy()
+	require.NoError(t, controller.cleanupResources(context.Background(), session))
+	require.Equal(t, before, session.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)))
 }

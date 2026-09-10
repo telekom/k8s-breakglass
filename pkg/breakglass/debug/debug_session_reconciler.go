@@ -39,6 +39,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 	corev1 "k8s.io/api/core/v1"
@@ -623,11 +624,15 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 // hasTrackedSpokeResources reports whether the session status still references
 // anything that was deployed to the spoke cluster.
 func hasTrackedSpokeResources(ds *breakglassv1alpha1.DebugSession) bool {
-	if len(ds.Status.DeployedResources) > 0 ||
+	if utils.DebugSessionHasActionableDeployedResources(ds) ||
 		hasOutstandingAuxiliaryResources(ds) ||
-		len(ds.Status.PodTemplateResourceStatuses) > 0 ||
 		len(ds.Status.AllowedPods) > 0 {
 		return true
+	}
+	for _, resource := range ds.Status.PodTemplateResourceStatuses {
+		if !resource.Deleted && (resource.Created || resource.UID != "" || resource.CreateOperationID != "") {
+			return true
+		}
 	}
 	if status := ds.Status.KubectlDebugStatus; status != nil {
 		if len(status.CopiedPods) > 0 {
@@ -660,16 +665,12 @@ func hasOutstandingAuxiliaryResources(ds *breakglassv1alpha1.DebugSession) bool 
 			return true
 		}
 		for _, child := range status.AdditionalResources {
-			if !child.Deleted && ((child.UID == "" && child.CreateOperationID != "") || shouldDeleteAuxiliaryResource(ds, status.Name)) {
+			if utils.DebugSessionAuxiliaryChildHasCleanupResidual(ds, status.Name, child) {
 				return true
 			}
 		}
 	}
 	return false
-}
-
-func auxiliaryStatusHasOutstandingResource(status breakglassv1alpha1.AuxiliaryResourceStatus) bool {
-	return !status.Deleted && (status.Created || status.UID != "" || status.CreateOperationID != "")
 }
 
 // handleCleanup removes deployed resources for expired/terminated sessions
