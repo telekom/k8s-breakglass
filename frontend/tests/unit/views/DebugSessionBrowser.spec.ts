@@ -9,6 +9,7 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { createRouter, createMemoryHistory } from "vue-router";
 import { ref } from "vue";
 import DebugSessionBrowser from "@/views/DebugSessionBrowser.vue";
+import DebugSessionCard from "@/components/DebugSessionCard.vue";
 import { AuthKey } from "@/keys";
 
 const mockListSessions = vi.fn().mockResolvedValue({
@@ -201,6 +202,67 @@ describe("DebugSessionBrowser", () => {
       await flushPromises();
 
       expect(mockJoinSession).toHaveBeenCalledWith("debug-session-1");
+    });
+
+    it("renders rejected sessions through the state filter without active-session actions", async () => {
+      mockListSessions.mockResolvedValueOnce({
+        sessions: [
+          {
+            name: "rejected-session",
+            namespace: "default",
+            cluster: "test-cluster",
+            state: "Rejected",
+            templateRef: "standard-debug",
+            requestedBy: "test@example.com",
+            statusMessage: "Rejected by approver",
+          },
+        ],
+      });
+
+      await router.push("/debug-sessions");
+      await router.isReady();
+      const wrapper = mount(DebugSessionBrowser, {
+        global: {
+          plugins: [router],
+          provide: {[AuthKey as symbol]: mockAuth},
+          stubs: {
+            PageHeader: true,
+            LoadingState: true,
+            EmptyState: true,
+            DebugSessionCard,
+            "scale-button": {
+              inheritAttrs: false,
+              template: '<button v-bind="$attrs"><slot /></button>',
+            },
+            "scale-tag": {template: '<span v-bind="$attrs"><slot /></span>'},
+            "scale-text-field": true,
+            "scale-checkbox": true,
+            "scale-modal": true,
+            "scale-dropdown-select": true,
+            "scale-dropdown-select-item": true,
+            "scale-icon-alert-error": true,
+          },
+        },
+      });
+
+      await flushPromises();
+      expect(wrapper.find('[data-testid="debug-sessions-empty-state"]').exists()).toBe(true);
+
+      const rejectedFilter = wrapper.find('[data-testid="state-filter-Rejected"]');
+      Object.defineProperty(rejectedFilter.element, "checked", {value: true, configurable: true});
+      await rejectedFilter.trigger("scale-change");
+      await flushPromises();
+
+      const card = wrapper.find(".debug-session-card");
+      expect(card.exists()).toBe(true);
+      expect(card.find('[data-testid="session-state"]').text()).toBe("Rejected");
+      expect(card.find('[data-testid="status-message"]').text()).toContain("Rejected by approver");
+      expect(card.find('[data-testid="join-button"]').exists()).toBe(false);
+      expect(card.find('[data-testid="leave-button"]').exists()).toBe(false);
+      expect(card.find('[data-testid="renew-button"]').exists()).toBe(false);
+      expect(card.find('[data-testid="terminate-button"]').exists()).toBe(false);
+      expect(card.find('[data-testid="approve-button"]').exists()).toBe(false);
+      expect(card.find('[data-testid="reject-button"]').exists()).toBe(false);
     });
   });
 
