@@ -5,6 +5,7 @@ package debug
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestLegacyPendingUsesPersistedPolicyAfterLiveTemplateRotation(t *testing.T) {
@@ -28,6 +30,7 @@ func TestLegacyPendingUsesPersistedPolicyAfterLiveTemplateRotation(t *testing.T)
 			ctx := context.Background()
 			c, ds, template, target := newDeploymentFenceFixture(t)
 			template.Spec.ExtraDeployVariables = []breakglassv1alpha1.ExtraDeployVariable{{Name: "hidden", InputType: breakglassv1alpha1.InputTypeText, Disabled: true}}
+			template.Spec.PodOverridesTemplate = "nodeSelector:\n  approved: \"yes\"\n"
 			ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
 			ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
 			ds.Status.ResolvedBindingSnapshotCaptured = true
@@ -43,6 +46,7 @@ func TestLegacyPendingUsesPersistedPolicyAfterLiveTemplateRotation(t *testing.T)
 			require.NoError(t, c.client.Status().Update(ctx, ds))
 			template.Spec.PodTemplateString = strings.ReplaceAll(template.Spec.PodTemplateString, "busybox", "unsafe")
 			template.Spec.ExtraDeployVariables[0].Disabled = false
+			template.Spec.PodOverridesTemplate = "nodeSelector:\n  approved: \"no\"\n"
 			require.NoError(t, c.client.Update(ctx, template))
 			require.NoError(t, c.client.Get(ctx, client.ObjectKeyFromObject(ds), ds))
 			_, err = c.handlePending(ctx, ds)
@@ -62,6 +66,7 @@ func TestLegacyPendingUsesPersistedPolicyAfterLiveTemplateRotation(t *testing.T)
 			deployment := &appsv1.Deployment{}
 			require.NoError(t, target.Get(ctx, client.ObjectKey{Namespace: "breakglass-debug", Name: ds.Name}, deployment))
 			require.Equal(t, "busybox", deployment.Spec.Template.Spec.Containers[0].Image)
+			require.Equal(t, "yes", deployment.Spec.Template.Spec.NodeSelector["approved"])
 		})
 	}
 }
@@ -110,7 +115,7 @@ func TestBindingDefaultAdmissionDoesNotMaterializeHiddenTemplateDefaults(t *test
 
 func TestPersistedBindingProvenanceFailsBeforeWorkloadCreation(t *testing.T) {
 	for _, state := range []breakglassv1alpha1.DebugSessionState{breakglassv1alpha1.DebugSessionStatePending, breakglassv1alpha1.DebugSessionStatePendingApproval} {
-		for _, raw := range []string{"missing", "null", "[]"} {
+		for _, raw := range []string{"missing", "null", "[]", "{}", `{"unknown":true}`, `{"templateRef":{"name":"template"},"clusters":["spoke"],"extraDeployVariables":[{"name":"absent","disabled":true}]}`} {
 			t.Run(string(state)+"/"+raw, func(t *testing.T) {
 				c, ds, template, target := newDeploymentFenceFixture(t)
 				ds.Status.State = state
@@ -232,4 +237,62 @@ func TestBindingRestrictedDefaultSurvivesAPIAndActivation(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestAutoApprovalPersistsSnapshotBeforeActivationFailure(t *testing.T) {
+	c, ds, template, target := newDeploymentFenceFixture(t)
+	template.Spec.ExtraDeployVariables = []breakglassv1alpha1.ExtraDeployVariable{{Name: "value", InputType: breakglassv1alpha1.InputTypeText}}
+	require.NoError(t, c.client.Update(t.Context(), template))
+	ds.Status = breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending}
+	require.NoError(t, c.client.Status().Update(t.Context(), ds))
+	hub := c.client.(client.WithWatch)
+	writes := 0
+	c.client = interceptor.NewClient(hub, interceptor.Funcs{SubResourcePatch: func(ctx context.Context, cl client.Client, sub string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+		if _, ok := obj.(*breakglassv1alpha1.DebugSession); ok {
+			writes++
+			if writes == 2 {
+				return fmt.Errorf("activation interrupted")
+			}
+		}
+		return cl.Status().Patch(ctx, obj, patch, opts...)
+	}})
+	_, err := c.handlePending(t.Context(), ds)
+	require.ErrorContains(t, err, "activation interrupted")
+	require.NoError(t, hub.Get(t.Context(), client.ObjectKeyFromObject(ds), ds))
+	require.Equal(t, breakglassv1alpha1.DebugSessionStatePending, ds.Status.State)
+	require.NotNil(t, ds.Status.ResolvedTemplate)
+	require.True(t, ds.Status.ResolvedBindingSnapshotCaptured)
+	require.NotNil(t, ds.Status.ResolvedTemplateVariablePolicy)
+	require.Nil(t, ds.Status.ExpiresAt, "activation lease write failed after approval snapshot persistence")
+	template.Spec.PodTemplateString = strings.ReplaceAll(template.Spec.PodTemplateString, "busybox", "unsafe")
+	require.NoError(t, hub.Update(t.Context(), template))
+	c.client = hub
+	_, err = c.handlePending(t.Context(), ds)
+	require.NoError(t, err)
+	deployment := &appsv1.Deployment{}
+	require.NoError(t, target.Get(t.Context(), client.ObjectKey{Namespace: "breakglass-debug", Name: ds.Name}, deployment))
+	require.Equal(t, "busybox", deployment.Spec.Template.Spec.Containers[0].Image)
+}
+
+func TestSessionDetailHidesRecoveryVariablePolicy(t *testing.T) {
+	c, ds, _, _ := newDeploymentFenceFixture(t)
+	ds.Status.ResolvedTemplateVariablePolicy = []breakglassv1alpha1.ExtraDeployVariable{{Name: "hidden", Default: &apiextensionsv1.JSON{Raw: []byte(`"private-policy-value"`)}}}
+	require.NoError(t, c.client.Status().Update(t.Context(), ds))
+	api := NewDebugSessionAPIController(zap.NewNop().Sugar(), c.client, nil, nil)
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set("legacy_identity_allowed", true)
+		ctx.Set("username", ds.Spec.RequestedBy)
+		ctx.Next()
+	})
+	require.NoError(t, api.Register(router.Group("/api/debugSessions")))
+	request := httptest.NewRequest(http.MethodGet, "/api/debugSessions/"+ds.Name+"?namespace="+ds.Namespace, nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.NotContains(t, response.Body.String(), "private-policy-value")
+	require.NotContains(t, response.Body.String(), "resolvedTemplateVariablePolicy")
+	require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), ds))
+	require.Len(t, ds.Status.ResolvedTemplateVariablePolicy, 1)
+	require.JSONEq(t, `"private-policy-value"`, string(ds.Status.ResolvedTemplateVariablePolicy[0].Default.Raw))
 }

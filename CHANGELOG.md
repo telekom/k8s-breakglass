@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Make terminal cleanup accounting idempotent and avoid decrementing active
   counts for sessions rejected before activation.
 
+- Persist complete debug-session approval snapshots before activation, preserve all template runtime policy through typed SSA, reject semantically empty binding provenance, and omit internal recovery variable policy from session REST responses.
+
 - Reject incomplete binding snapshots and impossible or widening variable constraints; preserve restricted binding defaults consistently through API admission and activation, and discard stale UI option selections after binding changes.
 
 - Preserve disabled binding variables and inline workload templates through SSA, apply binding-specific validation messages/defaults, and safely recover legacy Pending snapshots without reading approval policy from live configuration.

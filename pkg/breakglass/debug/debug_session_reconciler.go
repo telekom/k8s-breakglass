@@ -333,7 +333,7 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	effectiveTemplate, err := effectiveTemplateForBinding(template, binding, ds.Spec.ExtraDeployValues, ds.Spec.UserGroups)
 	if err != nil {
 		log.Warnw("Rejecting session because binding variable constraints or values are invalid", "error", err)
-		return c.failSession(ctx, ds, "invalid binding extra deploy variable constraints")
+		return c.failSession(ctx, ds, "invalid extra deploy variable policy or values")
 	}
 
 	// Cache the resolved template in status after applying binding-level duration overrides.
@@ -378,6 +378,10 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
 	}
 
+	// Persist the complete approval decision before starting any activation work.
+	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+		return ctrl.Result{}, err
+	}
 	// Auto-approved, transition to active
 	return c.activateSession(ctx, ds, template, binding)
 }
@@ -724,7 +728,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	if ds.Status.ResolvedTemplate != nil && !breakglassv1alpha1.HasCompleteResolvedBindingSnapshot(ds.Status) {
 		return c.failSession(ctx, ds, "approved binding provenance is incomplete; recreate this session")
 	}
-	if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplateVariablePolicy == nil && len(ds.Status.ResolvedTemplate.ExtraDeployVariables) != 0 {
+	if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplateVariablePolicy == nil {
 		policy := ds.Status.ResolvedTemplate.DeepCopy().ExtraDeployVariables
 		if !breakglassv1alpha1.CanInitializeLegacyVariablePolicy(ds.Status, policy) {
 			return c.failSession(ctx, ds, "legacy binding variable provenance is unavailable; recreate this session")
