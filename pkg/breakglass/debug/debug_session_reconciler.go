@@ -288,6 +288,9 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 
 // handlePending processes a newly created debug session
 func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
+	if ds.Status.ResolvedTemplate != nil {
+		return c.resumePersistedPending(ctx, ds)
+	}
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 
 	// Resolve the template
@@ -718,6 +721,15 @@ func releaseSessionMetricSeries(sessionName string) {
 // activateSession deploys debug resources and marks session as active
 func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
+	if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplateVariablePolicy == nil && len(ds.Status.ResolvedTemplate.ExtraDeployVariables) != 0 {
+		policy := ds.Status.ResolvedTemplate.DeepCopy().ExtraDeployVariables
+		if !breakglassv1alpha1.CanInitializeLegacyVariablePolicy(ds.Status, policy) {
+			return c.failSession(ctx, ds, "legacy binding variable provenance is unavailable; recreate this session")
+		}
+		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) { status.ResolvedTemplateVariablePolicy = policy }); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
 
 	if template.Spec.PodTemplateRef != nil && ds.Status.ResolvedPodTemplate == nil {
 		return c.failSession(ctx, ds, "approved pod-template snapshot is missing")

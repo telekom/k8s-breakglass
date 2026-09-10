@@ -1,0 +1,25 @@
+// SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+// SPDX-License-Identifier: Apache-2.0
+
+package v1alpha1
+
+import (
+	"encoding/json"
+	"reflect"
+)
+
+// CanInitializeLegacyVariablePolicy permits only an exact copy of the already
+// persisted template policy when no binding variable intersection was applied.
+func CanInitializeLegacyVariablePolicy(old DebugSessionStatus, policy []ExtraDeployVariable) bool {
+	if old.ResolvedTemplate == nil || old.ResolvedTemplateVariablePolicy != nil || !old.ResolvedBindingSnapshotCaptured ||
+		(old.State != DebugSessionStatePending && old.State != DebugSessionStatePendingApproval) {
+		return false
+	}
+	if old.ResolvedBindingSpec != nil {
+		var binding DebugSessionClusterBindingSpec
+		if json.Unmarshal(old.ResolvedBindingSpec.Raw, &binding) != nil || len(binding.ExtraDeployVariables) != 0 {
+			return false
+		}
+	}
+	return reflect.DeepEqual(old.ResolvedTemplate.ExtraDeployVariables, policy)
+}

@@ -1237,10 +1237,18 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		if req.ExtraDeployValues == nil {
 			req.ExtraDeployValues = make(map[string]apiextensionsv1.JSON)
 		}
-		for _, variable := range effectiveVariables {
-			if !variable.Disabled && variable.Default != nil {
-				if _, provided := req.ExtraDeployValues[variable.Name]; !provided {
-					req.ExtraDeployValues[variable.Name] = *variable.Default.DeepCopy()
+		for _, constraint := range resolvedBinding.Spec.ExtraDeployVariables {
+			if constraint.Default == nil {
+				continue
+			}
+			for _, variable := range effectiveVariables {
+				if variable.Name != constraint.Name {
+					continue
+				}
+				if !variable.Disabled && variable.Default != nil {
+					if _, provided := req.ExtraDeployValues[variable.Name]; !provided {
+						req.ExtraDeployValues[variable.Name] = *variable.Default.DeepCopy()
+					}
 				}
 			}
 		}

@@ -126,7 +126,7 @@ func validateDebugSessionStatusMutation(oldStatus, newStatus breakglassv1alpha1.
 	if oldStatus.ResolvedTemplate != nil && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedTemplate, newStatus.ResolvedTemplate) {
 		return fmt.Errorf("approved resolved template snapshot is immutable")
 	}
-	if oldStatus.ResolvedTemplate != nil && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedTemplateVariablePolicy, newStatus.ResolvedTemplateVariablePolicy) {
+	if oldStatus.ResolvedTemplate != nil && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedTemplateVariablePolicy, newStatus.ResolvedTemplateVariablePolicy) && !breakglassv1alpha1.CanInitializeLegacyVariablePolicy(oldStatus, newStatus.ResolvedTemplateVariablePolicy) {
 		return fmt.Errorf("approved resolved template variable policy is immutable")
 	}
 	if oldStatus.ResolvedBindingSpec != nil && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedBindingSpec, newStatus.ResolvedBindingSpec) {

@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Make terminal cleanup accounting idempotent and avoid decrementing active
   counts for sessions rejected before activation.
 
+- Preserve disabled binding variables and inline workload templates through SSA, apply binding-specific validation messages/defaults, and safely recover legacy Pending snapshots without reading approval policy from live configuration.
+
 - Retry final quota-admission completion after same-UID resource-version
   conflicts, while refusing terminal or replacement sessions.
 

@@ -190,6 +190,7 @@ func mergeVariableValidation(base, narrow *VariableValidation) (*VariableValidat
 			patterns = append(patterns, merged.Pattern)
 		}
 		merged.Pattern = narrow.Pattern
+		merged.PatternError = narrow.PatternError
 		merged.AdditionalPatterns = append(patterns, narrow.AdditionalPatterns...)
 	}
 	if narrow.MinLength != nil && (merged.MinLength == nil || *narrow.MinLength > *merged.MinLength) {
