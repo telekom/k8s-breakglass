@@ -15,6 +15,9 @@ func CanInitializeLegacyVariablePolicy(old DebugSessionStatus, policy []ExtraDep
 		(old.State != DebugSessionStatePending && old.State != DebugSessionStatePendingApproval) {
 		return false
 	}
+	if !HasCompleteResolvedBindingSnapshot(old) {
+		return false
+	}
 	if old.ResolvedBindingSpec != nil {
 		var binding DebugSessionClusterBindingSpec
 		if json.Unmarshal(old.ResolvedBindingSpec.Raw, &binding) != nil || len(binding.ExtraDeployVariables) != 0 {
@@ -22,4 +25,21 @@ func CanInitializeLegacyVariablePolicy(old DebugSessionStatus, policy []ExtraDep
 		}
 	}
 	return reflect.DeepEqual(old.ResolvedTemplate.ExtraDeployVariables, policy)
+}
+
+// HasCompleteResolvedBindingSnapshot distinguishes an explicit no-binding result
+// from missing or malformed persisted approval provenance.
+func HasCompleteResolvedBindingSnapshot(status DebugSessionStatus) bool {
+	if !status.ResolvedBindingSnapshotCaptured || (status.ResolvedBinding == nil) != (status.ResolvedBindingSpec == nil) {
+		return false
+	}
+	if status.ResolvedBindingSpec == nil {
+		return true
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(status.ResolvedBindingSpec.Raw, &object) != nil || object == nil {
+		return false
+	}
+	var binding DebugSessionClusterBindingSpec
+	return json.Unmarshal(status.ResolvedBindingSpec.Raw, &binding) == nil
 }

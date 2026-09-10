@@ -491,7 +491,7 @@ func (m *AuxiliaryResourceManager) buildVarsFromSession(
 	// Apply defaults from template variable definitions
 	if template != nil {
 		for _, varDef := range template.ExtraDeployVariables {
-			if varDef.Default != nil && len(varDef.Default.Raw) > 0 {
+			if !varDef.Disabled && varDef.Default != nil && len(varDef.Default.Raw) > 0 {
 				// Extract default value from JSON
 				defaultVal := extractJSONValue(varDef.Default.Raw)
 				vars[varDef.Name] = defaultVal
