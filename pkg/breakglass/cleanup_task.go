@@ -594,8 +594,20 @@ func buildDebugSessionNotificationRecipients(ds breakglassv1alpha1.DebugSession)
 
 // debugSessionCleanupOutstanding preserves evidence for completed and ambiguous spoke creates.
 func debugSessionCleanupOutstanding(ds *breakglassv1alpha1.DebugSession) bool {
-	if len(ds.Status.DeployedResources) > 0 || len(ds.Status.PodTemplateResourceStatuses) > 0 || len(ds.Status.AllowedPods) > 0 || ds.Status.KubectlDebugStatus != nil {
+	if len(ds.Status.DeployedResources) > 0 || len(ds.Status.PodTemplateResourceStatuses) > 0 || len(ds.Status.AllowedPods) > 0 {
 		return true
+	}
+	// Completed operation history is retained evidence, not a pending cleanup.
+	// Preserve unresolved outcomes for recovery or operator investigation.
+	if status := ds.Status.KubectlDebugStatus; status != nil {
+		if len(status.CopiedPods) > 0 {
+			return true
+		}
+		for _, operation := range status.Operations {
+			if operation.State != breakglassv1alpha1.KubectlDebugOperationCompleted && operation.State != breakglassv1alpha1.KubectlDebugOperationFailed {
+				return true
+			}
+		}
 	}
 	for _, resource := range ds.Status.AuxiliaryResourceStatuses {
 		intentionallyRetained := false

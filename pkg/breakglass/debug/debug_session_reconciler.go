@@ -441,6 +441,7 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 	if ds.Status.ExpiresAt == nil || ds.Status.ExpiresAt.IsZero() {
 		return c.terminalizeActiveSessionWithoutExpiry(ctx, ds)
 	}
+
 	// Resolve any target mutation whose status outcome was interrupted by a
 	// controller restart or an ambiguous target API response before handling
 	// expiry. Prepared intent is durable in the session status, so this read-only

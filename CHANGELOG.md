@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Allow debug-session retention cleanup after completed operation history while preserving unresolved outcomes and pending copied-pod cleanup.
+
 - Preserve debug-session cleanup evidence past retention, enforce inactivity in fallback cleanup, and retain explicit evidence deadlines when a cluster is deleted.
 
 - Retry final quota-admission completion after same-UID resource-version
