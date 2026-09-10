@@ -327,11 +327,17 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 				"namespace", binding.Namespace)
 		}
 	}
+	effectiveTemplate, err := effectiveTemplateForBinding(template, binding, ds.Spec.ExtraDeployValues, ds.Spec.UserGroups)
+	if err != nil {
+		log.Warnw("Rejecting session because binding variable constraints or values are invalid", "error", err)
+		return c.failSession(ctx, ds, "invalid binding extra deploy variable constraints")
+	}
 
 	// Cache the resolved template in status after applying binding-level duration overrides.
-	resolvedTemplate := template.Spec.DeepCopy()
+	resolvedTemplate := effectiveTemplate.Spec.DeepCopy()
 	resolvedTemplate.Constraints = effectiveDebugSessionConstraints(template, binding)
 	ds.Status.ResolvedTemplate = resolvedTemplate
+	ds.Status.ResolvedTemplateVariablePolicy = template.Spec.DeepCopy().ExtraDeployVariables
 	ds.Status.ResolvedBindingSnapshotCaptured = true
 	if binding != nil {
 		ds.Status.ResolvedBinding = &breakglassv1alpha1.ResolvedBindingRef{
@@ -740,6 +746,13 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		}
 		binding = approvedBinding
 	}
+	if len(ds.Status.ResolvedTemplateVariablePolicy) > 0 && binding != nil {
+		effectiveVariables, err := breakglassv1alpha1.EffectiveExtraDeployVariables(ds.Status.ResolvedTemplateVariablePolicy, binding.Spec.ExtraDeployVariables)
+		if err != nil {
+			return c.failSession(ctx, ds, "invalid approved binding variable snapshot")
+		}
+		template.Spec.ExtraDeployVariables = effectiveVariables
+	}
 
 	// Establish the bounded lease durably before deploying any target resources.
 	// The session remains Pending/PendingApproval during deployment, so API
@@ -870,6 +883,7 @@ func effectiveTemplateForBinding(
 	template *breakglassv1alpha1.DebugSessionTemplate,
 	binding *breakglassv1alpha1.DebugSessionClusterBinding,
 	values map[string]apiextensionsv1.JSON,
+	groups []string,
 ) (*breakglassv1alpha1.DebugSessionTemplate, error) {
 	var constraints []breakglassv1alpha1.ExtraDeployVariableConstraint
 	if binding != nil {
@@ -879,9 +893,15 @@ func effectiveTemplateForBinding(
 	if err != nil {
 		return nil, err
 	}
+	values = breakglassv1alpha1.CoerceExtraDeployValues(values, effectiveVariables)
 	nameErrs := breakglassv1alpha1.ValidateExtraDeployValueNames(values, effectiveVariables, len(constraints) > 0, field.NewPath("extraDeployValues"))
 	if len(nameErrs) > 0 {
 		return nil, fmt.Errorf("extra deploy values are not allowed by binding: %s", nameErrs[0].Error())
+	}
+	if len(values) > 0 || len(effectiveVariables) > 0 {
+		if errs := breakglassv1alpha1.ValidateExtraDeployValuesWithGroups(values, effectiveVariables, groups, field.NewPath("extraDeployValues")); len(errs) > 0 {
+			return nil, fmt.Errorf("extra deploy values are invalid: %s", errs[0].Error())
+		}
 	}
 	result := template.DeepCopy()
 	result.Spec.ExtraDeployVariables = effectiveVariables

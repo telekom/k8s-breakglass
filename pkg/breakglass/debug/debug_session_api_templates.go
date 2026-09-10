@@ -135,7 +135,7 @@ type BindingOption struct {
 	RequestReason                 *breakglass.ReasonConfigInfo                `json:"requestReason,omitempty"`
 	ApprovalReason                *breakglass.ReasonConfigInfo                `json:"approvalReason,omitempty"`
 	Notification                  *NotificationConfigInfo                     `json:"notification,omitempty"`
-	ExtraDeployVariables          []breakglassv1alpha1.ExtraDeployVariable    `json:"extraDeployVariables,omitempty"`
+	ExtraDeployVariables          []breakglassv1alpha1.ExtraDeployVariable    `json:"extraDeployVariables"`
 }
 
 // BindingReference identifies the binding that enabled access
@@ -668,6 +668,10 @@ func (c *DebugSessionAPIController) findBindingsForTemplate(template *breakglass
 		}
 		// Check templateRef
 		if binding.Spec.TemplateRef != nil && binding.Spec.TemplateRef.Name == template.Name {
+			if _, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, binding.Spec.ExtraDeployVariables); err != nil {
+				c.log.Warnw("findBindingsForTemplate: skipping binding with invalid variable constraints", "binding", bindingID, "error", err)
+				continue
+			}
 			c.log.Debugw("findBindingsForTemplate: matched by templateRef",
 				"template", template.Name,
 				"binding", bindingID,
@@ -694,6 +698,10 @@ func (c *DebugSessionAPIController) findBindingsForTemplate(template *breakglass
 					"matches", matches,
 				)
 				if matches {
+					if _, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, binding.Spec.ExtraDeployVariables); err != nil {
+						c.log.Warnw("findBindingsForTemplate: skipping binding with invalid variable constraints", "binding", bindingID, "error", err)
+						continue
+					}
 					result = append(result, *binding)
 				}
 			}

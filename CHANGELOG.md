@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Make terminal cleanup accounting idempotent and avoid decrementing active
   counts for sessions rejected before activation.
 
+- Reapply binding variable intersections during controller reconciliation and
+  activation, reject invalid bindings during discovery, and keep all-disabled
+  binding variable lists explicit in the API response.
+
 - If a debug session expires after an ephemeral-container intent is persisted
   but before the target write, record the operation as Failed without touching
   the target Pod; the normal expiry reconciler retains ownership of lifecycle
