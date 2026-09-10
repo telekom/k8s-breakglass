@@ -379,6 +379,14 @@ func TestNewNoVariableSessionAPIActivation(t *testing.T) {
 			require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), ds))
 			require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, ds.Status.State, ds.Status.Message)
 			require.Nil(t, ds.Status.ResolvedBinding)
+			// Binding activation publishes Active before the merged accounting
+			// reconciler observes it; retries must retain exactly one active count.
+			require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(template), template))
+			require.EqualValues(t, 1, template.Status.ActiveSessionCount)
+			require.NoError(t, c.reconcileActiveAccounting(t.Context(), ds, false))
+			require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(template), template))
+			require.EqualValues(t, 1, template.Status.ActiveSessionCount)
+
 			if mode == breakglassv1alpha1.DebugSessionModeWorkload {
 				deployment := &appsv1.Deployment{}
 				require.NoError(t, target.Get(t.Context(), client.ObjectKey{Namespace: "breakglass-debug", Name: ds.Name}, deployment))
