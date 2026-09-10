@@ -149,6 +149,12 @@ cleanup evidence; they are not implied by the upstream intent names.
 
 ## Ephemeral identity and RBAC
 
+The active session records the requesting user's identity-provider name and
+issuer on its owner participant. The authorization webhook compares those
+values with the issuer supplied by the target cluster before allowing pod
+operations, so a multi-provider deployment must preserve the issuer on the
+session request.
+
 Use a per-session ServiceAccount when a utility must call the Kubernetes API or
 when the target platform uses impersonation. Create it in the target session
 namespace, disable automount on unrelated pods, and grant only the operation's

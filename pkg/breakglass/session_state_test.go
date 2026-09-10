@@ -280,6 +280,23 @@ func TestCreateSessionAfterWithdrawal_WithdrawnDoesNotBlock(t *testing.T) {
 	t.Log("✓ New session creation would NOT be blocked by 409 conflict")
 }
 
+func TestIsSessionPendingApproval_TimeoutBoundaryIsInclusive(t *testing.T) {
+	deadline := time.Unix(1234, 5678)
+	session := breakglassv1alpha1.BreakglassSession{
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStatePending,
+			TimeoutAt: metav1.NewTime(deadline),
+		},
+	}
+
+	if isSessionPendingApprovalAt(session, deadline) {
+		t.Fatal("a pending session at its exact TimeoutAt boundary must not be considered pending")
+	}
+	if !isSessionPendingApprovalAt(session, deadline.Add(-time.Nanosecond)) {
+		t.Fatal("a pending session immediately before TimeoutAt must still be considered pending")
+	}
+}
+
 // TestWithdrawnSessionExcludedFromActiveAndPending verifies the distinction:
 // - Withdrawn sessions ARE excluded from "active" (IsSessionActive returns false)
 // - Withdrawn sessions ARE ALSO excluded from "pending" (IsSessionPendingApproval checks State first)
@@ -372,11 +389,11 @@ func TestIsSessionValid_EdgeCases(t *testing.T) {
 			session: breakglassv1alpha1.BreakglassSession{
 				Status: breakglassv1alpha1.BreakglassSessionStatus{
 					State:     breakglassv1alpha1.SessionStatePending,
-					ExpiresAt: metav1.Time{}, // Zero value - never expires
+					ExpiresAt: metav1.Time{}, // Pending sessions do not use ExpiresAt
 				},
 			},
 			expected: true,
-			reason:   "session with empty ExpiresAt is not expired",
+			reason:   "pending sessions do not expire based on ExpiresAt",
 		},
 		{
 			name: "session_expires_exactly_now",
@@ -387,8 +404,8 @@ func TestIsSessionValid_EdgeCases(t *testing.T) {
 					ApprovedAt: metav1.NewTime(now.Add(-1 * time.Hour)),
 				},
 			},
-			expected: false, // time.Now().After(now) can be true due to time progression
-			reason:   "approved session expiring exactly now may be expired depending on exact timing",
+			expected: false, // time.Now() advances after the fixture is created, so this is expired in practice
+			reason:   "approved session expiring exactly now is expired",
 		},
 		{
 			name: "session_scheduled_in_future",
@@ -1148,15 +1165,15 @@ func TestIsSessionActive_ExcludesAllTerminalStates(t *testing.T) {
 	}
 }
 
-// TestStateIsUltimateAuthority verifies that session STATE is the primary determinant
-// of session validity, not timestamps. A session in a terminal state is never valid,
-// even if timestamps suggest it should be active.
+// TestStateAndLeaseAuthority verifies that terminal STATE takes precedence over
+// timestamps and that an Approved session still requires a live lease. A session
+// in a terminal state is never valid, even if timestamps suggest it should be active.
 //
 // This test covers the requirement: "All filters and checks should primarily look at state
 // and then at the relevant timestamps. An already rejected session should never show up as
 // a valid one as the state mismatches, even if the approved date and duration would still
 // make it valid"
-func TestStateIsUltimateAuthority(t *testing.T) {
+func TestStateAndLeaseAuthority(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {

@@ -162,8 +162,16 @@ Error: context deadline exceeded
 ```yaml
 webhook:
   timeout: 5s
+  # Kubernetes 1.34+ structured authorization configuration:
+  authorizedTTL: 5m
+  cacheAuthorizedRequests: false
+  cacheUnauthorizedRequests: false
   unauthorizedTTL: 30s
 ```
+
+This structured setting applies to Kubernetes 1.34+. On older clusters use
+legacy webhook mode with `--authorization-webhook-cache-authorized-ttl=0s`
+and `--authorization-webhook-cache-unauthorized-ttl=0s`.
 
 2. Check network latency
 
@@ -812,3 +820,9 @@ kubectl logs -n breakglass-system deployment/breakglass-manager > logs.txt
 - [Webhook Setup](./webhook-setup.md) - Webhook configuration
 - [Cluster Config](./cluster-config.md) - Cluster connection details
 - [API Reference](./api-reference.md) - API endpoints
+
+CI diagnostic redaction covers case-insensitive JSON authorization, proxy
+authorization, cookie and secret-header keys with string or string-array values
+on a log line. Non-secret diagnostic fields are retained. Run
+`bash .github/scripts/test-ci-e2e-diagnostics.sh` to exercise redaction and output
+bounds with synthetic credentials.

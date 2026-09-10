@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsinternal "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
@@ -112,31 +111,6 @@ func TestCRDSchemaValidation(t *testing.T) {
 	}
 }
 
-// TestDebugSessionClusterBindingCRDMatchesHiddenField verifies that the
-// generated schema exposes the API type's hidden field to the API server.
-func TestDebugSessionClusterBindingCRDMatchesHiddenField(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join(crdBasesDir(), "breakglass.t-caas.telekom.com_debugsessionclusterbindings.yaml"))
-	require.NoError(t, err, "CRD file not found (run 'make manifests' first)")
-
-	scheme := runtime.NewScheme()
-	apiextensionsinstall.Install(scheme)
-	crd, _, err := serializer.NewCodecFactory(scheme).UniversalDeserializer().Decode(data, nil, nil)
-	require.NoError(t, err)
-
-	v1CRD, ok := crd.(*apiextensionsv1.CustomResourceDefinition)
-	require.True(t, ok, "decoded object is %T, expected *v1.CustomResourceDefinition", crd)
-	require.NotEmpty(t, v1CRD.Spec.Versions)
-	require.NotNil(t, v1CRD.Spec.Versions[0].Schema)
-	require.NotNil(t, v1CRD.Spec.Versions[0].Schema.OpenAPIV3Schema)
-
-	specSchema, ok := v1CRD.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
-	require.True(t, ok, "generated CRD is missing spec schema")
-	hiddenSchema, ok := specSchema.Properties["hidden"]
-	require.True(t, ok, "generated CRD is missing spec.hidden")
-	assert.Equal(t, "boolean", hiddenSchema.Type)
-	assert.Contains(t, hiddenSchema.Description, "hidden hides this binding")
-}
-
 // TestCRDInstallation installs all CRDs into a real envtest API server to
 // validate that they are accepted (CEL cost, structural schema, conversion).
 // This is the canonical validation — identical to what happens during
@@ -189,6 +163,32 @@ func TestCRDInstallation(t *testing.T) {
 
 	t.Logf("envtest API server started — all %d CRDs installed successfully", crdCount)
 
+	t.Run("binding hidden field survives create and update", func(t *testing.T) {
+		scheme := runtime.NewScheme()
+		require.NoError(t, corev1.AddToScheme(scheme))
+		require.NoError(t, AddToScheme(scheme))
+		apiClient, err := client.New(cfg, client.Options{Scheme: scheme})
+		require.NoError(t, err)
+		ctx := context.Background()
+		namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "binding-schema-"}}
+		require.NoError(t, apiClient.Create(ctx, namespace))
+		binding := &DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "hidden-binding", Namespace: namespace.Name},
+			Spec: DebugSessionClusterBindingSpec{
+				TemplateRef: &TemplateReference{Name: "test-template"},
+				Clusters:    []string{"test-cluster"},
+				Hidden:      true,
+			},
+		}
+		require.NoError(t, apiClient.Create(ctx, binding))
+		var stored DebugSessionClusterBinding
+		require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(binding), &stored))
+		require.True(t, stored.Spec.Hidden, "API server must preserve hidden on creation")
+		stored.Spec.Hidden = false
+		require.NoError(t, apiClient.Update(ctx, &stored))
+		require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(binding), &stored))
+		require.False(t, stored.Spec.Hidden, "API server must preserve hidden on update")
+	})
 	t.Run("template and binding duration admission", func(t *testing.T) {
 		scheme := runtime.NewScheme()
 		require.NoError(t, corev1.AddToScheme(scheme))
@@ -224,7 +224,6 @@ func TestCRDInstallation(t *testing.T) {
 			})
 		}
 	})
-
 	t.Run("shared duration syntax is accepted across resources", func(t *testing.T) {
 		scheme := runtime.NewScheme()
 		require.NoError(t, corev1.AddToScheme(scheme))

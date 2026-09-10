@@ -1,6 +1,20 @@
 # Debug Sessions
 
-Debug Sessions provide temporary, controlled access to debug pods deployed on target clusters. Unlike breakglass escalations which grant RBAC privileges, debug sessions deploy actual workloads (DaemonSets/Deployments) or enable `kubectl debug` operations with fine-grained controls.
+Debug Sessions provide temporary, controlled access to debug pods deployed on target clusters. Unlike breakglass escalations which grant RBAC privileges, debug sessions deploy actual workloads (DaemonSets/Deployments) or enable authenticated API-mediated `kubectl debug` operations with fine-grained controls.
+
+Ephemeral-container injection is available only through the authenticated
+DebugSession API operation. The manager validates the approved image and
+security policy and rechecks the live session lease and target Pod UID before
+the target update. PR
+[#1277](https://github.com/telekom/k8s-breakglass/pull/1277) records ephemeral
+operation evidence after that effect. It cannot guarantee durable pre-effect
+evidence or recover the outcome if the status write is interrupted. Those
+guarantees depend on the durable operation outbox in PR
+[#1278](https://github.com/telekom/k8s-breakglass/pull/1278). Independent writes to
+`pods/ephemeralcontainers` through a target cluster API server are governed by
+that cluster's RBAC and are outside Breakglass. Kubernetes cannot remove an
+ephemeral container from a live Pod, so retained containers remain only as
+inaccessible target-Pod state after the session ends.
 
 **Type Definitions:**
 - [`DebugSession`](../api/v1alpha1/debug_session_types.go)
@@ -49,7 +63,8 @@ Jobs are the supported one-shot workload type; the controller accepts `batch/v1`
 
 ### Kubectl Debug Mode
 
-Enables ephemeral container injection and pod copying via `kubectl debug`:
+Enables authenticated API-mediated ephemeral-container injection and pod
+copying with `kubectl debug`-style controls:
 
 ```yaml
 mode: kubectl-debug
@@ -112,6 +127,10 @@ Debug sessions follow a strict state machine:
 | `Expired` | Session duration exceeded | ❌ |
 | `Terminated` | Manually ended by owner or admin | ❌ |
 | `Failed` | Setup failed or rejected | ❌ |
+
+A non-zero `metadata.deletionTimestamp` revokes an otherwise active
+DebugSession immediately. Live authorization and privileged operation fences do
+not wait for finalizer completion.
 
 ## Resource Definitions
 
@@ -307,7 +326,7 @@ spec:
     notifyOnApproval: true
     notifyOnExpiry: true
     notifyOnTermination: true
-  expirationBehavior: terminate   # or notify-only
+  expirationBehavior: terminate   # notify-only is deprecated
   gracePeriodBeforeExpiry: 15m
 
   # Optional: Resource controls
@@ -336,6 +355,15 @@ spec:
     logs: true        # kubectl logs
     portForward: true # kubectl port-forward
 ```
+
+`expirationBehavior: notify-only` is deprecated. For compatibility, it requests
+the configured expiry notification and then performs the same hard expiry as
+`terminate`. Expiry always changes the session to `Expired`, revokes new access,
+and starts resource cleanup. Use `notification.notifyOnExpiry` with `terminate`
+for new templates. Notification settings never disable hard expiry.
+An `Active` DebugSession must have a non-zero `status.expiresAt`. Admission and
+internal status writers reject adding a lease later to a malformed active
+session, and reconciliation changes that session to terminal `Failed` state.
 
 `gracePeriodBeforeExpiry` uses the same shared duration parser as the other
 session timing fields, including extended day, week, and year units.
@@ -530,6 +558,8 @@ This maintains backward compatibility with existing debug session templates.
 - The webhook enforces operation restrictions by checking the pod subresource (`exec`, `attach`, `log`, `portforward`) against the session's `AllowedPodOperations`.
 - `kubectl cp` uses the exec subresource internally (it runs tar in the container). Therefore, `kubectl cp` requires `exec: true` to function. If exec is disabled, all `kubectl cp` operations will be blocked.
 - The webhook operates at the subresource level and cannot distinguish between different commands executed via exec.
+- For pod operations, the webhook re-reads the named Pod and requires its UID to match the UID recorded in `status.allowedPods`; deleting and recreating a directly managed Pod with the same name is therefore denied. Pods recreated by the recorded DaemonSet or Deployment workload are admitted only after their owner and Pod template lineage is verified.
+- The webhook uses indexed cached session discovery for normal requests and retries discovery through the live API reader, scoped to the selected ClusterConfig namespace and the session's cluster label with bounded pagination, when that cache has not observed a newly active session yet. The final session, expiry, participant issuer, and target Pod UID checks still use live state and fail closed on any mismatch.
 
 ### Viewing Allowed Operations
 
@@ -807,7 +837,7 @@ When a user creates a debug session:
    - `createIfNotExists: false`: Session fails or uses fail-open mode
 
 The web UI validates Kubernetes namespace syntax and glob-style allowed/denied patterns before submitting a debug session request. The API and controller remain the authoritative enforcement points for namespace constraints and cluster state.
-Kubectl-debug namespace selectors for ephemeral-container injection and pod-copy creation are evaluated against live namespace labels from the target cluster; selector-based policies fail closed if those labels cannot be read.
+Kubectl-debug namespace selectors for ephemeral-container injection and pod-copy creation are evaluated against live namespace labels from the target cluster; selector-based policies fail closed if those labels cannot be read. The namespace policy is evaluated again at the final privileged mutation boundary, after target Pod identity checks, so a concurrent label change cannot authorize a stale mutation.
 
 ### Example: Team-Isolated Debug Namespaces
 
@@ -1310,12 +1340,43 @@ expiration time, but the renewed expiration cannot move past
 For a Job-backed workload, renewal commits the new expiry and renewal count
 before synchronizing the tracked Job's `activeDeadlineSeconds`. If the target
 update fails, the renewal remains accepted and the active reconciler retries
-the deadline sync without counting the renewal again. Jobs that have not started yet defer deadline synchronization until their start time is available; normal reconciliation retries without warning.
+the deadline sync without counting the renewal again. Each target patch is
+fenced by a live session and privileged cluster-configuration check. Jobs that
+have not started yet defer synchronization until their start time is available;
+normal reconciliation retries without warning. Once a Job has started, the
+sync adjusts its relative deadline in either direction to match the latest
+committed session expiry. Kubernetes measures this deadline from the Job start
+time and stores it as an integer number of seconds. The controller floors
+fractional seconds, so the resulting deadline may end less than one second
+early but never extends beyond the committed expiry. Delayed startup requires a
+subsequent controller reconciliation;
+controller downtime can delay that adjustment and cleanup.
 Only the requester or an active `owner`/`participant` status entry can renew a
 session; `viewer` entries and participants with `leftAt` set cannot renew.
 The active-session expiry, approval-timeout, expiring-soon message, cleanup
 timeout, and cleanup expiry writers use optimistic locking, so stale reconciler
 or cleanup passes cannot overwrite a newer renewal or participant update.
+Kubectl-debug outcome and cleanup status writes also require the session UID
+captured by the operation; a same-name replacement is rejected. Cleanup stays
+pending when tracked spoke resources exist but the cluster client provider is
+unavailable.
+Cleanup status merges the latest persisted inventory with the entries retired
+by the current attempt, preserving targets recorded concurrently by the same
+session, including nested auxiliary-document identities. ClusterConfig deletion
+keeps its finalizer while any DebugSession state still retains spoke inventory,
+including a session just transitioned to a terminal state.
+Every resource-create intent records a non-empty operation identity, and recovery
+requires the target object's exact matching marker before reusing a same-name
+resource from the same session.
+Auxiliary documents continue to be retried after their primary resource is
+deleted; once the primary and every child are deleted, their history no longer
+counts as outstanding cleanup inventory.
+Failed sessions finish cleanup once all primary and child auxiliary resources
+are marked deleted; retained history alone does not trigger another retry.
+Terminal DebugSession states cannot transition again on the status mutation
+path or status admission path. Renewal performs its final uncached state and
+strict `now < expiresAt` check immediately before the optimistic status patch,
+so a request that reaches the boundary cannot extend or resurrect the lease.
 
 ## Terminal Sharing
 
@@ -1522,6 +1583,11 @@ Kubectl-debug operations merge their operation-specific status fields into the
 current `DebugSession` status before returning. Concurrent renewals, participant
 changes, and lifecycle updates are preserved while the operation records copied
 pods, injected containers, allowed pods, or cleanup state.
+
+Immediately before creating pod copies or privileged node-debug Pods, the
+controller re-reads the destination Namespace and requires the same non-empty
+UID. Node-debug creation also re-evaluates namespace label policy, so Namespace
+deletion/recreation or relabeling fails closed before Pod creation.
 
 #### Inject Ephemeral Container
 
@@ -1762,7 +1828,8 @@ spec:
 1. **Monitor expired sessions**: Sessions clean up automatically
 2. **Review long-running sessions**: Set alerts for sessions approaching max duration
 3. **Use termination**: Actively terminate sessions when done
-4. **Investigate cleanup retries**: Failed debug-resource deletes keep their status tracking entries so the controller can retry cleanup on the next reconciliation
+4. **Investigate cleanup retries**: Failed debug-resource deletes and resources held by finalizers keep their status tracking entries so the controller can retry cleanup on the next reconciliation
+5. **Bound Job lifetimes**: Job workloads reconcile their active deadline against the committed session expiry after a delayed start
 
 Template and cluster-binding `constraints.maxDuration` and `defaultDuration`
 accept weeks (`1w`), years (`1y`), and fractional sub-day values (`1.5h`),
@@ -1944,3 +2011,8 @@ Tracked-resource cleanup keeps the recorded resource UID and cleanup status afte
 an accepted deletion until the original resource is absent. Finalizers and
 failed verification reads keep cleanup pending; a same-name replacement is
 left untouched.
+
+If a tracked-resource create response is lost to a bounded timeout, the
+controller recovers only a live object carrying the session and operation
+markers and matching the requested content, then records its returned UID. Canceled, permanent, and non-timeout
+transport errors do not trigger adoption.

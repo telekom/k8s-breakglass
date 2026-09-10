@@ -163,18 +163,16 @@ func TestControllerSetupPlan(t *testing.T) {
 			name:              "controllers enabled",
 			enableControllers: true,
 			want: controllerSetupPlan{
-				registerControllerIndexes: true,
-				registerReconcilers:       true,
-				attachCachedReconcilers:   true,
+				registerReconcilers:     true,
+				attachCachedReconcilers: true,
 			},
 		},
 		{
 			name:              "controllers disabled",
 			enableControllers: false,
 			want: controllerSetupPlan{
-				registerControllerIndexes: true,
-				registerReconcilers:       false,
-				attachCachedReconcilers:   false,
+				registerReconcilers:     false,
+				attachCachedReconcilers: false,
 			},
 		},
 	}
@@ -207,7 +205,7 @@ func (c *emptyUnindexedListClient) List(ctx context.Context, list client.ObjectL
 	return c.Client.List(ctx, list, opts...)
 }
 
-func assertAuthorizationSelectionUsesSharedIndexes(t *testing.T, enableControllers bool) {
+func assertAuthorizationSelectionUsesSharedIndexes(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
 
@@ -221,24 +219,21 @@ func assertAuthorizationSelectionUsesSharedIndexes(t *testing.T, enableControlle
 			State: breakglassv1alpha1.SessionStateApproved,
 		},
 	}
-	plan := newControllerSetupPlan(enableControllers)
 	builder := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(session)
-	if plan.registerControllerIndexes {
-		builder = builder.
-			WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
-				return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
-			}).
-			WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
-				return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
-			})
-	}
+	builder = builder.
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+		})
 	cachedClient := builder.Build()
 
 	manager := breakglass.NewSessionManagerWithClient(&emptyUnindexedListClient{
 		Client:  cachedClient,
-		indexed: plan.registerControllerIndexes,
+		indexed: true,
 	})
 	sessions, err := manager.GetClusterUserBreakglassSessions(
 		context.Background(),
@@ -250,12 +245,8 @@ func assertAuthorizationSelectionUsesSharedIndexes(t *testing.T, enableControlle
 	assert.Equal(t, "approved-session", sessions[0].Name)
 }
 
-func TestAuthorizationSelectionUsesSharedIndexesWhenControllersDisabled(t *testing.T) {
-	assertAuthorizationSelectionUsesSharedIndexes(t, false)
-}
-
-func TestAuthorizationSelectionUsesSharedIndexesWhenControllersEnabled(t *testing.T) {
-	assertAuthorizationSelectionUsesSharedIndexes(t, true)
+func TestAuthorizationSelectionUsesSharedIndexes(t *testing.T) {
+	assertAuthorizationSelectionUsesSharedIndexes(t)
 }
 
 func TestNewManager_MetricsServerOptions(t *testing.T) {

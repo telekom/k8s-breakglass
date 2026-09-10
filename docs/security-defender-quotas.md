@@ -11,7 +11,9 @@ UID. The controller records that UID in the shared
 One resource-version compare-and-swap reserves every applicable scope together.
 Only then does the API complete admission and send successful creation responses
 or request notifications. Provisional objects are visible but cannot grant
-breakglass access or progress to debug workloads without admission.
+breakglass access or progress to debug workloads without admission; this guard
+is applied in the shared clock-injected validity and token checks used by the
+authorization webhook as well as the ordinary wrappers.
 
 The ledger covers regular-session tuple uniqueness (user, cluster, granted
 group), global per-user limits, escalation-UID totals, debug template-UID totals,
@@ -47,7 +49,11 @@ responsibility of the debug lifecycle controller.
 
 The regular cleanup loop completes empty-status provisional admissions after a
 crash. Debug reconciliation retries admission before approval-waiting or
-activation, including sessions created directly as Kubernetes resources.
+activation, including sessions created directly as Kubernetes resources, and
+never resolves templates or deploys workloads while the admission annotation is
+still provisional. API completion retries resource-version conflicts against a
+fresh same-UID object; repeated conflicts remain fail-closed without repeating
+the Kubernetes Create or duplicating the durable ledger reservation.
 Failed API calls can therefore leave recoverable provisional objects; inspect
 the session list before submitting a replacement request. Explicit quota denials
 are terminal and do not later activate. Nonterminal legacy sessions are counted

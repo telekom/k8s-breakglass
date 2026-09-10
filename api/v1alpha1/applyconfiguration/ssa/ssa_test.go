@@ -28,6 +28,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -493,6 +494,9 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 			Logs:        &logsAllowed,
 			PortForward: &portForwardAllowed,
 		}
+		ds.Status.ResolvedBindingSnapshotCaptured = true
+		ds.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: []byte(`{"spec":{"impersonate":{"groups":["system:masters"]}}}`)}
+		ds.Status.ResolvedPodTemplate = &apiextensionsv1.JSON{Raw: []byte(`{"spec":{"containers":[{"name":"debug","image":"example/debug:latest"}]}}`)}
 		ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{
 			{
 				Name:            "debug-rbac",
@@ -501,6 +505,7 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 				APIVersion:      "v1",
 				ResourceName:    "debug-sa",
 				Namespace:       "debug-ns",
+				UID:             "auxiliary-uid",
 				Created:         true,
 				CreatedAt:       &createdAt,
 				Ready:           true,
@@ -513,6 +518,7 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 						APIVersion:      "rbac.authorization.k8s.io/v1",
 						ResourceName:    "debug-role",
 						Namespace:       "debug-ns",
+						UID:             "additional-uid",
 						Ready:           true,
 						ReadinessStatus: "Current",
 						Deleted:         false,
@@ -534,6 +540,7 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 				Deleted:         true,
 				DeletedAt:       &deletedAt,
 				Error:           "cleanup pending",
+				UID:             "pod-template-uid",
 			},
 		}
 
@@ -549,22 +556,30 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 		assert.Equal(t, &attachAllowed, updated.Status.AllowedPodOperations.Attach)
 		assert.Equal(t, &logsAllowed, updated.Status.AllowedPodOperations.Logs)
 		assert.Equal(t, &portForwardAllowed, updated.Status.AllowedPodOperations.PortForward)
+		assert.True(t, updated.Status.ResolvedBindingSnapshotCaptured)
+		require.NotNil(t, updated.Status.ResolvedBindingSpec)
+		assert.JSONEq(t, string(ds.Status.ResolvedBindingSpec.Raw), string(updated.Status.ResolvedBindingSpec.Raw))
+		require.NotNil(t, updated.Status.ResolvedPodTemplate)
+		assert.JSONEq(t, string(ds.Status.ResolvedPodTemplate.Raw), string(updated.Status.ResolvedPodTemplate.Raw))
 
 		require.Len(t, updated.Status.AuxiliaryResourceStatuses, 1)
 		auxiliaryStatus := updated.Status.AuxiliaryResourceStatuses[0]
 		assert.Equal(t, "debug-rbac", auxiliaryStatus.Name)
 		assert.Equal(t, "debug-sa", auxiliaryStatus.ResourceName)
+		assert.Equal(t, "auxiliary-uid", auxiliaryStatus.UID)
 		assert.True(t, auxiliaryStatus.Created)
 		assert.True(t, auxiliaryStatus.Ready)
 		assert.False(t, auxiliaryStatus.Deleted)
 		require.Len(t, auxiliaryStatus.AdditionalResources, 1)
 		assert.Equal(t, "debug-role", auxiliaryStatus.AdditionalResources[0].ResourceName)
+		assert.Equal(t, "additional-uid", auxiliaryStatus.AdditionalResources[0].UID)
 		assert.False(t, auxiliaryStatus.AdditionalResources[0].Deleted)
 
 		require.Len(t, updated.Status.PodTemplateResourceStatuses, 1)
 		podTemplateStatus := updated.Status.PodTemplateResourceStatuses[0]
 		assert.Equal(t, "ConfigMap", podTemplateStatus.Kind)
 		assert.Equal(t, "debug-config", podTemplateStatus.ResourceName)
+		assert.Equal(t, "pod-template-uid", podTemplateStatus.UID)
 		assert.True(t, podTemplateStatus.Created)
 		assert.False(t, podTemplateStatus.Ready)
 		assert.True(t, podTemplateStatus.Deleted)
@@ -1026,10 +1041,11 @@ func TestDeployedResourceRefFrom(t *testing.T) {
 
 	t.Run("converts full resource ref", func(t *testing.T) {
 		ref := &breakglassv1alpha1.DeployedResourceRef{
-			APIVersion: "apps/v1",
-			Kind:       "Deployment",
-			Name:       "debug-pod",
-			Namespace:  "debug-ns",
+			APIVersion:        "apps/v1",
+			Kind:              "Deployment",
+			Name:              "debug-pod",
+			Namespace:         "debug-ns",
+			CreateOperationID: "operation-1",
 		}
 
 		result := DeployedResourceRefFrom(ref)
@@ -1039,6 +1055,7 @@ func TestDeployedResourceRefFrom(t *testing.T) {
 		assert.Equal(t, "Deployment", *result.Kind)
 		assert.Equal(t, "debug-pod", *result.Name)
 		assert.Equal(t, "debug-ns", *result.Namespace)
+		assert.Equal(t, "operation-1", *result.CreateOperationID)
 	})
 }
 
@@ -1124,6 +1141,7 @@ func TestKubectlDebugStatusFrom(t *testing.T) {
 					OriginalNamespace: "app-ns",
 					CopyName:          "debug-copy",
 					CopyNamespace:     "debug-ns",
+					UID:               "copy-uid",
 					CreatedAt:         now,
 				},
 			},
@@ -1134,6 +1152,7 @@ func TestKubectlDebugStatusFrom(t *testing.T) {
 		require.NotNil(t, result)
 		require.Len(t, result.EphemeralContainersInjected, 1)
 		require.Len(t, result.CopiedPods, 1)
+		assert.Equal(t, "copy-uid", *result.CopiedPods[0].UID)
 	})
 }
 

@@ -244,6 +244,23 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	}
 
 	newRenewalCount := session.Status.RenewalCount + 1
+	// Re-read immediately before the status patch. The status mutation path and
+	// admission webhook both repeat the strict time check at the API boundary.
+	live := &breakglassv1alpha1.DebugSession{}
+	if err := c.reader().Get(apiCtx, ctrlclient.ObjectKeyFromObject(session), live); err != nil {
+		reqLog.Errorw("Failed to re-read debug session before renewal", "session", name, "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to renew session")
+		return
+	}
+	if live.UID != session.UID || live.ResourceVersion != session.ResourceVersion ||
+		!canRenewDebugSession(live, identity) || live.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
+		live.Status.ExpiresAt == nil || !time.Now().Before(live.Status.ExpiresAt.Time) {
+		apiresponses.RespondConflict(ctx, "debug session changed or expired before renewal; refresh the session before retrying")
+		return
+	}
+	session = live
+	newExpiry = metav1.NewTime(session.Status.ExpiresAt.Add(extendBy))
+
 	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.ExpiresAt = &newExpiry
 		status.RenewalCount = newRenewalCount
@@ -281,14 +298,27 @@ func (c *DebugSessionAPIController) extendTrackedJobDeadlines(ctx context.Contex
 	if !hasTrackedDebugJob(session) {
 		return nil
 	}
-	targetClient, err := c.targetClusterClient(ctx, session.Spec.Cluster)
+	provider := c.clusterClients
+	if provider == nil {
+		if c.ccProvider == nil {
+			return fmt.Errorf("cluster client provider is not configured")
+		}
+		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
+	}
+	targetClient, configured, err := provider.GetClientForPrivilegedOperation(ctx, session.Spec.Cluster)
 	if err != nil {
 		return fmt.Errorf("get target client for debug session %q: %w", session.Name, err)
 	}
+	defer releasePrivilegedOperationSnapshot(provider, configured)
 	if targetClient == nil {
 		return fmt.Errorf("target client for debug session %q is unavailable", session.Name)
 	}
-	return syncTrackedDebugJobDeadlines(ctx, targetClient, session, newExpiry)
+	return syncTrackedDebugJobDeadlines(ctx, targetClient, session, newExpiry, func(fenceCtx context.Context, requested metav1.Time) (metav1.Time, error) {
+		if err := provider.ValidatePrivilegedOperationClusterConfig(fenceCtx, configured); err != nil {
+			return requested, fmt.Errorf("privileged target configuration changed: %w", err)
+		}
+		return liveDebugSessionDeadline(fenceCtx, c.reader(), session, requested)
+	})
 }
 
 func canRenewDebugSession(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {

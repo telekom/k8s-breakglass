@@ -218,70 +218,33 @@ The API error response includes the required groups:
 }
 ```
 
-## YAML injection is blocked at the boundary
+## YAML injection is blocked during template validation
 
-Every value that reaches `.vars` is escaped before template rendering begins, in
-`buildVarsFromSession` (see `pkg/breakglass/debug/template_vars_sanitize.go`).
-Line terminators — LF, CR, CRLF, NEL (U+0085), LINE SEPARATOR (U+2028) and
-PARAGRAPH SEPARATOR (U+2029) — are collapsed to a single space, and a leading
-`---`/`...` document marker is defused by prefixing a space, since a document
-marker is only recognised at column 0.
+Both variable builders preserve submitted values and defaults, including line
+breaks and document markers. They do not sanitize or emit sanitization warnings.
+`ValidateTemplateOutput` checks every template before pod and auxiliary-resource
+rendering. Dynamic output must use an approved serializer (`yamlQuote`,
+`yamlSafe`, `quote`, or `k8sName`); quoted serializers must occupy a complete YAML
+scalar. Raw interpolation, surrounding quotes, and literal fragments around a
+quoted serialized value are rejected before rendering.
 
-Everything else is preserved byte-for-byte. In particular a *leading* `---`/`...`
-is only treated as a document marker when the YAML spec says it is one — followed
-by end-of-value or whitespace. Values such as `---foo` or `...bar` are plain
-scalars and pass through unchanged.
-
-This matters because a value containing a newline used to be able to close the
-scalar it was substituted into and open **sibling YAML keys**. In a
-`podOverridesTemplate` that meant an end user could inject `hostNetwork: true`,
-`hostPID: true` or `hostIPC: true`, which `applyPodOverridesStruct` applies to the
-debug pod verbatim:
-
-```yaml
-# Template written by an operator:
-nodeSelector:
-  kubernetes.io/hostname: {{ .vars.node }}
-
-# Formerly, a user submitting node = "worker-1\nhostNetwork: true" rendered:
-nodeSelector:
-  kubernetes.io/hostname: worker-1
-hostNetwork: true          # <-- injected sibling key, honoured by the controller
-```
-
-Escaping happens at the single point where untrusted values enter a render
-context, so **no template author has to remember to do anything**. Values are
-escaped, not rejected, so ordinary values (image references, quantities,
-comma-joined multiSelect values, prose containing `:` or `#`) render unchanged.
-
-> Note: a value whose line breaks are collapsed may still produce a document that
-> does not parse (for example `worker-1 hostNetwork: true` in a scalar position).
-> That fails the session closed with a YAML parse error rather than producing a
-> privileged pod.
+For example, a value containing `worker-1\nhostNetwork: true` remains one quoted
+string when rendered as `{{ .vars.node | yamlQuote }}`. It cannot create a sibling
+`hostNetwork` key. The rendered pod still undergoes pod-security validation.
 
 ## Template Functions
 
 ### `yamlQuote`
 
-Recommended for user-provided values used in ambiguous scalar positions.
-
-Structural injection is already prevented at the boundary (see above), so
-`yamlQuote` is defence-in-depth rather than the primary control. It remains useful
-for keeping values unambiguous — quoting `true`, `null` or values containing `:`
-so they are read as strings rather than as booleans, nulls or nested mappings.
+Use `yamlQuote` to preserve a user-provided string as one YAML scalar:
 
 ```yaml
-# Explicit and unambiguous
 label: {{ .vars.customerName | yamlQuote }}
-
-# Also safe from structural injection, but the value may be retyped by YAML
-label: {{ .vars.customerName }}
 ```
 
-The `yamlQuote` function:
-- Wraps values in double quotes when needed
-- Escapes special characters (`:`, `#`, `\n`, `"`, etc.)
-- Handles YAML keywords (`true`, `false`, `null`)
+It always emits a double-quoted string, escaping line breaks and quotes and
+preserving values such as `true` or `null` as strings. Do not add another pair
+of quotes or concatenate literal text outside the serialized output.
 
 ### `yamlSafe`
 
@@ -309,104 +272,17 @@ Truncates strings to a maximum length:
 
 ```yaml
 # Keep within 63 char limit
-name: {{ .session.name | truncName 50 }}-suffix
+name: {{ printf "%s-suffix" (.session.name | truncName 50) | k8sName }}
 ```
 
 ## Complete Example
 
-### DebugPodTemplate with Variables
-
-```yaml
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: DebugPodTemplate
-metadata:
-  name: unified-network
-spec:
-  displayName: "Unified Network Debug"
-  description: "Network debugging with configurable access level"
-  
-  extraDeployVariables:
-    - name: networkMode
-      displayName: "Network Mode"
-      inputType: select
-      default: "pod"
-      options:
-        - value: "pod"
-          displayName: "Pod Network"
-        - value: "host"
-          displayName: "Host Network"
-          allowedGroups: ["platform_poweruser"]
-    
-    - name: enableCapture
-      displayName: "Enable Packet Capture"
-      inputType: boolean
-      default: false
-    
-    - name: captureSize
-      displayName: "Capture Storage"
-      inputType: storageSize
-      default: "5Gi"
-      validation:
-        minStorage: "1Gi"
-        maxStorage: "50Gi"
-
-  podTemplateString: |
-    apiVersion: v1
-    kind: Pod
-    metadata:
-      labels:
-        network-mode: {{ .vars.networkMode | yamlQuote }}
-    spec:
-      {{- if eq .vars.networkMode "host" }}
-      hostNetwork: true
-      {{- end }}
-      containers:
-        - name: debug
-          image: nicolaka/netshoot:v0.13
-          command: ["sleep", "infinity"]
-          {{- if eq .vars.enableCapture "true" }}
-          volumeMounts:
-            - name: captures
-              mountPath: /captures
-          {{- end }}
-      {{- if eq .vars.enableCapture "true" }}
-      volumes:
-        - name: captures
-          emptyDir:
-            sizeLimit: {{ .vars.captureSize }}
-      {{- end }}
-```
-
-### DebugSessionTemplate Using the Pod Template
-
-```yaml
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: DebugSessionTemplate
-metadata:
-  name: network-debug
-spec:
-  displayName: "Network Debug Session"
-  mode: workload
-  
-  podTemplateRef:
-    name: unified-network
-  
-  # Session-level variables (in addition to pod template vars)
-  extraDeployVariables:
-    - name: severity
-      displayName: "Incident Severity"
-      inputType: select
-      default: "standard"
-      options:
-        - value: "standard"
-          displayName: "Standard (2h max)"
-        - value: "incident"
-          displayName: "Incident (8h max)"
-          allowedGroups: ["platform_poweruser"]
-  
-  constraints:
-    maxDuration: "{{ if eq .vars.severity \"incident\" }}8h{{ else }}2h{{ end }}"
-```
+Start with the current paired CRDs in the
+[DebugSession authoring guide](debug-session-authoring.md#minimal-workload-template).
+Declare variables in `DebugSessionTemplate.spec.extraDeployVariables`; the pod
+uses `DebugPodTemplate.spec.templateString` for dynamic rendering. Duration
+constraints are static values, not Go templates. Use separate administrator
+session templates when different users need different duration limits.
 
 ## Security Best Practices
 

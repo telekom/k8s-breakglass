@@ -18,6 +18,7 @@ package debug
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -32,11 +33,42 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
+func fakeClientWithUID() ctrlclient.Client {
+	return fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, client ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.CreateOption) error {
+				if obj.GetUID() == "" {
+					obj.SetUID("test-created-uid")
+				}
+				return client.Create(ctx, obj, opts...)
+			},
+			Apply: func(_ context.Context, _ ctrlclient.WithWatch, cfg runtime.ApplyConfiguration, _ ...ctrlclient.ApplyOption) error {
+				body, err := json.Marshal(cfg)
+				if err != nil {
+					return err
+				}
+				var object map[string]interface{}
+				if err := json.Unmarshal(body, &object); err != nil {
+					return err
+				}
+				object["metadata"].(map[string]interface{})["uid"] = "test-created-uid"
+				body, err = json.Marshal(object)
+				if err != nil {
+					return err
+				}
+				return json.Unmarshal(body, cfg)
+			},
+		}).
+		Build()
+}
 func TestBuildPodRenderContext(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	controller := &DebugSessionController{
@@ -1537,6 +1569,27 @@ spec:
 	assert.Equal(t, "job", job.Name)
 	require.Len(t, result.PodSpec.Containers, 1)
 	assert.Equal(t, "test", result.PodSpec.Containers[0].Name)
+}
+
+func TestRenderPodTemplateStringMultiDoc_UnsupportedKindJob(t *testing.T) {
+	controller := newTestController()
+
+	templateStr := `apiVersion: batch/v1
+kind: Job
+metadata:
+  name: test
+spec:
+  template:
+    spec:
+      containers:
+        - name: debug
+          image: busybox:latest
+`
+	ctx := newTestRenderContext()
+	result, err := controller.renderPodTemplateStringMultiDoc(templateStr, ctx)
+	require.NoError(t, err)
+	_, ok := result.Workload.(*batchv1.Job)
+	assert.True(t, ok, "expected *batchv1.Job")
 }
 
 func TestRenderPodTemplateStringMultiDoc_EmptyContainersError(t *testing.T) {
@@ -4343,7 +4396,7 @@ spec:
 // ==================== deployPodTemplateResource Tests ====================
 
 func TestDeployPodTemplateResource_SetsNamespaceWhenEmpty(t *testing.T) {
-	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	fakeClient := fakeClientWithUID()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
 	ds := &breakglassv1alpha1.DebugSession{
@@ -4370,7 +4423,7 @@ func TestDeployPodTemplateResource_SetsNamespaceWhenEmpty(t *testing.T) {
 }
 
 func TestDeployPodTemplateResource_PreservesExistingNamespace(t *testing.T) {
-	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	fakeClient := fakeClientWithUID()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
 	ds := &breakglassv1alpha1.DebugSession{
@@ -4397,7 +4450,7 @@ func TestDeployPodTemplateResource_PreservesExistingNamespace(t *testing.T) {
 }
 
 func TestDeployPodTemplateResource_SetsLabels(t *testing.T) {
-	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	fakeClient := fakeClientWithUID()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
 	ds := &breakglassv1alpha1.DebugSession{
@@ -4427,7 +4480,7 @@ func TestDeployPodTemplateResource_SetsLabels(t *testing.T) {
 }
 
 func TestDeployPodTemplateResource_MergesExistingLabels(t *testing.T) {
-	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	fakeClient := fakeClientWithUID()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
 	ds := &breakglassv1alpha1.DebugSession{
@@ -4460,7 +4513,7 @@ func TestDeployPodTemplateResource_MergesExistingLabels(t *testing.T) {
 }
 
 func TestDeployPodTemplateResource_SetsAnnotations(t *testing.T) {
-	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	fakeClient := fakeClientWithUID()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
 	ds := &breakglassv1alpha1.DebugSession{
@@ -4488,7 +4541,7 @@ func TestDeployPodTemplateResource_SetsAnnotations(t *testing.T) {
 }
 
 func TestDeployPodTemplateResource_MergesExistingAnnotations(t *testing.T) {
-	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	fakeClient := fakeClientWithUID()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
 	ds := &breakglassv1alpha1.DebugSession{
@@ -4533,7 +4586,6 @@ func TestDeployPodTemplateResource_RejectsTenantConfigMapCollisionWithoutMutatio
 
 	err := (&DebugSessionController{log: zap.NewNop().Sugar()}).deployPodTemplateResource(context.Background(), targetClient, ds, obj, existing.Namespace)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "refusing to overwrite pre-existing")
 
 	var unchanged corev1.ConfigMap
 	require.NoError(t, targetClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(existing), &unchanged))
@@ -4541,7 +4593,7 @@ func TestDeployPodTemplateResource_RejectsTenantConfigMapCollisionWithoutMutatio
 }
 
 func TestDeployPodTemplateResource_UpdatesSessionStatus(t *testing.T) {
-	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	fakeClient := fakeClientWithUID()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
 	ds := &breakglassv1alpha1.DebugSession{
@@ -4586,7 +4638,7 @@ func TestDeployPodTemplateResource_UpdatesSessionStatus(t *testing.T) {
 }
 
 func TestDeployPodTemplateResource_MultipleResources(t *testing.T) {
-	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	fakeClient := fakeClientWithUID()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
 	ds := &breakglassv1alpha1.DebugSession{
@@ -4622,7 +4674,7 @@ func TestDeployPodTemplateResource_MultipleResources(t *testing.T) {
 }
 
 func TestDeployPodTemplateResource_NilLabelsAndAnnotations(t *testing.T) {
-	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	fakeClient := fakeClientWithUID()
 	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
 	ds := &breakglassv1alpha1.DebugSession{

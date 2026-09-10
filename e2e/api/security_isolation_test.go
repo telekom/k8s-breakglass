@@ -30,6 +30,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
 
 // TestCrossClusterSessionIsolation verifies that a session approved for cluster-A
@@ -154,7 +155,8 @@ func TestExpiredSessionRaceCondition(t *testing.T) {
 	err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &toExpire)
 	require.NoError(t, err)
 	toExpire.Status.State = breakglassv1alpha1.SessionStateExpired
-	toExpire.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Second))
+	toExpire.Status.ReasonEnded = "testCleanup"
+	toExpire.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(toExpire.Status.ExpiresAt, time.Now())
 	err = helpers.ApplySessionStatus(ctx, cli, &toExpire)
 	require.NoError(t, err)
 

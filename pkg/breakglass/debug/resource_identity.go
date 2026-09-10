@@ -7,14 +7,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 
+	"github.com/google/uuid"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	corev1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -220,7 +223,18 @@ func isDefaultServiceAccountVolume(volume corev1.Volume) bool {
 // the supplied configuration; a subsequent Get could instead observe a replacement.
 func applyTrackedResource(ctx context.Context, target client.Client, obj client.Object) error {
 	if u, ok := obj.(*unstructured.Unstructured); ok {
-		return target.Apply(ctx, client.ApplyConfigurationFromUnstructured(u), client.FieldOwner(utils.FieldOwnerController), client.ForceOwnership)
+		cfg := client.ApplyConfigurationFromUnstructured(u)
+		if err := target.Apply(ctx, cfg, client.FieldOwner(utils.FieldOwnerController), client.ForceOwnership); err != nil {
+			return err
+		}
+		response, err := json.Marshal(cfg)
+		if err != nil {
+			return fmt.Errorf("encode tracked apply response: %w", err)
+		}
+		if err := json.Unmarshal(response, u); err != nil {
+			return fmt.Errorf("decode tracked apply response: %w", err)
+		}
+		return nil
 	}
 	cfg, err := utils.ToApplyConfiguration(obj)
 	if err != nil {
@@ -237,4 +251,190 @@ func applyTrackedResource(ctx context.Context, target client.Client, obj client.
 		return fmt.Errorf("decode tracked apply response: %w", err)
 	}
 	return nil
+}
+
+func applyOwnedTrackedResource(ctx context.Context, target client.Client, obj client.Object, session *breakglassv1alpha1.DebugSession) error {
+	if err := target.Create(ctx, obj); err == nil {
+		return nil
+	} else {
+		return recoverTrackedCreateResult(ctx, target, obj, session, err)
+	}
+}
+
+func recoverTrackedCreateResult(ctx context.Context, target client.Client, obj client.Object, session *breakglassv1alpha1.DebugSession, createErr error) error {
+	if !apierrors.IsAlreadyExists(createErr) && !isAmbiguousCreateError(createErr) {
+		return fmt.Errorf("create tracked resource: %w", createErr)
+	}
+	if session == nil || session.UID == "" {
+		return fmt.Errorf("cannot recover tracked resource without a session UID: %w", createErr)
+	}
+	desiredAnnotations := obj.GetAnnotations()
+	desiredOperationID := desiredAnnotations[createOperationIDAnnotation]
+	if desiredOperationID == "" {
+		return fmt.Errorf("target resource %s/%s already exists with a different operation identity: %w", obj.GetNamespace(), obj.GetName(), createErr)
+	}
+	existing := obj.DeepCopyObject().(client.Object)
+	if err := target.Get(ctx, client.ObjectKeyFromObject(obj), existing); err != nil {
+		return fmt.Errorf("recover tracked resource after create error: %w; read existing resource: %w", createErr, err)
+	}
+	existingAnnotations := existing.GetAnnotations()
+	if existingAnnotations[sourceSessionUIDAnnotation] != string(session.UID) {
+		return fmt.Errorf("target resource %s/%s already exists and is owned by another session: %w", obj.GetNamespace(), obj.GetName(), createErr)
+	}
+	if existingAnnotations[createOperationIDAnnotation] != desiredOperationID {
+		return fmt.Errorf("target resource %s/%s already exists with a different operation identity: %w", obj.GetNamespace(), obj.GetName(), createErr)
+	}
+	contentMatches, err := recoveredCreateContentMatches(obj, existing)
+	if err != nil {
+		return fmt.Errorf("validate recovered resource %s/%s content: %w", obj.GetNamespace(), obj.GetName(), err)
+	}
+	if !contentMatches {
+		return fmt.Errorf("target resource %s/%s already exists with different desired content: %w", obj.GetNamespace(), obj.GetName(), createErr)
+	}
+	obj.SetUID(existing.GetUID())
+	obj.SetResourceVersion(existing.GetResourceVersion())
+	return nil
+}
+
+func stampCreateOperation(obj client.Object, session *breakglassv1alpha1.DebugSession) (string, error) {
+	if session == nil {
+		return "", fmt.Errorf("cannot stamp create operation without a session")
+	}
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	operationID, err := deterministicCreateOperationID(obj, session)
+	if err != nil {
+		return "", err
+	}
+	if persisted := persistedCreateOperationID(obj, session); persisted == operationID {
+		operationID = persisted
+	}
+	if session.UID != "" {
+		annotations[sourceSessionUIDAnnotation] = string(session.UID)
+	}
+	annotations[createOperationIDAnnotation] = operationID
+	obj.SetAnnotations(annotations)
+	return operationID, nil
+}
+
+func deterministicCreateOperationID(obj client.Object, session *breakglassv1alpha1.DebugSession) (string, error) {
+	if session == nil {
+		return "", fmt.Errorf("cannot stamp create operation without a session")
+	}
+	desired := obj.DeepCopyObject().(client.Object)
+	annotations := desired.GetAnnotations()
+	if annotations != nil {
+		annotations = maps.Clone(annotations)
+		delete(annotations, createOperationIDAnnotation)
+		delete(annotations, sourceSessionUIDAnnotation)
+		desired.SetAnnotations(annotations)
+	}
+	desired.SetUID("")
+	desired.SetResourceVersion("")
+	desired.SetManagedFields(nil)
+	desired.SetCreationTimestamp(metav1.Time{})
+	desired.SetGeneration(0)
+	desired.SetDeletionTimestamp(nil)
+	desired.SetDeletionGracePeriodSeconds(nil)
+	desired.SetSelfLink("")
+	serialized, err := json.Marshal(desired)
+	if err != nil {
+		return "", fmt.Errorf("serialize create operation intent: %w", err)
+	}
+	return uuid.NewSHA1(uuid.Nil, append([]byte(string(session.UID)+"\x00"), serialized...)).String(), nil
+}
+
+func recoveredCreateContentMatches(desired, existing client.Object) (bool, error) {
+	desiredMap, err := normalizedCreateObjectMap(desired)
+	if err != nil {
+		return false, fmt.Errorf("serialize desired object: %w", err)
+	}
+	existingMap, err := normalizedCreateObjectMap(existing)
+	if err != nil {
+		return false, fmt.Errorf("serialize recovered object: %w", err)
+	}
+	return jsonSubset(desiredMap, existingMap), nil
+}
+
+func normalizedCreateObjectMap(obj client.Object) (map[string]interface{}, error) {
+	serialized, err := json.Marshal(obj)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(serialized, &result); err != nil {
+		return nil, err
+	}
+	delete(result, "status")
+	if metadata, ok := result["metadata"].(map[string]interface{}); ok {
+		for _, key := range []string{"uid", "resourceVersion", "generation", "creationTimestamp", "deletionTimestamp", "deletionGracePeriodSeconds", "managedFields", "selfLink"} {
+			delete(metadata, key)
+		}
+	}
+	return result, nil
+}
+
+func jsonSubset(expected, actual interface{}) bool {
+	switch expectedValue := expected.(type) {
+	case map[string]interface{}:
+		actualValue, ok := actual.(map[string]interface{})
+		if !ok {
+			return false
+		}
+		for key, value := range expectedValue {
+			actualField, ok := actualValue[key]
+			if !ok || !jsonSubset(value, actualField) {
+				return false
+			}
+		}
+		return true
+	case []interface{}:
+		actualValue, ok := actual.([]interface{})
+		if !ok || len(expectedValue) != len(actualValue) {
+			return false
+		}
+		for i := range expectedValue {
+			if !jsonSubset(expectedValue[i], actualValue[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return equality.Semantic.DeepEqual(expected, actual)
+	}
+}
+
+func persistedCreateOperationID(obj client.Object, session *breakglassv1alpha1.DebugSession) string {
+	if session == nil {
+		return ""
+	}
+	apiVersion := obj.GetObjectKind().GroupVersionKind().GroupVersion().String()
+	kind := obj.GetObjectKind().GroupVersionKind().Kind
+	if unstructuredObj, ok := obj.(*unstructured.Unstructured); ok {
+		apiVersion = unstructuredObj.GetAPIVersion()
+		kind = unstructuredObj.GetKind()
+	}
+	for _, ref := range session.Status.DeployedResources {
+		if ref.APIVersion == apiVersion && ref.Kind == kind && ref.Name == obj.GetName() && ref.Namespace == obj.GetNamespace() {
+			return ref.CreateOperationID
+		}
+	}
+	for _, status := range session.Status.PodTemplateResourceStatuses {
+		if status.APIVersion == apiVersion && status.Kind == kind && status.ResourceName == obj.GetName() && status.Namespace == obj.GetNamespace() {
+			return status.CreateOperationID
+		}
+	}
+	for _, status := range session.Status.AuxiliaryResourceStatuses {
+		if status.APIVersion == apiVersion && status.Kind == kind && status.ResourceName == obj.GetName() && status.Namespace == obj.GetNamespace() {
+			return status.CreateOperationID
+		}
+		for _, ref := range status.AdditionalResources {
+			if ref.APIVersion == apiVersion && ref.Kind == kind && ref.ResourceName == obj.GetName() && ref.Namespace == obj.GetNamespace() {
+				return ref.CreateOperationID
+			}
+		}
+	}
+	return ""
 }

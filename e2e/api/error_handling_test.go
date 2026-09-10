@@ -251,7 +251,7 @@ func TestErrorHandlingStatusTransitions(t *testing.T) {
 	tc := helpers.NewTestContext(t, ctx)
 	requesterClient := tc.RequesterClient()
 
-	t.Run("ApproveExpiredSession", func(t *testing.T) {
+	t.Run("ApproveWithdrawnSession", func(t *testing.T) {
 		escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-error-approve-expired-esc"), namespace).
 			WithEscalatedGroup("error-test-expired-group").
 			WithAllowedClusters(clusterName).
@@ -274,25 +274,21 @@ func TestErrorHandlingStatusTransitions(t *testing.T) {
 		// Wait for pending state
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
-		// Set to expired state (simulating expiration)
+		// Pending cannot transition directly to Expired. Withdraw it first, then
+		// prove that a terminal session cannot be approved.
 		var toExpire breakglassv1alpha1.BreakglassSession
 		require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &toExpire))
-		toExpire.Status.State = breakglassv1alpha1.SessionStateExpired
-		toExpire.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Hour))
-		require.NoError(t, cli.Status().Update(ctx, &toExpire))
+		require.NoError(t, requesterClient.WithdrawSessionViaAPI(ctx, t, session.Name, session.Namespace))
 
-		// Try to approve an expired session (invalid transition)
+		// Try to approve the withdrawn session. Terminal states cannot be reopened.
 		var toApprove breakglassv1alpha1.BreakglassSession
 		require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &toApprove))
 		toApprove.Status.State = breakglassv1alpha1.SessionStateApproved
+		toApprove.Status.ExpiresAt = metav1.NewTime(time.Now().Add(time.Hour))
 		toApprove.Status.Approver = helpers.GetTestApproverEmail()
 		err = cli.Status().Update(ctx, &toApprove)
 
-		if err != nil {
-			t.Logf("Approving expired session correctly rejected: %v", err)
-		} else {
-			t.Log("Approving expired session was allowed (controller may revert this)")
-		}
+		require.Error(t, err, "a withdrawn session must not return to Approved")
 	})
 
 	t.Run("RejectApprovedSession", func(t *testing.T) {
@@ -383,6 +379,8 @@ func TestErrorHandlingConcurrentModification(t *testing.T) {
 		// First update should succeed
 		session1.Status.State = breakglassv1alpha1.SessionStateApproved
 		session1.Status.Approver = helpers.TestUsers.Approver.Email
+		session1.Status.ApprovedAt = metav1.Now()
+		session1.Status.ExpiresAt = metav1.NewTime(time.Now().Add(time.Hour))
 		err1 := cli.Status().Update(ctx, &session1)
 		require.NoError(t, err1)
 

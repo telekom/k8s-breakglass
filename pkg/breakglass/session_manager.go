@@ -131,6 +131,13 @@ func (c *SessionManager) Reader() client.Reader {
 	return c.Client
 }
 
+// QuotaNamespace returns the controller namespace configured for durable
+// admission. DebugSessions are created in this namespace, so callers that
+// need a bounded live discovery can scope reads there.
+func (c *SessionManager) QuotaNamespace() string {
+	return c.quotaNamespace
+}
+
 func (c *SessionManager) list(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	if c.reader != nil {
 		return c.reader.List(ctx, list, opts...)
@@ -278,7 +285,8 @@ func (c *SessionManager) GetBreakglassSessionByName(ctx context.Context, name st
 	// controller-runtime client requires a namespace when a name is provided in ObjectKey.
 	// If the object was created with a namespace, a direct Get with empty namespace will fail.
 	// In that case, fall back to listing sessions across all namespaces using a field selector on metadata.name.
-	if err := c.Get(ctx, client.ObjectKey{Name: name}, &bs); err == nil {
+	reader := c.Reader()
+	if err := reader.Get(ctx, client.ObjectKey{Name: name}, &bs); err == nil {
 		log.Infow("Fetched BreakglassSession by name (direct GET)", system.NamespacedFields(name, bs.Namespace)...)
 		return bs, nil
 	} else {
@@ -287,7 +295,7 @@ func (c *SessionManager) GetBreakglassSessionByName(ctx context.Context, name st
 
 	// Try cache-backed field index before falling back to selector-based listing
 	indexed := breakglassv1alpha1.BreakglassSessionList{}
-	if err := c.List(ctx, &indexed, client.MatchingFields{"metadata.name": name}); err == nil {
+	if err := reader.List(ctx, &indexed, client.MatchingFields{"metadata.name": name}); err == nil {
 		switch len(indexed.Items) {
 		case 0:
 			log.Debugw("Field index lookup returned no sessions; falling back to selector", "name", name)

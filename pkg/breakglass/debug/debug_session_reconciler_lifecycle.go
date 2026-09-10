@@ -108,17 +108,12 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 		return err
 	}
 
-	allowedPods := make([]breakglassv1alpha1.AllowedPodRef, 0, len(podList.Items))
-	for _, pod := range podList.Items {
-		// UID-bearing pods must belong to this concrete DebugSession instance.
-		// The owner-chain and recorded-resource checks below remain authoritative.
-		if podUID, hasUID := pod.Labels[DebugSessionUIDLabelKey]; hasUID &&
-			podUID != debugSessionIdentity(ds) {
-			continue
-		}
-		if !c.podBelongsToTrackedWorkload(ctx, targetClient, ds, &pod) {
-			continue
-		}
+	allowedPodCandidates, retainedAllowedPods := c.filterAllowedPodsForRefresh(ctx, targetClient, ds, podList.Items)
+	allowedPods := make([]breakglassv1alpha1.AllowedPodRef, 0, len(allowedPodCandidates)+len(retainedAllowedPods))
+	// Keep rejected same-name identities in status so later refreshes do not
+	// reinterpret the replacement as an untracked Pod.
+	allowedPods = append(allowedPods, retainedAllowedPods...)
+	for _, pod := range allowedPodCandidates {
 		ready := false
 		for _, cond := range pod.Status.Conditions {
 			if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
@@ -133,15 +128,7 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 		// Build container status for detailed information
 		containerStatus := buildContainerStatus(&pod)
 
-		allowedPods = append(allowedPods, breakglassv1alpha1.AllowedPodRef{
-			Namespace:       pod.Namespace,
-			Name:            pod.Name,
-			UID:             string(pod.UID),
-			NodeName:        pod.Spec.NodeName,
-			Ready:           ready,
-			Phase:           string(pod.Status.Phase),
-			ContainerStatus: containerStatus,
-		})
+		allowedPods = append(allowedPods, allowedPodRefFromPod(&pod, ready, containerStatus))
 	}
 
 	// Preserve allowed pods for ephemeral containers injected into existing pods
@@ -156,10 +143,9 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 				}
 			}
 			if !found {
-				// Find it in the old allowedPods to preserve its state only for the
-				// exact pod that received the ephemeral container.
+				// Find it in the old allowedPods to preserve its state
 				for _, oldAP := range ds.Status.AllowedPods {
-					if oldAP.Namespace == ec.Namespace && oldAP.Name == ec.PodName && oldAP.UID == ec.PodUID {
+					if oldAP.Namespace == ec.Namespace && oldAP.Name == ec.PodName && ec.PodUID != "" && oldAP.UID == ec.PodUID {
 						allowedPods = append(allowedPods, oldAP)
 						break
 					}
@@ -179,9 +165,82 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 	return c.patchDebugSessionAllowedPods(ctx, ds, allowedPods)
 }
 
-// podBelongsToTrackedWorkload treats labels as discovery only. Authorization follows
-// the UID of the controller created for this session, including Deployment ReplicaSets.
+func (c *DebugSessionController) filterAllowedPodsForRefresh(
+	ctx context.Context,
+	targetClient ctrlclient.Client,
+	ds *breakglassv1alpha1.DebugSession,
+	pods []corev1.Pod,
+) ([]corev1.Pod, []breakglassv1alpha1.AllowedPodRef) {
+	allowed := make([]corev1.Pod, 0, len(pods))
+	retained := make([]breakglassv1alpha1.AllowedPodRef, 0)
+	for _, pod := range pods {
+		if !c.allowedPodForRefresh(ctx, targetClient, ds, &pod) {
+			if existing, found := existingAllowedPodRef(ds, &pod); found {
+				retained = append(retained, existing)
+			}
+			continue
+		}
+		allowed = append(allowed, pod)
+	}
+	return allowed, retained
+}
+
+func existingAllowedPodRef(ds *breakglassv1alpha1.DebugSession, pod *corev1.Pod) (breakglassv1alpha1.AllowedPodRef, bool) {
+	for _, existing := range ds.Status.AllowedPods {
+		if existing.Namespace == pod.Namespace && existing.Name == pod.Name {
+			return existing, true
+		}
+	}
+	return breakglassv1alpha1.AllowedPodRef{}, false
+}
+
+func (c *DebugSessionController) allowedPodForRefresh(
+	ctx context.Context,
+	targetClient ctrlclient.Client,
+	ds *breakglassv1alpha1.DebugSession,
+	pod *corev1.Pod,
+) bool {
+	existing, known := existingAllowedPodRef(ds, pod)
+	if known {
+		if existing.UID == string(pod.UID) && existing.UID != "" {
+			return true
+		}
+		if existing.UID == "" || pod.UID == "" {
+			return false
+		}
+		return c.podBelongsToTrackedWorkload(ctx, targetClient, ds, pod)
+	}
+	return c.podBelongsToTrackedWorkload(ctx, targetClient, ds, pod)
+}
+
+func allowedPodRefFromPod(pod *corev1.Pod, ready bool, containerStatus *breakglassv1alpha1.PodContainerStatus) breakglassv1alpha1.AllowedPodRef {
+	return breakglassv1alpha1.AllowedPodRef{
+		Namespace:       pod.Namespace,
+		Name:            pod.Name,
+		UID:             string(pod.UID),
+		NodeName:        pod.Spec.NodeName,
+		Ready:           ready,
+		Phase:           string(pod.Status.Phase),
+		ContainerStatus: containerStatus,
+	}
+}
+
+func (c *DebugSessionController) updateAuxiliaryResourceReadiness(
+	ctx context.Context,
+	ds *breakglassv1alpha1.DebugSession,
+	targetClient ctrlclient.Client,
+) error {
+	if c.auxiliaryMgr == nil || len(ds.Status.AuxiliaryResourceStatuses) == 0 {
+		return nil
+	}
+	_, err := c.auxiliaryMgr.CheckAuxiliaryResourcesReadiness(ctx, ds, targetClient)
+	return err
+}
+
 func (c *DebugSessionController) podBelongsToTrackedWorkload(ctx context.Context, targetClient ctrlclient.Client, ds *breakglassv1alpha1.DebugSession, pod *corev1.Pod) bool {
+	if ds == nil || pod == nil {
+		return false
+	}
 	for _, ref := range ds.Status.DeployedResources {
 		if ref.UID == "" || ref.Namespace != pod.Namespace || ref.Source != "debug-pod" {
 			continue
@@ -243,18 +302,6 @@ func (c *DebugSessionController) podBelongsToTrackedWorkload(ctx context.Context
 		}
 	}
 	return false
-}
-
-func (c *DebugSessionController) updateAuxiliaryResourceReadiness(
-	ctx context.Context,
-	ds *breakglassv1alpha1.DebugSession,
-	targetClient ctrlclient.Client,
-) error {
-	if c.auxiliaryMgr == nil || len(ds.Status.AuxiliaryResourceStatuses) == 0 {
-		return nil
-	}
-	_, err := c.auxiliaryMgr.CheckAuxiliaryResourcesReadiness(ctx, ds, targetClient)
-	return err
 }
 
 // monitorPodHealth checks pod status and emits audit events for failures/restarts
@@ -422,8 +469,16 @@ func buildContainerStatus(pod *corev1.Pod) *breakglassv1alpha1.PodContainerStatu
 // cleanupResources removes deployed resources from the target cluster
 func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
 	log := c.log.With("debugSession", ds.Name, "cluster", ds.Spec.Cluster)
+	// Keep the inventory observed at the start of this cleanup attempt.  A
+	// concurrent outcome writer may add a newer target while cleanup is in
+	// progress; the status patch below must remove only entries that this
+	// attempt actually retired.
+	cleanupBaseline := ds.Status.DeepCopy()
 
 	if c.ccProvider == nil {
+		if hasTrackedSpokeResources(ds) {
+			return fmt.Errorf("cannot clean up tracked spoke resources: cluster client provider is unavailable")
+		}
 		return nil
 	}
 
@@ -431,10 +486,9 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	kubectlHandler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
 	var cleanupErrors []error
 	if err := kubectlHandler.CleanupKubectlDebugResources(ctx, ds); err != nil {
-		// Check if the error is due to missing ClusterConfig - if so, treat as cleanup complete
+		// An unavailable cluster cannot prove that tracked resources are gone.
 		if errors.Is(err, cluster.ErrClusterConfigNotFound) {
-			log.Warnw("ClusterConfig no longer exists; retaining cleanup inventory for retry",
-				"cluster", ds.Spec.Cluster)
+			log.Warnw("ClusterConfig no longer exists; retaining cleanup inventory for retry", "cluster", ds.Spec.Cluster)
 			return fmt.Errorf("cleanup blocked by missing ClusterConfig: %w", err)
 		}
 		log.Errorw("Failed to cleanup kubectl-debug resources", "error", err)
@@ -444,7 +498,10 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	if len(ds.Status.DeployedResources) == 0 &&
 		len(ds.Status.AuxiliaryResourceStatuses) == 0 &&
 		len(ds.Status.PodTemplateResourceStatuses) == 0 {
-		if err := c.patchDebugSessionCleanupStatus(ctx, ds); err != nil {
+		// AllowedPods are authorization references, not spoke resources. Remove
+		// this attempt's baseline refs while the status merge retains newer refs.
+		ds.Status.AllowedPods = nil
+		if err := c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
 		}
 		return errors.Join(cleanupErrors...)
@@ -453,12 +510,6 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	// Get spoke cluster client for cleanup
 	restCfg, err := c.ccProvider.GetRESTConfig(ctx, ds.Spec.Cluster)
 	if err != nil {
-		// Check if the error is due to missing ClusterConfig - if so, treat as cleanup complete
-		if errors.Is(err, cluster.ErrClusterConfigNotFound) {
-			log.Warnw("ClusterConfig no longer exists; retaining cleanup inventory for retry",
-				"cluster", ds.Spec.Cluster)
-			return fmt.Errorf("cleanup blocked by missing ClusterConfig: %w", err)
-		}
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to get REST config: %w", err))
 		return errors.Join(cleanupErrors...)
 	}
@@ -488,7 +539,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 
 	if len(ds.Status.DeployedResources) == 0 {
 		// Persist any status changes from auxiliary/pod-template cleanup above
-		if err := c.patchDebugSessionCleanupStatus(ctx, ds); err != nil {
+		if err := c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
 		}
 		return errors.Join(cleanupErrors...)
@@ -497,7 +548,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	if err := c.cleanupDeployedResources(ctx, ds, targetClient, auxiliaryCleanupFailed, len(ds.Status.PodTemplateResourceStatuses) > 0); err != nil {
 		cleanupErrors = append(cleanupErrors, err)
 	}
-	if err := c.patchDebugSessionCleanupStatus(ctx, ds); err != nil {
+	if err := c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline); err != nil {
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
 	}
 	return errors.Join(cleanupErrors...)
@@ -521,8 +572,13 @@ func residualResourceIdentities(refs []breakglassv1alpha1.DeployedResourceRef) s
 func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 	ctx context.Context,
 	ds *breakglassv1alpha1.DebugSession,
+	baseline ...*breakglassv1alpha1.DebugSessionStatus,
 ) error {
 	desiredStatus := ds.Status
+	cleanupBaseline := desiredStatus
+	if len(baseline) > 0 && baseline[0] != nil {
+		cleanupBaseline = *baseline[0]
+	}
 	var patchedStatus breakglassv1alpha1.DebugSessionStatus
 	var patchedResourceVersion string
 
@@ -531,13 +587,29 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 		if err := c.client.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), current); err != nil {
 			return err
 		}
+		if ds.UID != "" && current.UID != ds.UID {
+			return fmt.Errorf("debug session UID changed while patching cleanup status: expected %q, got %q", ds.UID, current.UID)
+		}
 
 		base := current.DeepCopy()
-		current.Status.DeployedResources = desiredStatus.DeployedResources
-		current.Status.AllowedPods = desiredStatus.AllowedPods
-		current.Status.KubectlDebugStatus = desiredStatus.KubectlDebugStatus
-		current.Status.AuxiliaryResourceStatuses = desiredStatus.AuxiliaryResourceStatuses
-		current.Status.PodTemplateResourceStatuses = desiredStatus.PodTemplateResourceStatuses
+		current.Status.DeployedResources = mergeCleanupInventory(
+			cleanupBaseline.DeployedResources, desiredStatus.DeployedResources, current.Status.DeployedResources,
+			deployedResourceKey,
+		)
+		current.Status.AllowedPods = mergeCleanupInventory(
+			cleanupBaseline.AllowedPods, desiredStatus.AllowedPods, current.Status.AllowedPods,
+			allowedPodKey,
+		)
+		current.Status.AuxiliaryResourceStatuses = mergeAuxiliaryResourceStatuses(
+			cleanupBaseline.AuxiliaryResourceStatuses, desiredStatus.AuxiliaryResourceStatuses, current.Status.AuxiliaryResourceStatuses,
+		)
+		current.Status.PodTemplateResourceStatuses = mergeCleanupInventory(
+			cleanupBaseline.PodTemplateResourceStatuses, desiredStatus.PodTemplateResourceStatuses, current.Status.PodTemplateResourceStatuses,
+			podTemplateResourceStatusKey,
+		)
+		current.Status.KubectlDebugStatus = mergeKubectlDebugStatus(
+			cleanupBaseline.KubectlDebugStatus, desiredStatus.KubectlDebugStatus, current.Status.KubectlDebugStatus,
+		)
 		if current.Generation > 0 {
 			current.Status.ObservedGeneration = current.Generation
 		}
@@ -556,6 +628,123 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 	ds.Status = patchedStatus
 	ds.ResourceVersion = patchedResourceVersion
 	return nil
+}
+
+// mergeCleanupInventory applies the removals observed by one cleanup attempt
+// to the latest persisted list.  Entries absent from the baseline are newer
+// writes and must survive, even when the cleanup caller started from an older
+// same-UID session object.
+func mergeCleanupInventory[T any](baseline, desired, current []T, key func(T) string) []T {
+	baselineKeys := make(map[string]struct{}, len(baseline))
+	for _, item := range baseline {
+		baselineKeys[key(item)] = struct{}{}
+	}
+	desiredKeys := make(map[string]struct{}, len(desired))
+	for _, item := range desired {
+		desiredKeys[key(item)] = struct{}{}
+	}
+	merged := append([]T(nil), desired...)
+	for _, item := range current {
+		itemKey := key(item)
+		if _, wasTracked := baselineKeys[itemKey]; wasTracked {
+			continue
+		}
+		if _, alreadyDesired := desiredKeys[itemKey]; !alreadyDesired {
+			merged = append(merged, item)
+		}
+	}
+	return merged
+}
+
+func deployedResourceKey(ref breakglassv1alpha1.DeployedResourceRef) string {
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", ref.APIVersion, ref.Kind, ref.Namespace, ref.Name, ref.Source, ref.UID, ref.CreateOperationID)
+}
+
+func allowedPodKey(ref breakglassv1alpha1.AllowedPodRef) string {
+	return fmt.Sprintf("%s|%s|%s", ref.Namespace, ref.Name, ref.UID)
+}
+
+func auxiliaryResourceStatusKey(status breakglassv1alpha1.AuxiliaryResourceStatus) string {
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s", status.Name, status.Category, status.APIVersion, status.Kind, status.ResourceName, status.Namespace, status.UID, status.CreateOperationID)
+}
+
+func additionalResourceKey(ref breakglassv1alpha1.AdditionalResourceRef) string {
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s", ref.APIVersion, ref.Kind, ref.Namespace, ref.ResourceName, ref.UID, ref.CreateOperationID)
+}
+
+func mergeAuxiliaryResourceStatuses(
+	baseline, desired, current []breakglassv1alpha1.AuxiliaryResourceStatus,
+) []breakglassv1alpha1.AuxiliaryResourceStatus {
+	merged := append([]breakglassv1alpha1.AuxiliaryResourceStatus(nil), desired...)
+	desiredByKey := make(map[string]int, len(desired))
+	baselineByKey := make(map[string]breakglassv1alpha1.AuxiliaryResourceStatus, len(baseline))
+	for i, status := range desired {
+		desiredByKey[auxiliaryResourceStatusKey(status)] = i
+	}
+	for _, status := range baseline {
+		baselineByKey[auxiliaryResourceStatusKey(status)] = status
+	}
+	for _, status := range current {
+		key := auxiliaryResourceStatusKey(status)
+		if desiredIndex, ok := desiredByKey[key]; ok {
+			baselineStatus := baselineByKey[key]
+			merged[desiredIndex].AdditionalResources = mergeCleanupInventory(
+				baselineStatus.AdditionalResources,
+				desired[desiredIndex].AdditionalResources,
+				status.AdditionalResources,
+				additionalResourceKey,
+			)
+			continue
+		}
+		if _, wasTracked := baselineByKey[key]; !wasTracked {
+			merged = append(merged, status)
+		}
+	}
+	return merged
+}
+
+func podTemplateResourceStatusKey(status breakglassv1alpha1.PodTemplateResourceStatus) string {
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", status.APIVersion, status.Kind, status.Namespace, status.ResourceName, status.Source, status.UID, status.CreateOperationID)
+}
+
+func canonicalCopiedPodUID(ref breakglassv1alpha1.CopiedPodRef) string {
+	if ref.UID != "" {
+		return ref.UID
+	}
+	return ref.CopyUID
+}
+
+func mergeKubectlDebugStatus(baseline, desired, current *breakglassv1alpha1.KubectlDebugStatus) *breakglassv1alpha1.KubectlDebugStatus {
+	if baseline == nil && desired == nil {
+		return current.DeepCopy()
+	}
+	var empty breakglassv1alpha1.KubectlDebugStatus
+	if baseline == nil {
+		baseline = &empty
+	}
+	if desired == nil {
+		desired = &empty
+	}
+	if current == nil {
+		current = &empty
+	}
+	merged := desired.DeepCopy()
+	merged.EphemeralContainersInjected = mergeCleanupInventory(
+		baseline.EphemeralContainersInjected, desired.EphemeralContainersInjected, current.EphemeralContainersInjected,
+		func(ref breakglassv1alpha1.EphemeralContainerRef) string {
+			return fmt.Sprintf("%s|%s|%s|%s|%s", ref.Namespace, ref.PodName, ref.ContainerName, ref.PodUID, ref.Image)
+		},
+	)
+	merged.CopiedPods = mergeCleanupInventory(
+		baseline.CopiedPods, desired.CopiedPods, current.CopiedPods,
+		func(ref breakglassv1alpha1.CopiedPodRef) string {
+			return fmt.Sprintf("%s|%s|%s|%s|%s", ref.CopyNamespace, ref.CopyName, canonicalCopiedPodUID(ref), ref.OriginalNamespace, ref.OriginalPod)
+		},
+	)
+	if len(merged.EphemeralContainersInjected) == 0 && len(merged.CopiedPods) == 0 {
+		return nil
+	}
+	return merged
 }
 
 func (c *DebugSessionController) cleanupDeployedResources(
@@ -664,6 +853,45 @@ func (c *DebugSessionController) cleanupDeployedResources(
 	ds.Status.DeployedResources = remainingDeployedResources
 	ds.Status.AllowedPods = allowedPodsForRemainingDeployedPods(ds.Status.AllowedPods, remainingDeployedResources)
 	return errors.Join(cleanupErrors...)
+}
+
+const sourceSessionUIDAnnotation = "breakglass.t-caas.telekom.com/source-session-uid"
+
+const createOperationIDAnnotation = "breakglass.t-caas.telekom.com/create-operation-id"
+
+// deleteOwnedResource resolves the target object immediately before deletion and
+// verifies immutable ownership. A name is reusable after deletion, so deleting
+// a name-only placeholder can destroy a replacement belonging to another
+// session. Records written before UID tracking was introduced are only
+// deletable when the immutable session UID annotation is present and matches.
+func deleteOwnedResource(ctx context.Context, targetClient ctrlclient.Client, obj ctrlclient.Object, expectedUID string, session *breakglassv1alpha1.DebugSession) error {
+	live := obj.DeepCopyObject().(ctrlclient.Object)
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(obj), live); err != nil {
+		return err
+	}
+	if live.GetUID() == "" {
+		return fmt.Errorf("refusing to delete %s %s/%s: live UID is unavailable", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetNamespace(), obj.GetName())
+	}
+	if expectedUID != "" {
+		if string(live.GetUID()) != expectedUID {
+			return nil
+		}
+	} else if session == nil || session.UID == "" || live.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
+		return fmt.Errorf("refusing to delete %s %s/%s: ownership identity is unavailable or changed", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetNamespace(), obj.GetName())
+	}
+	if live.GetUID() != "" {
+		uid := live.GetUID()
+		return targetClient.Delete(ctx, live, ctrlclient.Preconditions{UID: &uid})
+	}
+	return targetClient.Delete(ctx, live)
+}
+
+func captureResourceUID(_ context.Context, _ ctrlclient.Client, obj ctrlclient.Object) (string, error) {
+	// Use only the mutation response; a name lookup could observe a replacement.
+	if obj.GetUID() == "" {
+		return "", fmt.Errorf("resource %s/%s has no UID after mutation", obj.GetNamespace(), obj.GetName())
+	}
+	return string(obj.GetUID()), nil
 }
 
 func auxiliaryResourceDeleted(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
@@ -785,43 +1013,8 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 		obj.SetGroupVersionKind(gvk)
 		obj.SetName(status.ResourceName)
 		obj.SetNamespace(status.Namespace)
-		uid := types.UID(status.UID)
-		obj.SetUID(uid)
-
-		existing := &unstructured.Unstructured{}
-		existing.SetGroupVersionKind(gvk)
-		existing.SetName(status.ResourceName)
-		existing.SetNamespace(status.Namespace)
-		if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(existing), existing); err != nil {
-			if apierrors.IsNotFound(err) {
-				log.Debugw("Pod template resource already deleted",
-					"kind", status.Kind,
-					"name", status.ResourceName)
-				status.Deleted = true
-				now := time.Now().UTC().Format(time.RFC3339)
-				status.DeletedAt = &now
-				continue
-			}
-			status.Error = fmt.Sprintf("get failed: %v", err)
-			remainingStatuses = append(remainingStatuses, *status)
-			cleanupErrors = append(cleanupErrors, fmt.Errorf("get pod template resource %s %s/%s: %w", status.Kind, status.Namespace, status.ResourceName, err))
-			continue
-		}
-		// UID-bearing resources are fenced against replacement by an exact
-		// session identity. Resources written by older releases predate the UID
-		// marker, but their session name/namespace markers still provide safe
-		// ownership proof and must remain cleanable during an upgrade. Resources
-		// without recognized ownership metadata are retained; status alone is not
-		// sufficient proof that a replacement resource belongs to this session.
-		if !resourceMayBeDeletedByDebugSession(existing, ds) {
-			status.Error = "ownership precondition failed: resource was replaced or belongs to another session"
-			remainingStatuses = append(remainingStatuses, *status)
-			cleanupErrors = append(cleanupErrors, fmt.Errorf("refusing to delete pod template resource %s %s/%s: ownership precondition failed", status.Kind, status.Namespace, status.ResourceName))
-			continue
-		}
-		expectedUID := types.UID(status.UID)
-		if expectedUID == "" {
-			expectedUID = existing.GetUID()
+		if status.UID != "" {
+			obj.SetUID(types.UID(status.UID))
 		}
 
 		if err := deleteTrackedResource(ctx, targetClient, ds, obj); err != nil {
@@ -850,7 +1043,8 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 			remaining.SetName(status.ResourceName)
 			remaining.SetNamespace(status.Namespace)
 			if getErr := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(remaining), remaining); getErr == nil {
-				if remaining.GetUID() == expectedUID {
+				expectedUID := types.UID(status.UID)
+				if expectedUID != "" && remaining.GetUID() == expectedUID {
 					status.Error = "delete accepted but resource remains pending finalizers"
 					remainingStatuses = append(remainingStatuses, *status)
 					cleanupErrors = append(cleanupErrors, fmt.Errorf("delete pod template resource %s %s/%s is pending finalizers", status.Kind, status.Namespace, status.ResourceName))
@@ -867,6 +1061,7 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 				"name", status.ResourceName,
 				"namespace", status.Namespace)
 		}
+
 		status.Deleted = true
 		now := time.Now().UTC().Format(time.RFC3339)
 		status.DeletedAt = &now

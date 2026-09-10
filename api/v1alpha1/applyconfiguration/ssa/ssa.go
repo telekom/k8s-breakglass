@@ -179,7 +179,7 @@ func BreakglassSessionStatusFrom(status *breakglassv1alpha1.BreakglassSessionSta
 	if len(status.Approvers) > 0 {
 		result.WithApprovers(status.Approvers...)
 	}
-	if len(status.ApproverIdentityProviders) > 0 {
+	if status.ApproverIdentityProviders != nil {
 		result.WithApproverIdentityProviders(status.ApproverIdentityProviders...)
 	}
 	if status.ApprovalReason != "" {
@@ -297,6 +297,15 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	// Set resolved binding
 	if status.ResolvedBinding != nil {
 		result.WithResolvedBinding(ResolvedBindingRefFrom(status.ResolvedBinding))
+	}
+	if status.ResolvedBindingSnapshotCaptured {
+		result.WithResolvedBindingSnapshotCaptured(true)
+	}
+	if status.ResolvedBindingSpec != nil {
+		result.WithResolvedBindingSpec(*status.ResolvedBindingSpec.DeepCopy())
+	}
+	if status.ResolvedPodTemplate != nil {
+		result.WithResolvedPodTemplate(*status.ResolvedPodTemplate.DeepCopy())
 	}
 
 	return result
@@ -523,14 +532,14 @@ func DebugSessionParticipantFrom(p *breakglassv1alpha1.DebugSessionParticipant) 
 	if p.Email != "" {
 		result.WithEmail(p.Email)
 	}
+	if p.DisplayName != "" {
+		result.WithDisplayName(p.DisplayName)
+	}
 	if p.IdentityProviderName != "" {
 		result.WithIdentityProviderName(p.IdentityProviderName)
 	}
 	if p.IdentityProviderIssuer != "" {
 		result.WithIdentityProviderIssuer(p.IdentityProviderIssuer)
-	}
-	if p.DisplayName != "" {
-		result.WithDisplayName(p.DisplayName)
 	}
 	if p.LeftAt != nil {
 		result.WithLeftAt(*p.LeftAt)
@@ -567,6 +576,9 @@ func DeployedResourceRefFrom(r *breakglassv1alpha1.DeployedResourceRef) *ac.Depl
 		WithKind(r.Kind).
 		WithName(r.Name)
 
+	if r.CreateOperationID != "" {
+		result.WithCreateOperationID(r.CreateOperationID)
+	}
 	if r.Namespace != "" {
 		result.WithNamespace(r.Namespace)
 	}
@@ -588,11 +600,13 @@ func AllowedPodRefFrom(p *breakglassv1alpha1.AllowedPodRef) *ac.AllowedPodRefApp
 	result := ac.AllowedPodRef().
 		WithNamespace(p.Namespace).
 		WithName(p.Name).
-		WithUID(p.UID).
 		WithReady(p.Ready)
 
 	if p.NodeName != "" {
 		result.WithNodeName(p.NodeName)
+	}
+	if p.UID != "" {
+		result.WithUID(p.UID)
 	}
 	if p.Phase != "" {
 		result.WithPhase(p.Phase)
@@ -635,6 +649,12 @@ func AuxiliaryResourceStatusFrom(s *breakglassv1alpha1.AuxiliaryResourceStatus) 
 		WithCreated(s.Created).
 		WithReady(s.Ready).
 		WithDeleted(s.Deleted)
+	if s.CreateOperationID != "" {
+		result.WithCreateOperationID(s.CreateOperationID)
+	}
+	if s.UID != "" {
+		result.WithUID(s.UID)
+	}
 
 	if s.Category != "" {
 		result.WithCategory(s.Category)
@@ -650,9 +670,6 @@ func AuxiliaryResourceStatusFrom(s *breakglassv1alpha1.AuxiliaryResourceStatus) 
 	}
 	if s.Namespace != "" {
 		result.WithNamespace(s.Namespace)
-	}
-	if s.UID != "" {
-		result.WithUID(s.UID)
 	}
 	if s.CreatedAt != nil {
 		result.WithCreatedAt(*s.CreatedAt)
@@ -685,12 +702,15 @@ func AdditionalResourceRefFrom(r *breakglassv1alpha1.AdditionalResourceRef) *ac.
 		WithResourceName(r.ResourceName).
 		WithReady(r.Ready).
 		WithDeleted(r.Deleted)
-
-	if r.Namespace != "" {
-		result.WithNamespace(r.Namespace)
+	if r.CreateOperationID != "" {
+		result.WithCreateOperationID(r.CreateOperationID)
 	}
 	if r.UID != "" {
 		result.WithUID(r.UID)
+	}
+
+	if r.Namespace != "" {
+		result.WithNamespace(r.Namespace)
 	}
 	if r.ReadinessStatus != "" {
 		result.WithReadinessStatus(r.ReadinessStatus)
@@ -708,6 +728,12 @@ func PodTemplateResourceStatusFrom(s *breakglassv1alpha1.PodTemplateResourceStat
 		WithCreated(s.Created).
 		WithReady(s.Ready).
 		WithDeleted(s.Deleted)
+	if s.CreateOperationID != "" {
+		result.WithCreateOperationID(s.CreateOperationID)
+	}
+	if s.UID != "" {
+		result.WithUID(s.UID)
+	}
 	if s.Kind != "" {
 		result.WithKind(s.Kind)
 	}
@@ -719,9 +745,6 @@ func PodTemplateResourceStatusFrom(s *breakglassv1alpha1.PodTemplateResourceStat
 	}
 	if s.Namespace != "" {
 		result.WithNamespace(s.Namespace)
-	}
-	if s.UID != "" {
-		result.WithUID(s.UID)
 	}
 	if s.Source != "" {
 		result.WithSource(s.Source)
@@ -790,11 +813,13 @@ func EphemeralContainerRefFrom(e *breakglassv1alpha1.EphemeralContainerRef) *ac.
 	result := ac.EphemeralContainerRef().
 		WithPodName(e.PodName).
 		WithNamespace(e.Namespace).
-		WithPodUID(e.PodUID).
 		WithContainerName(e.ContainerName).
 		WithImage(e.Image).
 		WithInjectedAt(e.InjectedAt).
 		WithInjectedBy(e.InjectedBy)
+	if e.PodUID != "" {
+		result.WithPodUID(e.PodUID)
+	}
 
 	return result
 }
@@ -809,8 +834,13 @@ func CopiedPodRefFrom(c *breakglassv1alpha1.CopiedPodRef) *ac.CopiedPodRefApplyC
 		WithOriginalNamespace(c.OriginalNamespace).
 		WithCopyName(c.CopyName).
 		WithCopyNamespace(c.CopyNamespace).
-		WithCopyUID(c.CopyUID).
 		WithCreatedAt(c.CreatedAt)
+	if c.UID != "" {
+		result.WithUID(c.UID)
+	}
+	if c.CopyUID != "" {
+		result.WithCopyUID(c.CopyUID)
+	}
 
 	if c.ExpiresAt != nil {
 		result.WithExpiresAt(*c.ExpiresAt)

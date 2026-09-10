@@ -13,6 +13,12 @@ package v1alpha1
 //
 // PodTemplateResourceStatus tracks the state of resources deployed from multi-doc pod templates.
 type PodTemplateResourceStatusApplyConfiguration struct {
+	// createOperationID identifies the exact target create attempt represented by this intent.
+	// Recovery must match this immutable operation marker before reusing a same-name object.
+	CreateOperationID *string `json:"createOperationID,omitempty"`
+	// uid is the immutable Kubernetes UID observed when the resource was created.
+	// Cleanup must match this UID before deleting a name-reused replacement.
+	UID *string `json:"uid,omitempty"`
 	// kind is the Kubernetes kind of the resource.
 	Kind *string `json:"kind,omitempty"`
 	// apiVersion is the API version of the resource.
@@ -21,8 +27,6 @@ type PodTemplateResourceStatusApplyConfiguration struct {
 	ResourceName *string `json:"resourceName,omitempty"`
 	// namespace is the namespace where the resource is deployed.
 	Namespace *string `json:"namespace,omitempty"`
-	// uid is the immutable identity of the deployed resource.
-	UID *string `json:"uid,omitempty"`
 	// source identifies where this resource came from.
 	// Either "podTemplateString" or "debugPodTemplate:<name>".
 	Source *string `json:"source,omitempty"`
@@ -48,6 +52,22 @@ type PodTemplateResourceStatusApplyConfiguration struct {
 // apply.
 func PodTemplateResourceStatus() *PodTemplateResourceStatusApplyConfiguration {
 	return &PodTemplateResourceStatusApplyConfiguration{}
+}
+
+// WithCreateOperationID sets the CreateOperationID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the CreateOperationID field is set to the value of the last call.
+func (b *PodTemplateResourceStatusApplyConfiguration) WithCreateOperationID(value string) *PodTemplateResourceStatusApplyConfiguration {
+	b.CreateOperationID = &value
+	return b
+}
+
+// WithUID sets the UID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UID field is set to the value of the last call.
+func (b *PodTemplateResourceStatusApplyConfiguration) WithUID(value string) *PodTemplateResourceStatusApplyConfiguration {
+	b.UID = &value
+	return b
 }
 
 // WithKind sets the Kind field in the declarative configuration to the given value
@@ -79,14 +99,6 @@ func (b *PodTemplateResourceStatusApplyConfiguration) WithResourceName(value str
 // If called multiple times, the Namespace field is set to the value of the last call.
 func (b *PodTemplateResourceStatusApplyConfiguration) WithNamespace(value string) *PodTemplateResourceStatusApplyConfiguration {
 	b.Namespace = &value
-	return b
-}
-
-// WithUID sets the UID field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the UID field is set to the value of the last call.
-func (b *PodTemplateResourceStatusApplyConfiguration) WithUID(value string) *PodTemplateResourceStatusApplyConfiguration {
-	b.UID = &value
 	return b
 }
 

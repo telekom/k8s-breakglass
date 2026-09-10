@@ -87,6 +87,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		}
 		return
 	}
+	authorizedUID := bs.UID
 
 	// Authorization must happen before body validation and state-specific
 	// responses so unauthorized callers cannot learn session details from
@@ -150,6 +151,28 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	// Sanitize approver reason to prevent injection attacks
 	if approverPayload.Reason != "" {
 		approverPayload.Reason = SanitizeReasonText(approverPayload.Reason)
+	}
+
+	// The authorization check and request parsing above can race with the
+	// requester withdrawing the session or with the approval deadline. For
+	// approval/rejection, fence the state transition with a fresh API read so a
+	// stale cached object cannot be promoted after its timeout.
+	if sesCondition == breakglassv1alpha1.SessionConditionTypeApproved || sesCondition == breakglassv1alpha1.SessionConditionTypeRejected {
+		latest := breakglassv1alpha1.BreakglassSession{}
+		if err := wc.sessionManager.Reader().Get(c.Request.Context(), client.ObjectKey{Namespace: bs.Namespace, Name: bs.Name}, &latest); err != nil {
+			reqLog.Error("error while re-reading breakglass session before approval transition", zap.Error(err))
+			if apierrors.IsNotFound(err) {
+				apiresponses.RespondNotFoundSimple(c, "session not found")
+			} else {
+				apiresponses.RespondInternalError(c, "re-read session", err, reqLog)
+			}
+			return
+		}
+		if latest.UID != authorizedUID {
+			apiresponses.RespondConflict(c, "session was replaced while approval was in progress, please retry")
+			return
+		}
+		bs = latest
 	}
 
 	var lastCondition metav1.Condition
@@ -254,13 +277,15 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	case breakglassv1alpha1.SessionConditionTypeRejected:
 		// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
 		// Only set state and rejection-specific timestamp.
+		now := time.Now().UTC()
+		bs.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(bs.Status.ExpiresAt, now)
 		bs.Status.RejectedAt = metav1.Now()
 		bs.Status.State = breakglassv1alpha1.SessionStateRejected
 		bs.Status.ReasonEnded = "rejected"
 
 		// Set RetainedUntil for rejected sessions
 		retainFor := ParseRetainFor(bs.Spec, reqLog)
-		bs.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
+		bs.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
 
 		// record approver (rejector)
 		rejector := authenticatedActor
@@ -773,8 +798,12 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 			return
 		}
 		canApprove := pendingApproval && approvalMeta.CanApprove
-		alreadyActive := IsSessionAccessActive(ses)
-		valid := isSessionTokenValid(ses)
+		// Evaluate both flags against one instant so a response cannot claim the
+		// token is valid while simultaneously reporting that access is inactive
+		// when the expiry boundary is crossed between helper calls.
+		now := time.Now()
+		alreadyActive := isSessionAccessActiveAt(ses, now)
+		valid := isSessionTokenValidAt(ses, now)
 		c.JSON(http.StatusOK, gin.H{"canApprove": canApprove, "alreadyActive": alreadyActive, "valid": valid})
 		return
 	}
@@ -963,6 +992,13 @@ func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, se
 	// Check session state first
 	switch session.Status.State {
 	case breakglassv1alpha1.SessionStateApproved:
+		// The controller may be a little behind the wall clock.  Do not expose
+		// an Approved session as usable in the API/UI during that cleanup lag:
+		// the recorded expiry is the effective access boundary.
+		if !IsSessionAccessActive(session) {
+			meta.StateMessage = "This session has expired"
+			return meta
+		}
 		meta.StateMessage = "This session has already been approved"
 		if session.Status.Approver != "" {
 			meta.StateMessage += " by " + session.Status.Approver

@@ -6,15 +6,18 @@ package debug
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
-	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
@@ -22,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -43,7 +47,8 @@ func TestDeleteTrackedResourceIdentityAndLegacyRecovery(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns", UID: types.UID(tc.live)}}
+			// A replacement can copy mutable session markers; they cannot recover its original UID.
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns", UID: types.UID(tc.live), Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}}}
 			builder := fake.NewClientBuilder().WithScheme(testScheme())
 			if tc.live != "" {
 				builder.WithObjects(pod)
@@ -51,7 +56,7 @@ func TestDeleteTrackedResourceIdentityAndLegacyRecovery(t *testing.T) {
 			target := builder.Build()
 			ref := pod.DeepCopy()
 			ref.UID = types.UID(tc.recorded)
-			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{LegacyCleanupUIDsAnnotation: tc.recovery}}}
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid", Annotations: map[string]string{LegacyCleanupUIDsAnnotation: tc.recovery}}}
 			err := deleteTrackedResource(ctx, target, session, ref)
 			if tc.wantError {
 				require.ErrorContains(t, err, "operator")
@@ -79,6 +84,27 @@ func TestCleanupDeployedResourcesRetiresLegacyReplacement(t *testing.T) {
 	var retained corev1.Pod
 	require.NoError(t, target.Get(context.Background(), client.ObjectKeyFromObject(replacement), &retained))
 	require.Equal(t, types.UID("replacement-uid"), retained.UID)
+}
+
+func TestMergeKubectlDebugStatusUsesPersistedUIDAndLegacyFallback(t *testing.T) {
+	ref := func(uid, copyUID string) breakglassv1alpha1.CopiedPodRef {
+		return breakglassv1alpha1.CopiedPodRef{CopyNamespace: "ns", CopyName: "copy", UID: uid, CopyUID: copyUID}
+	}
+
+	merged := mergeKubectlDebugStatus(
+		&breakglassv1alpha1.KubectlDebugStatus{CopiedPods: []breakglassv1alpha1.CopiedPodRef{ref("old", "")}},
+		&breakglassv1alpha1.KubectlDebugStatus{},
+		&breakglassv1alpha1.KubectlDebugStatus{CopiedPods: []breakglassv1alpha1.CopiedPodRef{ref("new", "")}},
+	)
+	require.Len(t, merged.CopiedPods, 1)
+	require.Equal(t, "new", merged.CopiedPods[0].UID)
+
+	merged = mergeKubectlDebugStatus(
+		&breakglassv1alpha1.KubectlDebugStatus{CopiedPods: []breakglassv1alpha1.CopiedPodRef{ref("", "legacy")}},
+		&breakglassv1alpha1.KubectlDebugStatus{},
+		&breakglassv1alpha1.KubectlDebugStatus{CopiedPods: []breakglassv1alpha1.CopiedPodRef{ref("", "legacy")}},
+	)
+	require.Nil(t, merged)
 }
 
 func TestDeleteTrackedResourceUsesUIDPrecondition(t *testing.T) {
@@ -115,7 +141,7 @@ func TestLifecycleCleanupPathsPreserveReplacement(t *testing.T) {
 				require.Empty(t, ds.Status.DeployedResources)
 			case "pod-template":
 				ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{{APIVersion: "v1", Kind: "Pod", Namespace: "ns", ResourceName: "pod", UID: "original", Created: true}}
-				require.Error(t, ctrl.cleanupPodTemplateResources(ctx, ds, target))
+				require.NoError(t, ctrl.cleanupPodTemplateResources(ctx, ds, target))
 			case "auxiliary":
 				m := NewAuxiliaryResourceManager(zap.NewNop().Sugar(), target)
 				require.NoError(t, m.deleteResource(ctx, target, breakglassv1alpha1.AuxiliaryResourceStatus{APIVersion: "v1", Kind: "Pod", Namespace: "ns", ResourceName: "pod", UID: "original"}, ds))
@@ -128,6 +154,52 @@ func TestLifecycleCleanupPathsPreserveReplacement(t *testing.T) {
 			live := &corev1.Pod{}
 			require.NoError(t, target.Get(ctx, client.ObjectKeyFromObject(pod), live))
 			require.Equal(t, types.UID("replacement"), live.UID)
+		})
+	}
+}
+
+func TestAuxiliaryCleanupRequiresRecordedOrOperatorUID(t *testing.T) {
+	for _, tc := range []struct {
+		name, recordedOperation, liveOperation, liveUID, legacyUID string
+		wantDeleted, wantError                                     bool
+	}{
+		{name: "copied markers do not prove original identity", recordedOperation: "op-1", liveOperation: "op-1", liveUID: "replacement-uid", wantError: true},
+		{name: "missing recorded operation", liveOperation: "op-1", wantError: true},
+		{name: "different operation", recordedOperation: "op-1", liveOperation: "op-2", wantError: true},
+		{name: "operator recovery", liveUID: "original-uid", legacyUID: "original-uid", wantDeleted: true},
+		{name: "operator recovery preserves replacement", liveUID: "replacement-uid", legacyUID: "original-uid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			liveUID := tc.liveUID
+			if liveUID == "" {
+				liveUID = "live-uid"
+			}
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+				Name: "pod", Namespace: "ns", UID: types.UID(liveUID),
+				Annotations: map[string]string{
+					sourceSessionUIDAnnotation:  "session-uid",
+					createOperationIDAnnotation: tc.liveOperation,
+				},
+			}}
+			target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(pod).Build()
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+			if tc.legacyUID != "" {
+				session.Annotations = map[string]string{LegacyCleanupUIDsAnnotation: fmt.Sprintf(`{"v1/Pod/ns/pod":%q}`, tc.legacyUID)}
+			}
+			status := breakglassv1alpha1.AuxiliaryResourceStatus{
+				APIVersion: "v1", Kind: "Pod", Namespace: "ns", ResourceName: "pod",
+				CreateOperationID: tc.recordedOperation,
+			}
+			err := (&AuxiliaryResourceManager{log: zap.NewNop().Sugar()}).deleteResource(ctx, target, status, session)
+			if tc.wantError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			var remaining corev1.Pod
+			getErr := target.Get(ctx, client.ObjectKeyFromObject(pod), &remaining)
+			require.Equal(t, !tc.wantDeleted, !apierrors.IsNotFound(getErr))
 		})
 	}
 }
@@ -163,31 +235,67 @@ func TestTrackedWorkloadPodMembership(t *testing.T) {
 			require.Equal(t, tc.want, (&DebugSessionController{}).podBelongsToTrackedWorkload(context.Background(), target, ds, pod))
 		})
 	}
-
-	t.Run("job controller and UID are required", func(t *testing.T) {
-		jobTemplate := corev1.PodTemplateSpec{Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, Containers: []corev1.Container{{Name: "debug", Image: "debug:v1"}}}}
-		job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", Namespace: "ns", UID: "job-uid"}, Spec: batchv1.JobSpec{Template: jobTemplate}}
-		target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(job).Build()
-		pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "job-pod", Namespace: "ns", UID: "pod-uid", OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID, Controller: ptr.To(true)}}}, Spec: *jobTemplate.Spec.DeepCopy()}
-		session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name, Namespace: job.Namespace, UID: string(job.UID), Source: "debug-pod"}}}}
-		require.True(t, (&DebugSessionController{}).podBelongsToTrackedWorkload(context.Background(), target, session, pod))
-		pod.OwnerReferences[0].UID = "replacement-uid"
-		require.False(t, (&DebugSessionController{}).podBelongsToTrackedWorkload(context.Background(), target, session, pod))
-	})
 }
 
-func TestPodTemplateIdentityComesFromApplyResponse(t *testing.T) {
-	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session-uid"}}
-	gets := 0
-	target := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
-		Apply: func(_ context.Context, _ client.WithWatch, cfg runtime.ApplyConfiguration, _ ...client.ApplyOption) error {
-			return json.Unmarshal([]byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"config","namespace":"ns","uid":"applied-uid"}}`), cfg)
+func TestAllowedPodRefreshRejectsReplacementUnlessWorkloadOwnsIt(t *testing.T) {
+	isController := true
+	template := corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "debug", Image: "debug:v1"}}}}
+	daemon := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "daemon", Namespace: "ns", UID: "daemon-uid"},
+		Spec:       appsv1.DaemonSetSpec{Template: template},
+	}
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(daemon).Build()
+
+	newPod := func(uid string, owner *metav1.OwnerReference) *corev1.Pod {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns", UID: types.UID(uid)},
+			Spec:       *template.Spec.DeepCopy(),
+		}
+		if owner != nil {
+			pod.OwnerReferences = []metav1.OwnerReference{*owner}
+		}
+		return pod
+	}
+
+	session := &breakglassv1alpha1.DebugSession{
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AllowedPods: []breakglassv1alpha1.AllowedPodRef{{Name: "pod", Namespace: "ns", UID: "original"}},
+			DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{
+				APIVersion: "apps/v1", Kind: "DaemonSet", Name: "daemon", Namespace: "ns", UID: "daemon-uid", Source: "debug-pod",
+			}},
 		},
-		Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
-			gets++
-			obj.SetUID("existing-uid")
-			obj.SetLabels(map[string]string{"breakglass.t-caas.telekom.com/session": ds.Name, DebugSessionUIDLabelKey: string(ds.UID)})
-			obj.SetAnnotations(map[string]string{"breakglass.t-caas.telekom.com/source-session": ds.Namespace + "/" + ds.Name, DebugSessionUIDAnnotationKey: string(ds.UID)})
+	}
+
+	replacement := newPod("replacement", nil)
+	controller := &DebugSessionController{}
+	for refresh := 0; refresh < 3; refresh++ {
+		allowed, retained := controller.filterAllowedPodsForRefresh(context.Background(), target, session, []corev1.Pod{*replacement})
+		require.Empty(t, allowed, "refresh %d must reject the same-name replacement", refresh+1)
+		require.Equal(t, session.Status.AllowedPods, retained, "refresh %d must retain the old identity", refresh+1)
+		session.Status.AllowedPods = retained
+	}
+
+	untracked := replacement.DeepCopy()
+	untracked.Name = "arbitrary-label-only-pod"
+	allowed, retained := controller.filterAllowedPodsForRefresh(context.Background(), target, session, []corev1.Pod{*untracked})
+	require.Empty(t, allowed, "an arbitrary new label-only Pod must not be admitted")
+	require.Empty(t, retained, "an arbitrary new name has no prior identity to retain")
+
+	owner := metav1.OwnerReference{APIVersion: "apps/v1", Kind: "DaemonSet", Name: "daemon", UID: "daemon-uid", Controller: &isController}
+	lineageReplacement := newPod("replacement", &owner)
+	allowed, retained = controller.filterAllowedPodsForRefresh(context.Background(), target, session, []corev1.Pod{*lineageReplacement})
+	require.Len(t, allowed, 1, "a replacement from the recorded workload should be admitted")
+	require.Empty(t, retained)
+}
+
+func TestPodTemplateIdentityComesFromCreateResponse(t *testing.T) {
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.CreateOption) error {
+			obj.SetUID(types.UID("created-uid"))
+			return nil
+		},
+		Get: func(_ context.Context, _ client.WithWatch, key client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+			t.Fatal("must use create response, not an ownership pre-read")
 			return nil
 		},
 	}).Build()
@@ -195,10 +303,10 @@ func TestPodTemplateIdentityComesFromApplyResponse(t *testing.T) {
 	obj.SetAPIVersion("v1")
 	obj.SetKind("ConfigMap")
 	obj.SetName("config")
+	ds := &breakglassv1alpha1.DebugSession{}
 	require.NoError(t, (&DebugSessionController{log: zap.NewNop().Sugar()}).deployPodTemplateResource(context.Background(), target, ds, obj, "ns"))
-	require.Equal(t, 1, gets, "apply response must supply identity without a second lookup")
-	require.Equal(t, "applied-uid", ds.Status.PodTemplateResourceStatuses[0].UID)
-	require.Equal(t, "applied-uid", ds.Status.DeployedResources[0].UID)
+	require.Equal(t, "created-uid", ds.Status.PodTemplateResourceStatuses[0].UID)
+	require.Equal(t, "created-uid", ds.Status.DeployedResources[0].UID)
 }
 
 func TestAuxiliaryReadinessUsesOneUIDCheckedSnapshot(t *testing.T) {
@@ -272,6 +380,360 @@ func TestTrackedApplyRetainsResponseIdentity(t *testing.T) {
 			require.Equal(t, types.UID("applied-original"), obj.GetUID())
 		})
 	}
+}
+
+func TestApplyOwnedTrackedResourceCreatesWithoutAdoptingExistingResource(t *testing.T) {
+	obj := &unstructured.Unstructured{}
+	obj.SetAPIVersion("v1")
+	obj.SetKind("ConfigMap")
+	obj.SetName("tracked")
+	obj.SetNamespace("ns")
+	obj.SetAnnotations(map[string]string{
+		sourceSessionUIDAnnotation:  "session-uid",
+		createOperationIDAnnotation: "op-1",
+	})
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tracked",
+			Namespace: "ns",
+			UID:       "foreign",
+			Annotations: map[string]string{
+				sourceSessionUIDAnnotation:  "session-uid",
+				createOperationIDAnnotation: "other-op",
+			},
+		},
+	}).Build()
+
+	err := applyOwnedTrackedResource(context.Background(), target, obj, session)
+	require.ErrorContains(t, err, "different operation identity")
+}
+
+func TestApplyOwnedTrackedResourceReusesOwnedExistingResource(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	obj := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
+		Name: "tracked", Namespace: "ns",
+		Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"},
+	}}
+	operationID, err := stampCreateOperation(obj, session)
+	require.NoError(t, err)
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tracked",
+			Namespace: "ns",
+			UID:       "owned",
+			Annotations: map[string]string{
+				sourceSessionUIDAnnotation:  "session-uid",
+				createOperationIDAnnotation: operationID,
+			},
+			ResourceVersion: "17",
+		},
+	}).Build()
+
+	require.NoError(t, applyOwnedTrackedResource(context.Background(), target, obj, session))
+	require.Equal(t, types.UID("owned"), obj.GetUID())
+	require.Equal(t, "17", obj.GetResourceVersion())
+}
+
+func TestApplyOwnedTrackedResourceRejectsMissingOperationIdentity(t *testing.T) {
+	obj := &unstructured.Unstructured{}
+	obj.SetAPIVersion("v1")
+	obj.SetKind("ConfigMap")
+	obj.SetName("tracked")
+	obj.SetNamespace("ns")
+	obj.SetAnnotations(map[string]string{sourceSessionUIDAnnotation: "session-uid"})
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tracked",
+			Namespace: "ns",
+			UID:       "owned",
+			Annotations: map[string]string{
+				sourceSessionUIDAnnotation: "session-uid",
+			},
+		},
+	}).Build()
+
+	err := applyOwnedTrackedResource(context.Background(), target, obj, session)
+	require.ErrorContains(t, err, "different operation identity")
+}
+
+func TestCreateOrRecoverTargetObjectRequiresExactOperationIdentity(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	for _, tc := range []struct {
+		name       string
+		desiredOp  string
+		existingOp string
+		wantErr    string
+	}{
+		{name: "missing desired operation", existingOp: "op-1", wantErr: "different operation identity"},
+		{name: "missing existing operation", desiredOp: "op-1", wantErr: "different operation identity"},
+		{name: "different operation", desiredOp: "op-1", existingOp: "op-2", wantErr: "different operation identity"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			annotations := map[string]string{sourceSessionUIDAnnotation: "session-uid"}
+			if tc.existingOp != "" {
+				annotations[createOperationIDAnnotation] = tc.existingOp
+			}
+			target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(&corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: "tracked", Namespace: "ns", UID: "owned", Annotations: annotations},
+			}).Build()
+			desired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "tracked", Namespace: "ns", Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}}}
+			if tc.desiredOp != "" {
+				desired.Annotations[createOperationIDAnnotation] = tc.desiredOp
+			}
+			err := createOrRecoverTargetObject(context.Background(), target, desired, session)
+			require.ErrorContains(t, err, tc.wantErr)
+		})
+	}
+}
+
+func TestCreateRecoveryAfterAmbiguousCreate(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		createErr error
+		foreign   bool
+		wantErr   string
+		readError bool
+	}{
+		{name: "request timeout recovers", createErr: apierrors.NewTimeoutError("create timed out", 1)},
+		{name: "server timeout recovers", createErr: apierrors.NewServerTimeout(schema.GroupResource{Group: "", Resource: "configmaps"}, "create", 1)},
+		{name: "wrapped context deadline recovers", createErr: fmt.Errorf("transport: %w", context.DeadlineExceeded)},
+		{name: "wrapped URL timeout recovers", createErr: &url.Error{Op: "POST", URL: "https://api.invalid", Err: &net.DNSError{Err: "timed out", IsTimeout: true}}},
+		{name: "foreign operation is rejected", createErr: apierrors.NewTimeoutError("create timed out", 1), foreign: true, wantErr: "different operation identity"},
+		{name: "read failure is retained", createErr: apierrors.NewTimeoutError("create timed out", 1), readError: true, wantErr: "read existing resource"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+			desired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "tracked", Namespace: "ns", Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}}}
+			_, err := stampCreateOperation(desired, session)
+			require.NoError(t, err)
+			target := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if tc.foreign {
+						foreign := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
+							Name: "tracked", Namespace: "ns", UID: "foreign",
+							Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid", createOperationIDAnnotation: "foreign-op"},
+						}}
+						if err := cl.Create(ctx, foreign, opts...); err != nil {
+							return err
+						}
+					} else {
+						created := obj.DeepCopyObject().(client.Object)
+						created.SetUID("created")
+						if err := cl.Create(ctx, created, opts...); err != nil {
+							return err
+						}
+					}
+					return tc.createErr
+				},
+				Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if tc.readError {
+						return apierrors.NewServiceUnavailable("read existing resource")
+					}
+					return cl.Get(ctx, key, obj, opts...)
+				},
+			}).Build()
+
+			call := applyOwnedTrackedResource
+			if tc.name == "server timeout recovers" {
+				call = func(ctx context.Context, target client.Client, obj client.Object, session *breakglassv1alpha1.DebugSession) error {
+					return createOrRecoverTargetObject(ctx, target, obj, session)
+				}
+			}
+			err = call(context.Background(), target, desired, session)
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, types.UID("created"), desired.UID)
+		})
+	}
+}
+
+func TestCreateRecoveryDoesNotAdoptNonAmbiguousOrCanceledResults(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		createErr error
+	}{
+		{name: "non-timeout transport error", createErr: &net.OpError{Op: "write", Net: "tcp", Err: errors.New("connection reset")}},
+		{name: "forbidden API error", createErr: apierrors.NewForbidden(corev1.Resource("configmaps"), "tracked", errors.New("denied"))},
+		{name: "canceled request", createErr: context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+			desired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "tracked", Namespace: "ns"}}
+			_, err := stampCreateOperation(desired, session)
+			require.NoError(t, err)
+			target := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					created := obj.DeepCopyObject().(client.Object)
+					created.SetUID("created")
+					require.NoError(t, cl.Create(ctx, created, opts...))
+					return tc.createErr
+				},
+				Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+					t.Fatal("non-ambiguous create failures must not trigger recovery reads")
+					return nil
+				},
+			}).Build()
+
+			err = applyOwnedTrackedResource(context.Background(), target, desired, session)
+			require.ErrorIs(t, err, tc.createErr)
+			require.Empty(t, desired.UID)
+		})
+	}
+}
+
+func TestCreateRecoveryRejectsSameMarkerDifferentContent(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	desired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "tracked", Namespace: "ns", Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}}, Data: map[string]string{"value": "desired"}}
+	operationID, err := stampCreateOperation(desired, session)
+	require.NoError(t, err)
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(ctx context.Context, cl client.WithWatch, _ client.Object, opts ...client.CreateOption) error {
+			foreign := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
+				Name: "tracked", Namespace: "ns", UID: "foreign",
+				Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid", createOperationIDAnnotation: operationID},
+			}, Data: map[string]string{"value": "foreign"}}
+			if err := cl.Create(ctx, foreign, opts...); err != nil {
+				return err
+			}
+			return apierrors.NewTimeoutError("create timed out", 1)
+		},
+	}).Build()
+
+	err = applyOwnedTrackedResource(context.Background(), target, desired, session)
+	require.ErrorContains(t, err, "different desired content")
+}
+
+func TestCreateRecoveryDoesNotReadAfterDeterministicCreateFailure(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	desired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "tracked", Namespace: "ns", Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"}}}
+	_, err := stampCreateOperation(desired, session)
+	require.NoError(t, err)
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(_ context.Context, _ client.WithWatch, _ client.Object, _ ...client.CreateOption) error {
+			return apierrors.NewForbidden(corev1.Resource("configmaps"), "tracked", assert.AnError)
+		},
+		Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+			t.Fatal("deterministic create failures must not trigger recovery reads")
+			return nil
+		},
+	}).Build()
+
+	err = applyOwnedTrackedResource(context.Background(), target, desired, session)
+	require.ErrorContains(t, err, "create tracked resource")
+}
+
+func TestCreateRecoveryRejectsUnstampedDesiredResource(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	desired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "tracked", Namespace: "ns"}}
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(_ context.Context, _ client.WithWatch, _ client.Object, _ ...client.CreateOption) error {
+			return apierrors.NewTimeoutError("create timed out", 1)
+		},
+		Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+			t.Fatal("unstamped creates must fail closed before recovery reads")
+			return nil
+		},
+	}).Build()
+
+	err := applyOwnedTrackedResource(context.Background(), target, desired, session)
+	require.ErrorContains(t, err, "different operation identity")
+}
+
+func TestCreateRecoveryAllowsServerDefaultsAndStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		desired client.Object
+		server  func(client.Object)
+	}{
+		{
+			name: "deployment defaults",
+			desired: &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{
+				Name: "tracked", Namespace: "ns", Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"},
+			}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "debug", Image: "example/debug"}},
+			}}}},
+			server: func(obj client.Object) {
+				deployment := obj.(*appsv1.Deployment)
+				deployment.Spec.Replicas = ptr.To(int32(1))
+				deployment.Status.Replicas = 1
+			},
+		},
+		{
+			name: "pod defaults",
+			desired: &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+				Name: "tracked", Namespace: "ns", Annotations: map[string]string{sourceSessionUIDAnnotation: "session-uid"},
+			}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "debug", Image: "example/debug"}}}},
+			server: func(obj client.Object) {
+				pod := obj.(*corev1.Pod)
+				pod.Spec.ServiceAccountName = "default"
+				pod.Status.Phase = corev1.PodRunning
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+			_, err := stampCreateOperation(tc.desired, session)
+			require.NoError(t, err)
+			target := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					created := obj.DeepCopyObject().(client.Object)
+					tc.server(created)
+					created.SetUID("created")
+					if err := cl.Create(ctx, created, opts...); err != nil {
+						return err
+					}
+					return apierrors.NewServerTimeout(schema.GroupResource{Group: "", Resource: "objects"}, "create", 1)
+				},
+			}).Build()
+			require.NoError(t, applyOwnedTrackedResource(context.Background(), target, tc.desired, session))
+			require.Equal(t, types.UID("created"), tc.desired.GetUID())
+		})
+	}
+}
+
+func TestStampCreateOperationReusesPersistedIntentAfterRestart(t *testing.T) {
+	obj := &unstructured.Unstructured{}
+	obj.SetAPIVersion("v1")
+	obj.SetKind("ConfigMap")
+	obj.SetName("tracked")
+	obj.SetNamespace("ns")
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	persistedID, err := deterministicCreateOperationID(obj, session)
+	require.NoError(t, err)
+	session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{{
+		APIVersion: "v1", Kind: "ConfigMap", Name: "tracked", Namespace: "ns", CreateOperationID: persistedID,
+	}}
+
+	operationID, err := stampCreateOperation(obj, session)
+	require.NoError(t, err)
+	require.Equal(t, persistedID, operationID)
+	require.Equal(t, persistedID, obj.GetAnnotations()[createOperationIDAnnotation])
+}
+
+func TestStampCreateOperationSeparatesConflictingDesiredContent(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+	first := &unstructured.Unstructured{}
+	first.SetAPIVersion("v1")
+	first.SetKind("ConfigMap")
+	first.SetName("tracked")
+	first.SetNamespace("ns")
+	first.Object["data"] = map[string]interface{}{"value": "first"}
+	firstID, err := stampCreateOperation(first, session)
+	require.NoError(t, err)
+	session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{{
+		APIVersion: "v1", Kind: "ConfigMap", Name: "tracked", Namespace: "ns", CreateOperationID: firstID,
+	}}
+	second := first.DeepCopy()
+	second.Object["data"] = map[string]interface{}{"value": "second"}
+	secondID, err := stampCreateOperation(second, session)
+	require.NoError(t, err)
+	require.NotEqual(t, firstID, secondID)
+	require.NotEqual(t, firstID, second.GetAnnotations()[createOperationIDAnnotation])
 }
 
 func TestWorkloadTemplateAllowsConfiguredDefaultTolerations(t *testing.T) {

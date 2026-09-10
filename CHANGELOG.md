@@ -15,11 +15,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Report invalid terminal-recording retention only once.
+- Recover tracked resources after bounded create timeouts when session and
+  operation markers and requested content match the persisted object.
+
+- Preserve numeric dotted IP addresses and image versions when redacting
+  JWT-shaped diagnostic stream values.
+
+- Repeat debug-session participant issuer and target Pod UID checks at the final
+  authorization fence, failing closed when either live identity has changed.
+
+- Apply provisional quota admission checks in the shared authorization and
+  token validity helpers, and preserve concurrently recorded same-name copied
+  pod replacements by merging on the persisted UID with legacy fallback.
+
+- Reject approval or rejection when the authorized session was replaced under the same name, and clear completed debug-session pod authorization references while retaining concurrent additions.
+
+- Preserve concurrently created cleanup inventory entries when same-coordinate resources have distinct creation-operation provenance.
+
+- Redact structured diagnostic authorization headers and remove obsolete variable-sanitization warnings; template serialization remains mandatory.
+
+- Align template and cluster-binding duration schemas with supported week, year, and fractional sub-day values.
 
 - Align all shared `ParseDuration` CRD fields, including debug sessions, pod-copy TTL,
   recording retention, Keycloak timeouts, and breakglass session/escalation limits,
   with the supported duration syntax.
+
+- Report invalid terminal-recording retention once and test every catalogue utility job at the requested dispatch revision.
 
 - Verify SLSA provenance for both published reference image and catalogue chart,
   preserve reference namespaces safely during EXIT cleanup, and keep catalogue
@@ -30,6 +51,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Omit disabled deployment variables from requester template discovery.
 
 - Retry deadline synchronization quietly while tracked Jobs are waiting to start.
+
+- Document and test conservative fractional-second flooring for Job deadlines,
+  while keeping field indexes registered when controllers are disabled.
+- Keep tracked debug Job deadlines aligned with the latest committed session expiry,
+  including delayed starts and shorter live leases.
+- Retain auxiliary-resource cleanup inventory while a UID-matched delete is held
+  by a finalizer, and retire it only after the object is gone.
+- Require an explicit recorded or operator-approved original UID for auxiliary
+  cleanup when a create outcome did not persist; copied ownership markers cannot
+  authorize a same-name replacement.
 
 - Include diagnostic-artifact-collector in aggregate multi-platform utility builds.
 
@@ -70,7 +101,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including kubectl-debug, while the terminal-byte transport remains unavailable.
 - Renewing a Job-backed DebugSession now commits the session expiry and renewal
   count before synchronizing its tracked batch/v1 debug workload Job deadline;
-  a target failure is retried by reconciliation without double-counting.
+  a target failure is retried by reconciliation without double-counting, with a
+  live session and privileged cluster-configuration fence before each patch.
 - Reference usage cleanup bounds every waited Kubernetes delete and makes EXIT
   cleanup explicitly nonblocking; the API reference now lists `Job` among the
   allowed `workloadType` values.
@@ -281,6 +313,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Require every debug resource create intent to carry and recover by an exact
+  operation identity, preventing same-session same-name objects from being adopted.
+
 - Disable trusted raw field output for a complete debug template set when Sprig
   mutation functions can modify requester-visible maps during rendering.
 
@@ -402,6 +437,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runbooks, MOTD, bounded evidence bundles, controller-bound approval tuple,
   node-level operation lock, and cleanup/expiry integration define the
   supported operational boundary.
+
+### Fixed
+
+- **DebugSession cleanup identity fencing**: Kubectl-debug outcome and cleanup
+  status writes now require the original DebugSession UID, captured no-binding
+  decisions remain immutable through status admission, and cleanup retries
+  instead of reporting success when tracked spoke resources cannot be reached
+  because the cluster client provider is unavailable.
+- **DebugSession cluster-deletion and approval-read fencing**: DebugSession
+  deployment now establishes pod-template auxiliary resources with create-first
+  ownership checks that avoid adopting foreign same-name objects, failed
+  sessions with tracked spoke resources block ClusterConfig finalizer removal,
+  and reconciler setup restores uncached approval reads plus audit Secret
+  namespace wiring.
+- **ClusterConfig cleanup inventory fencing**: ClusterConfig finalizers now
+  remain until retained inventory is gone for every DebugSession state,
+  including sessions terminalized during the same reconciliation. Cleanup also
+  preserves concurrently recorded auxiliary child-document UIDs.
+- **Auxiliary cleanup retries**: Additional resources are retried after their
+  primary document has already been deleted, and completed auxiliary history no
+  longer keeps ClusterConfig deletion blocked.
+- **Failed-session cleanup completion**: Fully deleted auxiliary history no
+  longer causes a Failed DebugSession to requeue forever.
+- **Allowed pod identity tracking**: DebugSession status now records each
+  allowed Pod UID, including Pods created by API-mediated debug operations, so
+  webhook authorization remains bound to the original Pod after same-name
+  replacement; refreshes accept a new UID only for a Pod proven to belong to
+  the session's recorded workload.
+- **DebugSession authorization discovery**: Webhook authorization now retries
+  live DebugSession discovery when the informer cache has not observed a newly
+  active session. The fallback is scoped to the selected ClusterConfig
+  namespace and session cluster label with bounded pagination while retaining
+  the live expiry, participant, and Pod UID fences before allowing pod
+  operations.
+- **DebugSession participant identity**: Active owner participants now retain
+  the requesting session's identity-provider name and issuer so webhook pod
+  authorization preserves issuer provenance in multi-provider deployments.
+- **Hard-expiry CI diagnostics**: Diagnostic redaction now covers compact JWTs
+  with short segments, and the hard-expiry port-forward lane records only a
+  candidate proven to be available. SSA coverage also verifies immutable debug
+  authorization snapshots.
+- **DebugSession quota admission ordering**: The lifecycle reconciler now
+  completes durable quota admission before resolving or activating a
+  DebugSession, and API completion retries resource-version conflicts against
+  fresh same-UID objects without duplicating ledger reservations.
+- **DebugSession API mutation identity matching**: Mutating kubectl-debug
+  operations now authorize requester and participant identities using the same
+  provider-aware username/email matching used by read authorization, preventing
+  valid API-mediated ephemeral-container requests from being denied when the
+  username claim differs from the recorded user identifier.
+- **Hard expiry and authorization caching**: Authorization now fails closed
+  at the exact `expiresAt` boundary, cannot be resurrected by stale writes or
+  cached decisions, and shipped Kubernetes 1.34+ examples disable both
+  positive and negative webhook decision caches.
 
 ### Removed
 

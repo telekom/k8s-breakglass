@@ -112,18 +112,14 @@ func InformerSyncCheck(cache CacheSyncer) func(req *http.Request) error {
 }
 
 type controllerSetupPlan struct {
-	// Cached clients are shared by API and webhook paths, so these indexes are
-	// required even when reconcilers are disabled.
-	registerControllerIndexes bool
-	registerReconcilers       bool
-	attachCachedReconcilers   bool
+	registerReconcilers     bool
+	attachCachedReconcilers bool
 }
 
 func newControllerSetupPlan(enableControllers bool) controllerSetupPlan {
 	return controllerSetupPlan{
-		registerControllerIndexes: true,
-		registerReconcilers:       enableControllers,
-		attachCachedReconcilers:   enableControllers,
+		registerReconcilers:     enableControllers,
+		attachCachedReconcilers: enableControllers,
 	}
 }
 
@@ -146,6 +142,7 @@ func Setup(
 	auditService *audit.Service,
 	mailService *mail.Service,
 	frontendConfig config.Frontend,
+	quotaNamespace string,
 	disableEmail bool,
 	escalationManager *escalation.EscalationManager,
 	enableControllers bool,
@@ -163,15 +160,13 @@ func Setup(
 	}
 	log.Info("Health check handlers registered")
 
-	if plan.registerControllerIndexes {
-		if err := indexer.RegisterCommonFieldIndexes(ctx, mgr.GetFieldIndexer(), log); err != nil {
-			return fmt.Errorf("failed to register common field indexes: %w", err)
-		}
+	if err := indexer.RegisterCommonFieldIndexes(ctx, mgr.GetFieldIndexer(), log); err != nil {
+		return fmt.Errorf("failed to register common field indexes: %w", err)
+	}
 
-		// Assert that all expected indexes are registered
-		if err := indexer.AssertIndexesRegistered(log); err != nil {
-			return fmt.Errorf("index registration assertion failed: %w", err)
-		}
+	// Assert that all expected indexes are registered
+	if err := indexer.AssertIndexesRegistered(log); err != nil {
+		return fmt.Errorf("index registration assertion failed: %w", err)
 	}
 
 	if plan.registerReconcilers {
@@ -321,12 +316,10 @@ func Setup(
 		// Register DebugSession Reconciler with controller-runtime manager
 		log.Debugw("Setting up DebugSession reconciler")
 		debugSessionReconciler := debug.NewDebugSessionController(log, mgr.GetClient(), ccProvider).
-			WithAPIReader(mgr.GetAPIReader()).
+			WithLiveReader(mgr.GetAPIReader()).
+			WithQuotaNamespace(quotaNamespace).
 			WithAuditService(auditService).
 			WithMailService(mailService, frontendConfig.BrandingName, frontendConfig.BaseURL, disableEmail)
-		if auditService != nil {
-			debugSessionReconciler.WithQuotaNamespace(auditService.ControllerNamespace())
-		}
 		if err := debugSessionReconciler.SetupWithManager(mgr); err != nil {
 			return fmt.Errorf("failed to setup DebugSession reconciler with manager: %w", err)
 		}
@@ -338,13 +331,13 @@ func Setup(
 			mgr.GetClient(),
 			log,
 			mgr.GetEventRecorder("breakglass-audit-controller"),
-			func(ctx context.Context, auditConfigs []*breakglassv1alpha1.AuditConfig) error {
+			func(ctx context.Context, auditConfigs []*breakglassv1alpha1.AuditConfig, configuredUnavailable bool) error {
 				// Reload audit service with aggregated configuration from all AuditConfigs
 				if auditService == nil {
 					log.Warnw("AuditConfig changed but audit service is nil - skipping reload")
 					return nil
 				}
-				if err := auditService.ReloadMultiple(ctx, auditConfigs); err != nil {
+				if err := auditService.ReloadMultipleWithAvailability(ctx, auditConfigs, configuredUnavailable); err != nil {
 					log.Errorw("Failed to reload audit service", "error", err)
 					return err
 				}

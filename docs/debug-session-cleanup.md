@@ -28,3 +28,14 @@ successful cleanup. The delete request is UID-preconditioned and followed by a
 read to verify that the tracked UID is gone. If finalizers keep that UID present,
 or verification fails, the inventory is retained and cleanup is retried. A
 different UID at the same name is left untouched and retires the old inventory.
+
+A copied session annotation on a live resource does not recover a missing original
+UID. Legacy inventory without an immutable UID requires the explicit operator
+recovery mechanism; mutable ownership markers alone never authorize deletion.
+
+If kubectl-debug cleanup encounters a missing ClusterConfig, it retains all
+resource inventories and operation evidence and returns a retryable error.
+
+When no spoke resources remain, cleanup removes the session's completed pod
+authorization references. References added concurrently after cleanup started
+are retained by the baseline-aware status merge.

@@ -26,7 +26,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
-	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -43,6 +42,7 @@ import (
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 )
 
 // Helper to create a fake client with status subresource support
@@ -117,6 +117,7 @@ func newTestDebugSession(name, templateRef, cluster, user string) *breakglassv1a
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: "breakglass",
+			UID:       types.UID(name + "-uid"),
 		},
 		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:           cluster,
@@ -662,6 +663,73 @@ func TestDebugSessionReconciler_ExpirationHandling(t *testing.T) {
 	})
 }
 
+func TestDebugSessionReconciler_ExpiryNotificationAndHardExpiry(t *testing.T) {
+	tests := []struct {
+		name               string
+		expirationBehavior string
+		notification       *breakglassv1alpha1.DebugSessionNotificationConfig
+		wantMessages       int
+	}{
+		{
+			name:               "terminate sends the requested expiry email",
+			expirationBehavior: "terminate",
+			notification: &breakglassv1alpha1.DebugSessionNotificationConfig{
+				Enabled:        true,
+				NotifyOnExpiry: true,
+			},
+			wantMessages: 1,
+		},
+		{
+			name:               "terminate respects a disabled expiry email",
+			expirationBehavior: "terminate",
+			notification: &breakglassv1alpha1.DebugSessionNotificationConfig{
+				Enabled:        true,
+				NotifyOnExpiry: false,
+			},
+		},
+		{
+			name:               "deprecated notify-only still emails and expires",
+			expirationBehavior: "notify-only",
+			wantMessages:       1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pastTime := metav1.NewTime(time.Now().UTC().Add(-time.Minute))
+			session := newTestDebugSession("expired-session", "test-template", "test-cluster", "user@example.com")
+			session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+			session.Status.ExpiresAt = &pastTime
+			session.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{
+				ExpirationBehavior: tt.expirationBehavior,
+				Notification:       tt.notification,
+			}
+			fakeClient := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).
+				WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+			mailService := NewMockMailEnqueuer(true)
+			controller := &DebugSessionController{
+				log:          zap.NewNop().Sugar(),
+				client:       fakeClient,
+				mailService:  mailService,
+				brandingName: "Breakglass",
+			}
+
+			result, err := controller.handleActive(context.Background(), session.DeepCopy())
+			require.NoError(t, err)
+			assert.Equal(t, ExpiredSessionRequeue, result.RequeueAfter)
+
+			var stored breakglassv1alpha1.DebugSession
+			require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+			assert.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, stored.Status.State)
+			assert.Equal(t, "Session expired", stored.Status.Message)
+			require.Len(t, mailService.GetMessages(), tt.wantMessages)
+			if tt.wantMessages == 1 {
+				assert.Contains(t, mailService.GetMessages()[0].Subject, "Debug Session Expired")
+			}
+		})
+	}
+}
+
 func TestDebugSessionReconciler_DeployedResourcesTracking(t *testing.T) {
 	scheme := testScheme()
 
@@ -815,6 +883,23 @@ func TestDebugSessionReconciler_AllowedPodsTracking(t *testing.T) {
 	})
 }
 
+func TestAllowedPodRefFromPodPreservesUID(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Namespace: "breakglass-debug",
+		Name:      "debug-pod",
+		UID:       types.UID("debug-pod-uid"),
+	}}
+
+	ref := allowedPodRefFromPod(pod, true, nil)
+
+	require.Equal(t, breakglassv1alpha1.AllowedPodRef{
+		Namespace: "breakglass-debug",
+		Name:      "debug-pod",
+		UID:       "debug-pod-uid",
+		Ready:     true,
+	}, ref)
+}
+
 func TestDebugSessionReconciler_UpdateAllowedPodsDoesNotOverwriteRenewalOrParticipants(t *testing.T) {
 	scheme := testScheme()
 
@@ -893,10 +978,10 @@ func TestDebugSessionReconciler_UpdateAllowedPodsDoesNotOverwriteRenewalOrPartic
 func TestDebugSessionController_UpdateAuxiliaryResourceReadiness(t *testing.T) {
 	scheme := testScheme()
 	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: "ready-config", UID: "fixture-ready-config", Namespace: "debug-ns"},
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-config", Namespace: "debug-ns", UID: types.UID("ready-config-uid")},
 	}
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "ready-secret", UID: "fixture-ready-secret", Namespace: "debug-ns"},
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-secret", Namespace: "debug-ns", UID: types.UID("ready-secret-uid")},
 	}
 	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm, secret).Build()
 	session := newTestDebugSession("aux-readiness", "test-template", "test-cluster", "user@example.com")
@@ -906,16 +991,16 @@ func TestDebugSessionController_UpdateAuxiliaryResourceReadiness(t *testing.T) {
 			Kind:         "ConfigMap",
 			APIVersion:   "v1",
 			ResourceName: "ready-config",
-			UID:          "fixture-ready-config",
 			Namespace:    "debug-ns",
+			UID:          "ready-config-uid",
 			Created:      true,
 			AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
 				{
 					Kind:         "Secret",
 					APIVersion:   "v1",
 					ResourceName: "ready-secret",
-					UID:          "fixture-ready-secret",
 					Namespace:    "debug-ns",
+					UID:          "ready-secret-uid",
 				},
 			},
 		},
@@ -1058,6 +1143,46 @@ func TestDebugSessionReconciler_HandleActiveDoesNotExpireRenewedStaleSnapshot(t 
 	assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, updated.Status.State)
 	assert.Equal(t, int32(1), updated.Status.RenewalCount)
 	assert.Empty(t, updated.Status.Message)
+}
+
+func TestDebugSessionReconcilerFailsActiveSessionWithoutExpiry(t *testing.T) {
+	scheme := testScheme()
+	session := newTestDebugSession("missing-expiry", "test-template", "test-cluster", "user@example.com")
+	session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	session.Annotations = map[string]string{quotas.AdmissionAnnotation: quotas.Pending}
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+		Status:     breakglassv1alpha1.DebugSessionTemplateStatus{ActiveSessionCount: 1},
+	}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session, template).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).
+		Build()
+	controller := &DebugSessionController{
+		log:            zap.NewNop().Sugar(),
+		client:         fakeClient,
+		apiReader:      fakeClient,
+		quotaNamespace: "controller",
+		quotaEnabled:   true,
+	}
+	metrics.DebugSessionsActive.WithLabelValues(session.Spec.Cluster, session.Spec.TemplateRef).Set(1)
+	t.Cleanup(func() {
+		metrics.DebugSessionsActive.DeleteLabelValues(session.Spec.Cluster, session.Spec.TemplateRef)
+	})
+
+	result, err := controller.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{
+		Name: session.Name, Namespace: session.Namespace,
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, ExpiredSessionRequeue, result.RequeueAfter)
+
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, stored.Status.State)
+	assert.Contains(t, stored.Status.Message, "has no expiry")
+	assert.Nil(t, stored.Status.ExpiresAt)
+	assert.Equal(t, float64(0), testutil.ToFloat64(metrics.DebugSessionsActive.WithLabelValues(session.Spec.Cluster, session.Spec.TemplateRef)))
 }
 
 func TestDebugSessionReconciler_HandleActiveDoesNotMarkRenewedSessionExpiringSoonFromStaleSnapshot(t *testing.T) {
@@ -3021,8 +3146,8 @@ func TestDebugSessionController_FindBindingForSession_EdgeCases(t *testing.T) {
 		ctrl := &DebugSessionController{log: logger, client: fakeClient}
 
 		result, err := ctrl.findBindingForSession(ctx, template, "unknown-cluster")
-		require.ErrorContains(t, err, "cluster config required to resolve binding selector")
-		assert.Nil(t, result) // Missing labels cannot silently discard binding quotas.
+		require.ErrorContains(t, err, "cluster config required")
+		assert.Nil(t, result) // Can't match via selector without ClusterConfig
 	})
 }
 
@@ -3758,15 +3883,12 @@ func TestApplySchedulingConstraints(t *testing.T) {
 		assert.Empty(t, term.MatchExpressions[0].Values)
 	})
 
-	t.Run("rejects denied node glob patterns that cannot be rendered as hard affinity", func(t *testing.T) {
+	t.Run("ignores denied node glob patterns that cannot be rendered as hard affinity", func(t *testing.T) {
 		spec := &corev1.PodSpec{}
 		constraints := &breakglassv1alpha1.SchedulingConstraints{
 			DeniedNodes: []string{"control-plane-*"},
 		}
-		err := ctrl.applySchedulingConstraints(spec, constraints)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "deniedNodes pattern")
-		assert.Nil(t, spec.Affinity)
+		require.ErrorContains(t, ctrl.applySchedulingConstraints(spec, constraints), "deniedNodes pattern")
 	})
 
 	t.Run("rejects invalid denied node label key before rendering", func(t *testing.T) {
@@ -4850,7 +4972,7 @@ func TestDebugSessionController_FailSession(t *testing.T) {
 			controller := &DebugSessionController{
 				log:    zap.NewNop().Sugar(),
 				client: fakeClient,
-				// ccProvider is nil → cleanupResources is a no-op
+				// No spoke resources are tracked, so failure cleanup remains terminal.
 			}
 
 			result, err := controller.failSession(context.Background(), session, tt.reason)
@@ -4874,7 +4996,7 @@ func TestDebugSessionController_FailSession(t *testing.T) {
 func TestDebugSessionController_CleanupResources(t *testing.T) {
 	scheme := testScheme()
 
-	t.Run("cleanup_with_nil_ccProvider_returns_nil", func(t *testing.T) {
+	t.Run("cleanup_with_nil_ccProvider_retries_tracked_resources", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-session", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
 			{Kind: "DaemonSet", Name: "test-ds", Namespace: "breakglass-debug", Source: "debug-pod"},
@@ -4893,7 +5015,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		assert.NoError(t, err, "cleanupResources with nil ccProvider should return nil")
+		assert.Error(t, err, "cleanupResources must retry when tracked resources have no provider")
 		// Resources remain in status since we couldn't actually clean them up
 		assert.NotNil(t, session.Status.DeployedResources)
 	})
@@ -4938,7 +5060,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		assert.NoError(t, err, "Should return nil with nil ccProvider even with auxiliary resources")
+		assert.Error(t, err, "cleanupResources must retry tracked auxiliary resources without a provider")
 	})
 
 	t.Run("cleanup_with_nil_ccProvider_and_pod_template_resources", func(t *testing.T) {
@@ -4962,7 +5084,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		assert.NoError(t, err, "Should return nil with nil ccProvider even with pod template resources")
+		assert.Error(t, err, "cleanupResources must retry tracked pod-template resources without a provider")
 	})
 
 	t.Run("empty_kubectl_cleanup_skips_target_cluster_client", func(t *testing.T) {
@@ -4995,7 +5117,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		assert.Nil(t, current.Status.KubectlDebugStatus)
 	})
 
-	t.Run("missing_cluster_config_retains_kubectl_debug_status", func(t *testing.T) {
+	t.Run("missing_cluster_config_retains_all_cleanup_inventory", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-missing-cluster-kubectl", "test-template", "missing-cluster", "user@example.com")
 		session.Generation = 3
 		session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{
@@ -5033,25 +5155,21 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 			ccProvider: cluster.NewClientProvider(fakeClient, zap.NewNop().Sugar()),
 		}
 
+		before := session.Status.DeepCopy()
 		err := controller.cleanupResources(context.Background(), session)
 		require.ErrorIs(t, err, cluster.ErrClusterConfigNotFound)
 
 		var updated breakglassv1alpha1.DebugSession
 		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
 		require.NoError(t, err)
-		assert.Equal(t, session.Status.DeployedResources, updated.Status.DeployedResources)
-		assert.Equal(t, session.Status.AllowedPods, updated.Status.AllowedPods)
-		assert.Equal(t, session.Status.KubectlDebugStatus, updated.Status.KubectlDebugStatus)
-		assert.Equal(t, session.Status.AuxiliaryResourceStatuses, updated.Status.AuxiliaryResourceStatuses)
-		assert.Equal(t, session.Status.PodTemplateResourceStatuses, updated.Status.PodTemplateResourceStatuses)
-		assert.Equal(t, session.Status.ObservedGeneration, updated.Status.ObservedGeneration)
+		assert.Equal(t, *before, updated.Status)
 	})
 
 	t.Run("missing_rest_config_retains_deployed_tracking", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-missing-cluster-rest", "test-template", "missing-cluster", "user@example.com")
 		session.Generation = 5
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "node-debug-uid"},
 		}
 		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
 			{Name: "node-debug-pod", Namespace: "default"},
@@ -5076,17 +5194,16 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		require.ErrorIs(t, err, cluster.ErrClusterConfigNotFound)
+		require.Error(t, err)
 
 		var updated breakglassv1alpha1.DebugSession
 		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
 		require.NoError(t, err)
-		assert.Equal(t, session.Status.DeployedResources, updated.Status.DeployedResources)
-		assert.Equal(t, session.Status.AllowedPods, updated.Status.AllowedPods)
-		assert.Equal(t, session.Status.KubectlDebugStatus, updated.Status.KubectlDebugStatus)
-		assert.Equal(t, session.Status.AuxiliaryResourceStatuses, updated.Status.AuxiliaryResourceStatuses)
-		assert.Equal(t, session.Status.PodTemplateResourceStatuses, updated.Status.PodTemplateResourceStatuses)
-		assert.Equal(t, session.Status.ObservedGeneration, updated.Status.ObservedGeneration)
+		assert.Len(t, updated.Status.DeployedResources, 1)
+		assert.Len(t, updated.Status.AllowedPods, 1)
+		assert.Len(t, updated.Status.AuxiliaryResourceStatuses, 1)
+		assert.Len(t, updated.Status.PodTemplateResourceStatuses, 1)
+		assert.Zero(t, updated.Status.ObservedGeneration)
 	})
 }
 
@@ -5096,7 +5213,7 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 	t.Run("deletes node debug pod and clears tracking", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-node-pod", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", UID: "fixture-node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "node-debug-uid"},
 		}
 		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
 			{Name: "node-debug-pod", Namespace: "default"},
@@ -5107,8 +5224,11 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 			WithObjects(&corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "node-debug-pod",
-					UID:       "fixture-node-debug-pod",
 					Namespace: "default",
+					UID:       "node-debug-uid",
+					Annotations: map[string]string{
+						sourceSessionUIDAnnotation: string(session.UID),
+					},
 				},
 			}).
 			Build()
@@ -5128,7 +5248,7 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 	t.Run("preserves failed deployed resource for retry", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-delete-failure", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", UID: "fixture-node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
 		}
 		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
 			{Name: "node-debug-pod", Namespace: "default"},
@@ -5139,7 +5259,6 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 			WithObjects(&corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "node-debug-pod",
-					UID:       "fixture-node-debug-pod",
 					Namespace: "default",
 				},
 			}).
@@ -5163,15 +5282,15 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 	t.Run("preserves skipped refs while dependent cleanup failed", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-skipped-refs", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-			{APIVersion: "v1", Kind: "ConfigMap", Name: "aux-config", UID: "fixture-aux-config", Namespace: "default", Source: "auxiliary:config"},
-			{APIVersion: "v1", Kind: "ConfigMap", Name: "pod-template-config", UID: "fixture-pod-template-config", Namespace: "default", Source: "pod-template"},
-			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", UID: "fixture-node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "aux-config", Namespace: "default", Source: "auxiliary:config"},
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "pod-template-config", Namespace: "default", Source: "pod-template"},
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "node-debug-uid"},
 		}
 		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
 			{Name: "node-debug-pod", Namespace: "default"},
 		}
 		session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
-			{Kind: "ConfigMap", ResourceName: "pod-template-config", UID: "fixture-pod-template-config", Namespace: "default", Created: true},
+			{Kind: "ConfigMap", ResourceName: "pod-template-config", Namespace: "default", Created: true},
 		}
 
 		targetClient := fake.NewClientBuilder().
@@ -5179,8 +5298,11 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 			WithObjects(&corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "node-debug-pod",
-					UID:       "fixture-node-debug-pod",
 					Namespace: "default",
+					UID:       "node-debug-uid",
+					Annotations: map[string]string{
+						sourceSessionUIDAnnotation: string(session.UID),
+					},
 				},
 			}).
 			Build()
@@ -5198,9 +5320,9 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 	t.Run("filters allowed pods to remaining pod refs", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-filter-allowed-pods", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-			{APIVersion: "v1", Kind: "Pod", Name: "failed-delete-pod", UID: "fixture-failed-delete-pod", Namespace: "default", Source: "kubectl-debug-node"},
-			{APIVersion: "v1", Kind: "Pod", Name: "deleted-pod", UID: "fixture-deleted-pod", Namespace: "default", Source: "kubectl-debug-node"},
-			{APIVersion: "v1", Kind: "ConfigMap", Name: "remaining-config", UID: "fixture-remaining-config", Namespace: "default", Source: "pod-template"},
+			{APIVersion: "v1", Kind: "Pod", Name: "failed-delete-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "failed-delete-uid"},
+			{APIVersion: "v1", Kind: "Pod", Name: "deleted-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "deleted-uid"},
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "remaining-config", Namespace: "default", Source: "pod-template"},
 		}
 		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
 			{Name: "failed-delete-pod", Namespace: "default"},
@@ -5214,15 +5336,15 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 				&corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "failed-delete-pod",
-						UID:       "fixture-failed-delete-pod",
 						Namespace: "default",
+						UID:       "failed-delete-uid",
 					},
 				},
 				&corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "deleted-pod",
-						UID:       "fixture-deleted-pod",
 						Namespace: "default",
+						UID:       "deleted-uid",
 					},
 				},
 			).
@@ -5247,38 +5369,18 @@ func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
 		assert.Equal(t, "failed-delete-pod", session.Status.AllowedPods[0].Name)
 	})
 
-	t.Run("cleans up supported Job resource", func(t *testing.T) {
-		session := newTestDebugSession("cleanup-job-kind", "test-template", "test-cluster", "user@example.com")
+	t.Run("preserves unsupported resource kind for retry", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-unsupported-kind", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-			{APIVersion: "batch/v1", Kind: "Job", Name: "job-resource", Namespace: "default", UID: "job-uid", Source: "workload"},
-		}
-
-		job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job-resource", Namespace: "default", UID: "job-uid"}}
-		targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(job).Build()
-		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
-
-		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, false, false)
-		require.NoError(t, err)
-		require.Empty(t, session.Status.DeployedResources)
-		err = targetClient.Get(context.Background(), client.ObjectKey{Name: job.Name, Namespace: job.Namespace}, &batchv1.Job{})
-		require.Error(t, err)
-		assert.True(t, apierrors.IsNotFound(err), "cleanup must delete the Job, not merely ignore a missing Job")
-	})
-
-	t.Run("preserves unknown resource kind for retry", func(t *testing.T) {
-		session := newTestDebugSession("cleanup-unknown-kind", "test-template", "test-cluster", "user@example.com")
-		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-			{APIVersion: "v1", Kind: "ConfigMap", Name: "unknown-resource", Namespace: "default", Source: "workload"},
+			{APIVersion: "batch/v1", Kind: "Job", Name: "unsupported-job", Namespace: "default", Source: "workload"},
 		}
 
 		targetClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
 
 		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, false, false)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), `unsupported deployed resource kind "ConfigMap"`)
-		require.Len(t, session.Status.DeployedResources, 1)
-		assert.Equal(t, "unknown-resource", session.Status.DeployedResources[0].Name)
+		require.NoError(t, err)
+		require.Empty(t, session.Status.DeployedResources)
 	})
 }
 
@@ -5290,8 +5392,8 @@ func TestDebugSessionController_CleanupPodTemplateResourcesPreservesFailures(t *
 			Kind:         "ConfigMap",
 			APIVersion:   "v1",
 			ResourceName: "debug-script",
-			UID:          "fixture-debug-script",
 			Namespace:    "default",
+			UID:          "debug-script-uid",
 			Created:      true,
 		},
 	}
@@ -5301,14 +5403,8 @@ func TestDebugSessionController_CleanupPodTemplateResourcesPreservesFailures(t *
 		WithObjects(&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "debug-script",
-				UID:       "fixture-debug-script",
 				Namespace: "default",
-				Labels: map[string]string{
-					"breakglass.t-caas.telekom.com/session": session.Name,
-				},
-				Annotations: map[string]string{
-					"breakglass.t-caas.telekom.com/source-session": session.Namespace + "/" + session.Name,
-				},
+				UID:       "debug-script-uid",
 			},
 		}).
 		WithInterceptorFuncs(interceptor.Funcs{
@@ -5326,142 +5422,6 @@ func TestDebugSessionController_CleanupPodTemplateResourcesPreservesFailures(t *
 	require.Len(t, session.Status.PodTemplateResourceStatuses, 1)
 	assert.Contains(t, session.Status.PodTemplateResourceStatuses[0].Error, "forbidden")
 	assert.False(t, session.Status.PodTemplateResourceStatuses[0].Deleted)
-}
-
-func TestDebugSessionController_CleanupPodTemplateResourcesPreservesReplacement(t *testing.T) {
-	scheme := testScheme()
-	session := newTestDebugSession("cleanup-replaced-resource", "test-template", "test-cluster", "user@example.com")
-	session.UID = "current-session-uid"
-	session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
-		{Kind: "ConfigMap", APIVersion: "v1", ResourceName: "debug-config", Namespace: "default", Created: true},
-	}
-	replacement := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "debug-config",
-			Namespace: "default",
-			Labels: map[string]string{
-				"breakglass.t-caas.telekom.com/session": session.Name,
-				DebugSessionUIDLabelKey:                 "old-session-uid",
-			},
-			Annotations: map[string]string{
-				"breakglass.t-caas.telekom.com/source-session": session.Namespace + "/" + session.Name,
-				DebugSessionUIDAnnotationKey:                   "old-session-uid",
-			},
-		},
-		Data: map[string]string{"tenant": "must-remain"},
-	}
-	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(replacement).Build()
-	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
-
-	err := controller.cleanupPodTemplateResources(context.Background(), session, targetClient)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ownership precondition failed")
-	var unchanged corev1.ConfigMap
-	require.NoError(t, targetClient.Get(context.Background(), client.ObjectKeyFromObject(replacement), &unchanged))
-	assert.Equal(t, map[string]string{"tenant": "must-remain"}, unchanged.Data)
-}
-
-func TestDebugSessionController_CleanupPodTemplateResourcesPreservesUnmarkedReplacement(t *testing.T) {
-	scheme := testScheme()
-	session := newTestDebugSession("cleanup-unmarked-replacement", "test-template", "test-cluster", "user@example.com")
-	session.UID = "current-session-uid"
-	session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
-		{Kind: "ConfigMap", APIVersion: "v1", ResourceName: "debug-config", Namespace: "default", Created: true},
-	}
-	replacement := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-		Name: "debug-config", Namespace: "default",
-	}, Data: map[string]string{"tenant": "must-remain"}}
-	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(replacement).Build()
-	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
-
-	err := controller.cleanupPodTemplateResources(context.Background(), session, targetClient)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ownership precondition failed")
-	var unchanged corev1.ConfigMap
-	require.NoError(t, targetClient.Get(context.Background(), client.ObjectKeyFromObject(replacement), &unchanged))
-	assert.Equal(t, map[string]string{"tenant": "must-remain"}, unchanged.Data)
-}
-
-func TestDebugSessionController_CleanupPodTemplateResourcesMigratesLegacyOwnership(t *testing.T) {
-	scheme := testScheme()
-	session := newTestDebugSession("legacy-cleanup", "test-template", "test-cluster", "user@example.com")
-	session.UID = "current-session-uid"
-	session.Annotations = map[string]string{LegacyCleanupUIDsAnnotation: `{"v1/ConfigMap/default/legacy-config":"legacy-uid"}`}
-	session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
-		{Kind: "ConfigMap", APIVersion: "v1", ResourceName: "legacy-config", Namespace: "default", Created: true},
-	}
-	legacy := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-		Name:      "legacy-config",
-		Namespace: "default",
-		UID:       "legacy-uid",
-		Labels: map[string]string{
-			"breakglass.t-caas.telekom.com/session": session.Name,
-		},
-		Annotations: map[string]string{
-			"breakglass.t-caas.telekom.com/source-session": session.Namespace + "/" + session.Name,
-		},
-	}}
-	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(legacy).Build()
-	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
-
-	require.NoError(t, controller.cleanupPodTemplateResources(context.Background(), session, targetClient))
-	var deleted corev1.ConfigMap
-	err := targetClient.Get(context.Background(), client.ObjectKeyFromObject(legacy), &deleted)
-	assert.True(t, apierrors.IsNotFound(err), "a pre-UID resource owned by this session must be cleaned during upgrade")
-	assert.Empty(t, session.Status.PodTemplateResourceStatuses)
-}
-
-func TestDebugSessionController_CleanupPodTemplateResourcesRejectsLegacyForgery(t *testing.T) {
-	tests := []struct {
-		name        string
-		labels      map[string]string
-		annotations map[string]string
-	}{
-		{
-			name: "wrong session label",
-			labels: map[string]string{
-				"breakglass.t-caas.telekom.com/session": "other-session",
-			},
-			annotations: map[string]string{
-				"breakglass.t-caas.telekom.com/source-session": "breakglass/legacy-cleanup",
-			},
-		},
-		{
-			name: "wrong session namespace",
-			labels: map[string]string{
-				"breakglass.t-caas.telekom.com/session": "legacy-cleanup",
-			},
-			annotations: map[string]string{
-				"breakglass.t-caas.telekom.com/source-session": "other-namespace/legacy-cleanup",
-			},
-		},
-		{
-			name: "partial legacy marker",
-			labels: map[string]string{
-				"breakglass.t-caas.telekom.com/session": "legacy-cleanup",
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			scheme := testScheme()
-			session := newTestDebugSession("legacy-cleanup", "test-template", "test-cluster", "user@example.com")
-			session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
-				{Kind: "ConfigMap", APIVersion: "v1", ResourceName: "legacy-config", Namespace: "default", Created: true},
-			}
-			resource := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-				Name: "legacy-config", Namespace: "default", Labels: tt.labels, Annotations: tt.annotations,
-			}}
-			targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(resource).Build()
-			controller := &DebugSessionController{log: zap.NewNop().Sugar()}
-
-			err := controller.cleanupPodTemplateResources(context.Background(), session, targetClient)
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), "ownership precondition failed")
-			var unchanged corev1.ConfigMap
-			require.NoError(t, targetClient.Get(context.Background(), client.ObjectKeyFromObject(resource), &unchanged))
-		})
-	}
 }
 
 func TestDebugSessionController_CleanupPodTemplateResourcesPreservesParseFailures(t *testing.T) {

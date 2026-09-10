@@ -5,6 +5,16 @@ Deletion uses UID preconditions. A same-name replacement is preserved, while
 inventory for the original is retired. Auxiliary readiness evaluates the same
 UID-checked object snapshot, rather than fetching by name again.
 
+Copied-pod inventory uses the persisted `status.copiedPods[].uid` as its
+canonical merge identity, with the historical `copyUID` field as a legacy
+fallback. This preserves a same-name replacement recorded concurrently while
+cleanup still handles sessions written by older versions.
+
+Tracked cleanup inventory identity also includes the persisted
+`createOperationID`. A concurrent same-coordinate resource created by a
+different operation therefore remains tracked when cleanup removes its older
+predecessor.
+
 Pod labels are discovery hints. Direct debug Pods require their recorded UID.
 DaemonSet and Deployment children require a live, UID-matched controller chain
 (including the Deployment's ReplicaSet) and matching immutable workload
@@ -22,9 +32,11 @@ closed; terminate and recreate these sessions after upgrading.
 
 ## Recovering legacy cleanup inventory
 
-Old sessions may lack resource UIDs. Missing resources are automatically removed
-from cleanup inventory. Existing resources are never adopted solely from their
-names or mutable labels. An operator must verify ownership and either delete the
+Sessions may lack resource UIDs when an older status schema was used or when a
+target create succeeded but the outcome status write was interrupted. Missing
+resources are automatically removed from cleanup inventory. Existing resources
+are never adopted solely from their names, mutable labels, or copied create
+operation markers. An operator must verify ownership and either delete the
 original resource manually or record the approved original UID in the session's
 `breakglass.t-caas.telekom.com/legacy-cleanup-uids` annotation. The annotation is a
 JSON object keyed by `apiVersion/kind/namespace/name`; for example:

@@ -130,3 +130,16 @@ func TestApplyImpersonation_MutatesOnlyTheCopyItIsGiven(t *testing.T) {
 	assert.Empty(t, base.Impersonate.UserName,
 		"the original config must be untouched")
 }
+
+func TestCreateImpersonatedClientFromRESTConfigUsesValidatedBase(t *testing.T) {
+	controller := &DebugSessionController{log: zaptest.NewLogger(t).Sugar()}
+	base := &rest.Config{Host: "https://spoke.example.com"}
+
+	client, err := controller.createImpersonatedClientFromRESTConfig(
+		context.Background(), base, "spoke", &breakglassv1alpha1.ImpersonationConfig{
+			ServiceAccountRef: &breakglassv1alpha1.ServiceAccountReference{Namespace: "kube-system", Name: "debugger"},
+		})
+	require.NoError(t, err)
+	require.NotNil(t, client)
+	assert.Empty(t, base.Impersonate.UserName, "validated base config must not be mutated")
+}

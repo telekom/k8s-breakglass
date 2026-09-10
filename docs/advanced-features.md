@@ -431,11 +431,11 @@ kubectl get breakglasssession -A -o json > sessions-export.json
 
 ## State Management and Validation
 
-Breakglass implements a **state-first validation architecture** where session state takes absolute precedence over timestamps. This ensures robust session lifecycle management and prevents edge cases.
+Breakglass implements a **state-and-lease validation architecture** where terminal state takes precedence and an `Approved` session additionally requires a live, non-zero expiry lease. This ensures robust session lifecycle management and prevents edge cases.
 
-### State is Ultimate Authority
+### State and Lease Are Authoritative
 
-A session's validity is determined solely by its `state` field:
+A session's state determines its lifecycle position, while an `Approved` session's lease determines whether it can grant access:
 
 ```go
 // Pseudocode: State-first validation
@@ -455,8 +455,8 @@ func isSessionValid(session) bool {
         return false  // Awaiting scheduled start
     }
     
-    // Approved: Check expiration (ONLY checked for Approved)
-    if session.status.expiresAt <= now {
+    // Approved: a missing/zero or reached expiry fails closed.
+    if session.status.expiresAt is missing || session.status.expiresAt <= now {
         return false  // Session expired
     }
     

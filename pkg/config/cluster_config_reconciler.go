@@ -227,7 +227,7 @@ func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx cont
 
 		// Update the session status to Expired
 		session.Status.State = breakglassv1alpha1.SessionStateExpired
-		session.Status.ExpiresAt = now
+		session.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(session.Status.ExpiresAt, now.Time)
 		session.Status.ReasonEnded = "clusterDeleted"
 		session.SetCondition(metav1.Condition{
 			Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
@@ -290,9 +290,13 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 	for i := range sessionList.Items {
 		session := &sessionList.Items[i]
 
-		// Skip sessions that are already in cleanup or already cleaned up.
-		if session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
-			session.Status.State == breakglassv1alpha1.DebugSessionStateExpired {
+		// Terminal sessions may still need the DebugSession controller to clean
+		// their tracked spoke inventory. Keep the ClusterConfig finalizer until
+		// that inventory is empty, regardless of the terminal state.
+		if isDebugSessionTerminal(session.Status.State) {
+			if debugSessionHasTrackedSpokeResources(session) {
+				terminateErrs = append(terminateErrs, debugSessionCleanupPendingError(session))
+			}
 			continue
 		}
 
@@ -300,12 +304,31 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 			"session", session.Name, "namespace", session.Namespace, "cluster", clusterName,
 			"previousState", session.Status.State)
 
-		// Update the session status to Terminated so the debug-session reconciler
-		// performs resource cleanup.
-		session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
-		session.Status.Message = fmt.Sprintf("Session terminated: ClusterConfig %q was deleted", clusterName)
-
-		if err := ssa.ApplyDebugSessionStatus(ctx, r.Client, session); err != nil {
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			live := &breakglassv1alpha1.DebugSession{}
+			if err := r.Get(ctx, client.ObjectKeyFromObject(session), live); err != nil {
+				return err
+			}
+			if isDebugSessionTerminal(live.Status.State) {
+				if debugSessionHasTrackedSpokeResources(live) {
+					return debugSessionCleanupPendingError(live)
+				}
+				return nil
+			}
+			base := live.DeepCopy()
+			live.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+			live.Status.Message = fmt.Sprintf("Session terminated: ClusterConfig %q was deleted", clusterName)
+			if live.Generation > 0 {
+				live.Status.ObservedGeneration = live.Generation
+			}
+			if err := r.Status().Patch(ctx, live, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+				return err
+			}
+			if debugSessionHasTrackedSpokeResources(live) {
+				return debugSessionCleanupPendingError(live)
+			}
+			return nil
+		}); err != nil {
 			log.Warnw("Failed to terminate DebugSession", "session", session.Name, "error", err)
 			terminateErrs = append(terminateErrs, fmt.Errorf("terminate DebugSession %s/%s: %w", session.Namespace, session.Name, err))
 			continue
@@ -320,6 +343,38 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 	}
 
 	return errors.Join(terminateErrs...)
+}
+
+func debugSessionHasTrackedSpokeResources(session *breakglassv1alpha1.DebugSession) bool {
+	return len(session.Status.DeployedResources) > 0 ||
+		debugSessionHasOutstandingAuxiliaryResources(session) ||
+		len(session.Status.PodTemplateResourceStatuses) > 0 ||
+		len(session.Status.AllowedPods) > 0 ||
+		session.Status.KubectlDebugStatus != nil
+}
+
+func debugSessionHasOutstandingAuxiliaryResources(session *breakglassv1alpha1.DebugSession) bool {
+	for _, status := range session.Status.AuxiliaryResourceStatuses {
+		if status.Created && !status.Deleted {
+			return true
+		}
+		for _, child := range status.AdditionalResources {
+			if !child.Deleted {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isDebugSessionTerminal(state breakglassv1alpha1.DebugSessionState) bool {
+	return state == breakglassv1alpha1.DebugSessionStateTerminated ||
+		state == breakglassv1alpha1.DebugSessionStateExpired ||
+		state == breakglassv1alpha1.DebugSessionStateFailed
+}
+
+func debugSessionCleanupPendingError(session *breakglassv1alpha1.DebugSession) error {
+	return fmt.Errorf("DebugSession %s/%s in state %q still tracks spoke resources", session.Namespace, session.Name, session.Status.State)
 }
 
 // SetupWithManager sets up the controller with the Manager.

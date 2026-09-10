@@ -1,4 +1,7 @@
-apiVersion: apiserver.config.k8s.io/v1beta1
+# Kubernetes 1.34+ structured authorization configuration. Older clusters must
+# use the legacy webhook flags documented in docs/webhook-setup.md; do not
+# substitute a positive authorizedTTL for the explicit cache disable below.
+apiVersion: apiserver.config.k8s.io/v1
 kind: AuthorizationConfiguration
 authorizers:
   - type: Node
@@ -8,6 +11,9 @@ authorizers:
   - type: Webhook
     name: breakglass
     webhook:
+      authorizedTTL: 5m
+      cacheAuthorizedRequests: false
+      cacheUnauthorizedRequests: false
       unauthorizedTTL: 30s
       timeout: 3s
       subjectAccessReviewVersion: v1
@@ -17,8 +23,7 @@ authorizers:
         type: KubeConfigFile
         kubeConfigFile: /files/breakglass-authz-webhook.yaml
       matchConditions:
-      - expression: "'system:authenticated' in request.groups"
-      - expression: "!request.user.startsWith('system:')"
-      - expression: has(request.resourceAttributes)
-      - expression: "!request.user.startsWith('kubernetes')"
-
+        - expression: "'system:authenticated' in request.groups"
+        - expression: "!request.user.startsWith('system:')"
+        - expression: has(request.resourceAttributes)
+        - expression: "!request.user.startsWith('kubernetes')"

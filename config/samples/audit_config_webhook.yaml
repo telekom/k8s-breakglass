@@ -14,7 +14,9 @@ spec:
     dropOnFull: true
 
   sinks:
-    # Send events to an external webhook endpoint
+    # Send events to an external webhook endpoint. Required audit events bypass
+    # the queue and use a synchronous request. The endpoint must store each event
+    # before it returns a successful HTTP status.
     - name: siem-webhook
       type: webhook
       webhook:
@@ -39,6 +41,7 @@ spec:
         batchSize: 50
       # Only send security-relevant events
       eventTypes:
+        - session.termination_intent
         - session.created
         - session.approved
         - session.rejected

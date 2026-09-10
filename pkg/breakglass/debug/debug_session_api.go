@@ -51,6 +51,11 @@ import (
 
 const debugSessionNamePrefix = "debug"
 
+const (
+	debugSessionAdmissionAttempts   = 8
+	debugSessionAdmissionRetryDelay = 20 * time.Millisecond
+)
+
 // DebugSessionAPIController provides REST API endpoints for debug sessions
 type DebugSessionAPIController struct {
 	quotaNamespace string
@@ -148,26 +153,26 @@ func (c *DebugSessionAPIController) Handlers() []gin.HandlerFunc {
 func (c *DebugSessionAPIController) Register(rg *gin.RouterGroup) error {
 	// Session endpoints
 	rg.GET("", breakglass.InstrumentedHandler("handleListDebugSessions", c.handleListDebugSessions))
-	rg.GET(":name", breakglass.InstrumentedHandler("handleGetDebugSession", c.handleGetDebugSession))
+	rg.GET("/:name", breakglass.InstrumentedHandler("handleGetDebugSession", c.handleGetDebugSession))
 	rg.POST("", breakglass.InstrumentedHandler("handleCreateDebugSession", c.handleCreateDebugSession))
-	rg.POST(":name/join", breakglass.InstrumentedHandler("handleJoinDebugSession", c.handleJoinDebugSession))
-	rg.POST(":name/leave", breakglass.InstrumentedHandler("handleLeaveDebugSession", c.handleLeaveDebugSession))
-	rg.POST(":name/renew", breakglass.InstrumentedHandler("handleRenewDebugSession", c.handleRenewDebugSession))
-	rg.POST(":name/terminate", breakglass.InstrumentedHandler("handleTerminateDebugSession", c.handleTerminateDebugSession))
-	rg.POST(":name/approve", breakglass.InstrumentedHandler("handleApproveDebugSession", c.handleApproveDebugSession))
-	rg.POST(":name/reject", breakglass.InstrumentedHandler("handleRejectDebugSession", c.handleRejectDebugSession))
+	rg.POST("/:name/join", breakglass.InstrumentedHandler("handleJoinDebugSession", c.handleJoinDebugSession))
+	rg.POST("/:name/leave", breakglass.InstrumentedHandler("handleLeaveDebugSession", c.handleLeaveDebugSession))
+	rg.POST("/:name/renew", breakglass.InstrumentedHandler("handleRenewDebugSession", c.handleRenewDebugSession))
+	rg.POST("/:name/terminate", breakglass.InstrumentedHandler("handleTerminateDebugSession", c.handleTerminateDebugSession))
+	rg.POST("/:name/approve", breakglass.InstrumentedHandler("handleApproveDebugSession", c.handleApproveDebugSession))
+	rg.POST("/:name/reject", breakglass.InstrumentedHandler("handleRejectDebugSession", c.handleRejectDebugSession))
 
 	// Kubectl-debug mode endpoints
-	rg.POST(":name/injectEphemeralContainer", breakglass.InstrumentedHandler("handleInjectEphemeralContainer", c.handleInjectEphemeralContainer))
-	rg.POST(":name/createPodCopy", breakglass.InstrumentedHandler("handleCreatePodCopy", c.handleCreatePodCopy))
-	rg.POST(":name/createNodeDebugPod", breakglass.InstrumentedHandler("handleCreateNodeDebugPod", c.handleCreateNodeDebugPod))
+	rg.POST("/:name/injectEphemeralContainer", breakglass.InstrumentedHandler("handleInjectEphemeralContainer", c.handleInjectEphemeralContainer))
+	rg.POST("/:name/createPodCopy", breakglass.InstrumentedHandler("handleCreatePodCopy", c.handleCreatePodCopy))
+	rg.POST("/:name/createNodeDebugPod", breakglass.InstrumentedHandler("handleCreateNodeDebugPod", c.handleCreateNodeDebugPod))
 
 	// Template endpoints
-	rg.GET("templates", breakglass.InstrumentedHandler("handleListTemplates", c.handleListTemplates))
-	rg.GET("templates/:name", breakglass.InstrumentedHandler("handleGetTemplate", c.handleGetTemplate))
-	rg.GET("templates/:name/clusters", breakglass.InstrumentedHandler("handleGetTemplateClusters", c.handleGetTemplateClusters))
-	rg.GET("podTemplates", breakglass.InstrumentedHandler("handleListPodTemplates", c.handleListPodTemplates))
-	rg.GET("podTemplates/:name", breakglass.InstrumentedHandler("handleGetPodTemplate", c.handleGetPodTemplate))
+	rg.GET("/templates", breakglass.InstrumentedHandler("handleListTemplates", c.handleListTemplates))
+	rg.GET("/templates/:name", breakglass.InstrumentedHandler("handleGetTemplate", c.handleGetTemplate))
+	rg.GET("/templates/:name/clusters", breakglass.InstrumentedHandler("handleGetTemplateClusters", c.handleGetTemplateClusters))
+	rg.GET("/podTemplates", breakglass.InstrumentedHandler("handleListPodTemplates", c.handleListPodTemplates))
+	rg.GET("/podTemplates/:name", breakglass.InstrumentedHandler("handleGetPodTemplate", c.handleGetPodTemplate))
 	return nil
 }
 
@@ -1521,7 +1526,7 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 func (c *DebugSessionAPIController) admitCreatedDebugSession(ctx context.Context, session *breakglassv1alpha1.DebugSession) error {
 	original := session.DeepCopy()
 	current := session.DeepCopy()
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < debugSessionAdmissionAttempts; attempt++ {
 		quotaController := NewDebugSessionController(c.log, c.client, c.ccProvider).WithAPIReader(c.reader())
 		if c.quotaEnabled {
 			quotaController.WithQuotaNamespace(c.quotaNamespace)
@@ -1529,8 +1534,21 @@ func (c *DebugSessionAPIController) admitCreatedDebugSession(ctx context.Context
 		if err := quotaController.admitDebugSession(ctx, current); err == nil {
 			*session = *current
 			return nil
-		} else if !errors.Is(err, errDebugSessionCandidateChanged) || attempt == 2 {
+		} else if !errors.Is(err, errDebugSessionCandidateChanged) || attempt == debugSessionAdmissionAttempts-1 {
 			return err
+		}
+		delay := debugSessionAdmissionRetryDelay << attempt
+		if delay > 250*time.Millisecond {
+			delay = 250 * time.Millisecond
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
 		}
 
 		fresh := &breakglassv1alpha1.DebugSession{}

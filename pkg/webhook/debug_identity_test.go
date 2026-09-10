@@ -6,6 +6,7 @@ package webhook
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -32,7 +33,8 @@ func TestDebugSessionSARIssuerAndRole(t *testing.T) {
 		{"viewer", "https://a.example", "https://a.example", breakglassv1alpha1.ParticipantRoleViewer, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "debug", Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, AllowedPods: []breakglassv1alpha1.AllowedPodRef{{Name: "pod", Namespace: "default", UID: "pod-uid"}}, Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "same", IdentityProviderIssuer: tc.stored, Role: tc.role}}}}
+			expiresAt := metav1.NewTime(time.Now().Add(time.Hour))
+			ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "debug", Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expiresAt, AllowedPods: []breakglassv1alpha1.AllowedPodRef{{Name: "pod", Namespace: "default", UID: "pod-uid"}}, Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "same", IdentityProviderIssuer: tc.stored, Role: tc.role}}}}
 			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds)
 			for field, fn := range debugSessionIndexFnsWebhook {
 				builder = builder.WithIndex(ds, field, fn)

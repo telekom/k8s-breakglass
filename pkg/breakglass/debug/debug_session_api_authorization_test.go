@@ -1254,41 +1254,140 @@ func TestCanUserOperateDebugResources(t *testing.T) {
 	leftAt := metav1.Now()
 	session := &breakglassv1alpha1.DebugSession{
 		Spec: breakglassv1alpha1.DebugSessionSpec{
-			RequestedBy: "owner@example.com",
+			RequestedBy:            "owner@example.com",
+			RequestedByEmail:       "owner@example.com",
+			IdentityProviderName:   "idp-a",
+			IdentityProviderIssuer: "https://issuer.example",
 		},
 		Status: breakglassv1alpha1.DebugSessionStatus{
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{
-				{User: "participant@example.com", Role: breakglassv1alpha1.ParticipantRoleParticipant, JoinedAt: now},
-				{User: "status-owner@example.com", Role: breakglassv1alpha1.ParticipantRoleOwner, JoinedAt: now},
+				{
+					User:                   "participant@example.com",
+					Email:                  "participant@example.com",
+					Role:                   breakglassv1alpha1.ParticipantRoleParticipant,
+					JoinedAt:               now,
+					IdentityProviderName:   "idp-a",
+					IdentityProviderIssuer: "https://issuer.example",
+				},
+				{
+					User:                   "status-owner@example.com",
+					Email:                  "status-owner@example.com",
+					Role:                   breakglassv1alpha1.ParticipantRoleOwner,
+					JoinedAt:               now,
+					IdentityProviderName:   "idp-a",
+					IdentityProviderIssuer: "https://issuer.example",
+				},
 				{User: "viewer@example.com", Role: breakglassv1alpha1.ParticipantRoleViewer, JoinedAt: now},
 				{User: "left-participant@example.com", Role: breakglassv1alpha1.ParticipantRoleParticipant, JoinedAt: now, LeftAt: &leftAt},
 				{User: "unknown-role@example.com", Role: breakglassv1alpha1.ParticipantRole("operator"), JoinedAt: now},
 				{User: "empty-role@example.com", JoinedAt: now},
-				{User: "upgraded@example.com", Role: breakglassv1alpha1.ParticipantRoleViewer, JoinedAt: now},
-				{User: "upgraded@example.com", Role: breakglassv1alpha1.ParticipantRoleParticipant, JoinedAt: now},
+				{
+					User:                   "upgraded@example.com",
+					Email:                  "upgraded@example.com",
+					Role:                   breakglassv1alpha1.ParticipantRoleViewer,
+					JoinedAt:               now,
+					IdentityProviderName:   "idp-a",
+					IdentityProviderIssuer: "https://issuer.example",
+				},
+				{
+					User:                   "upgraded@example.com",
+					Email:                  "upgraded@example.com",
+					Role:                   breakglassv1alpha1.ParticipantRoleParticipant,
+					JoinedAt:               now,
+					IdentityProviderName:   "idp-a",
+					IdentityProviderIssuer: "https://issuer.example",
+				},
 			},
 		},
 	}
 
 	tests := []struct {
-		name string
-		user string
-		want bool
+		name     string
+		identity debugSessionReadIdentity
+		want     bool
 	}{
-		{name: "session requester", user: "owner@example.com", want: true},
-		{name: "active participant", user: "participant@example.com", want: true},
-		{name: "status owner", user: "status-owner@example.com", want: true},
-		{name: "viewer cannot mutate", user: "viewer@example.com", want: false},
-		{name: "left participant cannot mutate", user: "left-participant@example.com", want: false},
-		{name: "unknown role cannot mutate", user: "unknown-role@example.com", want: false},
-		{name: "empty role cannot mutate", user: "empty-role@example.com", want: false},
-		{name: "later participant role can mutate after viewer entry", user: "upgraded@example.com", want: true},
-		{name: "unrelated user", user: "other@example.com", want: false},
+		{
+			name: "session requester",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "owner@example.com", email: "owner@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: true,
+		},
+		{
+			name: "requester email alias with same provider can mutate",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "requester-subject", email: "owner@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: true,
+		},
+		{
+			name: "active participant",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "participant@example.com", email: "participant@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: true,
+		},
+		{
+			name: "participant email alias with same provider can mutate",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "participant-subject", email: "participant@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: true,
+		},
+		{
+			name: "status owner",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "status-owner@example.com", email: "status-owner@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: true,
+		},
+		{
+			name: "viewer cannot mutate",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "viewer@example.com", email: "viewer@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: false,
+		},
+		{
+			name: "left participant cannot mutate",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "left-participant@example.com", email: "left-participant@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: false,
+		},
+		{
+			name: "unknown role cannot mutate",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "unknown-role@example.com", email: "unknown-role@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: false,
+		},
+		{
+			name: "empty role cannot mutate",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "empty-role@example.com", email: "empty-role@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: false,
+		},
+		{
+			name: "later participant role can mutate after viewer entry",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "upgraded@example.com", email: "upgraded@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: true,
+		},
+		{
+			name: "unrelated user",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "other@example.com", email: "other@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, ctrl.canUserOperateDebugResources(session, debugSessionReadIdentity{legacyAllowed: true, username: tt.user}))
+			assert.Equal(t, tt.want, ctrl.canUserOperateDebugResources(session, tt.identity))
 		})
 	}
 }

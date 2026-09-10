@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -276,26 +277,64 @@ type WebhookController struct {
 	activityTracker         *ActivityTracker                                                      // optional buffered session activity tracker (#314)
 }
 
+const (
+	debugSessionClusterLabelKey             = "breakglass.telekom.com/debug-cluster"
+	liveDebugSessionDiscoveryPageSize int64 = 128
+	maxLiveDebugSessionDiscoveryPages       = 8
+)
+
 // checkDebugSessionAccessForIssuer checks if a pod operation is allowed by an active debug session.
 // Returns (allowed, sessionName, reason) where allowed is true if the user can perform
 // the requested operation on the pod via a debug session they are participating in.
 // Supports exec, attach, portforward, and log subresources based on AllowedPodOperations config.
+func (wc *WebhookController) checkDebugSessionAccess(ctx context.Context, username, clusterName string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (bool, string, string) {
+	ds, reason := wc.findDebugSessionAccess(ctx, username, clusterName, ra, reqLog)
+	if ds == nil {
+		return false, "", ""
+	}
+	return true, ds.Name, reason
+}
+
 func (wc *WebhookController) checkDebugSessionAccessForIssuer(ctx context.Context, username, clusterName, issuer string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (bool, string, string) {
+	ds, reason := wc.findDebugSessionAccessForIssuer(ctx, username, clusterName, issuer, ra, reqLog)
+	if ds == nil {
+		return false, "", ""
+	}
+	return true, ds.Name, reason
+}
+
+// findDebugSessionAccess returns the exact live DebugSession that authorized
+// the request. Cached discovery is only a hint: the returned object is
+// reread through the API reader and must still be Active with a non-zero,
+// strictly-future expiry at the decision boundary.
+func (wc *WebhookController) findDebugSessionAccess(ctx context.Context, username, clusterName string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (*breakglassv1alpha1.DebugSession, string) {
+	return wc.findDebugSessionAccessForIssuer(ctx, username, clusterName, "", ra, reqLog)
+}
+
+func (wc *WebhookController) findDebugSessionAccessForIssuer(ctx context.Context, username, clusterName, issuer string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (*breakglassv1alpha1.DebugSession, string) {
+	return wc.findDebugSessionAccessForIssuerInNamespace(ctx, username, clusterName, issuer, "", ra, reqLog)
+}
+
+func (wc *WebhookController) findDebugSessionAccessForIssuerInNamespace(ctx context.Context, username, clusterName, issuer, sessionNamespace string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (*breakglassv1alpha1.DebugSession, string) {
 	// Only check for pods with supported subresources
 	if ra == nil || ra.Resource != "pods" || !isDebugSessionSubresource(ra.Subresource) {
-		return false, "", ""
+		return nil, ""
 	}
 
 	if ra.Name == "" || ra.Namespace == "" {
-		return false, "", ""
+		return nil, ""
 	}
 
 	if wc.escalManager == nil || wc.escalManager.Client == nil {
 		reqLog.Debug("Debug session check skipped: no client available")
-		return false, "", ""
+		return nil, ""
 	}
 
-	// List active debug sessions for this cluster using indexed fields
+	// List active debug sessions for this cluster using indexed fields. The
+	// cache can briefly lag a status transition (the API caller waits on the
+	// live object), so an empty cached result must not make an already-active
+	// session invisible to the authorization path. Fall back to a live list and
+	// apply the same filters before the per-candidate live fence below.
 	debugSessionList := &breakglassv1alpha1.DebugSessionList{}
 	fieldSelector := client.MatchingFields{
 		"spec.cluster":             clusterName,
@@ -304,7 +343,21 @@ func (wc *WebhookController) checkDebugSessionAccessForIssuer(ctx context.Contex
 	}
 	if err := wc.escalManager.List(ctx, debugSessionList, fieldSelector); err != nil {
 		reqLog.Warnw("Failed to list debug sessions for pod operation check", "error", err)
-		return false, "", ""
+		return nil, ""
+	}
+	if len(debugSessionList.Items) == 0 && wc.sesManager != nil {
+		if sessionNamespace == "" {
+			sessionNamespace = wc.sesManager.QuotaNamespace()
+		}
+		liveSessions, err := wc.listLiveDebugSessionsForAuthorization(ctx, username, clusterName, sessionNamespace)
+		if err != nil {
+			reqLog.Warnw("Failed to list debug sessions through live reader for pod operation check", "error", err)
+			return nil, ""
+		}
+		debugSessionList.Items = append(debugSessionList.Items, liveSessions...)
+		if len(debugSessionList.Items) > 0 {
+			reqLog.Debugw("Using live debug session discovery after empty cache result", "count", len(debugSessionList.Items))
+		}
 	}
 
 	// Reuse one live snapshot only within this authorization decision.
@@ -312,15 +365,33 @@ func (wc *WebhookController) checkDebugSessionAccessForIssuer(ctx context.Contex
 	podFetched := false
 
 	// Check each active debug session
-	for _, ds := range debugSessionList.Items {
+	reader := client.Reader(wc.escalManager.Client)
+	if wc.sesManager != nil {
+		reader = wc.sesManager.Reader()
+	}
+	for _, discovered := range debugSessionList.Items {
+		ds := discovered.DeepCopy()
+		if reader != nil {
+			var live breakglassv1alpha1.DebugSession
+			if err := reader.Get(ctx, client.ObjectKey{Namespace: discovered.Namespace, Name: discovered.Name}, &live); err != nil {
+				reqLog.Debugw("Debug session discovery candidate disappeared before live fence", "session", discovered.Name, "error", err)
+				continue
+			}
+			ds = &live
+		}
 		// Only check active sessions for this cluster
-		if ds.Status.State != breakglassv1alpha1.DebugSessionStateActive || ds.Spec.Cluster != clusterName {
+		if !ds.DeletionTimestamp.IsZero() || ds.Status.State != breakglassv1alpha1.DebugSessionStateActive || ds.Spec.Cluster != clusterName {
 			continue
 		}
-		if ds.Status.ExpiresAt != nil && !ds.Status.ExpiresAt.Time.After(time.Now()) {
-			reqLog.Debugw("Debug session skipped because it is expired",
-				"session", ds.Name,
-				"expiresAt", ds.Status.ExpiresAt.Time)
+		// Debug sessions must always carry a live lease. Missing, equal, and
+		// past expiry are all denied; only a strictly-future timestamp grants.
+		if ds.Status.ExpiresAt == nil || !time.Now().Before(ds.Status.ExpiresAt.Time) {
+			var expiresAt interface{}
+			if ds.Status.ExpiresAt != nil {
+				expiresAt = ds.Status.ExpiresAt.Time
+			}
+			reqLog.Debugw("Debug session skipped because it is expired or missing expiry",
+				"session", ds.Name, "expiresAt", expiresAt)
 			continue
 		}
 
@@ -381,11 +452,111 @@ func (wc *WebhookController) checkDebugSessionAccessForIssuer(ctx context.Contex
 				"user", username,
 				"role", p.Role,
 				"operation", ra.Subresource)
-			return true, ds.Name, reason
+			return ds, reason
 		}
 	}
 
-	return false, "", ""
+	return nil, ""
+}
+
+func (wc *WebhookController) listLiveDebugSessionsForAuthorization(ctx context.Context, username, clusterName, sessionNamespace string) ([]breakglassv1alpha1.DebugSession, error) {
+	if wc.sesManager == nil {
+		return nil, nil
+	}
+
+	reader := wc.sesManager.Reader()
+	var sessions []breakglassv1alpha1.DebugSession
+	continueToken := ""
+	for page := 0; page < maxLiveDebugSessionDiscoveryPages; page++ {
+		liveList := &breakglassv1alpha1.DebugSessionList{}
+		listOptions := []client.ListOption{
+			client.MatchingLabels{debugSessionClusterLabelKey: clusterName},
+			client.Limit(liveDebugSessionDiscoveryPageSize),
+		}
+		if sessionNamespace != "" {
+			listOptions = append(listOptions, client.InNamespace(sessionNamespace))
+		}
+		if continueToken != "" {
+			listOptions = append(listOptions, client.Continue(continueToken))
+		}
+		if err := reader.List(ctx, liveList, listOptions...); err != nil {
+			return nil, err
+		}
+		for i := range liveList.Items {
+			ds := &liveList.Items[i]
+			if ds.Status.State != breakglassv1alpha1.DebugSessionStateActive {
+				continue
+			}
+			for _, participant := range ds.Status.Participants {
+				if participant.User == username && participant.LeftAt == nil {
+					sessions = append(sessions, *ds.DeepCopy())
+					break
+				}
+			}
+		}
+		if liveList.Continue == "" {
+			return sessions, nil
+		}
+		continueToken = liveList.Continue
+	}
+	return nil, fmt.Errorf("live debug session discovery exceeded %d pages", maxLiveDebugSessionDiscoveryPages)
+}
+
+// liveDebugSessionAccess is the final authorization fence for a debug-session
+// allow. It reads the exact candidate through the uncached reader and repeats
+// every identity/state/pod/participant/lease check at one decision instant.
+func (wc *WebhookController) liveDebugSessionAccess(ctx context.Context, username, issuer, clusterName string, ra *authorizationv1.ResourceAttributes, namespace, name, uid string) (bool, string) {
+	if wc.sesManager == nil || ra == nil || namespace == "" || name == "" {
+		return false, ""
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var ds breakglassv1alpha1.DebugSession
+	if err := wc.sesManager.Reader().Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &ds); err != nil {
+		return false, ""
+	}
+	// The discovery candidate's UID is part of the identity fence. An empty
+	// capture must never degrade into a name-only allow, and a replacement
+	// object with a different UID must be denied.
+	if uid == "" || string(ds.UID) != uid {
+		return false, ""
+	}
+	if !ds.DeletionTimestamp.IsZero() || ds.Status.State != breakglassv1alpha1.DebugSessionStateActive || ds.Spec.Cluster != clusterName {
+		return false, ""
+	}
+	now := time.Now()
+	if ds.Status.ExpiresAt == nil || !now.Before(ds.Status.ExpiresAt.Time) {
+		return false, ""
+	}
+	podAllowed := false
+	var allowedPodUID string
+	for _, pod := range ds.Status.AllowedPods {
+		if pod.Namespace == ra.Namespace && pod.Name == ra.Name && pod.UID != "" {
+			podAllowed = true
+			allowedPodUID = pod.UID
+			break
+		}
+	}
+	if !podAllowed || !ds.Status.AllowedPodOperations.IsOperationAllowed(ra.Subresource) {
+		return false, ""
+	}
+	targetPod, err := wc.fetchPodFromCluster(ctx, clusterName, ra.Namespace, ra.Name)
+	if err != nil || targetPod == nil || targetPod.UID == "" || string(targetPod.UID) != allowedPodUID {
+		return false, ""
+	}
+	reader := wc.sesManager.Reader()
+	for _, participant := range ds.Status.Participants {
+		if participant.User == username && participant.LeftAt == nil &&
+			debugParticipantIssuerMatches(ctx, reader, participant, issuer) &&
+			canDebugSessionParticipantAccessPodOperations(participant.Role) {
+			if !time.Now().Before(ds.Status.ExpiresAt.Time) {
+				return false, ""
+			}
+			return true, fmt.Sprintf("Allowed by debug session %s (role: %s, operation: %s)", ds.Name, participant.Role, ra.Subresource)
+		}
+	}
+	return false, ""
 }
 
 // getPodSecurityOverridesFromSessions retrieves the PodSecurityOverrides from the escalation
@@ -608,6 +779,11 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 
 	// Phase 5: Early debug-session allow (before deny policies)
 	if wc.checkEarlyDebugSession(c, s) {
+		// The early phase only records the debug-session candidate. Route it
+		// through the common final live fence before producing an allow response.
+		s.phases.LogSummary()
+		wc.buildFinalReason(s)
+		wc.sendAuthorizationResponse(c, s)
 		return
 	}
 
@@ -642,17 +818,120 @@ func (wc *WebhookController) handleAuthorize(c *gin.Context) {
 	s.phases.LogSummary()
 	wc.buildFinalReason(s)
 
-	// Phase 11: Record the impersonation outcome, so that impersonation allowed via
-	// RBAC or a session is audited and counted alongside the explicit denials.
-	wc.noteImpersonationOutcome(s)
-
-	// Phase 12: Emit metrics & send response
+	// Phase 11: Emit metrics & send response. The response helper performs the
+	// final live session/cluster fence before any allow-side effects.
 	wc.sendAuthorizationResponse(c, s)
+}
+
+// liveSessionAuthorizationCandidates performs the final authorization fence
+// against exact live session reads. Session discovery and the target-cluster SAR
+// can take long enough for a session to expire or be dropped after the cached
+// discovery read. A failed read removes that candidate rather than trusting the
+// stale snapshot. When candidates were attributed to the allow, any one live
+// candidate is sufficient; when no attribution was possible, all discovered
+// sessions are treated as contributors and must remain live.
+func (wc *WebhookController) liveSessionAuthorizationCandidates(ctx context.Context, sessions []breakglassv1alpha1.BreakglassSession, candidates []sessionAuthorizationCandidate) []sessionAuthorizationCandidate {
+	if wc.sesManager == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	refs := candidates
+	allCandidates := len(refs) == 0
+	if allCandidates {
+		if len(sessions) == 0 {
+			return nil
+		}
+		refs = make([]sessionAuthorizationCandidate, 0, len(sessions))
+		for i := range sessions {
+			session := &sessions[i]
+			refs = append(refs, sessionAuthorizationCandidate{
+				namespace: session.Namespace, name: session.Name, uid: string(session.UID), user: session.Spec.User,
+				cluster: session.Spec.Cluster, grantedGroup: session.Spec.GrantedGroup,
+				identityProviderName: session.Spec.IdentityProviderName,
+			})
+		}
+	}
+	currentSessions := make([]struct {
+		candidate sessionAuthorizationCandidate
+		session   breakglassv1alpha1.BreakglassSession
+	}, 0, len(refs))
+	for _, ref := range refs {
+		if ref.name == "" {
+			if allCandidates {
+				return nil
+			}
+			continue
+		}
+		var current breakglassv1alpha1.BreakglassSession
+		if err := wc.sesManager.Reader().Get(ctx, client.ObjectKey{Namespace: ref.namespace, Name: ref.name}, &current); err != nil {
+			if wc.log != nil {
+				wc.log.Debugw("final session access fence could not read session", "session", ref.name, "error", err)
+			}
+			continue
+		}
+		if string(current.UID) != ref.uid || current.Spec.User != ref.user || current.Spec.Cluster != ref.cluster || current.Spec.GrantedGroup != ref.grantedGroup || current.Spec.IdentityProviderName != ref.identityProviderName || !current.Status.RejectedAt.IsZero() {
+			continue
+		}
+		currentSessions = append(currentSessions, struct {
+			candidate sessionAuthorizationCandidate
+			session   breakglassv1alpha1.BreakglassSession
+		}{candidate: ref, session: current})
+	}
+	now := time.Now()
+	live := make([]sessionAuthorizationCandidate, 0, len(currentSessions))
+	for _, current := range currentSessions {
+		if breakglass.IsSessionAccessActiveAt(current.session, now) {
+			live = append(live, current.candidate)
+		}
+	}
+	if allCandidates && len(live) != len(refs) {
+		return nil
+	}
+	return live
+}
+
+// isSessionAccessStillActive retains the narrow helper used by existing tests
+// and callers while applying the same any-live-candidate semantics used by the
+// request path when an attributed candidate is provided.
+func (wc *WebhookController) isSessionAccessStillActive(ctx context.Context, sessions []breakglassv1alpha1.BreakglassSession, candidate *sessionAuthorizationCandidate) bool {
+	var candidates []sessionAuthorizationCandidate
+	if candidate != nil {
+		candidates = []sessionAuthorizationCandidate{*candidate}
+	}
+	return len(wc.liveSessionAuthorizationCandidates(ctx, sessions, candidates)) > 0
+}
+
+func (wc *WebhookController) isClusterConfigStillActive(ctx context.Context, configured *breakglassv1alpha1.ClusterConfig) bool {
+	if wc.ccProvider == nil || configured == nil {
+		return false
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	live, err := wc.ccProvider.GetInNamespaceLive(ctx, configured.Namespace, configured.Name)
+	if err != nil {
+		if wc.log != nil {
+			wc.log.Debugw("final cluster configuration fence denied session access", "cluster", configured.Name, "error", err)
+		}
+		return false
+	}
+	return live.Namespace == configured.Namespace && live.Name == configured.Name && live.UID == configured.UID &&
+		live.DeletionTimestamp.IsZero() && apiequality.Semantic.DeepEqual(live.Spec, configured.Spec)
 }
 
 // emitAccessDecisionAudit emits an audit event for SAR authorization decisions.
 // This captures both allowed and denied access attempts for audit trail purposes.
 func (wc *WebhookController) emitAccessDecisionAudit(ctx context.Context, username string, groups []string, cluster string, sar *authorizationv1.SubjectAccessReview, allowed bool, source, reason string) {
+	if wc.auditService == nil {
+		return
+	}
+	target, _, _, _ := wc.auditTargetFromSAR(ctx, cluster, sar)
+	wc.emitAccessDecisionAuditWithTarget(ctx, username, groups, sar, target, allowed, source, reason)
+}
+
+func (wc *WebhookController) emitAccessDecisionAuditWithTarget(ctx context.Context, username string, groups []string, sar *authorizationv1.SubjectAccessReview, target audit.Target, allowed bool, source, reason string) {
 	if wc.auditService == nil {
 		return
 	}
@@ -664,7 +943,7 @@ func (wc *WebhookController) emitAccessDecisionAudit(ctx context.Context, userna
 		severity = audit.SeverityWarning
 	}
 
-	target, verb, subresource, apiGroup := wc.auditTargetFromSAR(ctx, cluster, sar)
+	_, verb, subresource, apiGroup := wc.auditTargetFromSARWithoutEnrichment(sar)
 
 	// Build details map
 	details := map[string]interface{}{
@@ -690,6 +969,29 @@ func (wc *WebhookController) emitAccessDecisionAudit(ctx context.Context, userna
 	}
 
 	wc.auditService.Emit(ctx, event)
+}
+
+func (wc *WebhookController) auditTargetFromSARWithoutEnrichment(sar *authorizationv1.SubjectAccessReview) (audit.Target, string, string, string) {
+	target := audit.Target{}
+	var verb, subresource, apiGroup string
+	if sar == nil {
+		return target, verb, subresource, apiGroup
+	}
+	if sar.Spec.ResourceAttributes != nil {
+		ra := sar.Spec.ResourceAttributes
+		target.Kind = ra.Resource
+		target.Name = ra.Name
+		target.Namespace = ra.Namespace
+		verb = ra.Verb
+		subresource = ra.Subresource
+		apiGroup = ra.Group
+	} else if sar.Spec.NonResourceAttributes != nil {
+		nra := sar.Spec.NonResourceAttributes
+		target.Kind = "nonresource"
+		target.Name = nra.Path
+		verb = nra.Verb
+	}
+	return target, verb, subresource, apiGroup
 }
 
 // emitPolicyDenialAudit emits an audit event when a DenyPolicy blocks access.
@@ -772,25 +1074,11 @@ func (wc *WebhookController) emitPodSecurityAudit(ctx context.Context, username 
 }
 
 func (wc *WebhookController) auditTargetFromSAR(ctx context.Context, cluster string, sar *authorizationv1.SubjectAccessReview) (audit.Target, string, string, string) {
-	target := audit.Target{Cluster: cluster}
-	var verb, subresource, apiGroup string
-	if sar == nil {
-		return target, verb, subresource, apiGroup
-	}
-	if sar.Spec.ResourceAttributes != nil {
+	target, verb, subresource, apiGroup := wc.auditTargetFromSARWithoutEnrichment(sar)
+	target.Cluster = cluster
+	if sar != nil && sar.Spec.ResourceAttributes != nil {
 		ra := sar.Spec.ResourceAttributes
-		target.Kind = ra.Resource
-		target.Name = ra.Name
-		target.Namespace = ra.Namespace
 		target.NamespaceLabels = wc.auditNamespaceLabels(ctx, cluster, ra.Namespace)
-		verb = ra.Verb
-		subresource = ra.Subresource
-		apiGroup = ra.Group
-	} else if sar.Spec.NonResourceAttributes != nil {
-		nra := sar.Spec.NonResourceAttributes
-		target.Kind = "nonresource"
-		target.Name = nra.Path
-		verb = nra.Verb
 	}
 	return target, verb, subresource, apiGroup
 }
@@ -1040,25 +1328,41 @@ func dedupeStrings(in []string) []string {
 	return out
 }
 
-// authorizeViaSessions performs per-session SubjectAccessReviews using the session's granted group.
+// authorizeViaSessions performs per-session SubjectAccessReviews using the
+// session's granted group. It retains the historical first-winner return shape;
+// the request path uses authorizeViaSessionsWithCandidates so every independent
+// winner can be revalidated by the final live fence.
 func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.Config, sessions []breakglassv1alpha1.BreakglassSession, incoming authorizationv1.SubjectAccessReview, clusterName string, reqLog ...*zap.SugaredLogger) (bool, string, string, string) {
+	allowed, group, name, impersonated, _ := wc.authorizeViaSessionsWithCandidates(ctx, rc, sessions, incoming, clusterName, reqLog...)
+	return allowed, group, name, impersonated
+}
+
+func (wc *WebhookController) authorizeViaSessionsWithCandidates(ctx context.Context, rc *rest.Config, sessions []breakglassv1alpha1.BreakglassSession, incoming authorizationv1.SubjectAccessReview, clusterName string, reqLog ...*zap.SugaredLogger) (bool, string, string, string, []sessionAuthorizationCandidate) {
 	// Resolve logger once to avoid repeated if/else chains.
 	log := wc.log
 	if len(reqLog) > 0 && reqLog[0] != nil {
 		log = reqLog[0]
 	}
 	if len(sessions) == 0 || (incoming.Spec.ResourceAttributes == nil && incoming.Spec.NonResourceAttributes == nil) {
-		return false, "", "", ""
+		return false, "", "", "", nil
 	}
 	clientset, err := kubernetes.NewForConfig(rc)
 	if err != nil {
 		if log != nil {
 			log.With("error", err).Error("failed creating clientset for session SAR")
 		}
-		return false, "", "", ""
+		return false, "", "", "", nil
 	}
 	sarClient := clientset.AuthorizationV1().SubjectAccessReviews()
+	var firstGroup, firstName, firstImpersonated string
+	var candidates []sessionAuthorizationCandidate
 	for _, s := range sessions {
+		// Never trust a caller-supplied session snapshot for authorization. The
+		// final response also performs a live read because this loop can cross
+		// the expiry boundary while target-cluster SARs are in flight.
+		if !breakglass.IsSessionAccessActive(s) {
+			continue
+		}
 		var allowedGroupsToCheck []string
 		// Resolve escalation via OwnerReferences first
 		if len(s.OwnerReferences) > 0 && wc.escalManager != nil {
@@ -1177,17 +1481,25 @@ func (wc *WebhookController) authorizeViaSessions(ctx context.Context, rc *rest.
 				}
 			}
 			if resp != nil && resp.Status.Allowed {
-				metrics.WebhookSessionSARsAllowed.WithLabelValues(clusterName).Inc()
-				// Track IDP-based authorization if session has IDP specified
-				if s.Spec.IdentityProviderName != "" {
-					metrics.EscalationIDPAuthorizationChecks.WithLabelValues(s.Spec.GrantedGroup, s.Spec.IdentityProviderName, "allowed").Inc()
+				if firstName == "" {
+					firstGroup, firstName, firstImpersonated = s.Spec.GrantedGroup, s.Name, g
 				}
-				return true, s.Spec.GrantedGroup, s.Name, g
+				candidates = append(candidates, sessionAuthorizationCandidate{
+					namespace: s.Namespace, name: s.Name, uid: string(s.UID),
+					user: s.Spec.User, cluster: s.Spec.Cluster, grantedGroup: s.Spec.GrantedGroup,
+					identityProviderName: s.Spec.IdentityProviderName,
+				})
+				// One successful impersonation group is enough for this session;
+				// continue with the other sessions to preserve independent winners.
+				break
 			}
 			metrics.WebhookSessionSARsDenied.WithLabelValues(clusterName).Inc()
 		}
 	}
-	return false, "", "", ""
+	if firstName == "" {
+		return false, "", "", "", nil
+	}
+	return true, firstGroup, firstName, firstImpersonated, candidates
 }
 
 func (wc *WebhookController) SetCanDoFn(f func(ctx context.Context, rc *rest.Config, groups []string, sar authorizationv1.SubjectAccessReview, clustername string) (bool, error)) {

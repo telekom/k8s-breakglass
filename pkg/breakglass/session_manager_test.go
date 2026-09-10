@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -657,4 +658,27 @@ func TestSessionManager_GetBreakglassSessionByName(t *testing.T) {
 		_, err := mgr.GetBreakglassSessionByName(ctx, "non-existent")
 		require.Error(t, err)
 	})
+}
+
+func TestSessionManager_GetBreakglassSessionByNameUsesLiveReader(t *testing.T) {
+	ctx := context.Background()
+	expiredAt := metav1.NewTime(time.Now().Truncate(time.Second).Add(-time.Minute))
+	cacheSession := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "stale-session", Namespace: "default"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "alice", Cluster: "prod", GrantedGroup: "admin"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour))},
+	}
+	liveSession := cacheSession.DeepCopy()
+	liveSession.Status.ExpiresAt = expiredAt
+	liveSession.Status.State = breakglassv1alpha1.SessionStateExpired
+	cacheClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(cacheSession).Build()
+	liveClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(liveSession).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexer).
+		Build()
+	mgr := NewSessionManagerWithClientAndReader(cacheClient, liveClient)
+
+	result, err := mgr.GetBreakglassSessionByName(ctx, "stale-session")
+	require.NoError(t, err)
+	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, result.Status.State)
+	assert.Equal(t, expiredAt.Time, result.Status.ExpiresAt.Time)
 }

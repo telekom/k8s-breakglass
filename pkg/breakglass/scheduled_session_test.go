@@ -90,6 +90,7 @@ func TestScheduledSessionValidation(t *testing.T) {
 			// Test session state validity
 			session.Status.State = breakglassv1alpha1.SessionStateApproved
 			session.Status.ApprovedAt = metav1.Now()
+			session.Status.ExpiresAt = metav1.NewTime(session.Status.ApprovedAt.Add(time.Hour))
 			if tt.scheduledTime != nil && !tt.scheduledTime.IsZero() {
 				session.Status.State = breakglassv1alpha1.SessionStateWaitingForScheduledTime
 			}

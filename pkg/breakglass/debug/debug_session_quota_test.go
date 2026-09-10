@@ -65,6 +65,21 @@ func TestEnsureTargetNamespaceHonorsCreationAndFailMode(t *testing.T) {
 	}
 }
 
+func TestEnsureTargetNamespaceFencesCreation(t *testing.T) {
+	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil)
+	called := false
+	ready, err := controller.ensureTargetNamespace(t.Context(), cli, "debug-target", "", &breakglassv1alpha1.NamespaceConstraints{CreateIfNotExists: true}, func() error {
+		called = true
+		return fmt.Errorf("session expired")
+	})
+	require.Error(t, err)
+	assert.False(t, ready)
+	assert.True(t, called)
+	ns := &corev1.Namespace{}
+	assert.Error(t, cli.Get(t.Context(), client.ObjectKey{Name: "debug-target"}, ns))
+}
+
 func TestEffectiveNamespaceConstraintsBindingOverridesTemplate(t *testing.T) {
 	templateConstraints := &breakglassv1alpha1.NamespaceConstraints{DefaultNamespace: "template-debug", NamespaceLabels: map[string]string{"source": "template"}}
 	bindingConstraints := &breakglassv1alpha1.NamespaceConstraints{DefaultNamespace: "binding-debug", CreateIfNotExists: true, NamespaceLabels: map[string]string{"source": "binding"}}
@@ -105,7 +120,7 @@ func TestDeployDebugResourcesFailOpenSkipsSpokeWrites(t *testing.T) {
 		CurrentContext: "default",
 	})
 	require.NoError(t, err)
-	clusterConfig := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "spoke", Namespace: "default"}, Spec: breakglassv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "spoke-kubeconfig", Namespace: "default"}}}
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "spoke", Namespace: "default", UID: "spoke-uid"}, Spec: breakglassv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "spoke-kubeconfig", Namespace: "default"}}}
 	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "spoke-kubeconfig", Namespace: "default"}, Data: map[string][]byte{"value": kubeconfig}}
 	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{FailMode: "open", TargetNamespace: "missing-debug", ResourceQuota: &breakglassv1alpha1.DebugResourceQuotaConfig{MaxPods: int32Ptr(1)}}}
 	session := newTestDebugSession("fail-open", template.Name, clusterConfig.Name, "user@example.com")

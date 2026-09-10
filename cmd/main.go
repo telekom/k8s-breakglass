@@ -355,7 +355,7 @@ func run() error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := webhook.Setup(managerCtx, restConfig, log, scheme, &cliConfig.Webhook, svcs.ccProvider, cliConfig.EnableValidatingWebhooks,
+			if err := webhook.Setup(managerCtx, restConfig, log, scheme, &cliConfig.Webhook, cliConfig.EnableValidatingWebhooks,
 				cliConfig.EnableHTTP2, cliConfig.Webhook.CertGeneration); err != nil {
 				errCh <- fmt.Errorf("webhook server failed: %w", err)
 			}
@@ -450,7 +450,8 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 	if cbCfg.HalfOpenMaxRequests <= 0 {
 		cbCfg.HalfOpenMaxRequests = defaults.HalfOpenMaxRequests
 	}
-	ccProvider := cluster.NewClientProviderWithCircuitBreaker(escalationManager.Client, log, cbCfg)
+	ccProvider := cluster.NewClientProviderWithCircuitBreaker(escalationManager.Client, log, cbCfg).
+		WithLiveReader(reconcilerMgr.GetAPIReader())
 	denyEval := policy.NewEvaluator(escalationManager.Client, log)
 
 	// Create mail service with hot-reload capability
@@ -703,7 +704,8 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 		defer wg.Done()
 		if err := reconciler.Setup(ctx, deps.reconcilerMgr, deps.idpLoader, deps.server,
 			deps.ccProvider, deps.auditService, deps.mailService, deps.cfg.Frontend,
-			deps.cliConfig.DisableEmail, deps.escalationManager, deps.cliConfig.EnableControllers, log); err != nil {
+			deps.cliConfig.BreakglassNamespace, deps.cliConfig.DisableEmail,
+			deps.escalationManager, deps.cliConfig.EnableControllers, log); err != nil {
 			errCh <- fmt.Errorf("reconciler manager failed: %w", err)
 		}
 	}()

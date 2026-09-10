@@ -34,6 +34,7 @@ func TestExpirePendingSessions(t *testing.T) {
 	t.Run("expires pending session past approval timeout", func(t *testing.T) {
 		// Create a pending session that should be expired
 		// TimeoutAt is set in the past
+		naturalExpiry := metav1.NewTime(time.Now().UTC().Truncate(time.Second).Add(-time.Minute))
 		pendingSession := &breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              "pending-expired",
@@ -47,6 +48,7 @@ func TestExpirePendingSessions(t *testing.T) {
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:     breakglassv1alpha1.SessionStatePending,
 				TimeoutAt: metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour)), // Already past
+				ExpiresAt: naturalExpiry,
 			},
 		}
 
@@ -77,6 +79,7 @@ func TestExpirePendingSessions(t *testing.T) {
 
 		assert.Equal(t, breakglassv1alpha1.SessionStateTimeout, updatedSession.Status.State)
 		assert.Equal(t, "approvalTimeout", updatedSession.Status.ReasonEnded)
+		assert.True(t, updatedSession.Status.ExpiresAt.Time.Equal(naturalExpiry.Time), "approval timeout must preserve an elapsed expiry: got %v, want %v", updatedSession.Status.ExpiresAt.Time, naturalExpiry.Time)
 	})
 
 	t.Run("does not expire pending session within timeout", func(t *testing.T) {

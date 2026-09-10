@@ -13,6 +13,7 @@ import (
 
 func TestTemplateVarsPreservedBeforeSerialization(t *testing.T) {
 	for _, value := range []string{"registry/image:v1", "alice@example.com", "a,b", "worker-1\nhostNetwork: true", "---\nfoo", "a\u2028b"} {
+		want := value
 		raw, err := json.Marshal(value)
 		if err != nil {
 			t.Fatal(err)
@@ -21,12 +22,12 @@ func TestTemplateVarsPreservedBeforeSerialization(t *testing.T) {
 		spec := &breakglassv1alpha1.DebugSessionTemplateSpec{}
 		pod := (&DebugSessionController{}).buildVarsFromSession(session, spec)
 		auxiliary := (&AuxiliaryResourceManager{}).buildVarsFromSession(session, spec)
-		if pod["value"] != value || auxiliary["value"] != value {
-			t.Fatalf("input corrupted: pod=%q auxiliary=%q want=%q", pod["value"], auxiliary["value"], value)
+		if pod["value"] != want || auxiliary["value"] != want {
+			t.Fatalf("input not preserved: pod=%q auxiliary=%q want=%q", pod["value"], auxiliary["value"], want)
 		}
 		session.Spec.ExtraDeployValues = nil
 		spec.ExtraDeployVariables = []breakglassv1alpha1.ExtraDeployVariable{{Name: "value", Default: &apiextensionsv1.JSON{Raw: raw}}}
-		if (&DebugSessionController{}).buildVarsFromSession(session, spec)["value"] != value || (&AuxiliaryResourceManager{}).buildVarsFromSession(session, spec)["value"] != value {
+		if (&DebugSessionController{}).buildVarsFromSession(session, spec)["value"] != want || (&AuxiliaryResourceManager{}).buildVarsFromSession(session, spec)["value"] != want {
 			t.Fatal("default corrupted")
 		}
 	}
