@@ -338,7 +338,16 @@ func canRenewDebugSession(session *breakglassv1alpha1.DebugSession, identity deb
 }
 
 func isDebugSessionExpired(session *breakglassv1alpha1.DebugSession, now time.Time) bool {
-	return session != nil && session.Status.ExpiresAt != nil && !session.Status.ExpiresAt.Time.After(now)
+	if session == nil {
+		return false
+	}
+	if session.Status.ExpiresAt != nil && !session.Status.ExpiresAt.Time.After(now) {
+		return true
+	}
+	if idle, ok := debugSessionIdleDeadline(session); ok && !idle.After(now) {
+		return true
+	}
+	return false
 }
 
 func rejectUnexpectedDebugActionBody(ctx *gin.Context) bool {

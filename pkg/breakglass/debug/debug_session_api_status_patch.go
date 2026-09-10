@@ -26,6 +26,7 @@ import (
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func (c *DebugSessionAPIController) patchDebugSessionStatusWithOptimisticLock(
@@ -37,6 +38,29 @@ func (c *DebugSessionAPIController) patchDebugSessionStatusWithOptimisticLock(
 		return fmt.Errorf("patch DebugSession API status with optimistic lock: %w", err)
 	}
 	return nil
+}
+
+func (c *DebugSessionAPIController) recordDebugSessionActivity(ctx context.Context, session *breakglassv1alpha1.DebugSession) {
+	if session == nil {
+		return
+	}
+	now := metav1.Now()
+	if isDebugSessionExpired(session, now.Time) {
+		return
+	}
+	if err := c.patchDebugSessionStatusWithOptimisticLock(ctx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		candidate := session.DeepCopy()
+		candidate.Status = *status
+		if status.State != breakglassv1alpha1.DebugSessionStateActive || isDebugSessionExpired(candidate, now.Time) {
+			return
+		}
+		if status.LastActivity == nil || status.LastActivity.Time.Before(now.Time) {
+			status.LastActivity = &now
+		}
+		status.ActivityCount++
+	}); err != nil {
+		c.log.Warnw("successful debug operation was not recorded as activity", "session", session.Name, "error", err)
+	}
 }
 
 func respondDebugSessionStatusPatchError(ctx *gin.Context, reqLog *zap.SugaredLogger, action, responseMessage, sessionName string, err error) {
