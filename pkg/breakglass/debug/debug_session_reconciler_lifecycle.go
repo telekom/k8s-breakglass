@@ -498,6 +498,9 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	if len(ds.Status.DeployedResources) == 0 &&
 		len(ds.Status.AuxiliaryResourceStatuses) == 0 &&
 		len(ds.Status.PodTemplateResourceStatuses) == 0 {
+		// AllowedPods are authorization references, not spoke resources. Remove
+		// this attempt's baseline refs while the status merge retains newer refs.
+		ds.Status.AllowedPods = nil
 		if err := c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline); err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
 		}

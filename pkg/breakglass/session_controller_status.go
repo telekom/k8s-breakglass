@@ -87,6 +87,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		}
 		return
 	}
+	authorizedUID := bs.UID
 
 	// Authorization must happen before body validation and state-specific
 	// responses so unauthorized callers cannot learn session details from
@@ -165,6 +166,10 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 			} else {
 				apiresponses.RespondInternalError(c, "re-read session", err, reqLog)
 			}
+			return
+		}
+		if latest.UID != authorizedUID {
+			apiresponses.RespondConflict(c, "session was replaced while approval was in progress, please retry")
 			return
 		}
 		bs = latest
