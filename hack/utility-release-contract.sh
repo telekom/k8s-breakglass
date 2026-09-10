@@ -47,10 +47,13 @@ matrix() {
 	jq -e '(.schemaVersion == 1) and (.images|type=="array" and length>0) and
 		(([.images[].name]|length) == ([.images[].name]|unique|length)) and
 		(([.images[].file]|length) == ([.images[].file]|unique|length)) and
-		all(.images[]; (.name|test("^[a-z0-9]+([.-][a-z0-9]+)*$")) and
+		all(.images[]; (.buildContext // .context) as $buildContext |
+		(.name|test("^[a-z0-9]+([.-][a-z0-9]+)*$")) and
 		(.context|test("^utils/[A-Za-z0-9._/-]+$")) and
 		(.context|contains("..")|not) and (.context|contains("//")|not) and
-		(.file == (.context + "/Dockerfile")) and
+		($buildContext|test("^(\\.|utils/[A-Za-z0-9._/-]+)$")) and
+		($buildContext|contains("..")|not) and ($buildContext|contains("//")|not) and
+        (.file == (.context + "/Dockerfile")) and
 		(.smokeCommand|type=="array" and length>0 and all(.[]; type=="string" and length>0)) and
 		(.smokeOutput|type=="string" and length>0) and
 		(.requiredChecks|type=="array" and length>0 and all(.[]; type=="string" and length>0)) and

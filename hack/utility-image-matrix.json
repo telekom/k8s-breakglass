@@ -49,6 +49,25 @@
       "smokeOutput": "diagnostic-artifact-collector: bounded, immutable diagnostic recipes",
       "requiredChecks": ["Utility image checks (diagnostic-artifact-collection)"],
       "behaviorWorkflows": [".github/workflows/diagnostic-artifact-collector-image.yml"]
+    },
+    {
+      "name": "dump-reader",
+      "context": "utils/images/dump-reader",
+      "file": "utils/images/dump-reader/Dockerfile",
+      "smokeCommand": ["help"],
+      "smokeOutput": "dump-reader: inspect existing dump artifacts",
+      "requiredChecks": ["Storage and dump access behavior"],
+      "behaviorWorkflows": [".github/workflows/catalogue-utility-integration.yml"]
+    },
+    {
+      "name": "cluster-validator",
+      "context": "utils/cluster-validator",
+      "buildContext": ".",
+      "file": "utils/cluster-validator/Dockerfile",
+      "smokeCommand": ["--help"],
+      "smokeOutput": "Usage of cluster-validator",
+      "requiredChecks": ["Cluster validation behavior"],
+      "behaviorWorkflows": [".github/workflows/catalogue-utility-integration.yml"]
     }
   ]
 }
