@@ -1235,6 +1235,7 @@ func TestCleanupAuxiliaryResources_WithAdditionalResources(t *testing.T) {
 							Kind:              "ConfigMap",
 							APIVersion:        "v1",
 							ResourceName:      "config-2",
+							UID:               "fixture-config-2",
 							CreateOperationID: "config-2-operation",
 							Namespace:         "debug-ns",
 						},
