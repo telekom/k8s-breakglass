@@ -34,6 +34,8 @@ printf '%s\n' \
   '-----END RSA PRIVATE KEY-----' \
   'user=operator@example.com' \
   'status=healthy component=controller latency=12ms' \
+  'cluster-ip=10.0.0.1 node-version=1.36.1' \
+  'version 1.36.1.' \
   'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJvcGVyYXRvciJ9.qwertyuiopasdfghjklzxcvbnm123456' \
   'short-jwt e30.e30.x' \
   | ci_write_bounded_redacted_file "$redacted_output" 200 8192
@@ -53,6 +55,8 @@ for status in auth-useful proxy-useful array-useful headers-useful; do
   grep -Fq -- "\"status\":\"$status\"" "$redacted_output"
 done
 grep -Fq 'status=healthy component=controller latency=12ms' "$redacted_output"
+grep -Fq 'cluster-ip=10.0.0.1 node-version=1.36.1' "$redacted_output"
+grep -Fq 'version 1.36.1.' "$redacted_output"
 # Inline token-bearing lines retain their non-secret diagnostic context.
 grep -Fq 'status=healthy' "$redacted_output"
 test -z "$(grep -E 'END .*PRIVATE KEY|private-key-material' "$redacted_output" || true)"

@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve numeric dotted IP addresses and image versions when redacting
+  JWT-shaped diagnostic stream values.
+
 - Repeat debug-session participant issuer and target Pod UID checks at the final
   authorization fence, failing closed when either live identity has changed.
 

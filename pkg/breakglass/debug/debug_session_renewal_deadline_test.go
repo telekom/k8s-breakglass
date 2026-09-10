@@ -265,7 +265,7 @@ func TestTrackedJobDeadlineUsesCommittedExpiry(t *testing.T) {
 }
 
 func TestTrackedJobDeadlineFloorsFractionalCommittedExpiry(t *testing.T) {
-	start := metav1.NewTime(time.Now().UTC())
+	start := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
 	expiry := metav1.NewTime(start.Add(120*time.Second + 500*time.Millisecond))
 	deadline := int64(60)
 	job := &batchv1.Job{
