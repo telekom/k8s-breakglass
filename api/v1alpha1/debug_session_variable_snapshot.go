@@ -6,6 +6,8 @@ package v1alpha1
 import (
 	"encoding/json"
 	"reflect"
+
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // CanInitializeLegacyVariablePolicy permits only an exact copy of the already
@@ -31,6 +33,9 @@ func CanInitializeLegacyVariablePolicy(old DebugSessionStatus, policy []ExtraDep
 // from missing or malformed persisted approval provenance.
 func HasCompleteResolvedBindingSnapshot(status DebugSessionStatus) bool {
 	if !status.ResolvedBindingSnapshotCaptured || (status.ResolvedBinding == nil) != (status.ResolvedBindingSpec == nil) {
+		return false
+	}
+	if status.ResolvedBinding != nil && (len(validation.IsDNS1123Subdomain(status.ResolvedBinding.Name)) != 0 || len(validation.IsDNS1123Label(status.ResolvedBinding.Namespace)) != 0) {
 		return false
 	}
 	if status.ResolvedBindingSpec == nil {

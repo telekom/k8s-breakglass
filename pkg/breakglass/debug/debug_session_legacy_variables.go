@@ -6,6 +6,7 @@ package debug
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
@@ -50,4 +51,26 @@ func (c *DebugSessionController) resumePersistedPending(ctx context.Context, ds 
 		return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
 	}
 	return c.activateSession(ctx, ds, template, binding)
+}
+
+// canonicalizeDebugSessionApprovalSnapshot keeps immutable snapshots in their
+// persisted JSON shape. Runtime regex intersections are reconstructed from the
+// original policy and binding, not stored in json:"-" fields.
+func canonicalizeDebugSessionApprovalSnapshot(status *breakglassv1alpha1.DebugSessionStatus) error {
+	snapshot := struct {
+		Template *breakglassv1alpha1.DebugSessionTemplateSpec `json:"template,omitempty"`
+		Policy   []breakglassv1alpha1.ExtraDeployVariable     `json:"policy,omitempty"`
+	}{Template: status.ResolvedTemplate, Policy: status.ResolvedTemplateVariablePolicy}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		return fmt.Errorf("encode approved variable snapshot: %w", err)
+	}
+	snapshot.Template = nil
+	snapshot.Policy = nil
+	if err := json.Unmarshal(encoded, &snapshot); err != nil {
+		return fmt.Errorf("decode approved variable snapshot: %w", err)
+	}
+	status.ResolvedTemplate = snapshot.Template
+	status.ResolvedTemplateVariablePolicy = snapshot.Policy
+	return nil
 }

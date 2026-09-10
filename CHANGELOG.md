@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Canonicalize approved binding snapshots before status persistence, reject malformed captured binding references, and activate complete approved snapshots after live template deletion while preserving live access fences.
+
 - Preserve per-template accounting repair intervals and metric publication order; align the built-in rejected mock session and CLI rejection test with `Rejected`.
 
 - Align rejection API, mock, E2E, and audit contracts with `Rejected`; coalesce periodic active accounting while preserving immediate lifecycle and failure repair.

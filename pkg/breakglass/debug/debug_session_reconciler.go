@@ -368,6 +368,10 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		Required: requiresApproval,
 	}
 
+	if err := canonicalizeDebugSessionApprovalSnapshot(&ds.Status); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	if requiresApproval {
 		ds.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
 		ds.Status.Message = "Waiting for approval"
@@ -392,11 +396,11 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	// If approved, activate
 	if ds.Status.Approval != nil && ds.Status.Approval.ApprovedAt != nil {
-		template, err := c.getTemplate(ctx, ds.Spec.TemplateRef)
-		if err != nil {
-			return c.failSession(ctx, ds, fmt.Sprintf("template not found: %s", ds.Spec.TemplateRef))
-		}
 		if ds.Status.ResolvedTemplate == nil || !ds.Status.ResolvedBindingSnapshotCaptured {
+			template, err := c.getTemplate(ctx, ds.Spec.TemplateRef)
+			if err != nil {
+				return c.failSession(ctx, ds, fmt.Sprintf("template not found: %s", ds.Spec.TemplateRef))
+			}
 			if ds.Spec.BindingRef != nil {
 				if _, err := c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace); err != nil {
 					return c.deferOnUnresolvedBinding(ctx, ds, err)
@@ -406,6 +410,10 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 			}
 			return ctrl.Result{}, fmt.Errorf("approved activation snapshots are missing")
 		}
+		if !breakglassv1alpha1.HasCompleteResolvedBindingSnapshot(ds.Status) {
+			return c.failSession(ctx, ds, "approved binding provenance is incomplete; recreate this session")
+		}
+		template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: ds.Spec.TemplateRef}, Spec: *ds.Status.ResolvedTemplate.DeepCopy()}
 		var binding *breakglassv1alpha1.DebugSessionClusterBinding
 		if ds.Status.ResolvedBindingSpec != nil {
 			binding = &breakglassv1alpha1.DebugSessionClusterBinding{}
