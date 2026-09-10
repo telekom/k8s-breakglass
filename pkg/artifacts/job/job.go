@@ -67,8 +67,9 @@ func Build(config Config) (*batchv1.Job, error) {
 	labels := map[string]string{
 		"breakglass.t-caas.telekom.com/artifact":    config.ArtifactID,
 		"breakglass.t-caas.telekom.com/session-uid": config.SessionUID,
-		"breakglass.t-caas.telekom.com/plan-sha256": config.PlanDigest,
+		"breakglass.t-caas.telekom.com/plan-sha256": config.PlanDigest[:16],
 	}
+	annotations := map[string]string{"breakglass.t-caas.telekom.com/plan-sha256": config.PlanDigest}
 	env := []corev1.EnvVar{
 		{Name: "BREAKGLASS_ARTIFACT_ID", Value: config.ArtifactID},
 		{Name: "BREAKGLASS_ARTIFACT_SESSION_NAMESPACE", Value: config.SessionNamespace},
@@ -110,11 +111,10 @@ func Build(config Config) (*batchv1.Job, error) {
 		HostNetwork:                  false,
 		HostPID:                      false,
 		HostIPC:                      false,
+		SecurityContext:              &corev1.PodSecurityContext{FSGroup: int64Ptr(65532), FSGroupChangePolicy: fsGroupChangePolicyPtr(corev1.FSGroupChangeOnRootMismatch)},
 		Volumes:                      volumes,
-		Containers: []corev1.Container{
-			{Name: collectorContainer, Image: config.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/usr/local/bin/diagnostic-artifact-collector", "collect", "--recipe", config.Recipe, "--output", outputPath}, Env: env, SecurityContext: collectorSecurity, VolumeMounts: collectorMounts},
-			{Name: uploaderContainer, Image: config.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/usr/local/bin/diagnostic-artifact-collector", "upload", "--archive", outputPath}, Env: uploaderEnv, SecurityContext: uploaderSecurity, VolumeMounts: []corev1.VolumeMount{{Name: "output", MountPath: "/output"}}},
-		},
+		InitContainers:               []corev1.Container{{Name: collectorContainer, Image: config.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/usr/local/bin/diagnostic-artifact-collector", "collect", "--recipe", config.Recipe, "--output", outputPath}, Env: env, SecurityContext: collectorSecurity, VolumeMounts: collectorMounts}},
+		Containers:                   []corev1.Container{{Name: uploaderContainer, Image: config.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/usr/local/bin/diagnostic-artifact-collector", "upload", "--archive", outputPath}, Env: uploaderEnv, SecurityContext: uploaderSecurity, VolumeMounts: []corev1.VolumeMount{{Name: "output", MountPath: "/output"}}}},
 	}
 	if crashdump {
 		pod.NodeName = config.Node
@@ -129,7 +129,7 @@ func Build(config Config) (*batchv1.Job, error) {
 	if artifactName == "" {
 		artifactName = config.ArtifactID
 	}
-	return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: config.Name, Namespace: config.Namespace, Labels: labels, OwnerReferences: []metav1.OwnerReference{{APIVersion: "breakglass.t-caas.telekom.com/v1alpha1", Kind: "DebugSessionArtifact", Name: artifactName, UID: types.UID(config.ArtifactUID), Controller: &controller, BlockOwnerDeletion: &blockOwnerDeletion}}}, Spec: batchv1.JobSpec{BackoffLimit: int32Ptr(0), TTLSecondsAfterFinished: int32Ptr(300), Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: pod}}}, nil
+	return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: config.Name, Namespace: config.Namespace, Labels: labels, Annotations: annotations, OwnerReferences: []metav1.OwnerReference{{APIVersion: "breakglass.t-caas.telekom.com/v1alpha1", Kind: "DebugSessionArtifact", Name: artifactName, UID: types.UID(config.ArtifactUID), Controller: &controller, BlockOwnerDeletion: &blockOwnerDeletion}}}, Spec: batchv1.JobSpec{BackoffLimit: int32Ptr(0), TTLSecondsAfterFinished: int32Ptr(300), Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations}, Spec: pod}}}, nil
 }
 
 func validate(config Config) error {
@@ -196,6 +196,10 @@ func validOpaque(value string) bool {
 func validImageDigest(value string) bool {
 	return strings.Contains(value, "@sha256:") && validDigest(value[strings.LastIndex(value, "@sha256:")+8:])
 }
-func boolPtr(value bool) *bool                                       { return &value }
-func int32Ptr(value int32) *int32                                    { return &value }
+func boolPtr(value bool) *bool    { return &value }
+func int32Ptr(value int32) *int32 { return &value }
+func int64Ptr(value int64) *int64 { return &value }
+func fsGroupChangePolicyPtr(value corev1.PodFSGroupChangePolicy) *corev1.PodFSGroupChangePolicy {
+	return &value
+}
 func hostPathTypePtr(value corev1.HostPathType) *corev1.HostPathType { return &value }

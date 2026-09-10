@@ -20,19 +20,34 @@ import (
 )
 
 type Repository struct {
-	client ctrlclient.Client
+	client            ctrlclient.Client
+	artifactNamespace string
 }
 
 func NewRepository(client ctrlclient.Client) (*Repository, error) {
+	return NewRepositoryInNamespace(client, "")
+}
+
+// NewRepositoryInNamespace stores artifact objects in an administrator-owned
+// namespace while keeping the session namespace in the immutable SessionRef.
+// An empty namespace preserves the legacy same-namespace behavior.
+func NewRepositoryInNamespace(client ctrlclient.Client, artifactNamespace string) (*Repository, error) {
 	if client == nil {
 		return nil, errors.New("artifact Kubernetes repository client is required")
 	}
-	return &Repository{client: client}, nil
+	return &Repository{client: client, artifactNamespace: artifactNamespace}, nil
+}
+
+func (repository *Repository) objectNamespace(sessionNamespace string) string {
+	if repository.artifactNamespace != "" {
+		return repository.artifactNamespace
+	}
+	return sessionNamespace
 }
 
 func (repository *Repository) Get(ctx context.Context, namespace, sessionName, artifactID string) (backend.Record, error) {
 	var object breakglassv1alpha1.DebugSessionArtifact
-	if err := repository.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: artifactID}, &object); err != nil {
+	if err := repository.client.Get(ctx, types.NamespacedName{Namespace: repository.objectNamespace(namespace), Name: artifactID}, &object); err != nil {
 		if apierrors.IsNotFound(err) {
 			return backend.Record{}, storage.ErrNotFound
 		}
@@ -47,7 +62,7 @@ func (repository *Repository) Get(ctx context.Context, namespace, sessionName, a
 
 func (repository *Repository) Update(ctx context.Context, record backend.Record, expected int64) error {
 	var object breakglassv1alpha1.DebugSessionArtifact
-	if err := repository.client.Get(ctx, types.NamespacedName{Namespace: record.Namespace, Name: record.ArtifactID}, &object); err != nil {
+	if err := repository.client.Get(ctx, types.NamespacedName{Namespace: repository.objectNamespace(record.Namespace), Name: record.ArtifactID}, &object); err != nil {
 		if apierrors.IsNotFound(err) {
 			return storage.ErrNotFound
 		}
@@ -55,6 +70,15 @@ func (repository *Repository) Update(ctx context.Context, record backend.Record,
 	}
 	if object.Status.LifecycleRevision != expected {
 		return fmt.Errorf("diagnostic artifact lifecycle revision is stale: %w", backend.ErrConflict)
+	}
+	if !backend.ValidTransition(backend.State(object.Status.State), record.State) {
+		return fmt.Errorf("diagnostic artifact lifecycle transition is invalid: %w", backend.ErrConflict)
+	}
+	if record.ArtifactUID != "" && object.UID != types.UID(record.ArtifactUID) {
+		return fmt.Errorf("diagnostic artifact UID is stale: %w", backend.ErrConflict)
+	}
+	if record.ResourceVersion != "" && object.ResourceVersion != record.ResourceVersion {
+		return fmt.Errorf("diagnostic artifact resource version is stale: %w", backend.ErrConflict)
 	}
 	object.Status = statusFromRecord(record, object.Status, object.Generation)
 	if err := repository.client.Status().Update(ctx, &object); err != nil {
@@ -68,7 +92,7 @@ func (repository *Repository) Update(ctx context.Context, record backend.Record,
 
 func (repository *Repository) ListBySession(ctx context.Context, namespace, sessionName, sessionUID string) ([]backend.Record, error) {
 	var list breakglassv1alpha1.DebugSessionArtifactList
-	if err := repository.client.List(ctx, &list, ctrlclient.InNamespace(namespace)); err != nil {
+	if err := repository.client.List(ctx, &list, ctrlclient.InNamespace(repository.objectNamespace(namespace))); err != nil {
 		return nil, fmt.Errorf("list diagnostic artifacts: %w", err)
 	}
 	result := make([]backend.Record, 0, len(list.Items))
@@ -93,6 +117,7 @@ func Record(object *breakglassv1alpha1.DebugSessionArtifact) backend.Record {
 		SessionName:          object.Spec.SessionRef.Name,
 		SessionUID:           object.Spec.SessionRef.UID,
 		ArtifactID:           object.Spec.ArtifactID,
+		ArtifactUID:          string(object.UID),
 		TargetClusterUID:     object.Spec.TargetClusterUID,
 		TargetIdentityDigest: object.Spec.TargetIdentityDigest,
 		OperationEpoch:       object.Spec.OperationEpoch,

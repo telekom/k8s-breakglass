@@ -215,6 +215,14 @@ type Server struct {
 	AllowOIDCProxyRedirects *bool `yaml:"allowOIDCProxyRedirects,omitempty"`
 }
 
+// Artifacts configures the opt-in diagnostic artifact transport. Storage
+// credentials and provider endpoints are intentionally not represented here;
+// those are administrator-owned runtime dependencies supplied to the backend.
+type Artifacts struct {
+	Enabled        bool  `yaml:"enabled,omitempty"`
+	UploadMaxBytes int64 `yaml:"uploadMaxBytes,omitempty"`
+}
+
 // ServerTimeouts configures HTTP server timeouts.
 // Zero or unset values are replaced with production defaults via the GetX() accessor methods.
 type ServerTimeouts struct {
@@ -379,6 +387,7 @@ type Config struct {
 	Frontend   Frontend
 	Kubernetes Kubernetes
 	Telemetry  Telemetry
+	Artifacts  Artifacts
 }
 
 // Telemetry configures OpenTelemetry tracing.

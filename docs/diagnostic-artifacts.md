@@ -39,6 +39,13 @@ ambiguity is retained as `Unknown` until two independent empty inventory
 observations or an exact matching deletion provide evidence. Provider errors
 and credentials are not returned in API responses.
 
+The upload path repeats token and live-session checks after local archive
+validation and after provider publication. Download readers repeat the same
+check before each read, so revocation or expiry closes an in-flight stream.
+The collector runs as an init container before the uploader and shares a
+non-root output filesystem group; the full plan digest is carried in an
+annotation because Kubernetes labels cannot hold a 64-character digest.
+
 The feature remains disabled until the CRD, controller wiring, RBAC, storage
 configuration, API integration, fault matrix, and exact-head CI gates are
 reviewed together.

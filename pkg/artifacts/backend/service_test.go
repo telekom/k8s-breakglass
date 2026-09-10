@@ -43,9 +43,11 @@ func (repository *memoryRepository) ListBySession(context.Context, string, strin
 }
 
 type fakeStore struct {
-	backendID string
-	versions  []storage.Version
-	opened    bool
+	backendID         string
+	versions          []storage.Version
+	inventoryCalls    int
+	inventorySequence [][]storage.Version
+	opened            bool
 }
 
 func (store *fakeStore) Backend() string           { return storage.BackendLocal }
@@ -57,10 +59,32 @@ func (store *fakeStore) OpenVersion(context.Context, storage.Object, storage.Met
 	store.opened = true
 	return io.NopCloser(nilReader{}), storage.Metadata{}, nil
 }
-func (store *fakeStore) StatVersion(context.Context, storage.Object, storage.Metadata) (storage.Metadata, error) {
+func (store *fakeStore) StatVersion(_ context.Context, _ storage.Object, expected storage.Metadata) (storage.Metadata, error) {
+	if expected.VersionID != "" {
+		return expected, nil
+	}
 	return storage.Metadata{}, storage.ErrNotFound
 }
 func (store *fakeStore) Inventory(context.Context, storage.Object) ([]storage.Version, error) {
+	store.inventoryCalls++
+	if len(store.inventorySequence) > 0 {
+		index := store.inventoryCalls - 1
+		if index >= len(store.inventorySequence) {
+			index = len(store.inventorySequence) - 1
+		}
+		return append([]storage.Version(nil), store.inventorySequence[index]...), nil
+	}
+	return append([]storage.Version(nil), store.versions...), nil
+}
+func (store *fakeStore) InventoryKey(context.Context, string) ([]storage.Version, error) {
+	store.inventoryCalls++
+	if len(store.inventorySequence) > 0 {
+		index := store.inventoryCalls - 1
+		if index >= len(store.inventorySequence) {
+			index = len(store.inventorySequence) - 1
+		}
+		return append([]storage.Version(nil), store.inventorySequence[index]...), nil
+	}
 	return append([]storage.Version(nil), store.versions...), nil
 }
 func (store *fakeStore) DeleteVersion(context.Context, storage.Object, storage.Version) error {
@@ -90,7 +114,7 @@ func TestDownloadRejectsBindingMismatchBeforeProviderRead(t *testing.T) {
 	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "dsa-0123456789abcdef01234567", SessionUID: "uid", TargetIdentityDigest: "target", OperationEpoch: 2, State: StateAvailable, ExpiresAt: time.Unix(200, 0), Size: 1, SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", RuntimeBindingDigest: "binding"}}
 	store := &fakeStore{backendID: "backend"}
 	service := newServiceForTest(t, repository, store, allowAuthorizer{})
-	_, _, err := service.Download(context.Background(), "ns", "session", repository.record.ArtifactID, SessionBinding{UID: "other", TargetIdentityDigest: "target", OperationEpoch: 2})
+	_, _, err := service.Download(context.Background(), "ns", "session", repository.record.ArtifactID, SessionBinding{Namespace: "ns", Name: "session", UID: "other", TargetIdentityDigest: "target", OperationEpoch: 2})
 	require.ErrorIs(t, err, ErrForbidden)
 	require.False(t, store.opened)
 }
@@ -131,4 +155,53 @@ func TestListRequiresLiveBindingAndReturnsOnlyBoundMetadata(t *testing.T) {
 	public, err = service.List(context.Background(), "ns", "session", SessionBinding{Namespace: "ns", Name: "session", UID: "other", TargetIdentityDigest: "target", OperationEpoch: 2})
 	require.NoError(t, err)
 	require.Empty(t, public)
+}
+
+func TestUploadClaimsBindPlanRuntimeAndRecipe(t *testing.T) {
+	record := Record{PlanDigest: "plan", RuntimeBindingDigest: "runtime", Recipe: "system-summary.v1", RecipeVersion: 1}
+	claims := token.Claims{ArtifactPlanDigest: "plan", RuntimeBindingDigest: "runtime", Recipe: "system-summary.v1", RecipeVersion: 1}
+	require.NoError(t, validateUploadClaims(record, claims))
+	claims.ArtifactPlanDigest = "other"
+	require.ErrorIs(t, validateUploadClaims(record, claims), ErrForbidden)
+}
+
+func TestValidTransitionRejectsLifecycleResurrection(t *testing.T) {
+	for _, test := range []struct {
+		current State
+		next    State
+		valid   bool
+	}{
+		{StatePending, StateUploading, true},
+		{StateUploading, StateAvailable, true},
+		{StateAvailable, StateDeleting, true},
+		{StateDeleting, StateDeleted, true},
+		{StateUnknown, StateAvailable, false},
+		{StateDeleted, StateAvailable, false},
+		{StateExpired, StateDeleting, false},
+	} {
+		t.Run(string(test.current)+"-"+string(test.next), func(t *testing.T) {
+			require.Equal(t, test.valid, ValidTransition(test.current, test.next))
+		})
+	}
+}
+
+func TestDownloadRechecksLiveArtifactStateBeforeEachRead(t *testing.T) {
+	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "dsa-0123456789abcdef01234567", SessionUID: "uid", TargetIdentityDigest: "target", OperationEpoch: 2, State: StateAvailable, ExpiresAt: time.Unix(200, 0), Size: 1, SHA256: strings.Repeat("a", 64), RuntimeBindingDigest: "binding", Metadata: storage.Metadata{BackendInstanceID: "backend", Key: "dsa-0123456789abcdef01234567", VersionID: "version", RuntimeBindingDigest: "binding", Size: 1, SHA256: strings.Repeat("a", 64)}}}
+	service := newServiceForTest(t, repository, &fakeStore{backendID: "backend"}, allowAuthorizer{})
+	reader, _, err := service.Download(context.Background(), "ns", "session", repository.record.ArtifactID, SessionBinding{Namespace: "ns", Name: "session", UID: "uid", TargetIdentityDigest: "target", OperationEpoch: 2})
+	require.NoError(t, err)
+	repository.record.State = StateRevoked
+	_, err = reader.Read(make([]byte, 1))
+	require.ErrorIs(t, err, ErrExpired)
+	_ = reader.Close()
+}
+
+func TestCleanupRequiresTwoEmptyInventoriesAfterExactDelete(t *testing.T) {
+	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "dsa-0123456789abcdef01234567", RuntimeBindingDigest: "binding", State: StateAvailable, Generation: 1, Size: 4, SHA256: strings.Repeat("a", 64)}}
+	version := storage.Version{VersionID: "one", RuntimeBindingDigest: "binding", Size: 4, SHA256: repository.record.SHA256}
+	store := &fakeStore{backendID: "backend", inventorySequence: [][]storage.Version{{version}, {}, {}}}
+	service := newServiceForTest(t, repository, store, allowAuthorizer{})
+	require.NoError(t, service.Cleanup(context.Background(), repository.record, StateDeleted))
+	require.Equal(t, StateDeleted, repository.record.State)
+	require.Equal(t, 3, store.inventoryCalls)
 }

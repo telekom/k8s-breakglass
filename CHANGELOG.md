@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Recheck artifact upload token, session binding, plan/runtime/recipe claims, and
+  expiry immediately before provider publication and before making an artifact
+  available; stream downloads through the same live authorization fence.
+
+- Retain ambiguous cleanup evidence when status lost the object digest, require
+  repeated empty inventory observations, reject stale artifact UID/resource
+  versions, and render collector Jobs with ordered execution, a bounded digest
+  annotation, and the required output filesystem group.
+
 - Recover tracked resources after bounded create timeouts when session and
   operation markers and requested content match the persisted object.
 

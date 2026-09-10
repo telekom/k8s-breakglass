@@ -47,14 +47,16 @@ func TestValidateTokenSecretRequiresArtifactOwnerAndImmutableToken(t *testing.T)
 func TestValidateCollectorJobRequiresMatchingArtifactOwnership(t *testing.T) {
 	artifact := artifactForValidation()
 	controller := true
-	valid := batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: artifact.Namespace, Labels: map[string]string{"breakglass.t-caas.telekom.com/artifact": artifact.Spec.ArtifactID, "breakglass.t-caas.telekom.com/session-uid": string(artifact.Spec.SessionRef.UID)}, OwnerReferences: []metav1.OwnerReference{{Kind: "DebugSessionArtifact", UID: artifact.UID, Controller: &controller}}}}
+	group := int64(65532)
+	valid := batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: artifact.Namespace, Annotations: map[string]string{"breakglass.t-caas.telekom.com/plan-sha256": artifact.Spec.PlanDigest}, Labels: map[string]string{"breakglass.t-caas.telekom.com/artifact": artifact.Spec.ArtifactID, "breakglass.t-caas.telekom.com/session-uid": string(artifact.Spec.SessionRef.UID)}, OwnerReferences: []metav1.OwnerReference{{Kind: "DebugSessionArtifact", UID: artifact.UID, Controller: &controller}}}, Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{"breakglass.t-caas.telekom.com/plan-sha256": artifact.Spec.PlanDigest}}, Spec: corev1.PodSpec{AutomountServiceAccountToken: boolPtr(false), SecurityContext: &corev1.PodSecurityContext{FSGroup: &group}, InitContainers: []corev1.Container{{Name: "collector"}}, Containers: []corev1.Container{{Name: "uploader"}}}}}}
 	if err := validateCollectorJob(valid, artifact); err != nil {
 		t.Fatalf("valid collector Job rejected: %v", err)
 	}
 	for name, mutate := range map[string]func(*batchv1.Job){
-		"wrong artifact label": func(job *batchv1.Job) { job.Labels["breakglass.t-caas.telekom.com/artifact"] = "other" },
-		"wrong owner":          func(job *batchv1.Job) { job.OwnerReferences[0].UID = "other" },
-		"wrong namespace":      func(job *batchv1.Job) { job.Namespace = "other" },
+		"wrong artifact label":    func(job *batchv1.Job) { job.Labels["breakglass.t-caas.telekom.com/artifact"] = "other" },
+		"wrong owner":             func(job *batchv1.Job) { job.OwnerReferences[0].UID = "other" },
+		"wrong namespace":         func(job *batchv1.Job) { job.Namespace = "other" },
+		"side-by-side containers": func(job *batchv1.Job) { job.Spec.Template.Spec.InitContainers = nil },
 	} {
 		t.Run(name, func(t *testing.T) {
 			copy := valid.DeepCopy()

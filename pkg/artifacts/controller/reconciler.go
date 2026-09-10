@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/artifacts/archive"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	artifactjob "github.com/telekom/k8s-breakglass/pkg/artifacts/job"
 	artifactkube "github.com/telekom/k8s-breakglass/pkg/artifacts/kube"
@@ -146,8 +147,21 @@ func validateTokenSecret(secret corev1.Secret, object breakglassv1alpha1.DebugSe
 }
 
 func validateCollectorJob(job batchv1.Job, object breakglassv1alpha1.DebugSessionArtifact) error {
-	if job.Namespace != object.Namespace || job.Labels["breakglass.t-caas.telekom.com/artifact"] != object.Spec.ArtifactID || job.Labels["breakglass.t-caas.telekom.com/session-uid"] != string(object.Spec.SessionRef.UID) {
+	if job.Namespace != object.Namespace || job.Labels["breakglass.t-caas.telekom.com/artifact"] != object.Spec.ArtifactID || job.Labels["breakglass.t-caas.telekom.com/session-uid"] != string(object.Spec.SessionRef.UID) || job.Annotations["breakglass.t-caas.telekom.com/plan-sha256"] != object.Spec.PlanDigest {
 		return errors.New("diagnostic artifact collector Job does not match the artifact binding")
+	}
+	pod := job.Spec.Template.Spec
+	if len(pod.InitContainers) != 1 || pod.InitContainers[0].Name != "collector" || len(pod.Containers) != 1 || pod.Containers[0].Name != "uploader" {
+		return errors.New("diagnostic artifact collector Job does not enforce collector-before-uploader ordering")
+	}
+	if pod.SecurityContext == nil || pod.SecurityContext.FSGroup == nil || *pod.SecurityContext.FSGroup != 65532 || pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken {
+		return errors.New("diagnostic artifact collector Job does not satisfy its filesystem and token contract")
+	}
+	if job.Spec.Template.Annotations["breakglass.t-caas.telekom.com/plan-sha256"] != object.Spec.PlanDigest {
+		return errors.New("diagnostic artifact collector Pod template does not carry the full plan digest")
+	}
+	if object.Spec.Recipe == archive.CrashdumpCollectionRecipe && object.Spec.Node != nil && pod.NodeName != *object.Spec.Node {
+		return errors.New("diagnostic artifact crashdump Job is not pinned to its approved node")
 	}
 	for _, owner := range job.OwnerReferences {
 		if owner.Kind == "DebugSessionArtifact" && owner.UID == object.UID && owner.Controller != nil && *owner.Controller {

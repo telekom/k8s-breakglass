@@ -25,17 +25,23 @@ func TestBuildSystemSummaryJobHasFixedCommandsAndNoProviderInputs(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
-	if len(job.Spec.Template.Spec.Containers) != 2 {
-		t.Fatalf("container count = %d, want 2", len(job.Spec.Template.Spec.Containers))
+	if len(job.Spec.Template.Spec.InitContainers) != 1 || len(job.Spec.Template.Spec.Containers) != 1 {
+		t.Fatalf("collector/uploader ordering = %d init, %d app, want one each", len(job.Spec.Template.Spec.InitContainers), len(job.Spec.Template.Spec.Containers))
 	}
-	collector := job.Spec.Template.Spec.Containers[0]
+	if got := job.Annotations["breakglass.t-caas.telekom.com/plan-sha256"]; got != config.PlanDigest || len(job.Labels["breakglass.t-caas.telekom.com/plan-sha256"]) > 63 {
+		t.Fatalf("plan digest annotation/label = %q/%q", got, job.Labels["breakglass.t-caas.telekom.com/plan-sha256"])
+	}
+	if job.Spec.Template.Spec.SecurityContext == nil || job.Spec.Template.Spec.SecurityContext.FSGroup == nil || *job.Spec.Template.Spec.SecurityContext.FSGroup != 65532 {
+		t.Fatal("Job must apply the shared output fsGroup")
+	}
+	collector := job.Spec.Template.Spec.InitContainers[0]
 	if strings.Join(collector.Command, " ") != "/usr/local/bin/diagnostic-artifact-collector collect --recipe system-summary.v1 --output /output/artifact.tar.gz" {
 		t.Fatalf("collector command = %q", collector.Command)
 	}
 	if len(job.Spec.Template.Spec.Volumes) != 1 || job.Spec.Template.Spec.Volumes[0].HostPath != nil {
 		t.Fatalf("summary job unexpectedly has a host path")
 	}
-	for _, container := range job.Spec.Template.Spec.Containers {
+	for _, container := range append(job.Spec.Template.Spec.InitContainers, job.Spec.Template.Spec.Containers...) {
 		for _, env := range container.Env {
 			if strings.Contains(strings.ToLower(env.Name), "s3") || strings.Contains(strings.ToLower(env.Name), "credential") || strings.Contains(strings.ToLower(env.Name), "bucket") {
 				t.Fatalf("provider configuration leaked into Job env: %s", env.Name)

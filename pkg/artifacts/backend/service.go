@@ -43,6 +43,31 @@ const (
 	StateUnknown   State = "Unknown"
 )
 
+// ValidTransition enforces the durable lifecycle monotonicity. Unknown is a
+// safe forward state; no terminal or ambiguous result can be resurrected.
+func ValidTransition(current, next State) bool {
+	if current == "" {
+		current = StatePending
+	}
+	if current == next {
+		return true
+	}
+	switch current {
+	case StatePending:
+		return next == StateUploading || next == StateExpired || next == StateRevoked || next == StateUnknown
+	case StateUploading:
+		return next == StateAvailable || next == StateDeleting || next == StateExpired || next == StateRevoked || next == StateUnknown
+	case StateAvailable:
+		return next == StateDeleting || next == StateExpired || next == StateRevoked || next == StateUnknown
+	case StateDeleting:
+		return next == StateDeleted || next == StateExpired || next == StateRevoked || next == StateUnknown
+	case StateUnknown:
+		return next == StateDeleting || next == StateDeleted || next == StateExpired || next == StateRevoked || next == StateUnknown
+	default:
+		return false
+	}
+}
+
 // Record is the storage-neutral durable representation used by Repository.
 // Provider keys and credentials are deliberately absent; the backend derives
 // the object key from ID and the configured store instance.
@@ -51,6 +76,7 @@ type Record struct {
 	SessionName          string
 	SessionUID           string
 	ArtifactID           string
+	ArtifactUID          string
 	TargetClusterUID     string
 	TargetIdentityDigest string
 	RuntimeBindingDigest string
@@ -186,6 +212,9 @@ func (service *Service) Upload(ctx context.Context, encodedToken string, route s
 	if err := service.authorize(ctx, record, claims.SessionUID, claims.TargetIdentityDigest, claims.OperationEpoch); err != nil {
 		return PublicRecord{}, err
 	}
+	if err := validateUploadClaims(record, claims); err != nil {
+		return PublicRecord{}, ErrForbidden
+	}
 	if record.UploadJTI != claims.JTI && record.UploadJTIHash != jtiHash(claims.JTI) {
 		return PublicRecord{}, ErrForbidden
 	}
@@ -200,25 +229,31 @@ func (service *Service) Upload(ctx context.Context, encodedToken string, route s
 	}
 	record.State = StateUploading
 	record.Generation++
-	if err := service.repository.Update(ctx, record, record.Generation-1); err != nil {
+	if err := service.persist(ctx, &record, record.Generation-1); err != nil {
 		return PublicRecord{}, err
 	}
 
 	staged, size, digest, err := service.stage(ctx, source, record.MaxBytes)
 	if err != nil {
-		service.restorePending(ctx, record)
+		service.restoreUnknown(ctx, record)
 		return PublicRecord{}, err
 	}
 	defer func() { _ = staged.Close(); _ = os.Remove(staged.Name()) }()
 	validation, err := archive.Validate(ctx, staged, size, record.Expected, archive.Limits{MaxCompressedBytes: record.MaxBytes})
 	if err != nil {
-		service.restorePending(ctx, record)
+		service.restoreUnknown(ctx, record)
 		return PublicRecord{}, fmt.Errorf("validate diagnostic artifact: %w", err)
 	}
 	if validation.CompressedSHA256 != digest {
-		service.restorePending(ctx, record)
+		service.restoreUnknown(ctx, record)
 		return PublicRecord{}, errors.New("validated artifact digest changed during staging")
 	}
+	current, err := service.recheckUpload(ctx, encodedToken, claims, record)
+	if err != nil {
+		service.restoreUploadState(ctx, record, err)
+		return PublicRecord{}, err
+	}
+	record = current
 	if _, err := staged.Seek(0, io.SeekStart); err != nil {
 		service.restoreUnknown(ctx, record)
 		return PublicRecord{}, fmt.Errorf("rewind staged diagnostic artifact: %w", err)
@@ -233,15 +268,73 @@ func (service *Service) Upload(ctx context.Context, encodedToken string, route s
 			return PublicRecord{}, err
 		}
 	}
+	current, checkErr := service.recheckUpload(ctx, encodedToken, claims, record)
+	if checkErr != nil {
+		cleanupRecord := record
+		cleanupRecord.Size, cleanupRecord.SHA256, cleanupRecord.Metadata = size, digest, metadata
+		if latest, getErr := service.repository.Get(ctx, claims.SessionNamespace, claims.SessionName, claims.ArtifactID); getErr == nil {
+			cleanupRecord = latest
+			cleanupRecord.Size, cleanupRecord.SHA256, cleanupRecord.Metadata = size, digest, metadata
+		}
+		terminal := StateRevoked
+		if errors.Is(checkErr, ErrExpired) {
+			terminal = StateExpired
+		}
+		if cleanupErr := service.Cleanup(ctx, cleanupRecord, terminal); cleanupErr != nil {
+			return PublicRecord{}, errors.Join(checkErr, cleanupErr)
+		}
+		return PublicRecord{}, checkErr
+	}
+	record = current
 	record.State = StateAvailable
 	record.Generation++
 	record.Size = size
 	record.SHA256 = digest
 	record.Metadata = metadata
-	if err := service.repository.Update(ctx, record, record.Generation-1); err != nil {
+	if err := service.persist(ctx, &record, record.Generation-1); err != nil {
+		// The provider object exists but its Available CAS was not accepted.
+		// Preserve that uncertainty for reconciliation instead of leaving an
+		// apparently publishable Uploading record that could be retried blindly.
+		service.restoreUnknown(ctx, record)
 		return PublicRecord{}, fmt.Errorf("persist available diagnostic artifact: %w", err)
 	}
 	return service.Public(record), nil
+}
+
+func validateUploadClaims(record Record, claims token.Claims) error {
+	if claims.ArtifactPlanDigest != record.PlanDigest || claims.RuntimeBindingDigest != record.RuntimeBindingDigest || claims.Recipe != record.Recipe || claims.RecipeVersion != record.RecipeVersion {
+		return ErrForbidden
+	}
+	return nil
+}
+
+func (service *Service) recheckUpload(ctx context.Context, encodedToken string, claims token.Claims, expected Record) (Record, error) {
+	if _, err := service.tokens.Verify(encodedToken, service.now().UTC()); err != nil {
+		if errors.Is(err, token.ErrExpired) {
+			return Record{}, ErrExpired
+		}
+		return Record{}, ErrForbidden
+	}
+	current, err := service.repository.Get(ctx, claims.SessionNamespace, claims.SessionName, claims.ArtifactID)
+	if err != nil {
+		return Record{}, ErrConflict
+	}
+	if current.Generation != expected.Generation || current.State != StateUploading {
+		return Record{}, ErrConflict
+	}
+	if err := service.authorize(ctx, current, claims.SessionUID, claims.TargetIdentityDigest, claims.OperationEpoch); err != nil {
+		return Record{}, err
+	}
+	if err := validateUploadClaims(current, claims); err != nil {
+		return Record{}, ErrForbidden
+	}
+	if current.UploadJTI != claims.JTI && current.UploadJTIHash != jtiHash(claims.JTI) {
+		return Record{}, ErrForbidden
+	}
+	if current.ExpiresAt.IsZero() || !service.now().Before(current.ExpiresAt) {
+		return Record{}, ErrExpired
+	}
+	return current, nil
 }
 
 func jtiHash(value string) string {
@@ -252,6 +345,12 @@ func jtiHash(value string) string {
 // Download authorizes against the live session before resolving an exact
 // provider version and returning bytes.
 func (service *Service) Download(ctx context.Context, namespace, sessionName, artifactID string, binding SessionBinding) (io.ReadCloser, PublicRecord, error) {
+	if ctx == nil {
+		return nil, PublicRecord{}, ErrForbidden
+	}
+	if binding.Namespace != namespace || binding.Name != sessionName {
+		return nil, PublicRecord{}, ErrForbidden
+	}
 	record, err := service.repository.Get(ctx, namespace, sessionName, artifactID)
 	if err != nil {
 		return nil, PublicRecord{}, ErrForbidden
@@ -268,6 +367,14 @@ func (service *Service) Download(ctx context.Context, namespace, sessionName, ar
 	if record.State != StateAvailable || record.ExpiresAt.IsZero() || !service.now().Before(record.ExpiresAt) {
 		return nil, PublicRecord{}, ErrExpired
 	}
+	latest, err := service.repository.Get(ctx, namespace, sessionName, artifactID)
+	if err != nil {
+		return nil, PublicRecord{}, ErrForbidden
+	}
+	if err := service.authorizeDownload(ctx, latest, binding); err != nil {
+		return nil, PublicRecord{}, err
+	}
+	record = latest
 	metadata, err := service.resolveMetadata(ctx, record)
 	if err != nil {
 		return nil, PublicRecord{}, err
@@ -276,8 +383,46 @@ func (service *Service) Download(ctx context.Context, namespace, sessionName, ar
 	if err != nil {
 		return nil, PublicRecord{}, err
 	}
-	return reader, service.Public(record), nil
+	return &authorizedReadCloser{ctx: ctx, reader: reader, service: service, namespace: namespace, sessionName: sessionName, artifactID: artifactID, binding: binding}, service.Public(record), nil
 }
+
+func (service *Service) authorizeDownload(ctx context.Context, record Record, binding SessionBinding) error {
+	if record.Namespace != binding.Namespace || record.SessionName != binding.Name {
+		return ErrForbidden
+	}
+	if record.State != StateAvailable || record.ExpiresAt.IsZero() || !service.now().Before(record.ExpiresAt) {
+		return ErrExpired
+	}
+	if record.TargetClusterUID != "" && binding.TargetClusterUID != record.TargetClusterUID {
+		return ErrForbidden
+	}
+	return service.authorize(ctx, record, binding.UID, binding.TargetIdentityDigest, binding.OperationEpoch)
+}
+
+type authorizedReadCloser struct {
+	ctx         context.Context
+	reader      io.ReadCloser
+	service     *Service
+	namespace   string
+	sessionName string
+	artifactID  string
+	binding     SessionBinding
+}
+
+func (reader *authorizedReadCloser) Read(buffer []byte) (int, error) {
+	record, err := reader.service.repository.Get(reader.ctx, reader.namespace, reader.sessionName, reader.artifactID)
+	if err != nil {
+		_ = reader.reader.Close()
+		return 0, ErrForbidden
+	}
+	if err := reader.service.authorizeDownload(reader.ctx, record, reader.binding); err != nil {
+		_ = reader.reader.Close()
+		return 0, err
+	}
+	return reader.reader.Read(buffer)
+}
+
+func (reader *authorizedReadCloser) Close() error { return reader.reader.Close() }
 
 // Cleanup marks a record for deletion and removes only versions whose stored
 // identity matches the immutable record. Absence is treated as complete only
@@ -292,23 +437,65 @@ func (service *Service) Cleanup(ctx context.Context, record Record, terminal Sta
 	if record.State != StateDeleting {
 		record.State = StateDeleting
 		record.Generation++
-		if err := service.repository.Update(ctx, record, record.Generation-1); err != nil {
+		if err := service.persist(ctx, &record, record.Generation-1); err != nil {
 			return err
 		}
 	}
 	object := storage.Object{Key: record.ArtifactID, RuntimeBindingDigest: record.RuntimeBindingDigest, Size: record.Size, SHA256: record.SHA256}
 	if record.Size < 1 || record.SHA256 == "" {
-		record.State = terminal
-		record.Generation++
-		return service.repository.Update(ctx, record, record.Generation-1)
+		keyInventory, ok := service.store.(storage.KeyInventory)
+		if !ok {
+			record.State = StateUnknown
+			record.CleanupAmbiguous = true
+			record.Generation++
+			_ = service.persist(ctx, &record, record.Generation-1)
+			return storage.ErrAmbiguous
+		}
+		emptyKeyObservations := 0
+		for attempt := 0; attempt < 6 && record.Size < 1 && record.SHA256 == "" && emptyKeyObservations < 2; attempt++ {
+			versions, err := keyInventory.InventoryKey(ctx, object.Key)
+			if err != nil {
+				record.State = StateUnknown
+				record.CleanupAmbiguous = true
+				record.Generation++
+				_ = service.persist(ctx, &record, record.Generation-1)
+				return err
+			}
+			found := false
+			for _, version := range versions {
+				if version.DeleteMarker {
+					continue
+				}
+				found = true
+				if version.RuntimeBindingDigest != record.RuntimeBindingDigest || version.Size < 1 || version.SHA256 == "" {
+					record.State = StateUnknown
+					record.CleanupAmbiguous = true
+					record.Generation++
+					_ = service.persist(ctx, &record, record.Generation-1)
+					return storage.ErrConflict
+				}
+				record.Size, record.SHA256 = version.Size, version.SHA256
+				object.Size, object.SHA256 = record.Size, record.SHA256
+				break
+			}
+			if !found {
+				emptyKeyObservations++
+			}
+		}
+		if record.Size < 1 || record.SHA256 == "" {
+			record.State = terminal
+			record.Generation++
+			return service.persist(ctx, &record, record.Generation-1)
+		}
 	}
-	for observation := 0; observation < 2; observation++ {
+	emptyObservations := 0
+	for attempt := 0; attempt < 6 && emptyObservations < 2; attempt++ {
 		versions, err := service.store.Inventory(ctx, object)
 		if err != nil {
 			record.State = StateUnknown
 			record.CleanupAmbiguous = true
 			record.Generation++
-			_ = service.repository.Update(ctx, record, record.Generation-1)
+			_ = service.persist(ctx, &record, record.Generation-1)
 			return err
 		}
 		found := false
@@ -320,7 +507,7 @@ func (service *Service) Cleanup(ctx context.Context, record Record, terminal Sta
 				record.State = StateUnknown
 				record.CleanupAmbiguous = true
 				record.Generation++
-				_ = service.repository.Update(ctx, record, record.Generation-1)
+				_ = service.persist(ctx, &record, record.Generation-1)
 				return ErrConflict
 			}
 			found = true
@@ -329,13 +516,22 @@ func (service *Service) Cleanup(ctx context.Context, record Record, terminal Sta
 			}
 		}
 		if found {
+			emptyObservations = 0
 			continue
 		}
+		emptyObservations++
+	}
+	if emptyObservations < 2 {
+		record.State = StateUnknown
+		record.CleanupAmbiguous = true
+		record.Generation++
+		_ = service.persist(ctx, &record, record.Generation-1)
+		return storage.ErrAmbiguous
 	}
 	record.State = terminal
 	record.Generation++
 	record.CleanupAmbiguous = false
-	return service.repository.Update(ctx, record, record.Generation-1)
+	return service.persist(ctx, &record, record.Generation-1)
 }
 
 func (service *Service) authorize(ctx context.Context, record Record, sessionUID, targetDigest string, epoch uint64) error {
@@ -345,16 +541,33 @@ func (service *Service) authorize(ctx context.Context, record Record, sessionUID
 	return service.authorizer.AuthorizeArtifact(ctx, SessionBinding{Namespace: record.Namespace, Name: record.SessionName, UID: sessionUID, TargetClusterUID: record.TargetClusterUID, TargetIdentityDigest: targetDigest, OperationEpoch: epoch})
 }
 
-func (service *Service) restorePending(ctx context.Context, record Record) {
-	record.State = StatePending
+func (service *Service) restoreUploadState(ctx context.Context, record Record, cause error) {
+	if errors.Is(cause, ErrForbidden) {
+		record.State = StateRevoked
+	} else if errors.Is(cause, ErrExpired) {
+		record.State = StateExpired
+	} else {
+		record.State = StateUnknown
+	}
 	record.Generation++
-	_ = service.repository.Update(ctx, record, record.Generation-1)
+	_ = service.persist(ctx, &record, record.Generation-1)
 }
 
 func (service *Service) restoreUnknown(ctx context.Context, record Record) {
 	record.State = StateUnknown
 	record.Generation++
-	_ = service.repository.Update(ctx, record, record.Generation-1)
+	_ = service.persist(ctx, &record, record.Generation-1)
+}
+
+func (service *Service) persist(ctx context.Context, record *Record, expected int64) error {
+	if err := service.repository.Update(ctx, *record, expected); err != nil {
+		return err
+	}
+	// The repository has consumed this resourceVersion. A later transition in
+	// the same operation is protected by the lifecycle revision; the next
+	// fresh read repopulates ResourceVersion for its first CAS.
+	record.ResourceVersion = ""
+	return nil
 }
 
 func (service *Service) stage(ctx context.Context, source io.Reader, maxBytes int64) (*os.File, int64, string, error) {

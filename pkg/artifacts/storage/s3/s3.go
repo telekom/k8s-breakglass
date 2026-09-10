@@ -266,6 +266,43 @@ func (store *Store) Inventory(ctx context.Context, object artifactstorage.Object
 	return versions, nil
 }
 
+// InventoryKey recovers exact provider metadata when a controller restart
+// lost the durable size/digest fields. The backend compares the result with
+// the immutable runtime binding before allowing any delete.
+func (store *Store) InventoryKey(ctx context.Context, logicalKey string) ([]artifactstorage.Version, error) {
+	if store == nil || store.client == nil {
+		return nil, errors.New("S3 artifact store is closed")
+	}
+	key, err := store.key(logicalKey)
+	if err != nil {
+		return nil, err
+	}
+	paginator := awss3.NewListObjectVersionsPaginator(store.client, &awss3.ListObjectVersionsInput{Bucket: aws.String(store.config.Bucket), Prefix: aws.String(key), MaxKeys: aws.Int32(100)})
+	versions := make([]artifactstorage.Version, 0, 2)
+	for paginator.HasMorePages() {
+		page, pageErr := paginator.NextPage(ctx)
+		if pageErr != nil {
+			return nil, fmt.Errorf("inventory S3 artifact key: %w", pageErr)
+		}
+		for _, entry := range page.Versions {
+			if aws.ToString(entry.Key) != key {
+				continue
+			}
+			metadata, headErr := store.headVersion(ctx, artifactstorage.Object{Key: logicalKey}, key, aws.ToString(entry.VersionId))
+			if headErr != nil {
+				return nil, headErr
+			}
+			versions = append(versions, artifactstorage.Version{VersionID: metadata.VersionID, RuntimeBindingDigest: metadata.RuntimeBindingDigest, Size: metadata.Size, SHA256: metadata.SHA256, ETag: metadata.ETag, ProviderChecksum: metadata.ProviderChecksum, ModifiedAt: metadata.ModifiedAt})
+		}
+		for _, marker := range page.DeleteMarkers {
+			if aws.ToString(marker.Key) == key {
+				versions = append(versions, artifactstorage.Version{VersionID: aws.ToString(marker.VersionId), DeleteMarker: true, ModifiedAt: aws.ToTime(marker.LastModified)})
+			}
+		}
+	}
+	return versions, nil
+}
+
 func (store *Store) DeleteVersion(ctx context.Context, object artifactstorage.Object, version artifactstorage.Version) error {
 	if err := store.ready(object); err != nil {
 		return err
