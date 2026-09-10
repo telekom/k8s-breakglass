@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve auxiliary retention for legacy source-less references and retain mismatched UID evidence during cleanup.
+
 - Align cleanup retention checks for partial auxiliary and pod-template evidence across debug sessions and ClusterConfig deletion.
 
 - Preserve per-template accounting repair intervals and metric publication order; align the built-in rejected mock session and CLI rejection test with `Rejected`.
