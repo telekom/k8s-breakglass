@@ -10,6 +10,11 @@ canonical merge identity, with the historical `copyUID` field as a legacy
 fallback. This preserves a same-name replacement recorded concurrently while
 cleanup still handles sessions written by older versions.
 
+Tracked cleanup inventory identity also includes the persisted
+`createOperationID`. A concurrent same-coordinate resource created by a
+different operation therefore remains tracked when cleanup removes its older
+predecessor.
+
 Pod labels are discovery hints. Direct debug Pods require their recorded UID.
 DaemonSet and Deployment children require a live, UID-matched controller chain
 (including the Deployment's ReplicaSet) and matching immutable workload
