@@ -17,7 +17,7 @@ limitations under the License.
 package breakglass
 
 import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
@@ -28,21 +28,5 @@ import (
 // - It has not expired (expiresAt is nil or in the future)
 // - It is effective (effectiveFrom is nil or in the past)
 func IsBindingActive(binding *breakglassv1alpha1.DebugSessionClusterBinding) bool {
-	if binding.Spec.Disabled {
-		return false
-	}
-
-	now := metav1.Now()
-
-	// Check if binding has expired
-	if binding.Spec.ExpiresAt != nil && binding.Spec.ExpiresAt.Before(&now) {
-		return false
-	}
-
-	// Check if binding is not yet effective
-	if binding.Spec.EffectiveFrom != nil && now.Before(binding.Spec.EffectiveFrom) {
-		return false
-	}
-
-	return true
+	return utils.IsDebugSessionBindingActive(binding)
 }
