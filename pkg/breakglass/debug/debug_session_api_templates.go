@@ -286,7 +286,7 @@ func userHasAnyExactGroup(userGroups, allowedGroups []string) bool {
 
 func filterExtraDeployVariablesForRequester(vars []breakglassv1alpha1.ExtraDeployVariable, requester debugTemplateRequester) []breakglassv1alpha1.ExtraDeployVariable {
 	if len(vars) == 0 {
-		return nil
+		return []breakglassv1alpha1.ExtraDeployVariable{}
 	}
 
 	filtered := make([]breakglassv1alpha1.ExtraDeployVariable, 0, len(vars))
