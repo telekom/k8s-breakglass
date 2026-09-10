@@ -545,7 +545,7 @@ func (wc *WebhookController) liveDebugSessionAccess(ctx context.Context, usernam
 	if err != nil || targetPod == nil || targetPod.UID == "" || string(targetPod.UID) != allowedPodUID {
 		return false, ""
 	}
-	reader := client.Reader(wc.sesManager.Reader())
+	reader := wc.sesManager.Reader()
 	for _, participant := range ds.Status.Participants {
 		if participant.User == username && participant.LeftAt == nil &&
 			debugParticipantIssuerMatches(ctx, reader, participant, issuer) &&
