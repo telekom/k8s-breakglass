@@ -1305,6 +1305,7 @@ jobs:
           timeout 10 kubectl get breakglasssession -A -o yaml > "$DIAG_DIR/resources/sessions.yaml" 2>&1 &
           timeout 10 kubectl get denypolicy -A -o yaml > "$DIAG_DIR/resources/denypolicies.yaml" 2>&1 &
           timeout 10 kubectl get debugsession -A -o yaml > "$DIAG_DIR/resources/debugsessions.yaml" 2>&1 &
+          timeout 10 kubectl get debugsessionartifact -A -o yaml > "$DIAG_DIR/resources/debugsessionartifacts.yaml" 2>&1 &
           timeout 10 kubectl get debugsessiontemplate -A -o yaml > "$DIAG_DIR/resources/debugsessiontemplates.yaml" 2>&1 &
           timeout 10 kubectl get auditconfig -A -o yaml > "$DIAG_DIR/resources/auditconfigs.yaml" 2>&1 &
           wait
@@ -1351,6 +1352,7 @@ jobs:
           echo "--- Test results ---"
           cp e2e-core-results.txt "$DIAG_DIR/" 2>/dev/null || true
           cp e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
+          cp e2e-artifact-results.txt "$DIAG_DIR/" 2>/dev/null || true
           cp oidc-e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
           
           # ===========================================
