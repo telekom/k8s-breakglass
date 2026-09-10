@@ -1066,7 +1066,10 @@ POST /api/debugSessions/:name/renew
 
 Extends the session duration. Subject to template constraints (`maxDuration`,
 `maxRenewals`); the renewed expiration cannot exceed
-`status.startsAt + maxDuration`. Only the requester or an active `owner` or
+`status.startsAt + maxDuration`. For a Job-backed workload, the renewed expiry
+and count are committed before the tracked Job's `activeDeadlineSeconds` is
+synchronized. A target update failure is retried by the active reconciler and
+does not reject an otherwise committed renewal. Only the requester or an active `owner` or
 `participant` status entry can renew; `viewer` entries and participants with
 `leftAt` set cannot renew sessions.
 
@@ -1164,6 +1167,10 @@ Returns templates the current requester can use directly through
 `DebugSessionTemplate.spec.allowed` or indirectly through at least one active
 matching `DebugSessionClusterBinding`. User, email, group, and binding-granted
 access are all considered before a template is included in the response.
+
+`workloadType` accepts `DaemonSet`, `Deployment`, or `Job`. `Job` is the
+bounded one-shot workload form; it is not normalized into a long-running
+Deployment or DaemonSet.
 
 **Query Parameters:**
 - `includeHidden` (optional, boolean): When `true`, includes templates marked `hidden`.

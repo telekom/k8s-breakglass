@@ -64,6 +64,23 @@ func TestDeleteTrackedResourceIdentityAndLegacyRecovery(t *testing.T) {
 	}
 }
 
+func TestCleanupDeployedResourcesRetiresLegacyReplacement(t *testing.T) {
+	session := newTestDebugSession("legacy-replacement", "template", "cluster", "user@example.com")
+	session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{{
+		APIVersion: "v1", Kind: "Pod", Namespace: "default", Name: "debug-pod", Source: "debug-pod",
+	}}
+	session.Annotations = map[string]string{LegacyCleanupUIDsAnnotation: `{"v1/Pod/default/debug-pod":"original-uid"}`}
+	replacement := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "debug-pod", Namespace: "default", UID: "replacement-uid"}}
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(replacement).Build()
+	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+	require.NoError(t, controller.cleanupDeployedResources(context.Background(), session, target, false, false))
+	require.Empty(t, session.Status.DeployedResources)
+	var retained corev1.Pod
+	require.NoError(t, target.Get(context.Background(), client.ObjectKeyFromObject(replacement), &retained))
+	require.Equal(t, types.UID("replacement-uid"), retained.UID)
+}
+
 func TestDeleteTrackedResourceUsesUIDPrecondition(t *testing.T) {
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns", UID: "original"}}
 	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(pod).WithInterceptorFuncs(interceptor.Funcs{

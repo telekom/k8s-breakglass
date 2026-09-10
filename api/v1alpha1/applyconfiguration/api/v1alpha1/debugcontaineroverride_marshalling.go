@@ -26,12 +26,14 @@ func (b *DebugContainerOverrideApplyConfiguration) MarshalJSON() ([]byte, error)
 		Resources       *corev1.ResourceRequirements `json:"resources,omitempty"`
 		Env             []corev1.EnvVar              `json:"env,omitempty"`
 	}
+
 	value := payload{
 		Name:            b.Name,
 		SecurityContext: b.SecurityContext,
 		Resources:       b.Resources,
 		Env:             b.Env,
 	}
+
 	if b.Command != nil {
 		command := make([]string, len(b.Command))
 		copy(command, b.Command)
@@ -42,5 +44,6 @@ func (b *DebugContainerOverrideApplyConfiguration) MarshalJSON() ([]byte, error)
 		copy(args, b.Args)
 		value.Args = &args
 	}
+
 	return json.Marshal(value)
 }

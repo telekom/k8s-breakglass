@@ -900,12 +900,26 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 
 	// Validate constraints if specified
 	if template.Spec.Constraints != nil {
-		if template.Spec.Constraints.MaxDuration != "" {
-			result.Errors = append(result.Errors, validateDurationFormat(template.Spec.Constraints.MaxDuration, specPath.Child("constraints").Child("maxDuration"))...)
+		constraintsPath := specPath.Child("constraints")
+		constraintDurations := []struct {
+			name  string
+			value string
+		}{
+			{name: "maxDuration", value: template.Spec.Constraints.MaxDuration},
+			{name: "defaultDuration", value: template.Spec.Constraints.DefaultDuration},
 		}
-		if template.Spec.Constraints.DefaultDuration != "" {
-			result.Errors = append(result.Errors, validateDurationFormat(template.Spec.Constraints.DefaultDuration, specPath.Child("constraints").Child("defaultDuration"))...)
+		for _, item := range constraintDurations {
+			if item.value != "" {
+				result.Errors = append(result.Errors, validatePositiveDurationFormat(item.value, constraintsPath.Child(item.name))...)
+			}
 		}
+	}
+
+	if template.Spec.Audit != nil && template.Spec.Audit.RecordingRetention != "" {
+		result.Errors = append(result.Errors, validatePositiveDurationFormat(
+			template.Spec.Audit.RecordingRetention,
+			specPath.Child("audit").Child("recordingRetention"),
+		)...)
 	}
 
 	// Validate schedulingOptions if specified
@@ -957,13 +971,6 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 	// Validate gracePeriodBeforeExpiry is a valid duration
 	if template.Spec.GracePeriodBeforeExpiry != "" {
 		result.Errors = append(result.Errors, validateDurationFormat(template.Spec.GracePeriodBeforeExpiry, specPath.Child("gracePeriodBeforeExpiry"))...)
-	}
-
-	if template.Spec.Audit != nil && template.Spec.Audit.EnableTerminalRecording &&
-		template.Spec.Audit.RecordingRetention != "" {
-		result.Errors = append(result.Errors,
-			validatePositiveDurationFormat(template.Spec.Audit.RecordingRetention,
-				specPath.Child("audit").Child("recordingRetention"))...)
 	}
 
 	// Validate podCopy config if specified

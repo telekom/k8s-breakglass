@@ -159,6 +159,7 @@ func TestValidateRequestedDebugSessionDuration(t *testing.T) {
 		{name: "within max", requested: "90m"},
 		{name: "zero rejected", requested: "0", wantErr: true, errContains: "positive"},
 		{name: "negative rejected", requested: "-1h", wantErr: true, errContains: "positive"},
+		{name: "explicit plus rejected", requested: "+1h", wantErr: true, errContains: "invalid requestedDuration"},
 		{name: "above max rejected", requested: "3h", wantErr: true, errContains: "exceeds maximum duration 2h"},
 		{name: "invalid rejected", requested: "not-a-duration", wantErr: true, errContains: "invalid requestedDuration"},
 	}

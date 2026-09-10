@@ -244,13 +244,19 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	}
 
 	newRenewalCount := session.Status.RenewalCount + 1
-
 	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.ExpiresAt = &newExpiry
 		status.RenewalCount = newRenewalCount
 	}); err != nil {
 		respondDebugSessionStatusPatchError(ctx, reqLog, "renew session", "failed to renew session", name, err)
 		return
+	}
+
+	// Session status is the durable renewal commit. A target Job update is
+	// best-effort here and is retried by the active reconciler from that commit;
+	// a target failure must not turn an accepted renewal into a client retry.
+	if err := c.extendTrackedJobDeadlines(apiCtx, session, newExpiry); err != nil {
+		reqLog.Warnw("Renewal committed; will retry extending debug workload deadline", "name", name, "error", err)
 	}
 
 	reqLog.Infow("Debug session renewed",
@@ -264,6 +270,25 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		"newExpiresAt": newExpiry.Time,
 		"renewalCount": session.Status.RenewalCount,
 	})
+}
+
+// extendTrackedJobDeadlines keeps Kubernetes Job termination aligned with a
+// renewed session. Job activeDeadlineSeconds is relative to the Job start, so
+// this derives an absolute deadline from the resulting session expiry instead
+// of adding to the existing field. That makes a retry after a status conflict
+// idempotent. A UID fence prevents a same-name replacement from being changed.
+func (c *DebugSessionAPIController) extendTrackedJobDeadlines(ctx context.Context, session *breakglassv1alpha1.DebugSession, newExpiry metav1.Time) error {
+	if !hasTrackedDebugJob(session) {
+		return nil
+	}
+	targetClient, err := c.targetClusterClient(ctx, session.Spec.Cluster)
+	if err != nil {
+		return fmt.Errorf("get target client for debug session %q: %w", session.Name, err)
+	}
+	if targetClient == nil {
+		return fmt.Errorf("target client for debug session %q is unavailable", session.Name)
+	}
+	return syncTrackedDebugJobDeadlines(ctx, targetClient, session, newExpiry)
 }
 
 func canRenewDebugSession(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {

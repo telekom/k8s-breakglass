@@ -15,6 +15,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Report invalid terminal-recording retention only once.
+
+- Align all shared `ParseDuration` CRD fields, including debug sessions, pod-copy TTL,
+  recording retention, Keycloak timeouts, and breakglass session/escalation limits,
+  with the supported duration syntax.
+
+- Verify SLSA provenance for both published reference image and catalogue chart,
+  preserve reference namespaces safely during EXIT cleanup, and keep catalogue
+  integration checks on the requested workflow ref.
+
+- Parse debug-session expiry grace periods with the shared duration parser.
+
+- Omit disabled deployment variables from requester template discovery.
+
+- Retry deadline synchronization quietly while tracked Jobs are waiting to start.
+
 - Include diagnostic-artifact-collector in aggregate multi-platform utility builds.
 
 - Reject malformed chart SBOMs against the SPDX 2.3 schema before release attestation.
@@ -26,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copy limits are enforced on a single opened source descriptor, including
   growth after validation, and reference fixtures use run-scoped names and
   cleanup labels that cannot remove pre-existing resources.
+- Catalogue publication verification now requires exactly one linux/amd64 and
+  one linux/arm64 utility manifest after excluding attestation descriptors.
+- Cluster-validator node and namespace readiness checks now follow Kubernetes
+  continuation tokens instead of inspecting only the first list page.
 - Unsupported terminal recording errors identify the requested
   `spec.audit.enableTerminalRecording` field and the unavailable transport.
 - Cluster-validator report publication now refuses to replace an existing
@@ -46,9 +66,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   normalization is not part of the production build path.
 - Helm chart provenance reruns fail closed unless the pulled remote package is
   byte-identical to the package whose SBOM is being attested.
-- Terminal recording requests fail closed before approval or session-mode
-  selection, including kubectl-debug, while the terminal-byte transport
-  remains unavailable.
+- Terminal recording requests fail closed before approval or mode selection,
+  including kubectl-debug, while the terminal-byte transport remains unavailable.
+- Renewing a Job-backed DebugSession now commits the session expiry and renewal
+  count before synchronizing its tracked batch/v1 debug workload Job deadline;
+  a target failure is retried by reconciliation without double-counting.
+- Reference usage cleanup bounds every waited Kubernetes delete and makes EXIT
+  cleanup explicitly nonblocking; the API reference now lists `Job` among the
+  allowed `workloadType` values.
+- Release-values verification no longer depends on ripgrep and its negative
+  fixtures now assert the intended digest and evidence validation failures.
 
 ### Security
 

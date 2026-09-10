@@ -75,6 +75,7 @@ type DebugSessionController struct {
 	client         ctrlclient.Client
 	apiReader      ctrlclient.Reader
 	ccProvider     *cluster.ClientProvider
+	targetClients  ClientProviderInterface
 	auditService   *audit.Service
 	auditManager   *audit.Manager
 	mailService    breakglass.MailEnqueuer
@@ -97,6 +98,13 @@ func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client,
 // WithAPIReader sets the uncached reader used for quota admission.
 func (c *DebugSessionController) WithAPIReader(reader ctrlclient.Reader) *DebugSessionController {
 	c.apiReader = reader
+	return c
+}
+
+// WithTargetClusterClients overrides target-cluster client resolution for tests.
+// Production reconciliation continues to resolve clients through ccProvider.
+func (c *DebugSessionController) WithTargetClusterClients(provider ClientProviderInterface) *DebugSessionController {
+	c.targetClients = provider
 	return c
 }
 
@@ -359,7 +367,7 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 
 	// Emit expiring-soon status message when within grace period
 	if ds.Status.ExpiresAt != nil && ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry != "" {
-		grace, err := time.ParseDuration(ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry)
+		grace, err := breakglassv1alpha1.ParseDuration(ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry)
 		if err == nil {
 			until := time.Until(ds.Status.ExpiresAt.Time)
 			if until > 0 && until <= grace && ds.Status.Message != "Session expiring soon" {
@@ -405,6 +413,13 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		log.Info("Debug session expired")
 		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	}
+
+	// Renewal commits session status before touching the spoke Job. Reconcile
+	// from that durable expiry so a target failure or a lost API response
+	// converges without counting the renewal again.
+	if err := c.syncTrackedJobDeadlines(ctx, ds); err != nil {
+		log.Warnw("Failed to synchronize renewed debug workload deadline; will retry", "error", err)
 	}
 
 	// Update allowed pods list from deployed workloads

@@ -124,12 +124,12 @@ type KeycloakGroupSync struct {
 
 	// CacheTTL is the duration to cache user/group memberships (default: 10m)
 	// +optional
-	// +kubebuilder:validation:Pattern=`^([0-9]+(ns|us|µs|ms|s|m|h))+$`
+	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
 	CacheTTL string `json:"cacheTTL,omitempty"`
 
 	// RequestTimeout is the timeout for Keycloak API requests (default: 10s)
 	// +optional
-	// +kubebuilder:validation:Pattern=`^([0-9]+(ns|us|µs|ms|s|m|h))+$`
+	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
 	RequestTimeout string `json:"requestTimeout,omitempty"`
 
 	// InsecureSkipVerify is not supported for Keycloak group synchronization.

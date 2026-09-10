@@ -184,7 +184,10 @@ The `templateString` supports session context variables (`.session`, `.target`,
 and `.vars` values) using Sprig template functions. Declared `.vars` values are
 validated against `extraDeployVariables`; additional request keys may also be
 carried into `.vars`, so templates must not use undeclared keys for sensitive
-interpolation.
+interpolation. Disabled variables are omitted from requester-facing template
+list and detail responses, so the UI does not offer fields the API rejects.
+Submitting a disabled variable remains forbidden, even when it has a default
+or is marked required.
 Keep security-sensitive values such as images, commands, mounts, capabilities,
 and host namespaces literal in the administrator-owned template. See [Template
 Context Variables](#template-context-variables) for the full list.
@@ -333,6 +336,9 @@ spec:
     logs: true        # kubectl logs
     portForward: true # kubectl port-forward
 ```
+
+`gracePeriodBeforeExpiry` uses the same shared duration parser as the other
+session timing fields, including extended day, week, and year units.
 
 The controller updates `DebugSessionTemplate.status` with readiness conditions,
 the observed generation, pod-template reference resolution, active session
@@ -1301,6 +1307,10 @@ applicable binding for the target cluster, that binding's duration constraints
 override the template constraints for that session. Renewals extend the current
 expiration time, but the renewed expiration cannot move past
 `status.startsAt + maxDuration`.
+For a Job-backed workload, renewal commits the new expiry and renewal count
+before synchronizing the tracked Job's `activeDeadlineSeconds`. If the target
+update fails, the renewal remains accepted and the active reconciler retries
+the deadline sync without counting the renewal again. Jobs that have not started yet defer deadline synchronization until their start time is available; normal reconciliation retries without warning.
 Only the requester or an active `owner`/`participant` status entry can renew a
 session; `viewer` entries and participants with `leftAt` set cannot renew.
 The active-session expiry, approval-timeout, expiring-soon message, cleanup
@@ -1753,6 +1763,17 @@ spec:
 2. **Review long-running sessions**: Set alerts for sessions approaching max duration
 3. **Use termination**: Actively terminate sessions when done
 4. **Investigate cleanup retries**: Failed debug-resource deletes keep their status tracking entries so the controller can retry cleanup on the next reconciliation
+
+Template and cluster-binding `constraints.maxDuration` and `defaultDuration`
+accept weeks (`1w`), years (`1y`), and fractional sub-day values (`1.5h`),
+consistent with runtime duration parsing. Day, week, and year terms must be integers.
+
+The same duration syntax is accepted for `requestedDuration`, pod-copy `ttl`,
+and audit `recordingRetention`, so admission validation matches the shared
+runtime parser.
+
+When `spec.audit.recordingRetention` is supplied, it must be a positive duration,
+even when terminal recording is disabled. Invalid values produce one field error.
 
 ## Troubleshooting
 
