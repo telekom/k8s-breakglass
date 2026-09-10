@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestSessionAdmissionGlobalScopesAndCrashRecovery(t *testing.T) {
@@ -139,6 +140,99 @@ func TestQuotaReservationSurvivesInitialStatusFailure(t *testing.T) {
 	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(s), s))
 	assert.Equal(t, breakglassv1alpha1.SessionStatePending, s.Status.State)
 	assert.Equal(t, quotas.Ready, s.Annotations[quotas.AdmissionAnnotation])
+}
+
+func TestQuotaAdmissionCompletionRetriesSameUIDConflict(t *testing.T) {
+	esc := &breakglassv1alpha1.BreakglassEscalation{ObjectMeta: metav1.ObjectMeta{Name: "escalation", Namespace: "ns", UID: "esc"}}
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session", Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}, OwnerReferences: []metav1.OwnerReference{{APIVersion: breakglassv1alpha1.GroupVersion.String(), Kind: "BreakglassEscalation", Name: esc.Name, UID: esc.UID, Controller: ptrBool(true)}}},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user", Cluster: "cluster", GrantedGroup: "admin"},
+	}
+	injected := false
+	cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+		WithObjects(esc, session).WithInterceptorFuncs(interceptor.Funcs{
+		Patch: func(ctx context.Context, underlying client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			candidate, ok := obj.(*breakglassv1alpha1.BreakglassSession)
+			if !injected && ok && candidate.Annotations[quotas.AdmissionAnnotation] == quotas.Ready {
+				injected = true
+				var concurrent breakglassv1alpha1.BreakglassSession
+				require.NoError(t, underlying.Get(ctx, client.ObjectKeyFromObject(session), &concurrent))
+				concurrent.Labels = map[string]string{"concurrent": "update"}
+				require.NoError(t, underlying.Update(ctx, &concurrent))
+			}
+			return underlying.Patch(ctx, obj, patch, opts...)
+		},
+	}).Build()
+	manager := NewSessionManagerWithClientAndReader(cli, cli, WithQuotaNamespace("controller"))
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(session), session))
+	require.NoError(t, manager.admitSession(t.Context(), session))
+	var stored breakglassv1alpha1.BreakglassSession
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(session), &stored))
+	assert.Equal(t, quotas.Ready, stored.Annotations[quotas.AdmissionAnnotation])
+	assert.Equal(t, "update", stored.Labels["concurrent"])
+	assert.True(t, injected)
+}
+
+func TestQuotaAdmissionCompletionRejectsUIDReplacement(t *testing.T) {
+	esc := &breakglassv1alpha1.BreakglassEscalation{ObjectMeta: metav1.ObjectMeta{Name: "escalation", Namespace: "ns", UID: "esc"}}
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session", Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user", Cluster: "cluster", GrantedGroup: "admin"},
+	}
+	controller := true
+	session.OwnerReferences = []metav1.OwnerReference{{APIVersion: breakglassv1alpha1.GroupVersion.String(), Kind: "BreakglassEscalation", Name: esc.Name, UID: esc.UID, Controller: &controller}}
+	cli := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(esc, session).WithInterceptorFuncs(interceptor.Funcs{
+		Patch: func(ctx context.Context, underlying client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			candidate, ok := obj.(*breakglassv1alpha1.BreakglassSession)
+			if ok && candidate.Annotations[quotas.AdmissionAnnotation] == quotas.Ready {
+				var replacement breakglassv1alpha1.BreakglassSession
+				require.NoError(t, underlying.Get(ctx, client.ObjectKeyFromObject(session), &replacement))
+				replacement.UID = "replacement"
+				replacement.Labels = map[string]string{"replacement": "true"}
+				require.NoError(t, underlying.Update(ctx, &replacement))
+			}
+			return underlying.Patch(ctx, obj, patch, opts...)
+		},
+	}).Build()
+	manager := NewSessionManagerWithClientAndReader(cli, cli, WithQuotaNamespace("controller"))
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(session), session))
+	require.Error(t, manager.admitSession(t.Context(), session))
+	var stored breakglassv1alpha1.BreakglassSession
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(session), &stored))
+	assert.Equal(t, types.UID("replacement"), stored.UID)
+	assert.Equal(t, "true", stored.Labels["replacement"])
+	assert.Equal(t, quotas.Pending, stored.Annotations[quotas.AdmissionAnnotation])
+}
+
+func TestQuotaAdmissionCompletionRejectsTerminalTransition(t *testing.T) {
+	esc := &breakglassv1alpha1.BreakglassEscalation{ObjectMeta: metav1.ObjectMeta{Name: "escalation", Namespace: "ns", UID: "esc"}}
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session", Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user", Cluster: "cluster", GrantedGroup: "admin"},
+	}
+	controller := true
+	session.OwnerReferences = []metav1.OwnerReference{{APIVersion: breakglassv1alpha1.GroupVersion.String(), Kind: "BreakglassEscalation", Name: esc.Name, UID: esc.UID, Controller: &controller}}
+	cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).WithObjects(esc, session).WithInterceptorFuncs(interceptor.Funcs{
+		Patch: func(ctx context.Context, underlying client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			candidate, ok := obj.(*breakglassv1alpha1.BreakglassSession)
+			if ok && candidate.Annotations[quotas.AdmissionAnnotation] == quotas.Ready {
+				var terminal breakglassv1alpha1.BreakglassSession
+				require.NoError(t, underlying.Get(ctx, client.ObjectKeyFromObject(session), &terminal))
+				terminal.Status.State = breakglassv1alpha1.SessionStateRejected
+				terminal.Status.ReasonEnded = "concurrent rejection"
+				require.NoError(t, underlying.Status().Update(ctx, &terminal))
+			}
+			return underlying.Patch(ctx, obj, patch, opts...)
+		},
+	}).Build()
+	manager := NewSessionManagerWithClientAndReader(cli, cli, WithQuotaNamespace("controller"))
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(session), session))
+	require.Error(t, manager.admitSession(t.Context(), session))
+	var stored breakglassv1alpha1.BreakglassSession
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(session), &stored))
+	assert.Equal(t, breakglassv1alpha1.SessionStateRejected, stored.Status.State)
+	assert.Equal(t, "concurrent rejection", stored.Status.ReasonEnded)
+	assert.Equal(t, quotas.Pending, stored.Annotations[quotas.AdmissionAnnotation])
 }
 
 func TestDurableQuotaLimitPrecedence(t *testing.T) {

@@ -208,6 +208,14 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 		result.WithConnectionLease(DebugSessionConnectionLeaseFrom(status.ConnectionLease))
 	}
 
+	if status.LastActivity != nil {
+		result.WithLastActivity(*status.LastActivity)
+	}
+	result.WithActivityCount(status.ActivityCount)
+	if status.RetainedUntil != nil {
+		result.WithRetainedUntil(*status.RetainedUntil)
+	}
+
 	// Set observedGeneration for kstatus compliance
 	if status.ObservedGeneration > 0 {
 		result.WithObservedGeneration(status.ObservedGeneration)
@@ -1216,6 +1224,13 @@ func DebugSessionConstraintsFrom(c *breakglassv1alpha1.DebugSessionConstraints) 
 		return nil
 	}
 	result := ac.DebugSessionConstraints()
+	if c.IdleTimeout != "" {
+		result.WithIdleTimeout(c.IdleTimeout)
+	}
+	if c.RetainFor != "" {
+		result.WithRetainFor(c.RetainFor)
+	}
+
 	if c.MaxDuration != "" {
 		result.WithMaxDuration(c.MaxDuration)
 	}
