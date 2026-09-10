@@ -1055,6 +1055,45 @@ describe("DebugSessionCreate", () => {
   // Binding Source Labels
   // -----------------------------------------------------------------
   describe("binding source labels", () => {
+    it("keeps an explicitly empty binding variable list from falling back to the template", async () => {
+      const templates = defaultTemplates();
+      (templates[0] as unknown as Record<string, unknown>).extraDeployVariables = [
+        { name: "target", displayName: "Target", inputType: "text" },
+      ];
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            bindingOptions: [
+              {
+                bindingRef: { name: "binding-restricted", namespace: "breakglass" },
+                extraDeployVariables: [],
+              },
+            ],
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper(templates);
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string };
+        hasExtraDeployVariables: boolean;
+        effectiveExtraDeployVariables: unknown[];
+      };
+      vm.goToStep2();
+      await flushPromises();
+      vm.form.cluster = "prod-east";
+      await flushPromises();
+
+      expect(vm.hasExtraDeployVariables).toBe(false);
+      expect(vm.effectiveExtraDeployVariables).toEqual([]);
+      expect(wrapper.find('[data-testid="extra-variables-section"]').exists()).toBe(false);
+    });
+
     it("shows binding source reference on binding option cards", async () => {
       mockGetTemplateClusters.mockResolvedValue({
         templateName: "standard-debug",

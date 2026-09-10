@@ -151,14 +151,20 @@ const userGroups = ref<string[]>([]);
 
 // Check if template has extra deploy variables
 const hasExtraDeployVariables = computed(() => {
-  const variables = selectedBindingOption.value?.extraDeployVariables ||
-    selectedClusterDetail.value?.extraDeployVariables || selectedTemplate.value?.extraDeployVariables;
+  const variables =
+    selectedBindingOption.value?.extraDeployVariables ||
+    selectedClusterDetail.value?.extraDeployVariables ||
+    selectedTemplate.value?.extraDeployVariables;
   return !!(variables && variables.length > 0);
 });
 
 const effectiveExtraDeployVariables = computed(() => {
-  return selectedBindingOption.value?.extraDeployVariables ||
-    selectedClusterDetail.value?.extraDeployVariables || selectedTemplate.value?.extraDeployVariables || [];
+  return (
+    selectedBindingOption.value?.extraDeployVariables ||
+    selectedClusterDetail.value?.extraDeployVariables ||
+    selectedTemplate.value?.extraDeployVariables ||
+    []
+  );
 });
 
 // Get the selected cluster's detailed info
