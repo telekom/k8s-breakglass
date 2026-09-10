@@ -104,7 +104,7 @@ func (reconciler *Reconciler) Reconcile(ctx context.Context, request ctrl.Reques
 		}
 		return ctrl.Result{Requeue: true}, nil
 	}
-	if object.DeletionTimestamp.IsZero() && record.Recipe == backend.TerminalRecordingRecipe && !terminalRecord {
+	if object.DeletionTimestamp.IsZero() && record.Recipe == backend.TerminalRecordingRecipe && !terminalRecord && !record.CleanupAmbiguous {
 		if !now().Before(record.ExpiresAt) {
 			if err := reconciler.Service.Cleanup(ctx, record, backend.StateExpired); err != nil {
 				return ctrl.Result{}, err
@@ -173,7 +173,7 @@ func (reconciler *Reconciler) ensureUploadResources(ctx context.Context, object 
 		return err
 	}
 	defer release()
-	if err := reconciler.validateSpokeWrite(ctx, &object, session, target); err != nil {
+	if err := reconciler.validateSpokeWrite(ctx, &object, session, target, targetClient); err != nil {
 		return err
 	}
 	targetNamespace := session.Spec.TargetNamespace
@@ -201,7 +201,7 @@ func (reconciler *Reconciler) ensureUploadResources(ctx context.Context, object 
 			return fmt.Errorf("issue diagnostic artifact upload token: %w", issueErr)
 		}
 		secret = corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: targetNamespace, Labels: map[string]string{"breakglass.t-caas.telekom.com/artifact": object.Spec.ArtifactID}, Annotations: map[string]string{"breakglass.t-caas.telekom.com/artifact-uid": string(object.UID), "breakglass.t-caas.telekom.com/operation-id": secretRef.OperationID}}, Type: corev1.SecretTypeOpaque, Immutable: boolPtr(true), Data: map[string][]byte{"token": []byte(token)}}
-		if err := reconciler.validateSpokeWrite(ctx, &object, session, target); err != nil {
+		if err := reconciler.validateSpokeWrite(ctx, &object, session, target, targetClient); err != nil {
 			return err
 		}
 		if createErr := targetClient.Create(ctx, &secret); createErr != nil {
@@ -210,7 +210,7 @@ func (reconciler *Reconciler) ensureUploadResources(ctx context.Context, object 
 		if err := reconciler.persistResourceUID(ctx, &object, "Secret", secret.UID, secret.ResourceVersion); err != nil {
 			return err
 		}
-		if err := reconciler.validateSpokeWrite(ctx, &object, session, target); err != nil {
+		if err := reconciler.validateSpokeWrite(ctx, &object, session, target, targetClient); err != nil {
 			return err
 		}
 	} else if err != nil {
@@ -255,7 +255,7 @@ func (reconciler *Reconciler) ensureUploadResources(ctx context.Context, object 
 	}
 	collectorJob.Annotations["breakglass.t-caas.telekom.com/artifact-uid"] = string(object.UID)
 	collectorJob.Annotations["breakglass.t-caas.telekom.com/operation-id"] = jobRef.OperationID
-	if err := reconciler.validateSpokeWrite(ctx, &object, session, target); err != nil {
+	if err := reconciler.validateSpokeWrite(ctx, &object, session, target, targetClient); err != nil {
 		return err
 	}
 	if err := targetClient.Create(ctx, collectorJob); err != nil {
@@ -264,7 +264,7 @@ func (reconciler *Reconciler) ensureUploadResources(ctx context.Context, object 
 	if err := reconciler.persistResourceUID(ctx, &object, "Job", collectorJob.UID, collectorJob.ResourceVersion); err != nil {
 		return err
 	}
-	if err := reconciler.validateSpokeWrite(ctx, &object, session, target); err != nil {
+	if err := reconciler.validateSpokeWrite(ctx, &object, session, target, targetClient); err != nil {
 		return err
 	}
 	return nil
@@ -281,7 +281,7 @@ func validateTokenSecret(secret corev1.Secret, object breakglassv1alpha1.DebugSe
 }
 
 func validateCollectorJob(job batchv1.Job, object breakglassv1alpha1.DebugSessionArtifact, expectedNamespace, operationID string) error {
-	if job.Namespace != expectedNamespace || job.Labels["breakglass.t-caas.telekom.com/artifact"] != object.Spec.ArtifactID || job.Labels["breakglass.t-caas.telekom.com/session-uid"] != string(object.Spec.SessionRef.UID) || job.Annotations["breakglass.t-caas.telekom.com/plan-sha256"] != object.Spec.PlanDigest || job.Annotations["breakglass.t-caas.telekom.com/operation-id"] != operationID {
+	if job.Namespace != expectedNamespace || job.Labels["breakglass.t-caas.telekom.com/artifact"] != object.Spec.ArtifactID || job.Labels["breakglass.t-caas.telekom.com/session-uid"] != object.Spec.SessionRef.UID || job.Annotations["breakglass.t-caas.telekom.com/plan-sha256"] != object.Spec.PlanDigest || job.Annotations["breakglass.t-caas.telekom.com/operation-id"] != operationID {
 		return errors.New("diagnostic artifact collector Job does not match the artifact binding")
 	}
 	pod := job.Spec.Template.Spec
@@ -355,7 +355,29 @@ func (reconciler *Reconciler) spokeClient(ctx context.Context, object *breakglas
 	return &session, target, targetClient, release, nil
 }
 
-func (reconciler *Reconciler) validateSpokeWrite(ctx context.Context, object *breakglassv1alpha1.DebugSessionArtifact, session *breakglassv1alpha1.DebugSession, target *breakglassv1alpha1.ClusterConfig) error {
+func (reconciler *Reconciler) validateSpokeWrite(ctx context.Context, object *breakglassv1alpha1.DebugSessionArtifact, session *breakglassv1alpha1.DebugSession, target *breakglassv1alpha1.ClusterConfig, targetClient ctrlclient.Client) error {
+	if object.Spec.TargetPod != nil {
+		ref := object.Spec.TargetPod
+		var pod corev1.Pod
+		if ref.UID == "" || targetClient == nil {
+			return errors.New("artifact target pod identity is missing")
+		}
+		if err := targetClient.Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, &pod); err != nil {
+			return fmt.Errorf("read artifact target pod before spoke write: %w", err)
+		}
+		if string(pod.UID) != ref.UID || !pod.DeletionTimestamp.IsZero() {
+			return errors.New("artifact target pod identity changed")
+		}
+		if object.Spec.TargetNodeUID != "" {
+			var node corev1.Node
+			if err := targetClient.Get(ctx, types.NamespacedName{Name: pod.Spec.NodeName}, &node); err != nil {
+				return fmt.Errorf("read artifact target node before spoke write: %w", err)
+			}
+			if string(node.UID) != object.Spec.TargetNodeUID || !node.DeletionTimestamp.IsZero() {
+				return errors.New("artifact target node identity changed")
+			}
+		}
+	}
 	if err := reconciler.ClusterProvider.ValidatePrivilegedOperationClusterConfig(ctx, target); err != nil {
 		return err
 	}
@@ -366,6 +388,14 @@ func (reconciler *Reconciler) validateSpokeWrite(ctx context.Context, object *br
 	var liveArtifact breakglassv1alpha1.DebugSessionArtifact
 	if err := reconciler.hubGet(ctx, ctrlclient.ObjectKeyFromObject(object), &liveArtifact); err != nil {
 		return fmt.Errorf("read live artifact after target fence: %w", err)
+	}
+	if object.Spec.ConnectionLeaseUID != "" {
+		if reconciler.Service == nil {
+			return errors.New("artifact capability verifier is missing")
+		}
+		if err := reconciler.Service.AuthorizeCollection(ctx, artifactkube.Record(object)); err != nil {
+			return fmt.Errorf("authorize artifact capability before spoke write: %w", err)
+		}
 	}
 	var finalSession breakglassv1alpha1.DebugSession
 	if err := reconciler.hubGet(ctx, types.NamespacedName{Namespace: object.Spec.SessionRef.Namespace, Name: object.Spec.SessionRef.Name}, &finalSession); err != nil {
@@ -380,7 +410,7 @@ func (reconciler *Reconciler) validateSpokeWrite(ctx context.Context, object *br
 	if liveState == "" {
 		liveState = backend.StatePending
 	}
-	if finalSession.UID != session.UID || !finalSession.DeletionTimestamp.IsZero() || finalSession.Spec.Cluster != session.Spec.Cluster || finalSession.Spec.TargetNamespace != session.Spec.TargetNamespace || finalSession.Status.State != breakglassv1alpha1.DebugSessionStateActive || finalSession.Status.ExpiresAt == nil || !decisionTime.Before(finalSession.Status.ExpiresAt.Time) || breakglass.DebugSessionIdleExpired(&finalSession, decisionTime) || finalSession.Annotations[quotas.AdmissionAnnotation] == quotas.Pending || liveArtifact.UID != object.UID || !liveArtifact.DeletionTimestamp.IsZero() || liveState != backend.StatePending && liveState != backend.StateUploading || liveArtifact.Spec.TargetClusterUID != object.Spec.TargetClusterUID || liveArtifact.Spec.PlanDigest != object.Spec.PlanDigest || !decisionTime.Before(liveArtifact.Spec.ExpiresAt.Time) {
+	if finalSession.UID != session.UID || object.Spec.ConnectionLeaseUID != "" && (finalSession.Status.ConnectionLease == nil || string(finalSession.Status.ConnectionLease.UID) != object.Spec.ConnectionLeaseUID || finalSession.Status.ConnectionLease.Epoch != int64(object.Spec.OperationEpoch)) || !finalSession.DeletionTimestamp.IsZero() || finalSession.Spec.Cluster != session.Spec.Cluster || finalSession.Spec.TargetNamespace != session.Spec.TargetNamespace || finalSession.Status.State != breakglassv1alpha1.DebugSessionStateActive || finalSession.Status.ExpiresAt == nil || !decisionTime.Before(finalSession.Status.ExpiresAt.Time) || breakglass.DebugSessionIdleExpired(&finalSession, decisionTime) || finalSession.Annotations[quotas.AdmissionAnnotation] == quotas.Pending || liveArtifact.UID != object.UID || !liveArtifact.DeletionTimestamp.IsZero() || liveState != backend.StatePending && liveState != backend.StateUploading || liveArtifact.Spec.TargetClusterUID != object.Spec.TargetClusterUID || liveArtifact.Spec.PlanDigest != object.Spec.PlanDigest || !decisionTime.Before(liveArtifact.Spec.ExpiresAt.Time) {
 		return errors.New("artifact identity changed before spoke write")
 	}
 	return nil
@@ -484,7 +514,6 @@ func (reconciler *Reconciler) cleanupSpokeResources(ctx context.Context, object 
 		return err
 	}
 	defer release()
-	remaining := make([]breakglassv1alpha1.ArtifactResourceReference, 0, len(object.Status.Resources))
 	ambiguous := false
 	initialByOperation := make(map[string]breakglassv1alpha1.ArtifactResourceReference, len(object.Status.Resources))
 	removed := make(map[string]struct{})
@@ -506,7 +535,6 @@ func (reconciler *Reconciler) cleanupSpokeResources(ctx context.Context, object 
 		key := types.NamespacedName{Namespace: reference.Namespace, Name: reference.Name}
 		if err := targetClient.Get(ctx, key, resource); apierrors.IsNotFound(err) {
 			if reference.UID == "" {
-				remaining = append(remaining, reference)
 				ambiguous = true
 			} else {
 				removed[reference.OperationID] = struct{}{}
@@ -516,7 +544,6 @@ func (reconciler *Reconciler) cleanupSpokeResources(ctx context.Context, object 
 			return fmt.Errorf("get spoke artifact resource %s/%s: %w", reference.Namespace, reference.Name, err)
 		}
 		if reference.UID == "" {
-			remaining = append(remaining, reference)
 			ambiguous = true
 			continue
 		}
@@ -532,7 +559,6 @@ func (reconciler *Reconciler) cleanupSpokeResources(ctx context.Context, object 
 		if err := targetClient.Get(ctx, key, resource); err == nil {
 			if string(resource.GetUID()) == reference.UID {
 				reference.ResourceVersion = resource.GetResourceVersion()
-				remaining = append(remaining, reference)
 				updated[reference.OperationID] = reference
 			}
 		} else if !apierrors.IsNotFound(err) {

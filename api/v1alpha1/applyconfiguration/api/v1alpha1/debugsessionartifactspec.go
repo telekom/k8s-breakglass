@@ -29,6 +29,8 @@ type DebugSessionArtifactSpecApplyConfiguration struct {
 	TargetPod *ArtifactSessionReferenceApplyConfiguration `json:"targetPod,omitempty"`
 	// targetNodeUID binds node-local collection to an exact node incarnation.
 	TargetNodeUID *string `json:"targetNodeUID,omitempty"`
+	// connectionLeaseUID binds collector authority to the admitted lease incarnation.
+	ConnectionLeaseUID *string `json:"connectionLeaseUID,omitempty"`
 	// recipe is an immutable allowlisted recipe identifier.
 	Recipe *string `json:"recipe,omitempty"`
 	// recipeVersion is the immutable recipe schema version.
@@ -108,6 +110,14 @@ func (b *DebugSessionArtifactSpecApplyConfiguration) WithTargetPod(value *Artifa
 // If called multiple times, the TargetNodeUID field is set to the value of the last call.
 func (b *DebugSessionArtifactSpecApplyConfiguration) WithTargetNodeUID(value string) *DebugSessionArtifactSpecApplyConfiguration {
 	b.TargetNodeUID = &value
+	return b
+}
+
+// WithConnectionLeaseUID sets the ConnectionLeaseUID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ConnectionLeaseUID field is set to the value of the last call.
+func (b *DebugSessionArtifactSpecApplyConfiguration) WithConnectionLeaseUID(value string) *DebugSessionArtifactSpecApplyConfiguration {
+	b.ConnectionLeaseUID = &value
 	return b
 }
 

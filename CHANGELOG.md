@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve artifact publication evidence during cleanup races, bound collector reservation concurrency, and recheck requester identity and idle expiry around streamed reads.
+
 - Derive provider-compatible diagnostic artifact keys from immutable resource UIDs, preserving isolation and recovery of existing uploads.
 
 - Recheck artifact upload token, session binding, plan/runtime/recipe claims, and

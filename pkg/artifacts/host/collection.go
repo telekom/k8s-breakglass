@@ -67,7 +67,7 @@ func (c *collectionController) create(ctx *gin.Context) {
 	var podUID string
 	for _, pod := range session.Status.AllowedPods {
 		if pod.Namespace == request.PodNamespace && pod.Name == request.PodName {
-			podUID = string(pod.UID)
+			podUID = pod.UID
 			break
 		}
 	}
@@ -86,7 +86,7 @@ func (c *collectionController) create(ctx *gin.Context) {
 		ctx.Status(http.StatusForbidden)
 		return
 	}
-	record := backend.Record{Namespace: session.Namespace, SessionName: session.Name, SessionUID: string(session.UID), TargetClusterUID: string(config.UID), TargetPodNamespace: pod.Namespace, TargetPodName: pod.Name, TargetPodUID: string(pod.UID), Recipe: request.Recipe, RecipeVersion: 1, OperationEpoch: uint64(session.Status.ConnectionLease.Epoch), ExpiresAt: session.Status.ExpiresAt.Time, MaxBytes: c.maximum}
+	record := backend.Record{ConnectionLeaseUID: string(session.Status.ConnectionLease.UID), Namespace: session.Namespace, SessionName: session.Name, SessionUID: string(session.UID), TargetClusterUID: string(config.UID), TargetPodNamespace: pod.Namespace, TargetPodName: pod.Name, TargetPodUID: string(pod.UID), Recipe: request.Recipe, RecipeVersion: 1, OperationEpoch: uint64(session.Status.ConnectionLease.Epoch), ExpiresAt: session.Status.ExpiresAt.Time, MaxBytes: c.maximum}
 	if session.Status.ConnectionLease.TargetUID != config.UID {
 		ctx.Status(http.StatusForbidden)
 		return
@@ -140,7 +140,7 @@ func (c *collectionController) create(ctx *gin.Context) {
 		ctx.Status(http.StatusForbidden)
 		return
 	}
-	record.RuntimeBindingDigest = opaqueDigest(profile + "/" + record.TargetIdentityDigest)
+	record.RuntimeBindingDigest = opaqueDigest(profile + "/" + record.TargetIdentityDigest + "/" + record.ConnectionLeaseUID)
 	plan, _ := json.Marshal(struct {
 		Recipe  string
 		Inputs  archive.Inputs

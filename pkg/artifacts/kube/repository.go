@@ -95,17 +95,28 @@ func (repository *Repository) Update(ctx context.Context, record backend.Record,
 }
 
 func (repository *Repository) ListBySession(ctx context.Context, namespace, sessionName, sessionUID string) ([]backend.Record, error) {
-	var list breakglassv1alpha1.DebugSessionArtifactList
-	if err := repository.client.List(ctx, &list, ctrlclient.InNamespace(repository.objectNamespace(namespace))); err != nil {
-		return nil, fmt.Errorf("list diagnostic artifacts: %w", err)
-	}
-	result := make([]backend.Record, 0, len(list.Items))
-	for index := range list.Items {
-		record := toRecord(&list.Items[index])
-		if record.SessionName == sessionName && record.SessionUID == sessionUID {
-			result = append(result, record)
+	result := make([]backend.Record, 0)
+	continuation := ""
+	for {
+		var list breakglassv1alpha1.DebugSessionArtifactList
+		if err := repository.client.List(ctx, &list, ctrlclient.InNamespace(repository.objectNamespace(namespace)), ctrlclient.Limit(128), ctrlclient.Continue(continuation)); err != nil {
+			return nil, fmt.Errorf("list diagnostic artifacts: %w", err)
 		}
+		for index := range list.Items {
+			record := toRecord(&list.Items[index])
+			if record.Namespace == namespace && record.SessionName == sessionName && record.SessionUID == sessionUID {
+				result = append(result, record)
+			}
+		}
+		if list.Continue == "" {
+			break
+		}
+		if list.Continue == continuation {
+			return nil, errors.New("artifact listing did not advance")
+		}
+		continuation = list.Continue
 	}
+
 	return result, nil
 }
 
@@ -123,7 +134,7 @@ func Record(object *breakglassv1alpha1.DebugSessionArtifact) backend.Record {
 		ArtifactID:         object.Spec.ArtifactID,
 		ArtifactUID:        string(object.UID),
 		TargetClusterUID:   object.Spec.TargetClusterUID,
-		TargetPodNamespace: targetPodField(object, 0), TargetPodName: targetPodField(object, 1), TargetPodUID: targetPodField(object, 2), TargetNodeUID: object.Spec.TargetNodeUID,
+		TargetPodNamespace: targetPodField(object, 0), TargetPodName: targetPodField(object, 1), TargetPodUID: targetPodField(object, 2), TargetNodeUID: object.Spec.TargetNodeUID, ConnectionLeaseUID: object.Spec.ConnectionLeaseUID,
 		TargetIdentityDigest: object.Spec.TargetIdentityDigest,
 		OperationEpoch:       object.Spec.OperationEpoch,
 		UploadJTIHash:        object.Spec.UploadJTIHash,
@@ -193,7 +204,7 @@ func recordingFromObject(object *breakglassv1alpha1.DebugSessionArtifact) *backe
 // arbitration point for bounded per-session reservation slots.
 func (repository *Repository) Create(ctx context.Context, record backend.Record) (backend.Record, error) {
 	object := &breakglassv1alpha1.DebugSessionArtifact{ObjectMeta: metav1.ObjectMeta{Name: record.ArtifactID, Namespace: repository.objectNamespace(record.Namespace)}, Spec: breakglassv1alpha1.DebugSessionArtifactSpec{
-		ArtifactID: record.ArtifactID, SessionRef: breakglassv1alpha1.ArtifactSessionReference{Namespace: record.Namespace, Name: record.SessionName, UID: record.SessionUID}, TargetClusterUID: record.TargetClusterUID, TargetPod: reservationTargetPod(record), TargetNodeUID: record.TargetNodeUID, Recipe: record.Recipe, RecipeVersion: int32(record.RecipeVersion), PlanDigest: record.PlanDigest, RuntimeBindingDigest: record.RuntimeBindingDigest, TargetIdentityDigest: record.TargetIdentityDigest, OperationEpoch: record.OperationEpoch, UploadJTIHash: record.UploadJTIHash, UploadKeyID: record.UploadKeyID, ReservationNonce: record.ReservationNonce, Recording: apiRecording(record.Recording), RedactionProfile: record.Expected.RedactionProfile, RedactionVersion: int32(record.Expected.RedactionVersion), Node: record.Expected.Node, MaxBytes: record.MaxBytes, TimeoutSeconds: 300, ExpiresAt: metav1.NewTime(record.ExpiresAt), Inputs: breakglassv1alpha1.ArtifactInputs{MaxArchiveBytes: record.MaxBytes, DetailLevel: record.Expected.Inputs.DetailLevel, MaxAgeMinutes: record.Expected.Inputs.MaxAgeMinutes}}}
+		ArtifactID: record.ArtifactID, SessionRef: breakglassv1alpha1.ArtifactSessionReference{Namespace: record.Namespace, Name: record.SessionName, UID: record.SessionUID}, TargetClusterUID: record.TargetClusterUID, TargetPod: reservationTargetPod(record), TargetNodeUID: record.TargetNodeUID, ConnectionLeaseUID: record.ConnectionLeaseUID, Recipe: record.Recipe, RecipeVersion: int32(record.RecipeVersion), PlanDigest: record.PlanDigest, RuntimeBindingDigest: record.RuntimeBindingDigest, TargetIdentityDigest: record.TargetIdentityDigest, OperationEpoch: record.OperationEpoch, UploadJTIHash: record.UploadJTIHash, UploadKeyID: record.UploadKeyID, ReservationNonce: record.ReservationNonce, Recording: apiRecording(record.Recording), RedactionProfile: record.Expected.RedactionProfile, RedactionVersion: int32(record.Expected.RedactionVersion), Node: record.Expected.Node, MaxBytes: record.MaxBytes, TimeoutSeconds: 300, ExpiresAt: metav1.NewTime(record.ExpiresAt), Inputs: breakglassv1alpha1.ArtifactInputs{MaxArchiveBytes: record.MaxBytes, DetailLevel: record.Expected.Inputs.DetailLevel, MaxAgeMinutes: record.Expected.Inputs.MaxAgeMinutes}}}
 	if err := repository.client.Create(ctx, object); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			return backend.Record{}, storage.ErrAlreadyExists

@@ -106,6 +106,9 @@ type DebugSessionArtifactSpec struct {
 	// targetNodeUID binds node-local collection to an exact node incarnation.
 	// +optional
 	TargetNodeUID string `json:"targetNodeUID,omitempty"`
+	// connectionLeaseUID binds collector authority to the admitted lease incarnation.
+	// +optional
+	ConnectionLeaseUID string `json:"connectionLeaseUID,omitempty"`
 	// recipe is an immutable allowlisted recipe identifier.
 	// +kubebuilder:validation:Enum=system-summary.v1;crashdump-collection.v1;terminal-recording.v1
 	// +required

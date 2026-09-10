@@ -144,6 +144,10 @@ func (store *Store) PutIfAbsent(ctx context.Context, object artifactstorage.Obje
 			runtimeBindingHeader: object.RuntimeBindingDigest,
 			sha256Header:         object.SHA256,
 		},
+	}, func(options *awss3.Options) {
+		// A lost response is recovered through inventory; never replay a write
+		// that cleanup might already have observed and deleted.
+		options.RetryMaxAttempts = 1
 	})
 	if err != nil {
 		if isPreconditionFailed(err) {

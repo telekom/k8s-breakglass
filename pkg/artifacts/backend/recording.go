@@ -32,6 +32,9 @@ func (service *Service) ReserveRecording(ctx context.Context, record Record, aut
 	copyMetadata.Complete = false
 	copyMetadata.Frames = 0
 	record.Recording = &copyMetadata
+	if !validRecording(record.Recording) {
+		return Record{}, ErrForbidden
+	}
 	return service.reserve(ctx, record, authorize)
 }
 func validRecording(m *RecordingMetadata) bool {
@@ -41,13 +44,13 @@ func recordingIdentity(m *RecordingMetadata) *RecordingMetadata {
 	if m == nil {
 		return nil
 	}
-	copy := *m
-	copy.FinishedAt = time.Time{}
-	copy.Complete = false
-	copy.Frames = 0
-	copy.StartedAt = copy.StartedAt.UTC().Truncate(time.Second)
-	copy.StreamExpiresAt = copy.StreamExpiresAt.UTC().Truncate(time.Second)
-	return &copy
+	identity := *m
+	identity.FinishedAt = time.Time{}
+	identity.Complete = false
+	identity.Frames = 0
+	identity.StartedAt = identity.StartedAt.UTC().Truncate(time.Second)
+	identity.StreamExpiresAt = identity.StreamExpiresAt.UTC().Truncate(time.Second)
+	return &identity
 }
 func sameRecording(a, b Record) bool {
 	return a.ArtifactUID != "" && a.ArtifactUID == b.ArtifactUID && a.ArtifactID == b.ArtifactID && a.Namespace == b.Namespace && a.SessionName == b.SessionName && a.SessionUID == b.SessionUID && a.TargetClusterUID == b.TargetClusterUID && a.TargetIdentityDigest == b.TargetIdentityDigest && a.PlanDigest == b.PlanDigest && a.RuntimeBindingDigest == b.RuntimeBindingDigest && a.OperationEpoch == b.OperationEpoch && a.ExpiresAt.Equal(b.ExpiresAt) && reflect.DeepEqual(recordingIdentity(a.Recording), recordingIdentity(b.Recording))
@@ -150,7 +153,7 @@ func (service *Service) RecoverRecording(ctx context.Context, reservation Record
 	if err != nil {
 		return PublicRecord{}, err
 	}
-	if !sameRecording(current, reservation) {
+	if !sameRecording(current, reservation) || current.CleanupAmbiguous {
 		return PublicRecord{}, ErrForbidden
 	}
 	if !service.now().Before(current.ExpiresAt) {

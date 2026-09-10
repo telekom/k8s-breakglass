@@ -88,7 +88,7 @@ func TestConnectionLeaseFenceChecksLiveLeaseIdentity(t *testing.T) {
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session, lease).Build()
 	service := debug.NewConnectionLeaseService(client).WithLiveReader(client)
 	fence := NewConnectionLeaseFence(client, service)
-	binding := backend.SessionBinding{Namespace: "breakglass", Name: "session", UID: string(holderUID), TargetClusterUID: string(targetUID), TargetIdentityDigest: strings.Repeat("a", 64), OperationEpoch: 4}
+	binding := backend.SessionBinding{Namespace: "breakglass", Name: "session", UID: string(holderUID), TargetClusterUID: string(targetUID), TargetIdentityDigest: strings.Repeat("a", 64), OperationEpoch: 4, ConnectionLeaseUID: "lease-uid"}
 	require.NoError(t, fence.AuthorizeArtifact(context.Background(), binding))
 	binding.TargetClusterUID = "other-target"
 	require.ErrorIs(t, fence.AuthorizeArtifact(context.Background(), binding), backend.ErrForbidden)
@@ -103,6 +103,19 @@ func TestConnectionLeaseFenceChecksLiveLeaseIdentity(t *testing.T) {
 	lateService := debug.NewConnectionLeaseService(lateClient).WithLiveReader(lateReader)
 	lateFence := NewConnectionLeaseFence(lateReader, lateService)
 	require.ErrorIs(t, lateFence.AuthorizeArtifact(context.Background(), binding), backend.ErrForbidden)
+	// Recreating the same lease with an equal epoch must not revive old artifact authority.
+	require.NoError(t, client.Delete(context.Background(), lease))
+	replacement := lease.DeepCopy()
+	replacement.UID = "replacement-lease"
+	replacement.ResourceVersion = ""
+	require.NoError(t, client.Create(context.Background(), replacement))
+	require.NoError(t, client.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), session))
+	session.Status.ConnectionLease.UID = replacement.UID
+	require.NoError(t, client.Update(context.Background(), session))
+	require.ErrorIs(t, fence.AuthorizeArtifact(context.Background(), binding), backend.ErrForbidden)
+	binding.ConnectionLeaseUID = string(replacement.UID)
+	require.NoError(t, fence.AuthorizeArtifact(context.Background(), binding))
+
 }
 
 type markDeletingSessionReader struct {

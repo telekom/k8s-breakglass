@@ -85,9 +85,9 @@ func TestValidateTokenSecretRequiresArtifactOwnerAndImmutableToken(t *testing.T)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			copy := valid.DeepCopy()
-			mutate(copy)
-			if err := validateTokenSecret(*copy, artifact, artifact.Namespace, "op"); err == nil {
+			modified := valid.DeepCopy()
+			mutate(modified)
+			if err := validateTokenSecret(*modified, artifact, artifact.Namespace, "op"); err == nil {
 				t.Fatal("invalid token Secret accepted")
 			}
 		})
@@ -97,7 +97,7 @@ func TestValidateTokenSecretRequiresArtifactOwnerAndImmutableToken(t *testing.T)
 func TestValidateCollectorJobRequiresMatchingArtifactOwnership(t *testing.T) {
 	artifact := artifactForValidation()
 	group := int64(65532)
-	valid := batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: artifact.Namespace, Annotations: map[string]string{"breakglass.t-caas.telekom.com/plan-sha256": artifact.Spec.PlanDigest, "breakglass.t-caas.telekom.com/artifact-uid": string(artifact.UID), "breakglass.t-caas.telekom.com/operation-id": "op"}, Labels: map[string]string{"breakglass.t-caas.telekom.com/artifact": artifact.Spec.ArtifactID, "breakglass.t-caas.telekom.com/session-uid": string(artifact.Spec.SessionRef.UID)}}, Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{"breakglass.t-caas.telekom.com/plan-sha256": artifact.Spec.PlanDigest}}, Spec: corev1.PodSpec{AutomountServiceAccountToken: boolPtr(false), SecurityContext: &corev1.PodSecurityContext{FSGroup: &group}, InitContainers: []corev1.Container{{Name: "collector"}}, Containers: []corev1.Container{{Name: "uploader"}}}}}}
+	valid := batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: artifact.Namespace, Annotations: map[string]string{"breakglass.t-caas.telekom.com/plan-sha256": artifact.Spec.PlanDigest, "breakglass.t-caas.telekom.com/artifact-uid": string(artifact.UID), "breakglass.t-caas.telekom.com/operation-id": "op"}, Labels: map[string]string{"breakglass.t-caas.telekom.com/artifact": artifact.Spec.ArtifactID, "breakglass.t-caas.telekom.com/session-uid": artifact.Spec.SessionRef.UID}}, Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{"breakglass.t-caas.telekom.com/plan-sha256": artifact.Spec.PlanDigest}}, Spec: corev1.PodSpec{AutomountServiceAccountToken: boolPtr(false), SecurityContext: &corev1.PodSecurityContext{FSGroup: &group}, InitContainers: []corev1.Container{{Name: "collector"}}, Containers: []corev1.Container{{Name: "uploader"}}}}}}
 	if err := validateCollectorJob(valid, artifact, artifact.Namespace, "op"); err != nil {
 		t.Fatalf("valid collector Job rejected: %v", err)
 	}
@@ -108,9 +108,9 @@ func TestValidateCollectorJobRequiresMatchingArtifactOwnership(t *testing.T) {
 		"side-by-side containers": func(job *batchv1.Job) { job.Spec.Template.Spec.InitContainers = nil },
 	} {
 		t.Run(name, func(t *testing.T) {
-			copy := valid.DeepCopy()
-			mutate(copy)
-			if err := validateCollectorJob(*copy, artifact, artifact.Namespace, "op"); err == nil {
+			modified := valid.DeepCopy()
+			mutate(modified)
+			if err := validateCollectorJob(*modified, artifact, artifact.Namespace, "op"); err == nil {
 				t.Fatal("invalid collector Job accepted")
 			}
 		})
@@ -140,7 +140,7 @@ func TestEnsureUploadResourcesWritesOnlyToTargetClientAndCapturesUIDs(t *testing
 	spoke := &uidAssigningClient{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
 	provider := &testTargetProvider{client: spoke, config: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: types.UID("cluster-uid")}}}
 	reconciler := &Reconciler{Client: hub, LiveReader: hub, TokenIssuer: testTokenIssuer{}, Image: "registry.example/collector@sha256:" + strings.Repeat("c", 64), ControllerURL: "https://breakglass.example", ClusterProvider: provider}
-	require.NoError(t, reconciler.ensureUploadResources(context.Background(), artifact, backend.Record{ArtifactID: artifact.Spec.ArtifactID, ArtifactUID: string(artifact.UID), SessionUID: string(artifact.Spec.SessionRef.UID), Namespace: artifact.Spec.SessionRef.Namespace, SessionName: artifact.Spec.SessionRef.Name, ExpiresAt: expires.Time}))
+	require.NoError(t, reconciler.ensureUploadResources(context.Background(), artifact, backend.Record{ArtifactID: artifact.Spec.ArtifactID, ArtifactUID: string(artifact.UID), SessionUID: artifact.Spec.SessionRef.UID, Namespace: artifact.Spec.SessionRef.Namespace, SessionName: artifact.Spec.SessionRef.Name, ExpiresAt: expires.Time}))
 	var spokeJob batchv1.Job
 	require.NoError(t, spoke.Get(context.Background(), types.NamespacedName{Namespace: "target", Name: artifact.Spec.ArtifactID + "-collect"}, &spokeJob))
 	var spokeSecret corev1.Secret
@@ -158,7 +158,7 @@ func TestEnsureUploadResourcesWritesOnlyToTargetClientAndCapturesUIDs(t *testing
 	replacement.UID = types.UID("replacement-secret")
 	replacement.ResourceVersion = ""
 	require.NoError(t, spoke.Create(context.Background(), replacement))
-	require.ErrorContains(t, reconciler.ensureUploadResources(context.Background(), artifact, backend.Record{ArtifactID: artifact.Spec.ArtifactID, ArtifactUID: string(artifact.UID), SessionUID: string(artifact.Spec.SessionRef.UID), Namespace: artifact.Spec.SessionRef.Namespace, SessionName: artifact.Spec.SessionRef.Name, ExpiresAt: expires.Time}), "UID")
+	require.ErrorContains(t, reconciler.ensureUploadResources(context.Background(), artifact, backend.Record{ArtifactID: artifact.Spec.ArtifactID, ArtifactUID: string(artifact.UID), SessionUID: artifact.Spec.SessionRef.UID, Namespace: artifact.Spec.SessionRef.Namespace, SessionName: artifact.Spec.SessionRef.Name, ExpiresAt: expires.Time}), "UID")
 }
 
 func TestCreateOutcomePersistsUIDBeforePostWriteRevocation(t *testing.T) {
@@ -186,7 +186,7 @@ func TestCreateOutcomePersistsUIDBeforePostWriteRevocation(t *testing.T) {
 	}
 	provider := &testTargetProvider{client: spoke, config: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: types.UID("cluster-uid")}}}
 	reconciler := &Reconciler{Client: hub, LiveReader: hub, TokenIssuer: testTokenIssuer{}, Image: "registry.example/collector@sha256:" + strings.Repeat("c", 64), ControllerURL: "https://breakglass.example", ClusterProvider: provider}
-	require.Error(t, reconciler.ensureUploadResources(context.Background(), artifact, backend.Record{ArtifactID: artifact.Spec.ArtifactID, ArtifactUID: string(artifact.UID), SessionUID: string(artifact.Spec.SessionRef.UID), Namespace: artifact.Spec.SessionRef.Namespace, SessionName: artifact.Spec.SessionRef.Name, ExpiresAt: expires.Time}))
+	require.Error(t, reconciler.ensureUploadResources(context.Background(), artifact, backend.Record{ArtifactID: artifact.Spec.ArtifactID, ArtifactUID: string(artifact.UID), SessionUID: artifact.Spec.SessionRef.UID, Namespace: artifact.Spec.SessionRef.Namespace, SessionName: artifact.Spec.SessionRef.Name, ExpiresAt: expires.Time}))
 	updated := &breakglassv1alpha1.DebugSessionArtifact{}
 	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(&artifact), updated))
 	require.NotEmpty(t, updated.Status.Resources[0].UID)

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -214,4 +215,42 @@ func TestCleanupRequiresTwoEmptyInventoriesAfterExactDelete(t *testing.T) {
 	require.NoError(t, service.Cleanup(context.Background(), repository.record, StateDeleted))
 	require.Equal(t, StateDeleted, repository.record.State)
 	require.Equal(t, 3, store.inventoryCalls)
+}
+
+type callbackReadCloser struct{ read func([]byte) (int, error) }
+
+func (reader callbackReadCloser) Read(buffer []byte) (int, error) { return reader.read(buffer) }
+func (callbackReadCloser) Close() error                           { return nil }
+
+func TestDownloadDiscardsBytesWhenIdentityChangesDuringProviderRead(t *testing.T) {
+	for _, replacement := range []bool{false, true} {
+		t.Run(fmt.Sprint(replacement), func(t *testing.T) {
+			repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "artifact", ArtifactUID: "original", SessionUID: "session-uid", TargetIdentityDigest: "target", OperationEpoch: 2, State: StateAvailable, ExpiresAt: time.Unix(200, 0)}}
+			service := newServiceForTest(t, repository, &fakeStore{}, allowAuthorizer{})
+			reader := &authorizedReadCloser{ctx: context.Background(), service: service, namespace: "ns", sessionName: "session", artifactID: "artifact", artifactUID: "original", binding: SessionBinding{Namespace: "ns", Name: "session", UID: "session-uid", TargetIdentityDigest: "target", OperationEpoch: 2}}
+			reader.reader = callbackReadCloser{read: func(buffer []byte) (int, error) {
+				n := copy(buffer, "secret")
+				if replacement {
+					repository.record.ArtifactUID = "replacement"
+				} else {
+					repository.record.State = StateRevoked
+				}
+				return n, nil
+			}}
+			buffer := make([]byte, 6)
+			n, err := reader.Read(buffer)
+			require.Error(t, err)
+			require.Zero(t, n)
+			require.Equal(t, make([]byte, 6), buffer)
+		})
+	}
+}
+
+func TestCleanupRetainsUnobservedPublicationIntent(t *testing.T) {
+	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "dsa-0123456789abcdef01234567", ArtifactUID: "uid", RuntimeBindingDigest: "binding", State: StateUploading, Generation: 1, Size: 4, SHA256: strings.Repeat("a", 64)}}
+	service := newServiceForTest(t, repository, &fakeStore{backendID: "backend"}, allowAuthorizer{})
+	require.ErrorIs(t, service.Cleanup(context.Background(), repository.record, StateDeleted), storage.ErrAmbiguous)
+	require.Equal(t, StateUnknown, repository.record.State)
+	require.True(t, repository.record.CleanupAmbiguous)
+	require.Equal(t, int64(4), repository.record.Size)
 }

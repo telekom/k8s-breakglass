@@ -29,17 +29,20 @@ type reservationCreator interface {
 // UploadReservationBinding is domain-separated from token signing and binds a
 // reproducible nonce to the immutable reservation, never a requester credential.
 func UploadReservationBinding(record Record) string {
-	return record.ReservationNonce + "\x00" + record.Namespace + "\x00" + record.SessionName + "\x00" + record.SessionUID + "\x00" + record.ArtifactID + "\x00" + record.PlanDigest + "\x00" + strconv.FormatUint(record.OperationEpoch, 10)
+	return record.ConnectionLeaseUID + "\x00" + record.ReservationNonce + "\x00" + record.Namespace + "\x00" + record.SessionName + "\x00" + record.SessionUID + "\x00" + record.ArtifactID + "\x00" + record.PlanDigest + "\x00" + strconv.FormatUint(record.OperationEpoch, 10)
 }
 
 // Reserve admits a server-resolved collector request. Only the host's trusted
 // admission path may build Record; request credentials and locations are absent.
 func (service *Service) Reserve(ctx context.Context, record Record) (Record, error) {
+	if record.ConnectionLeaseUID == "" {
+		return Record{}, ErrForbidden
+	}
 	if record.Recipe != archive.SystemSummaryRecipe && record.Recipe != archive.CrashdumpCollectionRecipe {
 		return Record{}, ErrForbidden
 	}
 	return service.reserve(ctx, record, func(ctx context.Context) error {
-		return service.authorizer.AuthorizeArtifact(ctx, SessionBinding{Namespace: record.Namespace, Name: record.SessionName, UID: record.SessionUID, TargetClusterUID: record.TargetClusterUID, TargetPodNamespace: record.TargetPodNamespace, TargetPodName: record.TargetPodName, TargetPodUID: record.TargetPodUID, TargetNodeUID: record.TargetNodeUID, TargetIdentityDigest: record.TargetIdentityDigest, OperationEpoch: record.OperationEpoch})
+		return service.authorizer.AuthorizeArtifact(ctx, SessionBinding{Namespace: record.Namespace, Name: record.SessionName, UID: record.SessionUID, TargetClusterUID: record.TargetClusterUID, TargetPodNamespace: record.TargetPodNamespace, TargetPodName: record.TargetPodName, TargetPodUID: record.TargetPodUID, TargetNodeUID: record.TargetNodeUID, ConnectionLeaseUID: record.ConnectionLeaseUID, TargetIdentityDigest: record.TargetIdentityDigest, OperationEpoch: record.OperationEpoch})
 	})
 }
 
@@ -134,4 +137,12 @@ func ReservationToken(keyring *token.Keyring, record Record, route string, now t
 		return "", ErrForbidden
 	}
 	return keyring.Sign(claims)
+}
+
+// AuthorizeCollection rechecks the original collector capability before a spoke mutation.
+func (service *Service) AuthorizeCollection(ctx context.Context, record Record) error {
+	if record.ConnectionLeaseUID == "" || record.Recipe == TerminalRecordingRecipe {
+		return ErrForbidden
+	}
+	return service.authorize(ctx, record, record.SessionUID, record.TargetIdentityDigest, record.OperationEpoch)
 }

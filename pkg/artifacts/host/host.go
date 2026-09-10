@@ -169,6 +169,7 @@ func (source repositoryBindingSource) ResolveArtifactBinding(ctx context.Context
 		TargetClusterUID:     record.TargetClusterUID,
 		TargetIdentityDigest: record.TargetIdentityDigest,
 		OperationEpoch:       record.OperationEpoch,
+		ConnectionLeaseUID:   record.ConnectionLeaseUID,
 		TargetPodNamespace:   record.TargetPodNamespace,
 		TargetPodName:        record.TargetPodName,
 		TargetPodUID:         record.TargetPodUID,
@@ -203,7 +204,7 @@ func (fence *connectionLeaseFence) AuthorizeArtifact(ctx context.Context, bindin
 		return backend.ErrForbidden
 	}
 	lease := session.Status.ConnectionLease
-	if lease == nil || !artifactSessionIsLive(&session, binding, time.Now()) || string(lease.TargetUID) != binding.TargetClusterUID || lease.Epoch != int64(binding.OperationEpoch) || lease.ExpiresAt.IsZero() {
+	if lease == nil || binding.ConnectionLeaseUID == "" || string(lease.UID) != binding.ConnectionLeaseUID || !artifactSessionIsLive(&session, binding, time.Now()) || string(lease.TargetUID) != binding.TargetClusterUID || lease.Epoch != int64(binding.OperationEpoch) || lease.ExpiresAt.IsZero() {
 		return backend.ErrForbidden
 	}
 	ref := debug.ConnectionLeaseRef{
@@ -245,8 +246,11 @@ func (fence *connectionLeaseFence) AuthorizeArtifact(ctx context.Context, bindin
 			return backend.ErrForbidden
 		}
 	}
+	if err := fence.leases.Validate(ctx, ref, -1); err != nil {
+		return backend.ErrForbidden
+	}
 	var current breakglassv1alpha1.DebugSession
-	if err := fence.reader.Get(ctx, types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}, &current); err != nil || !artifactSessionIsLive(&current, binding, time.Now()) {
+	if err := fence.reader.Get(ctx, types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}, &current); err != nil || !artifactSessionIsLive(&current, binding, time.Now()) || current.Status.ConnectionLease == nil || string(current.Status.ConnectionLease.UID) != binding.ConnectionLeaseUID || current.Status.ConnectionLease.Epoch != int64(binding.OperationEpoch) {
 		return backend.ErrForbidden
 	}
 	return nil
@@ -396,6 +400,9 @@ func (resolver *readBindingResolver) Resolve(ctx *gin.Context, namespace, name, 
 	identity, err := resolver.debugAPI.AuthorizeArtifactRead(ctx, namespace, name)
 	if err != nil {
 		return backend.SessionBinding{}, backend.ErrForbidden
+	}
+	if artifactID == "" {
+		return backend.SessionBinding{Namespace: identity.Namespace, Name: identity.Name, UID: string(identity.UID)}, nil
 	}
 	binding, err := resolver.source.ResolveArtifactBinding(ctx.Request.Context(), namespace, name, artifactID)
 	if err != nil || binding.Namespace != identity.Namespace || binding.Name != identity.Name || binding.UID != string(identity.UID) {

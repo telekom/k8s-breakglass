@@ -57,6 +57,10 @@ spec:
                 description: artifactID is the public opaque artifact identifier.
                 pattern: ^dsa-[0-9a-f]{24}$
                 type: string
+              connectionLeaseUID:
+                description: connectionLeaseUID binds collector authority to the admitted
+                  lease incarnation.
+                type: string
               expiresAt:
                 description: expiresAt is the retention deadline after which access
                   is denied.

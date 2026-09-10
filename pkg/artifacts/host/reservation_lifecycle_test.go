@@ -20,6 +20,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,18 +30,20 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
 	"go.uber.org/zap"
 	batchv1 "k8s.io/api/batch/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/stretchr/testify/require"
-	v1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/archive"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/kube"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/storage/local"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/token"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/types"
@@ -55,10 +59,18 @@ func (allowLifecycle) AuthorizeArtifact(context.Context, backend.SessionBinding)
 
 type ambiguousStore struct {
 	storage.Store
-	lost bool
+	lost      bool
+	beforePut func()
+}
+
+func (s *ambiguousStore) InventoryKey(ctx context.Context, key string) ([]storage.Version, error) {
+	return s.Store.(storage.KeyInventory).InventoryKey(ctx, key)
 }
 
 func (s *ambiguousStore) PutIfAbsent(ctx context.Context, o storage.Object, r io.Reader) (storage.Metadata, error) {
+	if s.beforePut != nil {
+		s.beforePut()
+	}
 	m, e := s.Store.PutIfAbsent(ctx, o, r)
 	if e == nil && s.lost {
 		s.lost = false
@@ -79,12 +91,12 @@ func lifecycleFixture(t *testing.T) (*backend.Service, *kube.Repository, *ambigu
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, localStore.Close()) })
 	scheme := runtime.NewScheme()
-	require.NoError(t, v1.AddToScheme(scheme))
-	next := 0
-	hub := interceptor.NewClient(fake.NewClientBuilder().WithScheme(scheme).WithObjectTracker(clienttesting.NewObjectTracker(scheme, serializer.NewCodecFactory(scheme).UniversalDecoder())).WithStatusSubresource(&v1.DebugSessionArtifact{}).Build(), interceptor.Funcs{Create: func(ctx context.Context, c client.WithWatch, o client.Object, opts ...client.CreateOption) error {
-		next++
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	var next atomic.Int64
+	hub := interceptor.NewClient(fake.NewClientBuilder().WithScheme(scheme).WithObjectTracker(clienttesting.NewObjectTracker(scheme, serializer.NewCodecFactory(scheme).UniversalDecoder())).WithStatusSubresource(&breakglassv1alpha1.DebugSessionArtifact{}).Build(), interceptor.Funcs{Create: func(ctx context.Context, c client.WithWatch, o client.Object, opts ...client.CreateOption) error {
+		number := next.Add(1)
 		if o.GetUID() == "" {
-			o.SetUID(types.UID("created-" + strings.Repeat("x", next)))
+			o.SetUID(types.UID("created-" + strings.Repeat("x", int(number))))
 		}
 		return c.Create(ctx, o, opts...)
 	}})
@@ -100,7 +112,7 @@ func lifecycleFixture(t *testing.T) (*backend.Service, *kube.Repository, *ambigu
 }
 func lifecycleRecord(now time.Time) backend.Record {
 	detail := "basic"
-	return backend.Record{Namespace: "hub", SessionName: "session", SessionUID: "session-uid", TargetClusterUID: "cluster-uid", TargetIdentityDigest: strings.Repeat("a", 64), RuntimeBindingDigest: strings.Repeat("b", 64), PlanDigest: strings.Repeat("c", 64), Recipe: archive.SystemSummaryRecipe, RecipeVersion: 1, ExpiresAt: now.Add(time.Hour), MaxBytes: archive.MaxSystemSummaryArchiveBytes, OperationEpoch: 1, Expected: archive.Expected{Recipe: archive.SystemSummaryRecipe, RecipeVersion: 1, SessionNamespace: "hub", SessionName: "session", SessionUID: "session-uid", RedactionProfile: "credential-text.v1", RedactionVersion: 1, Inputs: archive.Inputs{MaxArchiveBytes: archive.MaxSystemSummaryArchiveBytes, DetailLevel: &detail}}}
+	return backend.Record{ConnectionLeaseUID: "lease-uid", Namespace: "hub", SessionName: "session", SessionUID: "session-uid", TargetClusterUID: "cluster-uid", TargetIdentityDigest: strings.Repeat("a", 64), RuntimeBindingDigest: strings.Repeat("b", 64), PlanDigest: strings.Repeat("c", 64), Recipe: archive.SystemSummaryRecipe, RecipeVersion: 1, ExpiresAt: now.Add(time.Hour), MaxBytes: archive.MaxSystemSummaryArchiveBytes, OperationEpoch: 1, Expected: archive.Expected{Recipe: archive.SystemSummaryRecipe, RecipeVersion: 1, SessionNamespace: "hub", SessionName: "session", SessionUID: "session-uid", RedactionProfile: "credential-text.v1", RedactionVersion: 1, Inputs: archive.Inputs{MaxArchiveBytes: archive.MaxSystemSummaryArchiveBytes, DetailLevel: &detail}}}
 }
 func TestDurableCollectorReservationTokenAndLocalRoundtrip(t *testing.T) {
 	svc, repo, _, keys, now, hub := lifecycleFixture(t)
@@ -133,7 +145,7 @@ func TestDurableCollectorReservationTokenAndLocalRoundtrip(t *testing.T) {
 	fresh, err := repo.Get(ctx, record.Namespace, record.SessionName, record.ArtifactID)
 	require.NoError(t, err)
 	require.NoError(t, svc.Cleanup(ctx, fresh, backend.StateDeleted))
-	object := &v1.DebugSessionArtifact{}
+	object := &breakglassv1alpha1.DebugSessionArtifact{}
 	require.NoError(t, hub.Get(ctx, client.ObjectKey{Namespace: "controller", Name: record.ArtifactID}, object))
 	require.NoError(t, hub.Delete(ctx, object))
 	replacement, err := svc.Reserve(ctx, lifecycleRecord(*now))
@@ -224,30 +236,30 @@ func validLocalArchive(t *testing.T, expected archive.Expected) []byte {
 
 type lifecycleTarget struct {
 	client client.Client
-	config *v1.ClusterConfig
+	config *breakglassv1alpha1.ClusterConfig
 }
 
-func (p lifecycleTarget) GetClientForPrivilegedOperation(context.Context, string) (client.Client, *v1.ClusterConfig, error) {
+func (p lifecycleTarget) GetClientForPrivilegedOperation(context.Context, string) (client.Client, *breakglassv1alpha1.ClusterConfig, error) {
 	return p.client, p.config, nil
 }
-func (p lifecycleTarget) ValidatePrivilegedOperationClusterConfig(context.Context, *v1.ClusterConfig) error {
+func (p lifecycleTarget) ValidatePrivilegedOperationClusterConfig(context.Context, *breakglassv1alpha1.ClusterConfig) error {
 	return nil
 }
-func (p lifecycleTarget) ReleasePrivilegedOperationClusterConfig(*v1.ClusterConfig) {}
+func (p lifecycleTarget) ReleasePrivilegedOperationClusterConfig(*breakglassv1alpha1.ClusterConfig) {}
 func TestRegisteredCollectorAdmissionCreatesJobWithReservedToken(t *testing.T) {
 	svc, repo, _, keys, now, hub := lifecycleFixture(t)
 	ctx := context.Background()
 	require.NoError(t, corev1.AddToScheme(hub.Scheme()))
 	require.NoError(t, batchv1.AddToScheme(hub.Scheme()))
 	expires := metav1.NewTime(now.Add(time.Hour))
-	session := &v1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: "session-uid"}, Spec: v1.DebugSessionSpec{RequestedBy: "owner", Cluster: "spoke", TargetNamespace: "target"}, Status: v1.DebugSessionStatus{State: v1.DebugSessionStateActive, ExpiresAt: &expires, ResolvedTemplate: &v1.DebugSessionTemplateSpec{ArtifactCollection: &v1.DebugSessionArtifactCollection{AllowedRecipes: []string{archive.SystemSummaryRecipe}}}, AllowedPods: []v1.AllowedPodRef{{Namespace: "target", Name: "approved", UID: "pod-uid"}}, ConnectionLease: &v1.DebugSessionConnectionLease{TargetUID: "cluster-uid", Epoch: 1}}}
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: "session-uid"}, Spec: breakglassv1alpha1.DebugSessionSpec{RequestedBy: "owner", Cluster: "spoke", TargetNamespace: "target"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expires, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{ArtifactCollection: &breakglassv1alpha1.DebugSessionArtifactCollection{AllowedRecipes: []string{archive.SystemSummaryRecipe}}}, AllowedPods: []breakglassv1alpha1.AllowedPodRef{{Namespace: "target", Name: "approved", UID: "pod-uid"}}, ConnectionLease: &breakglassv1alpha1.DebugSessionConnectionLease{UID: "lease-uid", TargetUID: "cluster-uid", Epoch: 1}}}
 	require.NoError(t, hub.Create(ctx, session))
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "approved", Namespace: "target", UID: "pod-uid"}}
 	spoke := interceptor.NewClient(fake.NewClientBuilder().WithScheme(hub.Scheme()).WithObjects(pod).Build(), interceptor.Funcs{Create: func(ctx context.Context, c client.WithWatch, o client.Object, opts ...client.CreateOption) error {
 		o.SetUID(types.UID("target-" + o.GetName()))
 		return c.Create(ctx, o, opts...)
 	}})
-	provider := lifecycleTarget{client: spoke, config: &v1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: "cluster-uid"}}}
+	provider := lifecycleTarget{client: spoke, config: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: "cluster-uid"}}}
 	debugAPI := debug.NewDebugSessionAPIController(zap.NewNop().Sugar(), hub, nil, nil).WithAPIReader(hub)
 	controller := &collectionController{service: svc, debug: debugAPI, provider: provider, maximum: archive.MaxSystemSummaryArchiveBytes}
 	router := gin.New()
@@ -285,4 +297,142 @@ func TestRegisteredCollectorAdmissionCreatesJobWithReservedToken(t *testing.T) {
 	result, err := svc.Upload(ctx, string(secret.Data["token"]), route, bytes.NewReader(body))
 	require.NoError(t, err)
 	require.Equal(t, backend.StateAvailable, result.State)
+
+	second := send(`{"recipe":"system-summary.v1","podNamespace":"target","podName":"approved"}`)
+	require.Equal(t, http.StatusCreated, second.Code, second.Body.String())
+	var next backend.PublicRecord
+	require.NoError(t, json.Unmarshal(second.Body.Bytes(), &next))
+	require.NoError(t, spoke.Delete(ctx, pod))
+	replacement := pod.DeepCopy()
+	replacement.ResourceVersion = ""
+	replacement.UID = "replacement"
+	require.NoError(t, spoke.Create(ctx, replacement))
+	nextKey := client.ObjectKey{Namespace: "controller", Name: next.ArtifactID}
+	_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: nextKey})
+	require.NoError(t, err)
+	_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: nextKey})
+	require.Error(t, err)
+	require.True(t, apierrors.IsNotFound(spoke.Get(ctx, client.ObjectKey{Namespace: "target", Name: next.ArtifactID + "-upload"}, &corev1.Secret{})))
+}
+
+func TestConcurrentCollectorReservationsHaveTwoDurableSlots(t *testing.T) {
+	svc, _, _, _, now, hub := lifecycleFixture(t)
+	var successes atomic.Int64
+	var wait sync.WaitGroup
+	for range 8 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			if _, err := svc.Reserve(context.Background(), lifecycleRecord(*now)); err == nil {
+				successes.Add(1)
+			}
+		}()
+	}
+	wait.Wait()
+	require.Equal(t, int64(2), successes.Load())
+	var list breakglassv1alpha1.DebugSessionArtifactList
+	require.NoError(t, hub.List(context.Background(), &list))
+	require.Len(t, list.Items, 2)
+	require.NotEqual(t, list.Items[0].Spec.ReservationNonce, list.Items[1].Spec.ReservationNonce)
+	require.Equal(t, "session-uid", list.Items[0].Spec.SessionRef.UID)
+	require.Equal(t, "session-uid", list.Items[1].Spec.SessionRef.UID)
+}
+
+func TestPendingReservationCleanupUsesDurableStatusTransition(t *testing.T) {
+	svc, repo, _, _, now, _ := lifecycleFixture(t)
+	ctx := context.Background()
+	record, err := svc.Reserve(ctx, lifecycleRecord(*now))
+	require.NoError(t, err)
+	require.NoError(t, svc.Cleanup(ctx, record, backend.StateExpired))
+	current, err := repo.Get(ctx, record.Namespace, record.SessionName, record.ArtifactID)
+	require.NoError(t, err)
+	require.Equal(t, backend.StateExpired, current.State)
+}
+
+func TestCleanupRetainsThenRecoversPublicationPausedBeforePut(t *testing.T) {
+	svc, repo, store, keys, now, hub := lifecycleFixture(t)
+	ctx := context.Background()
+	record, err := svc.Reserve(ctx, lifecycleRecord(*now))
+	require.NoError(t, err)
+	route := "/api/debugSessionArtifactUploads/hub/session/" + record.ArtifactID
+	signed, err := backend.ReservationToken(keys, record, route, *now, 15*time.Minute)
+	require.NoError(t, err)
+	store.beforePut = func() {
+		intent, err := repo.Get(ctx, record.Namespace, record.SessionName, record.ArtifactID)
+		require.NoError(t, err)
+		require.Equal(t, backend.StateUploading, intent.State)
+		require.Positive(t, intent.Size)
+		require.ErrorIs(t, svc.Cleanup(ctx, intent, backend.StateDeleted), storage.ErrAmbiguous)
+		retained, err := repo.Get(ctx, record.Namespace, record.SessionName, record.ArtifactID)
+		require.NoError(t, err)
+		require.Equal(t, record.ArtifactUID, retained.ArtifactUID)
+		require.Equal(t, backend.StateUnknown, retained.State)
+	}
+	_, err = svc.Upload(ctx, signed, route, bytes.NewReader(validLocalArchive(t, record.Expected)))
+	require.Error(t, err)
+	current, err := repo.Get(ctx, record.Namespace, record.SessionName, record.ArtifactID)
+	require.NoError(t, err)
+	require.Equal(t, record.ArtifactUID, current.ArtifactUID)
+	require.Equal(t, backend.StateRevoked, current.State)
+	object := &breakglassv1alpha1.DebugSessionArtifact{}
+	require.NoError(t, hub.Get(ctx, client.ObjectKey{Namespace: "controller", Name: record.ArtifactID}, object))
+	require.NoError(t, hub.Delete(ctx, object))
+	replacement, err := svc.Reserve(ctx, lifecycleRecord(*now))
+	require.NoError(t, err)
+	require.Equal(t, record.ArtifactID, replacement.ArtifactID)
+	require.NotEqual(t, record.ArtifactUID, replacement.ArtifactUID)
+}
+
+func TestRecordingReservationRejectsCollapsedSubsecondLifetime(t *testing.T) {
+	svc, _, _, _, now, hub := lifecycleFixture(t)
+	record := lifecycleRecord(*now)
+	record.Recording = &backend.RecordingMetadata{FormatVersion: 1, StartedAt: now.Add(time.Millisecond), StreamExpiresAt: now.Add(2 * time.Millisecond), PodNamespace: "target", PodName: "pod", PodUID: "uid", Operation: "exec", LeaseUID: "lease", LeaseEpoch: "1", Generation: "1"}
+	_, err := svc.ReserveRecording(context.Background(), record, func(context.Context) error { return nil })
+	require.ErrorIs(t, err, backend.ErrForbidden)
+	var list breakglassv1alpha1.DebugSessionArtifactList
+	require.NoError(t, hub.List(context.Background(), &list))
+	require.Empty(t, list.Items)
+}
+
+func TestCollectorLeaseRecreationDeniesOldUploadTokenAndDownload(t *testing.T) {
+	_, repo, store, keys, now, hub := lifecycleFixture(t)
+	require.NoError(t, coordinationv1.AddToScheme(hub.Scheme()))
+	ctx := context.Background()
+	expiry := metav1.NewTime(now.Add(time.Hour))
+	renew := metav1.NewMicroTime(*now)
+	holder := "session-uid"
+	duration := int32(3600)
+	lease := &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: "connection", Namespace: "hub", UID: "lease-uid", Annotations: map[string]string{"breakglass.telekom.com/connection-epoch": "1", "breakglass.telekom.com/connection-target-uid": "cluster-uid", "breakglass.telekom.com/connection-profile-digest": "sha256:profile"}}, Spec: coordinationv1.LeaseSpec{HolderIdentity: &holder, LeaseDurationSeconds: &duration, RenewTime: &renew}}
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: "session-uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expiry, ConnectionLease: &breakglassv1alpha1.DebugSessionConnectionLease{Namespace: "hub", Name: "connection", UID: "lease-uid", HolderUID: "session-uid", TargetUID: "cluster-uid", ProfileDigest: "sha256:profile", Epoch: 1, ExpiresAt: expiry}}}
+	require.NoError(t, hub.Create(ctx, lease))
+	require.NoError(t, hub.Create(ctx, session))
+	leaseService := debug.NewConnectionLeaseService(hub).WithLiveReader(hub)
+	service, err := backend.New(backend.Config{Repository: repo, Store: store, Tokens: keys, StagingDir: t.TempDir(), Now: func() time.Time { return *now }, Authorizer: NewLiveSessionAuthorizer(hub, NewConnectionLeaseFence(hub, leaseService), func() time.Time { return *now })})
+	require.NoError(t, err)
+	record, err := service.Reserve(ctx, lifecycleRecord(*now))
+	require.NoError(t, err)
+	route := "/api/debugSessionArtifactUploads/hub/session/" + record.ArtifactID
+	signed, err := backend.ReservationToken(keys, record, route, *now, 15*time.Minute)
+	require.NoError(t, err)
+	body := validLocalArchive(t, record.Expected)
+	_, err = service.Upload(ctx, signed, route, bytes.NewReader(body))
+	require.NoError(t, err)
+	binding := backend.SessionBinding{Namespace: "hub", Name: "session", UID: "session-uid", TargetClusterUID: "cluster-uid", TargetIdentityDigest: record.TargetIdentityDigest, OperationEpoch: 1, ConnectionLeaseUID: "lease-uid"}
+	reader, _, err := service.Download(ctx, "hub", "session", record.ArtifactID, binding)
+	require.NoError(t, err)
+	_, err = io.ReadAll(reader)
+	require.NoError(t, err)
+	require.NoError(t, reader.Close())
+	require.NoError(t, hub.Delete(ctx, lease))
+	replacement := lease.DeepCopy()
+	replacement.UID = "replacement-lease"
+	replacement.ResourceVersion = ""
+	require.NoError(t, hub.Create(ctx, replacement))
+	require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(session), session))
+	session.Status.ConnectionLease.UID = replacement.UID
+	require.NoError(t, hub.Update(ctx, session))
+	_, err = service.Upload(ctx, signed, route, bytes.NewReader(body))
+	require.ErrorIs(t, err, backend.ErrForbidden)
+	_, _, err = service.Download(ctx, "hub", "session", record.ArtifactID, binding)
+	require.ErrorIs(t, err, backend.ErrForbidden)
 }

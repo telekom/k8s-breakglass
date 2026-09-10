@@ -4,11 +4,16 @@
 package s3
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/stretchr/testify/require"
 	artifactstorage "github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
@@ -68,4 +73,27 @@ func TestStoreRejectsInvalidObjectBeforeProviderCall(t *testing.T) {
 	store := &Store{maximumBytes: 32}
 	require.Error(t, store.ready(artifactstorage.Object{Key: "x", Size: 1}))
 	require.Error(t, store.ready(artifactstorage.Object{Key: "x", RuntimeBindingDigest: "binding", SHA256: "digest", Size: 1}))
+}
+
+type failingPutTransport struct{ calls int }
+
+func (transport *failingPutTransport) Do(request *http.Request) (*http.Response, error) {
+	transport.calls++
+	_, _ = io.Copy(io.Discard, request.Body)
+	return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("<Error><Code>SlowDown</Code></Error>")), Request: request}, nil
+}
+func TestPublicationDoesNotRetryAfterAmbiguousProviderResponse(t *testing.T) {
+	transport := &failingPutTransport{}
+	client := awss3.NewFromConfig(aws.Config{Region: "eu-central-1", Credentials: aws.AnonymousCredentials{}, HTTPClient: transport}, func(options *awss3.Options) {
+		options.BaseEndpoint = aws.String("https://storage.example")
+		options.UsePathStyle = true
+		options.RetryMaxAttempts = 3
+	})
+	store, err := NewWithClient(client, Config{Region: "eu-central-1", Bucket: "artifacts", InstanceID: "instance-0123456789", RequireVersioned: true})
+	require.NoError(t, err)
+	content := "artifact"
+	digest := sha256.Sum256([]byte(content))
+	_, err = store.PutIfAbsent(context.Background(), artifactstorage.Object{Key: "key", RuntimeBindingDigest: "binding", Size: int64(len(content)), SHA256: hex.EncodeToString(digest[:])}, strings.NewReader(content))
+	require.Error(t, err)
+	require.Equal(t, 1, transport.calls)
 }

@@ -1462,6 +1462,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: artifactID
       type:
         scalar: string
+    - name: connectionLeaseUID
+      type:
+        scalar: string
     - name: expiresAt
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time

@@ -56,7 +56,13 @@ func (controller *ReadController) handleList(context *gin.Context) {
 		context.Status(http.StatusNotFound)
 		return
 	}
-	records, err := controller.service.List(context.Request.Context(), context.Param("namespace"), context.Param("session"), binding)
+	records, err := controller.service.ListAuthorized(context.Request.Context(), context.Param("namespace"), context.Param("session"), binding.UID, func() error {
+		current, err := controller.resolve(context, context.Param("namespace"), context.Param("session"), "")
+		if err != nil || current.UID != binding.UID {
+			return backend.ErrForbidden
+		}
+		return nil
+	})
 	if err != nil {
 		writeReadError(context, err)
 		return
@@ -83,7 +89,13 @@ func (controller *ReadController) handleDownload(context *gin.Context) {
 		context.Header("Content-Length", strconv.FormatInt(public.Size, 10))
 	}
 	context.Status(http.StatusOK)
-	if _, err := io.Copy(context.Writer, reader); err != nil {
+	if _, err := io.Copy(context.Writer, &requestAuthorizedReader{reader: reader, authorize: func() error {
+		current, err := controller.resolve(context, namespace, session, artifactID)
+		if err != nil || current != binding {
+			return backend.ErrForbidden
+		}
+		return nil
+	}}); err != nil {
 		return
 	}
 }
@@ -106,3 +118,21 @@ var _ interface {
 	Register(*gin.RouterGroup) error
 	Handlers() []gin.HandlerFunc
 } = (*ReadController)(nil)
+
+// requestAuthorizedReader keeps the caller's participant authorization live while streaming.
+type requestAuthorizedReader struct {
+	reader    io.Reader
+	authorize func() error
+}
+
+func (reader *requestAuthorizedReader) Read(buffer []byte) (int, error) {
+	if err := reader.authorize(); err != nil {
+		return 0, err
+	}
+	n, err := reader.reader.Read(buffer)
+	if authErr := reader.authorize(); authErr != nil {
+		clear(buffer[:n])
+		return 0, authErr
+	}
+	return n, err
+}

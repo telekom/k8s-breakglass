@@ -62,7 +62,7 @@ func ValidTransition(current, next State) bool {
 	}
 	switch current {
 	case StatePending:
-		return next == StateUploading || next == StateExpired || next == StateRevoked || next == StateUnknown
+		return next == StateUploading || next == StateDeleting || next == StateExpired || next == StateRevoked || next == StateUnknown
 	case StateUploading:
 		return next == StateAvailable || next == StateDeleting || next == StateExpired || next == StateRevoked || next == StateUnknown
 	case StateAvailable:
@@ -89,6 +89,7 @@ type Record struct {
 	TargetPodNamespace   string
 	TargetPodName        string
 	TargetPodUID         string
+	ConnectionLeaseUID   string
 	TargetNodeUID        string
 	TargetIdentityDigest string
 	RuntimeBindingDigest string
@@ -143,6 +144,7 @@ type SessionBinding struct {
 	TargetPodNamespace   string
 	TargetPodName        string
 	TargetPodUID         string
+	ConnectionLeaseUID   string
 	TargetNodeUID        string
 	TargetIdentityDigest string
 	OperationEpoch       uint64
@@ -211,6 +213,30 @@ func (service *Service) List(ctx context.Context, namespace, sessionName string,
 			continue
 		}
 		result = append(result, service.Public(record))
+	}
+	return result, nil
+}
+
+// ListAuthorized returns session metadata with caller authorization checked around I/O.
+func (service *Service) ListAuthorized(ctx context.Context, namespace, name, uid string, authorize func() error) ([]PublicRecord, error) {
+	if uid == "" || authorize == nil {
+		return nil, ErrForbidden
+	}
+	if err := authorize(); err != nil {
+		return nil, err
+	}
+	records, err := service.repository.ListBySession(ctx, namespace, name, uid)
+	if err != nil {
+		return nil, err
+	}
+	if err := authorize(); err != nil {
+		return nil, err
+	}
+	result := make([]PublicRecord, 0, len(records))
+	for _, record := range records {
+		if record.Namespace == namespace && record.SessionName == name && record.SessionUID == uid && record.Recipe != TerminalRecordingRecipe {
+			result = append(result, service.Public(record))
+		}
 	}
 	return result, nil
 }
@@ -419,7 +445,7 @@ func (service *Service) Download(ctx context.Context, namespace, sessionName, ar
 	if err != nil {
 		return nil, PublicRecord{}, err
 	}
-	return &authorizedReadCloser{ctx: ctx, reader: reader, service: service, namespace: namespace, sessionName: sessionName, artifactID: artifactID, binding: binding}, service.Public(record), nil
+	return &authorizedReadCloser{ctx: ctx, reader: reader, service: service, namespace: namespace, sessionName: sessionName, artifactID: artifactID, artifactUID: record.ArtifactUID, binding: binding}, service.Public(record), nil
 }
 
 func (service *Service) authorizeDownload(ctx context.Context, record Record, binding SessionBinding) error {
@@ -442,12 +468,13 @@ type authorizedReadCloser struct {
 	namespace   string
 	sessionName string
 	artifactID  string
+	artifactUID string
 	binding     SessionBinding
 }
 
 func (reader *authorizedReadCloser) Read(buffer []byte) (int, error) {
 	record, err := reader.service.repository.Get(reader.ctx, reader.namespace, reader.sessionName, reader.artifactID)
-	if err != nil {
+	if err != nil || record.ArtifactUID != reader.artifactUID {
 		_ = reader.reader.Close()
 		return 0, ErrForbidden
 	}
@@ -455,7 +482,19 @@ func (reader *authorizedReadCloser) Read(buffer []byte) (int, error) {
 		_ = reader.reader.Close()
 		return 0, err
 	}
-	return reader.reader.Read(buffer)
+	n, readErr := reader.reader.Read(buffer)
+	current, err := reader.service.repository.Get(reader.ctx, reader.namespace, reader.sessionName, reader.artifactID)
+	if err == nil && current.ArtifactUID == reader.artifactUID {
+		err = reader.service.authorizeDownload(reader.ctx, current, reader.binding)
+	} else {
+		err = ErrForbidden
+	}
+	if err != nil {
+		clear(buffer[:n])
+		_ = reader.reader.Close()
+		return 0, err
+	}
+	return n, readErr
 }
 
 func (reader *authorizedReadCloser) Close() error { return reader.reader.Close() }
@@ -528,6 +567,7 @@ func (service *Service) Cleanup(ctx context.Context, record Record, terminal Sta
 			return service.persist(ctx, &record, record.Generation-1)
 		}
 	}
+	publicationObserved := false
 	emptyObservations := 0
 	for attempt := 0; attempt < 6 && emptyObservations < 2; attempt++ {
 		versions, err := service.store.Inventory(ctx, object)
@@ -551,6 +591,7 @@ func (service *Service) Cleanup(ctx context.Context, record Record, terminal Sta
 				return ErrConflict
 			}
 			found = true
+			publicationObserved = true
 			if err := service.store.DeleteVersion(ctx, object, version); err != nil {
 				return err
 			}
@@ -561,7 +602,7 @@ func (service *Service) Cleanup(ctx context.Context, record Record, terminal Sta
 		}
 		emptyObservations++
 	}
-	if emptyObservations < 2 {
+	if emptyObservations < 2 || !publicationObserved {
 		record.State = StateUnknown
 		record.CleanupAmbiguous = true
 		record.Generation++
@@ -578,7 +619,7 @@ func (service *Service) authorize(ctx context.Context, record Record, sessionUID
 	if record.SessionUID != sessionUID || record.TargetIdentityDigest != targetDigest || record.OperationEpoch != epoch {
 		return ErrForbidden
 	}
-	return service.authorizer.AuthorizeArtifact(ctx, SessionBinding{Namespace: record.Namespace, Name: record.SessionName, UID: sessionUID, TargetClusterUID: record.TargetClusterUID, TargetPodNamespace: record.TargetPodNamespace, TargetPodName: record.TargetPodName, TargetPodUID: record.TargetPodUID, TargetNodeUID: record.TargetNodeUID, TargetIdentityDigest: targetDigest, OperationEpoch: epoch})
+	return service.authorizer.AuthorizeArtifact(ctx, SessionBinding{Namespace: record.Namespace, Name: record.SessionName, UID: sessionUID, TargetClusterUID: record.TargetClusterUID, TargetPodNamespace: record.TargetPodNamespace, TargetPodName: record.TargetPodName, TargetPodUID: record.TargetPodUID, TargetNodeUID: record.TargetNodeUID, ConnectionLeaseUID: record.ConnectionLeaseUID, TargetIdentityDigest: targetDigest, OperationEpoch: epoch})
 }
 
 func (service *Service) restoreUploadState(ctx context.Context, record Record, cause error) {

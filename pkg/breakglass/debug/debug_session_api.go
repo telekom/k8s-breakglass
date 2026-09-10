@@ -1734,7 +1734,7 @@ func (c *DebugSessionAPIController) AuthorizeArtifactRead(ctx *gin.Context, name
 	if err != nil {
 		return ArtifactReadBinding{}, fmt.Errorf("resolve artifact session: %w", err)
 	}
-	if session.Namespace != namespace || session.Name != name || session.Status.State != breakglassv1alpha1.DebugSessionStateActive || session.Status.ExpiresAt == nil || !time.Now().Before(session.Status.ExpiresAt.Time) {
+	if session.UID == "" || !session.DeletionTimestamp.IsZero() || session.Annotations[quotas.AdmissionAnnotation] == quotas.Pending || session.Namespace != namespace || session.Name != name || session.Status.State != breakglassv1alpha1.DebugSessionStateActive || session.Status.ExpiresAt == nil || isDebugSessionExpired(session, time.Now()) {
 		return ArtifactReadBinding{}, errors.New("artifact session is not active")
 	}
 	allowed, err := c.canReadDebugSession(apiCtx, session, identity)
@@ -1743,6 +1743,10 @@ func (c *DebugSessionAPIController) AuthorizeArtifactRead(ctx *gin.Context, name
 	}
 	if !allowed {
 		return ArtifactReadBinding{}, errors.New("artifact session read is forbidden")
+	}
+	current, err := c.getDebugSessionByName(apiCtx, name, namespace)
+	if err != nil || current.UID != session.UID || current.ResourceVersion != session.ResourceVersion || !current.DeletionTimestamp.IsZero() || current.Annotations[quotas.AdmissionAnnotation] == quotas.Pending || isDebugSessionExpired(current, time.Now()) {
+		return ArtifactReadBinding{}, errors.New("artifact session changed during authorization")
 	}
 	return ArtifactReadBinding{Namespace: session.Namespace, Name: session.Name, UID: session.UID}, nil
 }

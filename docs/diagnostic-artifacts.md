@@ -123,3 +123,17 @@ session's optional idle deadline. The controller's generated RBAC includes
 artifact resource, status, and finalizer operations. Signing and provider
 credentials are read by exact Secret name in the configured hub namespace;
 this feature adds no cluster-wide Secret permission.
+
+A publication intent with no observed provider version remains `Unknown` during
+cleanup: an empty inventory cannot prove that a paused publication will not
+finish. The reservation and finalizer remain for recovery or operator review.
+S3 publication makes one SDK attempt; a lost response is resolved by inventory,
+not by retrying a write after cleanup might have deleted its first version.
+Recording recovery never promotes an artifact already marked for ambiguous
+cleanup back to Available. Collector downloads revalidate both the requesting
+participant and the opened artifact UID before and after each provider read.
+
+Collector reservations bind the exact admitted connection Lease UID as well as
+its epoch. Recreating a same-name Lease with a reset epoch cannot revive an old
+upload token or download. Legacy records without this lease incarnation cannot
+grant collection access; their cleanup evidence remains usable.
