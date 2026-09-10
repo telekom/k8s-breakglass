@@ -1255,6 +1255,45 @@ func (c *DebugSessionController) updateTemplateStatus(ctx context.Context, templ
 	return nil
 }
 
+// reconcileActiveAccounting derives active counts from live DebugSessions so
+// repeated cleanup and concurrent transitions converge without one-shot
+// increment/decrement markers.
+func (c *DebugSessionController) reconcileActiveAccounting(ctx context.Context, ds *breakglassv1alpha1.DebugSession, markUsed bool) error {
+	var sessions breakglassv1alpha1.DebugSessionList
+	if err := c.client.List(ctx, &sessions); err != nil {
+		return fmt.Errorf("list DebugSessions: %w", err)
+	}
+	var active int32
+	for i := range sessions.Items {
+		session := &sessions.Items[i]
+		if session.Spec.Cluster == ds.Spec.Cluster && session.Spec.TemplateRef == ds.Spec.TemplateRef && session.Status.State == breakglassv1alpha1.DebugSessionStateActive {
+			active++
+		}
+	}
+	metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Set(float64(active))
+	if ds.Spec.TemplateRef == "" {
+		return nil
+	}
+	template, err := c.getTemplate(ctx, ds.Spec.TemplateRef)
+	if err != nil {
+		return fmt.Errorf("get template %q: %w", ds.Spec.TemplateRef, err)
+	}
+	template.Status.ActiveSessionCount = active
+	if markUsed {
+		now := metav1.Now()
+		template.Status.LastUsedAt = &now
+	}
+	if err := ssa.ApplyDebugSessionTemplateStatus(ctx, c.client, template); err != nil {
+		return fmt.Errorf("apply template active session count: %w", err)
+	}
+	if markUsed && template.Spec.PodTemplateRef != nil && template.Spec.PodTemplateRef.Name != "" {
+		if err := c.updatePodTemplateUsedBy(ctx, template.Spec.PodTemplateRef.Name, template.Name); err != nil {
+			return fmt.Errorf("update pod template used-by: %w", err)
+		}
+	}
+	return nil
+}
+
 // updatePodTemplateUsedBy ensures the DebugPodTemplate.status.usedBy list includes
 // the given DebugSessionTemplate name.
 func (c *DebugSessionController) updatePodTemplateUsedBy(ctx context.Context, podTemplateName, sessionTemplateName string) error {
