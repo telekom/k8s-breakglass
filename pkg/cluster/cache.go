@@ -572,6 +572,21 @@ func (p *ClientProvider) GetRESTConfigForPrivilegedOperation(ctx context.Context
 	return cfg, live, nil
 }
 
+// GetClientForPrivilegedOperation creates a controller-runtime client from
+// the same live, input-fenced configuration used by privileged writers.
+func (p *ClientProvider) GetClientForPrivilegedOperation(ctx context.Context, name string) (ctrlclient.Client, *breakglassv1alpha1.ClusterConfig, error) {
+	restConfig, configured, err := p.GetRESTConfigForPrivilegedOperation(ctx, name)
+	if err != nil {
+		return nil, nil, err
+	}
+	client, err := ctrlclient.New(restConfig, ctrlclient.Options{})
+	if err != nil {
+		p.ReleasePrivilegedOperationClusterConfig(configured)
+		return nil, nil, fmt.Errorf("create privileged target client: %w", err)
+	}
+	return client, configured, nil
+}
+
 func (p *ClientProvider) getRESTConfig(ctx context.Context, name string) (*rest.Config, *breakglassv1alpha1.ClusterConfig, error) {
 	now := time.Now()
 
