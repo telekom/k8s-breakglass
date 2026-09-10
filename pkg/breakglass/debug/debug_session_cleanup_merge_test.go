@@ -178,7 +178,7 @@ func TestCleanupStatusResidualsRespectRetentionAndUnresolvedIntents(t *testing.T
 	kept := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{
 		ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "kept", DeleteAfter: false}}},
 		AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{
-			Name: "kept", Created: true,
+			Name: "kept", Created: true, UID: "confirmed-kept",
 		}},
 	}}
 	assert.False(t, cleanupStatusHasResiduals(kept), "deleteAfter=false resources are intentionally retained")
@@ -417,4 +417,15 @@ func TestCleanupMergeAmbiguousUIDOutcomesRemainSeparate(t *testing.T) {
 	require.Empty(t, merged[0].UID)
 	require.Equal(t, "one", merged[1].UID)
 	require.Equal(t, "two", merged[2].UID)
+}
+
+func TestCleanupPreservesPartialPodTemplateEvidence(t *testing.T) {
+	for _, name := range []string{"", "pending"} {
+		session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{PodTemplateResourceStatuses: []breakglassv1alpha1.PodTemplateResourceStatus{{ResourceName: name}}}}
+		controller := NewDebugSessionController(zap.NewNop().Sugar(), nil, nil)
+		require.ErrorContains(t, controller.cleanupPodTemplateResources(context.Background(), session, nil), "unresolved")
+		require.Len(t, session.Status.PodTemplateResourceStatuses, 1)
+		require.False(t, session.Status.PodTemplateResourceStatuses[0].Deleted)
+		require.True(t, cleanupStatusHasResiduals(session))
+	}
 }

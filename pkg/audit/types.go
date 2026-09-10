@@ -350,7 +350,7 @@ func SeverityForEventType(eventType EventType) Severity {
 		EventEscalationRejected, EventPolicyViolation, EventAdmissionDenied,
 		EventSecretAccessed, EventSecretUpdated, EventResourceExec, EventResourceDelete,
 		EventPodExec, EventPodAttach, EventResourceImpersonate, EventWebhookTimeout,
-		EventDebugSessionRejected, EventDebugSessionValidationFailed,
+		EventDebugSessionValidationFailed,
 		EventDebugSessionCleanupFailed, EventDebugSessionCommand, EventAuditBackpressure, EventPodSecurityWarning,
 		EventDebugSessionBindingUnresolved:
 		return SeverityWarning

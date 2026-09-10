@@ -352,7 +352,7 @@ func debugSessionHasTrackedSpokeResources(session *breakglassv1alpha1.DebugSessi
 		return true
 	}
 	for _, resource := range session.Status.PodTemplateResourceStatuses {
-		if !resource.Deleted && (resource.Created || resource.UID != "" || resource.CreateOperationID != "") {
+		if utils.DebugSessionPodTemplateStatusHasCleanupResidual(resource) {
 			return true
 		}
 	}
