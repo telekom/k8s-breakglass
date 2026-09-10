@@ -1529,6 +1529,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
       default: 1h
+    - name: idleTimeout
+      type:
+        scalar: string
     - name: maxConcurrentSessions
       type:
         scalar: numeric
@@ -1543,6 +1546,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: renewalLimit
       type:
         scalar: numeric
+    - name: retainFor
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionNotificationConfig
   map:
     fields:
@@ -1683,6 +1689,9 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionStatus
   map:
     fields:
+    - name: activityCount
+      type:
+        scalar: numeric
     - name: allowedPodOperations
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AllowedPodOperations
@@ -1721,6 +1730,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: kubectlDebugStatus
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugStatus
+    - name: lastActivity
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
     - name: message
       type:
         scalar: string
@@ -1757,6 +1769,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: resolvedTemplate
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplateSpec
+    - name: retainedUntil
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
     - name: startsAt
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
