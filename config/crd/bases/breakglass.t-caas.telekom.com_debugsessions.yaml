@@ -2768,6 +2768,23 @@ spec:
                           type: string
                         type: array
                     type: object
+                  artifactCollection:
+                    description: artifactCollection explicitly enables fixed diagnostic
+                      recipes for active participants.
+                    properties:
+                      allowedRecipes:
+                        description: allowedRecipes is the administrator-selected
+                          collection allowlist.
+                        items:
+                          enum:
+                          - system-summary.v1
+                          - crashdump-collection.v1
+                          type: string
+                        maxItems: 2
+                        type: array
+                    required:
+                    - allowedRecipes
+                    type: object
                   audit:
                     description: audit configures audit logging for debug sessions.
                     properties:

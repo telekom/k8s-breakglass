@@ -874,6 +874,9 @@ func DebugSessionTemplateSpecFrom(t *breakglassv1alpha1.DebugSessionTemplateSpec
 	}
 
 	result := ac.DebugSessionTemplateSpec()
+	if t.ArtifactCollection != nil {
+		result.WithArtifactCollection(ac.DebugSessionArtifactCollection().WithAllowedRecipes(t.ArtifactCollection.AllowedRecipes...))
+	}
 
 	if t.DisplayName != "" {
 		result.WithDisplayName(t.DisplayName)

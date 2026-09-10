@@ -86,6 +86,10 @@ type Record struct {
 	ArtifactID           string
 	ArtifactUID          string
 	TargetClusterUID     string
+	TargetPodNamespace   string
+	TargetPodName        string
+	TargetPodUID         string
+	TargetNodeUID        string
 	TargetIdentityDigest string
 	RuntimeBindingDigest string
 	PlanDigest           string
@@ -97,6 +101,9 @@ type Record struct {
 	OperationEpoch       uint64
 	UploadJTI            string
 	UploadJTIHash        string
+	UploadKeyID          string
+	ReservationNonce     string
+	Recording            *RecordingMetadata
 	State                State
 	Generation           int64
 	Size                 int64
@@ -109,13 +116,14 @@ type Record struct {
 // PublicRecord is safe to return to an API client. It contains no provider
 // URL, bucket, object key, version ID, credential reference, or token.
 type PublicRecord struct {
-	ArtifactID    string    `json:"artifactID"`
-	Recipe        string    `json:"recipe"`
-	RecipeVersion int       `json:"recipeVersion"`
-	State         State     `json:"state"`
-	Size          int64     `json:"size,omitempty"`
-	SHA256        string    `json:"sha256,omitempty"`
-	ExpiresAt     time.Time `json:"expiresAt"`
+	Recording     *RecordingMetadata `json:"recording,omitempty"`
+	ArtifactID    string             `json:"artifactID"`
+	Recipe        string             `json:"recipe"`
+	RecipeVersion int                `json:"recipeVersion"`
+	State         State              `json:"state"`
+	Size          int64              `json:"size,omitempty"`
+	SHA256        string             `json:"sha256,omitempty"`
+	ExpiresAt     time.Time          `json:"expiresAt"`
 }
 
 // Repository is a durable CAS store. Update must fail with ErrConflict (or a
@@ -132,6 +140,10 @@ type SessionBinding struct {
 	Name                 string
 	UID                  string
 	TargetClusterUID     string
+	TargetPodNamespace   string
+	TargetPodName        string
+	TargetPodUID         string
+	TargetNodeUID        string
 	TargetIdentityDigest string
 	OperationEpoch       uint64
 }
@@ -176,7 +188,7 @@ func New(config Config) (*Service, error) {
 }
 
 func (service *Service) Public(record Record) PublicRecord {
-	return PublicRecord{ArtifactID: record.ArtifactID, Recipe: record.Recipe, RecipeVersion: record.RecipeVersion, State: record.State, Size: record.Size, SHA256: record.SHA256, ExpiresAt: record.ExpiresAt.UTC()}
+	return PublicRecord{Recording: record.Recording, ArtifactID: record.ArtifactID, Recipe: record.Recipe, RecipeVersion: record.RecipeVersion, State: record.State, Size: record.Size, SHA256: record.SHA256, ExpiresAt: record.ExpiresAt.UTC()}
 }
 
 // List returns metadata only after the live session binding has been checked.
@@ -215,6 +227,9 @@ func (service *Service) Upload(ctx context.Context, encodedToken string, route s
 	}
 	record, err := service.repository.Get(ctx, claims.SessionNamespace, claims.SessionName, claims.ArtifactID)
 	if err != nil {
+		return PublicRecord{}, ErrForbidden
+	}
+	if record.Recipe == TerminalRecordingRecipe {
 		return PublicRecord{}, ErrForbidden
 	}
 	if err := service.authorize(ctx, record, claims.SessionUID, claims.TargetIdentityDigest, claims.OperationEpoch); err != nil {
@@ -268,6 +283,11 @@ func (service *Service) Upload(ctx context.Context, encodedToken string, route s
 	}
 	key, err := artifactStorageKey(record)
 	if err != nil {
+		return PublicRecord{}, err
+	}
+	record.Size, record.SHA256 = size, digest
+	record.Generation++
+	if err := service.persist(ctx, &record, record.Generation-1); err != nil {
 		return PublicRecord{}, err
 	}
 	metadata, err := service.store.PutIfAbsent(ctx, storage.Object{Key: key, RuntimeBindingDigest: record.RuntimeBindingDigest, Size: size, SHA256: digest}, staged)
@@ -558,7 +578,7 @@ func (service *Service) authorize(ctx context.Context, record Record, sessionUID
 	if record.SessionUID != sessionUID || record.TargetIdentityDigest != targetDigest || record.OperationEpoch != epoch {
 		return ErrForbidden
 	}
-	return service.authorizer.AuthorizeArtifact(ctx, SessionBinding{Namespace: record.Namespace, Name: record.SessionName, UID: sessionUID, TargetClusterUID: record.TargetClusterUID, TargetIdentityDigest: targetDigest, OperationEpoch: epoch})
+	return service.authorizer.AuthorizeArtifact(ctx, SessionBinding{Namespace: record.Namespace, Name: record.SessionName, UID: sessionUID, TargetClusterUID: record.TargetClusterUID, TargetPodNamespace: record.TargetPodNamespace, TargetPodName: record.TargetPodName, TargetPodUID: record.TargetPodUID, TargetNodeUID: record.TargetNodeUID, TargetIdentityDigest: targetDigest, OperationEpoch: epoch})
 }
 
 func (service *Service) restoreUploadState(ctx context.Context, record Record, cause error) {

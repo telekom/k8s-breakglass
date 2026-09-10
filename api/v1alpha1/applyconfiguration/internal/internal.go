@@ -139,6 +139,51 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: leaseOwner
       type:
         scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ArtifactRecordingMetadata
+  map:
+    fields:
+    - name: complete
+      type:
+        scalar: boolean
+    - name: containerName
+      type:
+        scalar: string
+    - name: finishedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: formatVersion
+      type:
+        scalar: numeric
+    - name: frames
+      type:
+        scalar: numeric
+    - name: generation
+      type:
+        scalar: string
+    - name: leaseEpoch
+      type:
+        scalar: string
+    - name: leaseUID
+      type:
+        scalar: string
+    - name: operation
+      type:
+        scalar: string
+    - name: podName
+      type:
+        scalar: string
+    - name: podNamespace
+      type:
+        scalar: string
+    - name: podUID
+      type:
+        scalar: string
+    - name: startedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: streamExpiresAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.ArtifactResourceReference
   map:
     fields:
@@ -1402,6 +1447,15 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: status
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionArtifactStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionArtifactCollection
+  map:
+    fields:
+    - name: allowedRecipes
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionArtifactSpec
   map:
     fields:
@@ -1432,12 +1486,18 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: recipeVersion
       type:
         scalar: numeric
+    - name: recording
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ArtifactRecordingMetadata
     - name: redactionProfile
       type:
         scalar: string
     - name: redactionVersion
       type:
         scalar: numeric
+    - name: reservationNonce
+      type:
+        scalar: string
     - name: runtimeBindingDigest
       type:
         scalar: string
@@ -1450,10 +1510,19 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: targetIdentityDigest
       type:
         scalar: string
+    - name: targetNodeUID
+      type:
+        scalar: string
+    - name: targetPod
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ArtifactSessionReference
     - name: timeoutSeconds
       type:
         scalar: numeric
     - name: uploadJTIHash
+      type:
+        scalar: string
+    - name: uploadKeyID
       type:
         scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionArtifactStatus
@@ -1486,6 +1555,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: outbox
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ArtifactOutboxStatus
+    - name: recording
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ArtifactRecordingMetadata
     - name: resources
       type:
         list:
@@ -2035,6 +2107,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: approvers
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionApprovers
+    - name: artifactCollection
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionArtifactCollection
     - name: audit
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionAuditConfig

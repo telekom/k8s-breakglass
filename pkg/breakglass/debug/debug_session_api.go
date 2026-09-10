@@ -1930,3 +1930,21 @@ func stringInSlice(value string, values []string) bool {
 	}
 	return false
 }
+
+// AuthorizeArtifactCollection returns the exact active session only to a
+// participant who may operate its debug resources. Read-only approvers do not
+// gain permission to start collectors.
+func (c *DebugSessionAPIController) AuthorizeArtifactCollection(ctx *gin.Context, namespace, name string) (*breakglassv1alpha1.DebugSession, error) {
+	identity, ok := debugSessionRequestIdentity(ctx)
+	if !ok {
+		return nil, errors.New("artifact requester is unauthenticated")
+	}
+	session, err := c.getDebugSessionByName(ctx.Request.Context(), name, namespace)
+	if err != nil {
+		return nil, err
+	}
+	if session.UID == "" || session.Status.ExpiresAt == nil || session.Annotations[quotas.AdmissionAnnotation] == quotas.Pending || !session.DeletionTimestamp.IsZero() || session.Status.State != breakglassv1alpha1.DebugSessionStateActive || isDebugSessionExpired(session, time.Now()) || !c.canUserOperateDebugResources(session, identity) {
+		return nil, errors.New("artifact collection is forbidden")
+	}
+	return session, nil
+}

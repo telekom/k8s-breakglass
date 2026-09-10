@@ -111,6 +111,7 @@ spec:
                 enum:
                 - system-summary.v1
                 - crashdump-collection.v1
+                - terminal-recording.v1
                 type: string
               recipeVersion:
                 description: recipeVersion is the immutable recipe schema version.
@@ -118,6 +119,67 @@ spec:
                 maximum: 9999
                 minimum: 1
                 type: integer
+              recording:
+                description: recording binds a controller-owned terminal stream, never
+                  a collector request.
+                properties:
+                  complete:
+                    description: complete is controller-supplied recording metadata.
+                    type: boolean
+                  containerName:
+                    description: containerName is controller-supplied recording metadata.
+                    type: string
+                  finishedAt:
+                    description: finishedAt is controller-supplied recording metadata.
+                    format: date-time
+                    type: string
+                  formatVersion:
+                    description: formatVersion is controller-supplied recording metadata.
+                    enum:
+                    - 1
+                    format: int32
+                    type: integer
+                  frames:
+                    description: frames is controller-supplied recording metadata.
+                    format: int64
+                    type: integer
+                  generation:
+                    description: generation is controller-supplied recording metadata.
+                    type: string
+                  leaseEpoch:
+                    description: leaseEpoch is controller-supplied recording metadata.
+                    type: string
+                  leaseUID:
+                    description: leaseUID is controller-supplied recording metadata.
+                    type: string
+                  operation:
+                    description: operation is controller-supplied recording metadata.
+                    enum:
+                    - exec
+                    - attach
+                    type: string
+                  podName:
+                    description: podName is controller-supplied recording metadata.
+                    type: string
+                  podNamespace:
+                    description: podNamespace is controller-supplied recording metadata.
+                    type: string
+                  podUID:
+                    description: podUID is controller-supplied recording metadata.
+                    type: string
+                  startedAt:
+                    description: startedAt is controller-supplied recording metadata.
+                    format: date-time
+                    type: string
+                  streamExpiresAt:
+                    description: streamExpiresAt is controller-supplied recording
+                      metadata.
+                    format: date-time
+                    type: string
+                required:
+                - formatVersion
+                - operation
+                type: object
               redactionProfile:
                 description: redactionProfile selects the server-owned metadata redaction
                   policy.
@@ -129,6 +191,11 @@ spec:
                 maximum: 9999
                 minimum: 1
                 type: integer
+              reservationNonce:
+                description: reservationNonce distinguishes recreated slots without
+                  exposing a token identifier.
+                pattern: ^[0-9a-f]{32}$
+                type: string
               runtimeBindingDigest:
                 description: runtimeBindingDigest binds the target runtime identity
                   and operation.
@@ -165,6 +232,31 @@ spec:
                   details.
                 pattern: ^[0-9a-f]{64}$
                 type: string
+              targetNodeUID:
+                description: targetNodeUID binds node-local collection to an exact
+                  node incarnation.
+                type: string
+              targetPod:
+                description: targetPod is the original approved Pod used to resolve
+                  collection authority.
+                properties:
+                  name:
+                    description: name is the session name.
+                    minLength: 1
+                    type: string
+                  namespace:
+                    description: namespace is the session namespace.
+                    minLength: 1
+                    type: string
+                  uid:
+                    description: uid is the immutable session UID.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                - namespace
+                - uid
+                type: object
               timeoutSeconds:
                 description: timeoutSeconds is the immutable collector Job deadline.
                 format: int32
@@ -175,6 +267,10 @@ spec:
                 description: uploadJTIHash binds the one-time upload lease without
                   persisting the token identifier.
                 pattern: ^[0-9a-f]{64}$
+                type: string
+              uploadKeyID:
+                description: uploadKeyID identifies the existing controller signing
+                  key used by this reservation.
                 type: string
             required:
             - artifactID
@@ -197,6 +293,9 @@ spec:
             x-kubernetes-validations:
             - message: artifact specification is immutable
               rule: self == oldSelf
+            - message: terminal recording metadata is required only for the terminal
+                recording recipe
+              rule: (self.recipe == 'terminal-recording.v1') == has(self.recording)
           status:
             description: |-
               DebugSessionArtifactStatus is safe to expose to API readers. Provider
@@ -319,6 +418,66 @@ spec:
                 required:
                 - attempt
                 - kind
+                type: object
+              recording:
+                description: recording records bounded terminal completion metadata.
+                properties:
+                  complete:
+                    description: complete is controller-supplied recording metadata.
+                    type: boolean
+                  containerName:
+                    description: containerName is controller-supplied recording metadata.
+                    type: string
+                  finishedAt:
+                    description: finishedAt is controller-supplied recording metadata.
+                    format: date-time
+                    type: string
+                  formatVersion:
+                    description: formatVersion is controller-supplied recording metadata.
+                    enum:
+                    - 1
+                    format: int32
+                    type: integer
+                  frames:
+                    description: frames is controller-supplied recording metadata.
+                    format: int64
+                    type: integer
+                  generation:
+                    description: generation is controller-supplied recording metadata.
+                    type: string
+                  leaseEpoch:
+                    description: leaseEpoch is controller-supplied recording metadata.
+                    type: string
+                  leaseUID:
+                    description: leaseUID is controller-supplied recording metadata.
+                    type: string
+                  operation:
+                    description: operation is controller-supplied recording metadata.
+                    enum:
+                    - exec
+                    - attach
+                    type: string
+                  podName:
+                    description: podName is controller-supplied recording metadata.
+                    type: string
+                  podNamespace:
+                    description: podNamespace is controller-supplied recording metadata.
+                    type: string
+                  podUID:
+                    description: podUID is controller-supplied recording metadata.
+                    type: string
+                  startedAt:
+                    description: startedAt is controller-supplied recording metadata.
+                    format: date-time
+                    type: string
+                  streamExpiresAt:
+                    description: streamExpiresAt is controller-supplied recording
+                      metadata.
+                    format: date-time
+                    type: string
+                required:
+                - formatVersion
+                - operation
                 type: object
               resources:
                 description: |-

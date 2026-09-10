@@ -526,12 +526,13 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 		deps.Reader = reconcilerMgr.GetAPIReader()
 		deps.Manager = reconcilerMgr
 		deps.DebugAPI = debugSessionAPICtrl
+		deps.ClusterProvider = ccProvider
 		deps.Log = log
 		if deps.Lease == nil {
 			leaseService := debug.NewConnectionLeaseService(uncachedClient).
 				WithLiveReader(reconcilerMgr.GetAPIReader()).
 				WithNamespace(cliConfig.BreakglassNamespace)
-			deps.Lease = artifacthost.NewConnectionLeaseFence(reconcilerMgr.GetAPIReader(), leaseService)
+			deps.Lease = artifacthost.NewConnectionLeaseFence(reconcilerMgr.GetAPIReader(), leaseService, ccProvider)
 		}
 		components, buildErr := artifacthost.Build(ctx, cfg.Artifacts, cliConfig.BreakglassNamespace, deps)
 		if buildErr != nil {

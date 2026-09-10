@@ -8,6 +8,7 @@ package host
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -30,6 +31,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/token"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -59,13 +61,14 @@ type BindingSource interface {
 // Dependencies are the host-owned runtime seams. Client must be an uncached
 // client for exact Secret reads; Reader must be an uncached API reader.
 type Dependencies struct {
-	Client        ctrlclient.Client
-	Reader        ctrlclient.Reader
-	Manager       ctrl.Manager
-	DebugAPI      *debug.DebugSessionAPIController
-	Lease         LeaseFence
-	BindingSource BindingSource
-	Log           *zap.SugaredLogger
+	Client          ctrlclient.Client
+	Reader          ctrlclient.Reader
+	Manager         ctrl.Manager
+	DebugAPI        *debug.DebugSessionAPIController
+	Lease           LeaseFence
+	ClusterProvider artifactcontroller.TargetClientProvider
+	BindingSource   BindingSource
+	Log             *zap.SugaredLogger
 }
 
 // Components are registered by the application after construction.
@@ -82,7 +85,7 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	if !artifactConfig.Enabled {
 		return nil, nil
 	}
-	if ctx == nil || deps.Client == nil || deps.Reader == nil || deps.Manager == nil || deps.DebugAPI == nil || deps.Lease == nil {
+	if ctx == nil || deps.Client == nil || deps.Reader == nil || deps.Manager == nil || deps.DebugAPI == nil || deps.Lease == nil || deps.ClusterProvider == nil {
 		return nil, errors.New("enabled diagnostic artifacts require uncached clients, manager, debug API, and lease fence")
 	}
 	if len(validation.IsDNS1123Label(namespace)) != 0 {
@@ -91,7 +94,13 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	if len(validation.IsDNS1123Subdomain(artifactConfig.TokenSecretName)) != 0 || artifactConfig.TokenSignerKeyID == "" {
 		return nil, errors.New("artifact token Secret and signer key ID are required")
 	}
-	if artifactConfig.StagingDir == "" || artifactConfig.CollectorImage == "" {
+	imageParts := strings.Split(artifactConfig.CollectorImage, "@sha256:")
+	validImage := len(imageParts) == 2 && imageParts[0] != "" && len(imageParts[1]) == 64
+	if validImage {
+		_, imageErr := hex.DecodeString(imageParts[1])
+		validImage = imageErr == nil
+	}
+	if artifactConfig.StagingDir == "" || !validImage {
 		return nil, errors.New("artifact staging directory and pinned collector image are required")
 	}
 	if artifactConfig.UploadMaxBytes < 1 || artifactConfig.UploadMaxBytes > archive.MaxCollectorArchiveBytes {
@@ -122,7 +131,7 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 		return nil, err
 	}
 	issuerAdapter := &uploadTokenIssuer{keyring: keyring, now: time.Now}
-	reconciler := &artifactcontroller.Reconciler{Client: deps.Manager.GetClient(), Service: service, TokenIssuer: issuerAdapter, Image: artifactConfig.CollectorImage, ControllerURL: strings.TrimSuffix(artifactConfig.ControllerURL, "/"), Log: deps.Log}
+	reconciler := &artifactcontroller.Reconciler{Client: deps.Manager.GetClient(), LiveReader: deps.Reader, ClusterProvider: deps.ClusterProvider, Service: service, TokenIssuer: issuerAdapter, Image: artifactConfig.CollectorImage, ControllerURL: strings.TrimSuffix(artifactConfig.ControllerURL, "/"), Log: deps.Log}
 	resolver := newReadBindingResolver(deps.DebugAPI, deps.BindingSource)
 	uploadController, err := artifactapi.NewUploadController(service)
 	if err != nil {
@@ -134,7 +143,7 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 		_ = closeStore()
 		return nil, err
 	}
-	return &Components{Service: service, Controller: reconciler, APIControllers: []rootapi.APIController{uploadController, readController}, Close: closeStore}, nil
+	return &Components{Service: service, Controller: reconciler, APIControllers: []rootapi.APIController{uploadController, readController, &collectionController{service: service, debug: deps.DebugAPI, provider: deps.ClusterProvider, maximum: artifactConfig.UploadMaxBytes}}, Close: closeStore}, nil
 }
 
 // repositoryBindingSource reads the immutable session and target binding from
@@ -166,13 +175,18 @@ func (source repositoryBindingSource) ResolveArtifactBinding(ctx context.Context
 // the provider-neutral artifact authorization contract. The adapter checks
 // the session's persisted lease identity and then performs the lease's live
 // UID, holder, target, epoch, and expiry validation.
-func NewConnectionLeaseFence(reader ctrlclient.Reader, leases *debug.ConnectionLeaseService) LeaseFence {
-	return &connectionLeaseFence{reader: reader, leases: leases}
+func NewConnectionLeaseFence(reader ctrlclient.Reader, leases *debug.ConnectionLeaseService, providers ...artifactcontroller.TargetClientProvider) LeaseFence {
+	fence := &connectionLeaseFence{reader: reader, leases: leases}
+	if len(providers) > 0 {
+		fence.provider = providers[0]
+	}
+	return fence
 }
 
 type connectionLeaseFence struct {
-	reader ctrlclient.Reader
-	leases *debug.ConnectionLeaseService
+	reader   ctrlclient.Reader
+	leases   *debug.ConnectionLeaseService
+	provider artifactcontroller.TargetClientProvider
 }
 
 func (fence *connectionLeaseFence) AuthorizeArtifact(ctx context.Context, binding backend.SessionBinding) error {
@@ -199,6 +213,32 @@ func (fence *connectionLeaseFence) AuthorizeArtifact(ctx context.Context, bindin
 	}
 	if err := fence.leases.Validate(ctx, ref, -1); err != nil {
 		return backend.ErrForbidden
+	}
+	if binding.TargetPodUID != "" {
+		if fence.provider == nil {
+			return backend.ErrForbidden
+		}
+		target, config, err := fence.provider.GetClientForPrivilegedOperation(ctx, session.Spec.Cluster)
+		if err != nil {
+			return backend.ErrForbidden
+		}
+		defer fence.provider.ReleasePrivilegedOperationClusterConfig(config)
+		var pod corev1.Pod
+		if string(config.UID) != binding.TargetClusterUID {
+			return backend.ErrForbidden
+		}
+		if err := target.Get(ctx, ctrlclient.ObjectKey{Namespace: binding.TargetPodNamespace, Name: binding.TargetPodName}, &pod); err != nil || string(pod.UID) != binding.TargetPodUID || !pod.DeletionTimestamp.IsZero() {
+			return backend.ErrForbidden
+		}
+		if binding.TargetNodeUID != "" {
+			var node corev1.Node
+			if err := target.Get(ctx, ctrlclient.ObjectKey{Name: pod.Spec.NodeName}, &node); err != nil || string(node.UID) != binding.TargetNodeUID || !node.DeletionTimestamp.IsZero() {
+				return backend.ErrForbidden
+			}
+		}
+		if err := fence.provider.ValidatePrivilegedOperationClusterConfig(ctx, config); err != nil {
+			return backend.ErrForbidden
+		}
 	}
 	var current breakglassv1alpha1.DebugSession
 	if err := fence.reader.Get(ctx, types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}, &current); err != nil || !artifactSessionIsLive(&current, binding, time.Now()) {
@@ -294,26 +334,7 @@ type uploadTokenIssuer struct {
 }
 
 func (issuer *uploadTokenIssuer) IssueUploadToken(_ context.Context, record backend.Record, route string) (string, error) {
-	now := issuer.now().UTC().Truncate(time.Second)
-	expires := record.ExpiresAt.UTC().Truncate(time.Second)
-	if expires.After(now.Add(maxTokenTTL)) {
-		expires = now.Add(maxTokenTTL)
-	}
-	if !now.Before(expires) {
-		return "", backend.ErrExpired
-	}
-	jti, err := token.GenerateJTI()
-	if err != nil {
-		return "", fmt.Errorf("generate artifact upload token: %w", err)
-	}
-	claims := token.Claims{JTI: jti, IssuedAt: now, NotBefore: now, ExpiresAt: expires, Method: "PUT", Route: route, SessionNamespace: record.Namespace, SessionName: record.SessionName, SessionUID: record.SessionUID, ArtifactID: record.ArtifactID, ArtifactPlanDigest: record.PlanDigest, RuntimeBindingDigest: record.RuntimeBindingDigest, OperationEpoch: record.OperationEpoch, TargetIdentityDigest: record.TargetIdentityDigest, Recipe: record.Recipe, RecipeVersion: record.RecipeVersion}
-	if record.Expected.Node != nil {
-		claims.Node, claims.NodePresent = *record.Expected.Node, true
-	}
-	if route != token.CanonicalUploadRoute(claims) {
-		return "", errors.New("artifact upload route is not canonical")
-	}
-	return issuer.keyring.Sign(claims)
+	return backend.ReservationToken(issuer.keyring, record, route, issuer.now(), maxTokenTTL)
 }
 
 type liveSessionAuthorizer struct {
@@ -353,7 +374,7 @@ func (authorizer *liveSessionAuthorizer) AuthorizeArtifact(ctx context.Context, 
 }
 
 func artifactSessionIsLive(session *breakglassv1alpha1.DebugSession, binding backend.SessionBinding, now time.Time) bool {
-	return session != nil && session.DeletionTimestamp == nil && string(session.UID) == binding.UID && session.Status.State == breakglassv1alpha1.DebugSessionStateActive && session.Status.ExpiresAt != nil && now.Before(session.Status.ExpiresAt.Time)
+	return session != nil && session.Annotations[quotas.AdmissionAnnotation] != quotas.Pending && session.DeletionTimestamp == nil && string(session.UID) == binding.UID && session.Status.State == breakglassv1alpha1.DebugSessionStateActive && session.Status.ExpiresAt != nil && now.Before(session.Status.ExpiresAt.Time)
 }
 
 type readBindingResolver struct {

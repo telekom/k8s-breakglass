@@ -72,7 +72,8 @@ func (reconciler *Reconciler) Reconcile(ctx context.Context, request ctrl.Reques
 	if reconciler.Now != nil {
 		now = reconciler.Now
 	}
-	if object.DeletionTimestamp.IsZero() && !containsString(object.Finalizers, artifactFinalizer) {
+	terminalRecord := record.State == backend.StateDeleted || record.State == backend.StateExpired || record.State == backend.StateRevoked
+	if object.DeletionTimestamp.IsZero() && !terminalRecord && !containsString(object.Finalizers, artifactFinalizer) {
 		object.Finalizers = append(object.Finalizers, artifactFinalizer)
 		if err := reconciler.Update(ctx, &object); err != nil {
 			return ctrl.Result{}, fmt.Errorf("add diagnostic artifact finalizer: %w", err)
@@ -97,13 +98,27 @@ func (reconciler *Reconciler) Reconcile(ctx context.Context, request ctrl.Reques
 		}
 		return ctrl.Result{Requeue: true}, nil
 	}
+	if object.DeletionTimestamp.IsZero() && record.Recipe == backend.TerminalRecordingRecipe && !terminalRecord {
+		if !now().Before(record.ExpiresAt) {
+			if err := reconciler.Service.Cleanup(ctx, record, backend.StateExpired); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{Requeue: true}, nil
+		}
+		if record.State == backend.StateUploading || record.State == backend.StateUnknown {
+			if _, err := reconciler.Service.RecoverRecording(ctx, record); err != nil {
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			}
+		}
+		return ctrl.Result{RequeueAfter: min(30*time.Second, time.Until(record.ExpiresAt))}, nil
+	}
 	if object.DeletionTimestamp.IsZero() && (record.State == backend.StatePending || record.State == backend.StateUploading) {
 		if err := reconciler.ensureUploadResources(ctx, object, record); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
-	if !object.DeletionTimestamp.IsZero() || record.State == backend.StateDeleting || record.State == backend.StateUnknown || record.State == backend.StateExpired || record.State == backend.StateRevoked {
+	if !object.DeletionTimestamp.IsZero() || record.State == backend.StateDeleting || record.State == backend.StateUnknown || record.State == backend.StateExpired || record.State == backend.StateRevoked || record.State == backend.StateDeleted {
 		if record.State != backend.StateExpired && record.State != backend.StateRevoked && record.State != backend.StateDeleted {
 			terminal := backend.StateDeleted
 			if record.State == backend.StatePending || record.State == backend.StateUploading {
@@ -130,6 +145,15 @@ func (reconciler *Reconciler) Reconcile(ctx context.Context, request ctrl.Reques
 		if err := reconciler.Update(ctx, current); err != nil {
 			return ctrl.Result{}, fmt.Errorf("remove diagnostic artifact finalizer: %w", err)
 		}
+		if current.DeletionTimestamp.IsZero() {
+			uid, rv := current.UID, current.ResourceVersion
+			if err := reconciler.Delete(ctx, current, &ctrlclient.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &rv}}); err != nil && !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf("delete cleaned artifact reservation: %w", err)
+			}
+		}
+	}
+	if record.State == backend.StateAvailable {
+		return ctrl.Result{RequeueAfter: max(time.Second, time.Until(record.ExpiresAt))}, nil
 	}
 	return ctrl.Result{}, nil
 }

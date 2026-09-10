@@ -21,6 +21,8 @@ import (
 // object keys, URLs, version IDs, credentials, and secret references are not
 // persisted here.
 type DebugSessionArtifactStatusApplyConfiguration struct {
+	// recording records bounded terminal completion metadata.
+	Recording *ArtifactRecordingMetadataApplyConfiguration `json:"recording,omitempty"`
 	// targetCluster is the immutable ClusterConfig name used for spoke cleanup.
 	TargetCluster *string `json:"targetCluster,omitempty"`
 	// targetNamespace is the approved spoke namespace used for collection.
@@ -56,6 +58,14 @@ type DebugSessionArtifactStatusApplyConfiguration struct {
 // apply.
 func DebugSessionArtifactStatus() *DebugSessionArtifactStatusApplyConfiguration {
 	return &DebugSessionArtifactStatusApplyConfiguration{}
+}
+
+// WithRecording sets the Recording field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Recording field is set to the value of the last call.
+func (b *DebugSessionArtifactStatusApplyConfiguration) WithRecording(value *ArtifactRecordingMetadataApplyConfiguration) *DebugSessionArtifactStatusApplyConfiguration {
+	b.Recording = value
+	return b
 }
 
 // WithTargetCluster sets the TargetCluster field in the declarative configuration to the given value

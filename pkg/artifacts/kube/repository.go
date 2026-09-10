@@ -7,8 +7,11 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/archive"
@@ -71,7 +74,8 @@ func (repository *Repository) Update(ctx context.Context, record backend.Record,
 	if object.Status.LifecycleRevision != expected {
 		return fmt.Errorf("diagnostic artifact lifecycle revision is stale: %w", backend.ErrConflict)
 	}
-	if !backend.ValidTransition(backend.State(object.Status.State), record.State) {
+	recordingRecovery := object.Spec.Recipe == backend.TerminalRecordingRecipe && backend.State(object.Status.State) == backend.StateUnknown && record.State == backend.StateAvailable && object.Status.Size > 0 && object.Status.Size == record.Size && object.Status.SHA256 != "" && object.Status.SHA256 == record.SHA256
+	if !backend.ValidTransition(backend.State(object.Status.State), record.State) && !recordingRecovery {
 		return fmt.Errorf("diagnostic artifact lifecycle transition is invalid: %w", backend.ErrConflict)
 	}
 	if record.ArtifactUID != "" && object.UID != types.UID(record.ArtifactUID) {
@@ -113,15 +117,19 @@ func Record(object *breakglassv1alpha1.DebugSessionArtifact) backend.Record {
 		state = backend.StatePending
 	}
 	return backend.Record{
-		Namespace:            object.Spec.SessionRef.Namespace,
-		SessionName:          object.Spec.SessionRef.Name,
-		SessionUID:           object.Spec.SessionRef.UID,
-		ArtifactID:           object.Spec.ArtifactID,
-		ArtifactUID:          string(object.UID),
-		TargetClusterUID:     object.Spec.TargetClusterUID,
+		Namespace:          object.Spec.SessionRef.Namespace,
+		SessionName:        object.Spec.SessionRef.Name,
+		SessionUID:         object.Spec.SessionRef.UID,
+		ArtifactID:         object.Spec.ArtifactID,
+		ArtifactUID:        string(object.UID),
+		TargetClusterUID:   object.Spec.TargetClusterUID,
+		TargetPodNamespace: targetPodField(object, 0), TargetPodName: targetPodField(object, 1), TargetPodUID: targetPodField(object, 2), TargetNodeUID: object.Spec.TargetNodeUID,
 		TargetIdentityDigest: object.Spec.TargetIdentityDigest,
 		OperationEpoch:       object.Spec.OperationEpoch,
 		UploadJTIHash:        object.Spec.UploadJTIHash,
+		UploadKeyID:          object.Spec.UploadKeyID,
+		ReservationNonce:     object.Spec.ReservationNonce,
+		Recording:            recordingFromObject(object),
 		RuntimeBindingDigest: object.Spec.RuntimeBindingDigest,
 		PlanDigest:           object.Spec.PlanDigest,
 		Recipe:               object.Spec.Recipe,
@@ -147,7 +155,73 @@ func statusFromRecord(record backend.Record, existing breakglassv1alpha1.DebugSe
 	existing.Size = record.Size
 	existing.SHA256 = record.SHA256
 	existing.CleanupAmbiguous = record.CleanupAmbiguous
+	if record.Recording != nil {
+		existing.Recording = apiRecording(record.Recording)
+	}
 	return existing
 }
 
 var _ backend.Repository = (*Repository)(nil)
+
+func apiRecording(value *backend.RecordingMetadata) *breakglassv1alpha1.ArtifactRecordingMetadata {
+	if value == nil {
+		return nil
+	}
+	data, _ := json.Marshal(value)
+	var result breakglassv1alpha1.ArtifactRecordingMetadata
+	_ = json.Unmarshal(data, &result)
+	if value.FinishedAt.IsZero() {
+		result.FinishedAt = nil
+	}
+	return &result
+}
+func recordingFromObject(object *breakglassv1alpha1.DebugSessionArtifact) *backend.RecordingMetadata {
+	value := object.Spec.Recording
+	if object.Status.Recording != nil {
+		value = object.Status.Recording
+	}
+	if value == nil {
+		return nil
+	}
+	data, _ := json.Marshal(value)
+	var result backend.RecordingMetadata
+	_ = json.Unmarshal(data, &result)
+	return &result
+}
+
+// Create reserves one immutable artifact identity. Kubernetes Create is the
+// arbitration point for bounded per-session reservation slots.
+func (repository *Repository) Create(ctx context.Context, record backend.Record) (backend.Record, error) {
+	object := &breakglassv1alpha1.DebugSessionArtifact{ObjectMeta: metav1.ObjectMeta{Name: record.ArtifactID, Namespace: repository.objectNamespace(record.Namespace)}, Spec: breakglassv1alpha1.DebugSessionArtifactSpec{
+		ArtifactID: record.ArtifactID, SessionRef: breakglassv1alpha1.ArtifactSessionReference{Namespace: record.Namespace, Name: record.SessionName, UID: record.SessionUID}, TargetClusterUID: record.TargetClusterUID, TargetPod: reservationTargetPod(record), TargetNodeUID: record.TargetNodeUID, Recipe: record.Recipe, RecipeVersion: int32(record.RecipeVersion), PlanDigest: record.PlanDigest, RuntimeBindingDigest: record.RuntimeBindingDigest, TargetIdentityDigest: record.TargetIdentityDigest, OperationEpoch: record.OperationEpoch, UploadJTIHash: record.UploadJTIHash, UploadKeyID: record.UploadKeyID, ReservationNonce: record.ReservationNonce, Recording: apiRecording(record.Recording), RedactionProfile: record.Expected.RedactionProfile, RedactionVersion: int32(record.Expected.RedactionVersion), Node: record.Expected.Node, MaxBytes: record.MaxBytes, TimeoutSeconds: 300, ExpiresAt: metav1.NewTime(record.ExpiresAt), Inputs: breakglassv1alpha1.ArtifactInputs{MaxArchiveBytes: record.MaxBytes, DetailLevel: record.Expected.Inputs.DetailLevel, MaxAgeMinutes: record.Expected.Inputs.MaxAgeMinutes}}}
+	if err := repository.client.Create(ctx, object); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			return backend.Record{}, storage.ErrAlreadyExists
+		}
+		return backend.Record{}, fmt.Errorf("reserve diagnostic artifact: %w", err)
+	}
+	if object.UID == "" {
+		return backend.Record{}, errors.New("artifact reservation did not return UID")
+	}
+	return Record(object), nil
+}
+
+func targetPodField(object *breakglassv1alpha1.DebugSessionArtifact, index int) string {
+	if object.Spec.TargetPod == nil {
+		return ""
+	}
+	switch index {
+	case 0:
+		return object.Spec.TargetPod.Namespace
+	case 1:
+		return object.Spec.TargetPod.Name
+	default:
+		return object.Spec.TargetPod.UID
+	}
+}
+func reservationTargetPod(record backend.Record) *breakglassv1alpha1.ArtifactSessionReference {
+	if record.TargetPodUID == "" {
+		return nil
+	}
+	return &breakglassv1alpha1.ArtifactSessionReference{Namespace: record.TargetPodNamespace, Name: record.TargetPodName, UID: record.TargetPodUID}
+}

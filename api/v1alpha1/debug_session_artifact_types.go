@@ -87,6 +87,7 @@ type ArtifactInputs struct {
 // endpoints, bucket names, object keys, and arbitrary execution controls are
 // intentionally absent.
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="artifact specification is immutable"
+// +kubebuilder:validation:XValidation:rule="(self.recipe == 'terminal-recording.v1') == has(self.recording)",message="terminal recording metadata is required only for the terminal recording recipe"
 type DebugSessionArtifactSpec struct {
 	// artifactID is the public opaque artifact identifier.
 	// +kubebuilder:validation:Pattern="^dsa-[0-9a-f]{24}$"
@@ -99,8 +100,14 @@ type DebugSessionArtifactSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +required
 	TargetClusterUID string `json:"targetClusterUID"`
+	// targetPod is the original approved Pod used to resolve collection authority.
+	// +optional
+	TargetPod *ArtifactSessionReference `json:"targetPod,omitempty"`
+	// targetNodeUID binds node-local collection to an exact node incarnation.
+	// +optional
+	TargetNodeUID string `json:"targetNodeUID,omitempty"`
 	// recipe is an immutable allowlisted recipe identifier.
-	// +kubebuilder:validation:Enum=system-summary.v1;crashdump-collection.v1
+	// +kubebuilder:validation:Enum=system-summary.v1;crashdump-collection.v1;terminal-recording.v1
 	// +required
 	Recipe string `json:"recipe"`
 	// recipeVersion is the immutable recipe schema version.
@@ -128,6 +135,16 @@ type DebugSessionArtifactSpec struct {
 	// +kubebuilder:validation:Pattern="^[0-9a-f]{64}$"
 	// +required
 	UploadJTIHash string `json:"uploadJTIHash"`
+	// uploadKeyID identifies the existing controller signing key used by this reservation.
+	// +optional
+	UploadKeyID string `json:"uploadKeyID,omitempty"`
+	// reservationNonce distinguishes recreated slots without exposing a token identifier.
+	// +kubebuilder:validation:Pattern="^[0-9a-f]{32}$"
+	// +optional
+	ReservationNonce string `json:"reservationNonce,omitempty"`
+	// recording binds a controller-owned terminal stream, never a collector request.
+	// +optional
+	Recording *ArtifactRecordingMetadata `json:"recording,omitempty"`
 	// redactionProfile selects the server-owned metadata redaction policy.
 	// +kubebuilder:validation:Pattern="^[a-z][a-z0-9.-]{0,63}$"
 	// +required
@@ -211,6 +228,9 @@ type ArtifactResourceReference struct {
 // object keys, URLs, version IDs, credentials, and secret references are not
 // persisted here.
 type DebugSessionArtifactStatus struct {
+	// recording records bounded terminal completion metadata.
+	// +optional
+	Recording *ArtifactRecordingMetadata `json:"recording,omitempty"`
 	// targetCluster is the immutable ClusterConfig name used for spoke cleanup.
 	// +optional
 	TargetCluster string `json:"targetCluster,omitempty"`

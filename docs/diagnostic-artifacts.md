@@ -78,3 +78,42 @@ to expose the raw token; replacing the current random JTI issuance with that
 durable handoff is still required before enabling the feature.
 
 Provider object keys are 64 lowercase hexadecimal SHA-256 characters derived from the immutable artifact resource UID with a domain separator. Public artifact IDs remain unchanged. Same-named artifacts with different resource UIDs occupy separate provider objects, including during upload recovery and cleanup.
+
+### Durable collection admission and recording evidence
+
+An administrator enables collection explicitly in the approved template with
+`artifactCollection.allowedRecipes` (`system-summary.v1` and/or
+`crashdump-collection.v1`). Active participants may POST a recipe, `podNamespace`
+and `podName` to `/api/debugSessionArtifacts/:namespace/:session`. The Pod must
+match the approved UID. Only `detailLevel` or `maxAgeMinutes`, as appropriate to
+the recipe, are accepted as additional inputs. The controller selects the image,
+credentials, target identity, operation epoch, limits and digests. Unknown fields
+are rejected. Crashdump node identity comes from the live approved Pod and Node.
+
+Two retained collector reservations per session bound both concurrent Jobs and
+reserved bytes. A separate pool permits at most 128 retained recording
+reservations. Kubernetes Create arbitrates finite reservation slots across
+replicas. Slots become reusable only when provider and owned-resource cleanup
+finishes and the artifact CRD is deleted; this is deliberately stricter than a
+count checked before creation.
+
+A fresh random reservation incarnation and an existing signing-key identifier
+are immutable inputs to a domain-separated upload nonce. Only its hash is
+persisted. Restart can reproduce the correct nonce, while an old token cannot
+upload to a recreated slot. Removing a referenced signing key causes issuance
+to fail closed. Legacy records lacking that handoff cannot obtain a new token.
+
+The internal `terminal-recording.v1` path reserves before streaming and persists
+validated framing, size and digest before provider writes. It does not use the
+collector upload route. Finalization and exact inventory recovery may retain
+previously admitted evidence after access expires. The fixed reservation
+retention deadline is independent of the stream deadline; consumer policy may
+set it to the stream deadline plus retention, so early completion can retain
+bytes longer than completion plus retention. Replay still requires current
+explicit authorization, a matching live session UID and an unexpired artifact;
+a deleted session does not grant access from an old participant snapshot.
+
+Recording consumers use the shared reserve/finalize/recover and guarded replay
+methods. An independent artifact controller retries recovery and owns retention
+cleanup even when session mirror publication fails. Provider metadata and tokens
+are excluded from public artifact responses.

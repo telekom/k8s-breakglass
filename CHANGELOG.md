@@ -1862,3 +1862,8 @@ non-buggy case:
 [0.0.3]: https://github.com/telekom/k8s-breakglass/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/telekom/k8s-breakglass/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/telekom/k8s-breakglass/releases/tag/v0.0.1
+
+- Wire opt-in diagnostic collection admission through bounded durable reservations,
+  restart-safe upload nonce binding, fixed spoke Jobs and guarded artifact access.
+- Add a shared durable terminal-recording reservation, finalization, recovery and
+  retained replay contract with independent cleanup and immutable target metadata.
