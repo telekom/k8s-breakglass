@@ -67,6 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ephemeral-container identity, target, actor, digest, and timestamp fields.
 
 - Bind ephemeral-container operation evidence to the authenticated provider identity and cap new distinct injection admissions at 256 identities, including prepared reservations, while retaining existing history and recovery evidence.
+- Keep an explicitly empty primary cluster `extraDeployVariables` array in
+  template-cluster discovery responses when a binding disables all variables.
 
 - Recover tracked resources after bounded create timeouts when session and
   operation markers and requested content match the persisted object.

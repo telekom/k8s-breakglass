@@ -116,7 +116,7 @@ type AvailableClusterDetail struct {
 	RequestReason                 *breakglass.ReasonConfigInfo                `json:"requestReason,omitempty"`
 	ApprovalReason                *breakglass.ReasonConfigInfo                `json:"approvalReason,omitempty"`
 	Notification                  *NotificationConfigInfo                     `json:"notification,omitempty"`
-	ExtraDeployVariables          []breakglassv1alpha1.ExtraDeployVariable    `json:"extraDeployVariables,omitempty"`
+	ExtraDeployVariables          []breakglassv1alpha1.ExtraDeployVariable    `json:"extraDeployVariables"`
 	Status                        *ClusterStatusInfo                          `json:"status,omitempty"`
 }
 

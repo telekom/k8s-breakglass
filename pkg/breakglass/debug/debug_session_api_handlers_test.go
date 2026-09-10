@@ -60,6 +60,9 @@ func TestBindingOptionEmitsEmptyVariablesWhenAllDisabled(t *testing.T) {
 	payload, err := json.Marshal(detail.BindingOptions[0])
 	require.NoError(t, err)
 	assert.Contains(t, string(payload), `"extraDeployVariables":[]`)
+	payload, err = json.Marshal(detail)
+	require.NoError(t, err)
+	assert.Contains(t, string(payload), `"extraDeployVariables":[]`)
 }
 
 type stagedDebugSessionReader struct {
