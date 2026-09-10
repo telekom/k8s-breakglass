@@ -28,6 +28,14 @@ var (
 	ErrReplay    = errors.New("artifact upload has already been consumed")
 )
 
+func artifactStorageKey(record Record) (string, error) {
+	if record.ArtifactUID == "" {
+		return "", errors.New("artifact UID is required for storage key")
+	}
+	sum := sha256.Sum256([]byte("breakglass-artifact-v1:" + record.ArtifactUID))
+	return "sha256-" + hex.EncodeToString(sum[:]), nil
+}
+
 // State is monotonic. Unknown means the provider result is ambiguous and may
 // only be resolved by inventory; it is never treated as available.
 type State string
@@ -258,7 +266,11 @@ func (service *Service) Upload(ctx context.Context, encodedToken string, route s
 		service.restoreUnknown(ctx, record)
 		return PublicRecord{}, fmt.Errorf("rewind staged diagnostic artifact: %w", err)
 	}
-	metadata, err := service.store.PutIfAbsent(ctx, storage.Object{Key: record.ArtifactID, RuntimeBindingDigest: record.RuntimeBindingDigest, Size: size, SHA256: digest}, staged)
+	key, err := artifactStorageKey(record)
+	if err != nil {
+		return PublicRecord{}, err
+	}
+	metadata, err := service.store.PutIfAbsent(ctx, storage.Object{Key: key, RuntimeBindingDigest: record.RuntimeBindingDigest, Size: size, SHA256: digest}, staged)
 	if err != nil {
 		if errors.Is(err, storage.ErrAlreadyExists) {
 			metadata, err = service.reconcileObject(ctx, record, size, digest)
@@ -379,7 +391,11 @@ func (service *Service) Download(ctx context.Context, namespace, sessionName, ar
 	if err != nil {
 		return nil, PublicRecord{}, err
 	}
-	reader, _, err := service.store.OpenVersion(ctx, storage.Object{Key: record.ArtifactID, RuntimeBindingDigest: record.RuntimeBindingDigest, Size: record.Size, SHA256: record.SHA256}, metadata)
+	key, err := artifactStorageKey(record)
+	if err != nil {
+		return nil, PublicRecord{}, err
+	}
+	reader, _, err := service.store.OpenVersion(ctx, storage.Object{Key: key, RuntimeBindingDigest: record.RuntimeBindingDigest, Size: record.Size, SHA256: record.SHA256}, metadata)
 	if err != nil {
 		return nil, PublicRecord{}, err
 	}
@@ -441,7 +457,11 @@ func (service *Service) Cleanup(ctx context.Context, record Record, terminal Sta
 			return err
 		}
 	}
-	object := storage.Object{Key: record.ArtifactID, RuntimeBindingDigest: record.RuntimeBindingDigest, Size: record.Size, SHA256: record.SHA256}
+	key, err := artifactStorageKey(record)
+	if err != nil {
+		return err
+	}
+	object := storage.Object{Key: key, RuntimeBindingDigest: record.RuntimeBindingDigest, Size: record.Size, SHA256: record.SHA256}
 	if record.Size < 1 || record.SHA256 == "" {
 		keyInventory, ok := service.store.(storage.KeyInventory)
 		if !ok {
@@ -605,13 +625,21 @@ func (service *Service) stage(ctx context.Context, source io.Reader, maxBytes in
 
 func (service *Service) resolveMetadata(ctx context.Context, record Record) (storage.Metadata, error) {
 	if record.Metadata.VersionID != "" {
-		object := storage.Object{Key: record.ArtifactID, RuntimeBindingDigest: record.RuntimeBindingDigest, Size: record.Size, SHA256: record.SHA256}
+		key, err := artifactStorageKey(record)
+		if err != nil {
+			return storage.Metadata{}, err
+		}
+		object := storage.Object{Key: key, RuntimeBindingDigest: record.RuntimeBindingDigest, Size: record.Size, SHA256: record.SHA256}
 		metadata, err := service.store.StatVersion(ctx, object, record.Metadata)
 		if err == nil {
 			return metadata, nil
 		}
 	}
-	object := storage.Object{Key: record.ArtifactID, RuntimeBindingDigest: record.RuntimeBindingDigest, Size: record.Size, SHA256: record.SHA256}
+	key, err := artifactStorageKey(record)
+	if err != nil {
+		return storage.Metadata{}, err
+	}
+	object := storage.Object{Key: key, RuntimeBindingDigest: record.RuntimeBindingDigest, Size: record.Size, SHA256: record.SHA256}
 	versions, err := service.store.Inventory(ctx, object)
 	if err != nil {
 		return storage.Metadata{}, err
@@ -629,7 +657,9 @@ func (service *Service) resolveMetadata(ctx context.Context, record Record) (sto
 }
 
 func (service *Service) reconcileObject(ctx context.Context, record Record, size int64, digest string) (storage.Metadata, error) {
-	return service.resolveMetadata(ctx, Record{ArtifactID: record.ArtifactID, RuntimeBindingDigest: record.RuntimeBindingDigest, Size: size, SHA256: digest})
+	current := record
+	current.Size, current.SHA256 = size, digest
+	return service.resolveMetadata(ctx, current)
 }
 
 func copyContext(ctx context.Context, destination io.Writer, source io.Reader) (int64, error) {

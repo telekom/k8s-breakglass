@@ -111,7 +111,7 @@ func newServiceForTest(t *testing.T, repository Repository, store storage.Store,
 }
 
 func TestDownloadRejectsBindingMismatchBeforeProviderRead(t *testing.T) {
-	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "dsa-0123456789abcdef01234567", SessionUID: "uid", TargetIdentityDigest: "target", OperationEpoch: 2, State: StateAvailable, ExpiresAt: time.Unix(200, 0), Size: 1, SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", RuntimeBindingDigest: "binding"}}
+	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "dsa-0123456789abcdef01234567", ArtifactUID: "artifact-uid-1", SessionUID: "uid", TargetIdentityDigest: "target", OperationEpoch: 2, State: StateAvailable, ExpiresAt: time.Unix(200, 0), Size: 1, SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", RuntimeBindingDigest: "binding"}}
 	store := &fakeStore{backendID: "backend"}
 	service := newServiceForTest(t, repository, store, allowAuthorizer{})
 	_, _, err := service.Download(context.Background(), "ns", "session", repository.record.ArtifactID, SessionBinding{Namespace: "ns", Name: "session", UID: "other", TargetIdentityDigest: "target", OperationEpoch: 2})
@@ -119,15 +119,25 @@ func TestDownloadRejectsBindingMismatchBeforeProviderRead(t *testing.T) {
 	require.False(t, store.opened)
 }
 
+func TestArtifactStorageKeyRequiresUIDAndIsOpaque(t *testing.T) {
+	if _, err := artifactStorageKey(Record{ArtifactID: "public-id"}); err == nil {
+		t.Fatal("artifactStorageKey accepted a record without immutable UID")
+	}
+	key, err := artifactStorageKey(Record{ArtifactID: "public-id", ArtifactUID: "uid-a"})
+	require.NoError(t, err)
+	require.NotEqual(t, "public-id", key)
+	require.Len(t, key, len("sha256-")+64)
+}
+
 func TestCleanupPendingArtifactNeedsNoProviderObject(t *testing.T) {
-	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "dsa-0123456789abcdef01234567", State: StatePending, Generation: 1}}
+	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "dsa-0123456789abcdef01234567", ArtifactUID: "artifact-uid-1", State: StatePending, Generation: 1}}
 	service := newServiceForTest(t, repository, &fakeStore{backendID: "backend"}, allowAuthorizer{})
 	require.NoError(t, service.Cleanup(context.Background(), repository.record, StateExpired))
 	require.Equal(t, StateExpired, repository.record.State)
 }
 
 func TestCleanupRetainsAmbiguousProviderIdentity(t *testing.T) {
-	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "dsa-0123456789abcdef01234567", RuntimeBindingDigest: "binding", State: StateAvailable, Generation: 1, Size: 4, SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "dsa-0123456789abcdef01234567", ArtifactUID: "artifact-uid-1", RuntimeBindingDigest: "binding", State: StateAvailable, Generation: 1, Size: 4, SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
 	store := &fakeStore{backendID: "backend", versions: []storage.Version{{VersionID: "one", RuntimeBindingDigest: "other", Size: 4, SHA256: repository.record.SHA256}}}
 	service := newServiceForTest(t, repository, store, allowAuthorizer{})
 	require.ErrorIs(t, service.Cleanup(context.Background(), repository.record, StateRevoked), ErrConflict)
@@ -146,7 +156,7 @@ func TestPublicRecordOmitsProviderMetadata(t *testing.T) {
 }
 
 func TestListRequiresLiveBindingAndReturnsOnlyBoundMetadata(t *testing.T) {
-	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", SessionUID: "uid", ArtifactID: "dsa-0123456789abcdef01234567", TargetIdentityDigest: "target", OperationEpoch: 2, State: StateAvailable, ExpiresAt: time.Unix(200, 0), Size: 4, SHA256: strings.Repeat("a", 64)}}
+	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", SessionUID: "uid", ArtifactID: "dsa-0123456789abcdef01234567", ArtifactUID: "artifact-uid-1", TargetIdentityDigest: "target", OperationEpoch: 2, State: StateAvailable, ExpiresAt: time.Unix(200, 0), Size: 4, SHA256: strings.Repeat("a", 64)}}
 	service := newServiceForTest(t, repository, &fakeStore{backendID: "backend"}, allowAuthorizer{})
 	public, err := service.List(context.Background(), "ns", "session", SessionBinding{Namespace: "ns", Name: "session", UID: "uid", TargetIdentityDigest: "target", OperationEpoch: 2})
 	require.NoError(t, err)
@@ -186,7 +196,7 @@ func TestValidTransitionRejectsLifecycleResurrection(t *testing.T) {
 }
 
 func TestDownloadRechecksLiveArtifactStateBeforeEachRead(t *testing.T) {
-	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "dsa-0123456789abcdef01234567", SessionUID: "uid", TargetIdentityDigest: "target", OperationEpoch: 2, State: StateAvailable, ExpiresAt: time.Unix(200, 0), Size: 1, SHA256: strings.Repeat("a", 64), RuntimeBindingDigest: "binding", Metadata: storage.Metadata{BackendInstanceID: "backend", Key: "dsa-0123456789abcdef01234567", VersionID: "version", RuntimeBindingDigest: "binding", Size: 1, SHA256: strings.Repeat("a", 64)}}}
+	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "dsa-0123456789abcdef01234567", ArtifactUID: "artifact-uid-1", SessionUID: "uid", TargetIdentityDigest: "target", OperationEpoch: 2, State: StateAvailable, ExpiresAt: time.Unix(200, 0), Size: 1, SHA256: strings.Repeat("a", 64), RuntimeBindingDigest: "binding", Metadata: storage.Metadata{BackendInstanceID: "backend", Key: "dsa-0123456789abcdef01234567", VersionID: "version", RuntimeBindingDigest: "binding", Size: 1, SHA256: strings.Repeat("a", 64)}}}
 	service := newServiceForTest(t, repository, &fakeStore{backendID: "backend"}, allowAuthorizer{})
 	reader, _, err := service.Download(context.Background(), "ns", "session", repository.record.ArtifactID, SessionBinding{Namespace: "ns", Name: "session", UID: "uid", TargetIdentityDigest: "target", OperationEpoch: 2})
 	require.NoError(t, err)
@@ -197,7 +207,7 @@ func TestDownloadRechecksLiveArtifactStateBeforeEachRead(t *testing.T) {
 }
 
 func TestCleanupRequiresTwoEmptyInventoriesAfterExactDelete(t *testing.T) {
-	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "dsa-0123456789abcdef01234567", RuntimeBindingDigest: "binding", State: StateAvailable, Generation: 1, Size: 4, SHA256: strings.Repeat("a", 64)}}
+	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "dsa-0123456789abcdef01234567", ArtifactUID: "artifact-uid-1", RuntimeBindingDigest: "binding", State: StateAvailable, Generation: 1, Size: 4, SHA256: strings.Repeat("a", 64)}}
 	version := storage.Version{VersionID: "one", RuntimeBindingDigest: "binding", Size: 4, SHA256: repository.record.SHA256}
 	store := &fakeStore{backendID: "backend", inventorySequence: [][]storage.Version{{version}, {}, {}}}
 	service := newServiceForTest(t, repository, store, allowAuthorizer{})
