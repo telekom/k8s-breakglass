@@ -79,3 +79,37 @@ func TestCleanupStatusPatchRetainsFailureWhenConcurrentResourceArrives(t *testin
 	require.NotNil(t, storedCondition)
 	require.Equal(t, metav1.ConditionTrue, storedCondition.Status)
 }
+
+func TestCleanupStatusPatchRetainsFailureForUnresolvedPodTemplateIntent(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	live := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "ns", UID: "session-uid"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			PodTemplateResourceStatuses: []breakglassv1alpha1.PodTemplateResourceStatus{{
+				APIVersion: "v1", Kind: "ConfigMap", Namespace: "target", ResourceName: "late", CreateOperationID: "create-op",
+			}},
+			Conditions: []metav1.Condition{{
+				Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionTrue,
+				Reason: "CleanupFailed", Message: "residual resource",
+			}},
+		},
+	}
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(live).WithStatusSubresource(live).Build()
+	stale := live.DeepCopy()
+	stale.Status.PodTemplateResourceStatuses = nil
+	stale.Status.Conditions = []metav1.Condition{{
+		Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionFalse,
+		Reason: "CleanupRecovered", Message: "Cleanup completed; no residual resources remain.",
+	}}
+	baseline := live.Status.DeepCopy()
+	baseline.PodTemplateResourceStatuses = nil
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+	require.NoError(t, controller.patchDebugSessionCleanupStatus(context.Background(), stale, baseline))
+	stored := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(live), stored))
+	require.Len(t, stored.Status.PodTemplateResourceStatuses, 1)
+	storedCondition := stored.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+	require.NotNil(t, storedCondition)
+	require.Equal(t, metav1.ConditionTrue, storedCondition.Status)
+}

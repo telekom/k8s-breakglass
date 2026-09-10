@@ -653,7 +653,7 @@ func hasPreparedKubectlDebugOperation(ds *breakglassv1alpha1.DebugSession) bool 
 
 func hasOutstandingAuxiliaryResources(ds *breakglassv1alpha1.DebugSession) bool {
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
-		if status.Created && !status.Deleted {
+		if auxiliaryStatusHasOutstandingResource(status) {
 			return true
 		}
 		for _, child := range status.AdditionalResources {
@@ -663,6 +663,10 @@ func hasOutstandingAuxiliaryResources(ds *breakglassv1alpha1.DebugSession) bool 
 		}
 	}
 	return false
+}
+
+func auxiliaryStatusHasOutstandingResource(status breakglassv1alpha1.AuxiliaryResourceStatus) bool {
+	return !status.Deleted && (status.Created || status.UID != "" || status.CreateOperationID != "")
 }
 
 // handleCleanup removes deployed resources for expired/terminated sessions

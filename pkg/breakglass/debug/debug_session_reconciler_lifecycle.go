@@ -619,7 +619,7 @@ func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 		add(ref.Kind, ref.Namespace, ref.Name, ref.UID)
 	}
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
-		if status.Created && !status.Deleted {
+		if auxiliaryStatusHasOutstandingResource(status) {
 			add(status.Kind, status.Namespace, status.ResourceName, status.UID)
 		}
 		for _, ref := range status.AdditionalResources {
@@ -629,7 +629,7 @@ func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 		}
 	}
 	for _, status := range ds.Status.PodTemplateResourceStatuses {
-		if status.Created && !status.Deleted {
+		if !status.Deleted {
 			add(status.Kind, status.Namespace, status.ResourceName, status.UID)
 		}
 	}
@@ -747,7 +747,7 @@ func cleanupStatusHasResiduals(status breakglassv1alpha1.DebugSessionStatus) boo
 		return true
 	}
 	for _, resource := range status.AuxiliaryResourceStatuses {
-		if resource.Created && !resource.Deleted {
+		if auxiliaryStatusHasOutstandingResource(resource) {
 			return true
 		}
 		for _, child := range resource.AdditionalResources {
@@ -757,7 +757,7 @@ func cleanupStatusHasResiduals(status breakglassv1alpha1.DebugSessionStatus) boo
 		}
 	}
 	for _, resource := range status.PodTemplateResourceStatuses {
-		if resource.Created && !resource.Deleted {
+		if !resource.Deleted {
 			return true
 		}
 	}
