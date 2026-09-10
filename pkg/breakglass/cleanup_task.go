@@ -341,8 +341,18 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 		if ds.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
 			ds.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
 			ds.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
-			// Check if session should be deleted after retention period
-			// Use ExpiresAt or CreationTimestamp to determine retention eligibility
+			// Prefer the session's durable retention deadline; legacy sessions fall
+			// back to the historical expiry/creation based retention window.
+			if ds.Status.RetainedUntil != nil && !ds.Status.RetainedUntil.IsZero() {
+				if now.Before(ds.Status.RetainedUntil.Time) {
+					continue
+				}
+				if err := routine.Manager.Delete(ctx, &ds); err != nil {
+					routine.Log.Errorw("error deleting debug session past retention", "error", err)
+					continue
+				}
+				continue
+			}
 			retentionStart := ds.CreationTimestamp.Time
 			if ds.Status.ExpiresAt != nil && !ds.Status.ExpiresAt.IsZero() {
 				retentionStart = ds.Status.ExpiresAt.Time
