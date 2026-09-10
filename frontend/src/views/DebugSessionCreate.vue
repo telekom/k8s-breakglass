@@ -633,9 +633,9 @@ async function handleSubmit() {
       reason: form.reason,
     };
 
-    // Include selected binding reference when multiple bindings are available
-    if (hasMultipleBindings.value && selectedBindingOption.value) {
-      const binding = selectedBindingOption.value.bindingRef;
+    // Preserve the visible selection even when it is the only binding option.
+    const binding = selectedBindingOption.value?.bindingRef || selectedClusterDetail.value?.bindingRef;
+    if (binding) {
       request.bindingRef = `${binding.namespace}/${binding.name}`;
     }
 

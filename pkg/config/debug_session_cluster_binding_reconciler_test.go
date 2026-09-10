@@ -899,3 +899,45 @@ func TestDebugSessionClusterBindingReconciler_ReadyConditionChanged(t *testing.T
 	assert.False(t, readyConditionChanged([]metav1.Condition{readyTrue}, []metav1.Condition{readyTrueDifferentReason}))
 	assert.True(t, readyConditionChanged([]metav1.Condition{readyTrue}, []metav1.Condition{readyFalse}))
 }
+
+func TestBindingTemplateSelectorRetainsCompatiblePolicies(t *testing.T) {
+	for _, scenario := range []string{"mixed", "all incompatible", "explicit incompatible"} {
+		t.Run(scenario, func(t *testing.T) {
+			r, scheme := newTestClusterBindingReconciler()
+			invalid := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "a-invalid", Labels: map[string]string{"tier": "standard"}}}
+			valid := invalid.DeepCopy()
+			valid.Name = "z-valid"
+			valid.Spec.ExtraDeployVariables = []breakglassv1alpha1.ExtraDeployVariable{{Name: "target", InputType: "text"}}
+			disabled := true
+			binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "default", Generation: 1}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateSelector:     &metav1.LabelSelector{MatchLabels: map[string]string{"tier": "standard"}},
+				ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariableConstraint{{Name: "target", Disabled: &disabled}},
+			}}
+			if scenario == "explicit incompatible" {
+				binding.Spec.TemplateSelector = nil
+				binding.Spec.TemplateRef = &breakglassv1alpha1.TemplateReference{Name: invalid.Name}
+			}
+			objects := []client.Object{invalid, binding}
+			if scenario == "mixed" {
+				objects = append(objects, valid)
+			}
+			r.client = fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).WithStatusSubresource(&breakglassv1alpha1.DebugSessionClusterBinding{}).Build()
+			_, err := r.Reconcile(t.Context(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(binding)})
+			require.NoError(t, err)
+			require.NoError(t, r.client.Get(t.Context(), client.ObjectKeyFromObject(binding), binding))
+			if scenario == "mixed" {
+				require.Len(t, binding.Status.ResolvedTemplates, 1)
+				require.Equal(t, "z-valid", binding.Status.ResolvedTemplates[0].Name)
+			} else {
+				require.Empty(t, binding.Status.ResolvedTemplates)
+			}
+			resolved, err := r.resolveTemplates(t.Context(), binding)
+			if scenario == "mixed" {
+				require.NoError(t, err)
+				require.Len(t, resolved, 1)
+			} else {
+				require.ErrorContains(t, err, "target")
+			}
+		})
+	}
+}

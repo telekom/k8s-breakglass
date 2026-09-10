@@ -1595,3 +1595,9 @@ into arbitrary caller-selected node access.
 - [BreakglassSession](./breakglass-session.md) - Session management
 - [Debug Session](./debug-session.md) - Debug session feature guide
 - [Webhook Setup](./webhook-setup.md) - Authorization webhook configuration
+
+### Debug-session binding selection and cluster selectors
+
+The create-session UI submits the selected visible binding reference even when only one binding is offered. Hidden bindings remain excluded from discovery results but can still be selected explicitly through the API with `bindingRef: "namespace/name"`.
+
+A template's `allowed.clusters` patterns and `allowed.clusterSelector` are alternative direct grants: either may match a cluster. Discovery, admission, and controller activation use the same matching rule; selectors are evaluated against the uniquely resolved, ready ClusterConfig's labels. Existing requester restrictions still apply. A binding selected with `templateSelector` retains compatible template matches when another matching template has incompatible variable constraints. An explicit incompatible `templateRef`, or a selector with only incompatible matches, remains an error.

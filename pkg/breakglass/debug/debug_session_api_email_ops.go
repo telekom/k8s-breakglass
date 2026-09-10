@@ -948,7 +948,7 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrApplicableBindin
 ) ClusterAllowedResult {
 	result := ClusterAllowedResult{}
 
-	hasTemplateClusterRestriction := template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0
+	hasTemplateClusterRestriction := template.Spec.Allowed != nil && (len(template.Spec.Allowed.Clusters) > 0 || template.Spec.Allowed.ClusterSelector != nil)
 
 	c.log.Debugw("isClusterAllowedByTemplateOrBinding starting",
 		"template", template.Name,
@@ -972,25 +972,10 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrApplicableBindin
 		)
 	}
 
-	// 1. Check if allowed by template's allowed.clusters
-	if hasTemplateClusterRestriction {
-		for _, pattern := range template.Spec.Allowed.Clusters {
-			if matchPattern(pattern, clusterName) {
-				c.log.Debugw("Cluster allowed by template pattern",
-					"cluster", clusterName,
-					"pattern", pattern,
-				)
-				result.Allowed = true
-				result.AllowedBySource = "template"
-				break
-			}
-		}
-		if !result.Allowed {
-			c.log.Debugw("Cluster not allowed by template patterns",
-				"cluster", clusterName,
-				"templatePatterns", template.Spec.Allowed.Clusters,
-			)
-		}
+	// 1. Apply direct template names and label selectors consistently with discovery.
+	if directTemplateAllowsCluster(template, clusterName, clusterConfigs[clusterName]) {
+		result.Allowed = true
+		result.AllowedBySource = "template"
 	}
 
 	// 2. Check if allowed by any binding that references this template

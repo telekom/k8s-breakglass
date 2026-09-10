@@ -317,10 +317,12 @@ func (r *DebugSessionClusterBindingReconciler) resolveTemplates(
 			return nil, err
 		}
 
+		var incompatible error
 		for i := range templateList.Items {
 			template := &templateList.Items[i]
 			if _, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, binding.Spec.ExtraDeployVariables); err != nil {
-				return nil, fmt.Errorf("validate extraDeployVariables against template %q: %w", template.Name, err)
+				incompatible = fmt.Errorf("validate extraDeployVariables against template %q: %w", template.Name, err)
+				continue
 			}
 
 			displayName := template.Spec.DisplayName
@@ -335,6 +337,9 @@ func (r *DebugSessionClusterBindingReconciler) resolveTemplates(
 				DisplayName: displayName,
 				Ready:       ready,
 			})
+		}
+		if len(resolved) == 0 && incompatible != nil {
+			return nil, incompatible
 		}
 	}
 

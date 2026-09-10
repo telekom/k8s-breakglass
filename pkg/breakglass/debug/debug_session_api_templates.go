@@ -229,7 +229,7 @@ func (c *DebugSessionAPIController) canReadTemplateWithBindings(
 	bindings []breakglassv1alpha1.DebugSessionClusterBinding,
 	requester debugTemplateRequester,
 ) bool {
-	hasDirectClusters := template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0
+	hasDirectClusters := template.Spec.Allowed != nil && (len(template.Spec.Allowed.Clusters) > 0 || template.Spec.Allowed.ClusterSelector != nil)
 	if hasDirectClusters && requester.canRequest(effectiveDebugSessionAllowed(template, nil)) {
 		return true
 	}
@@ -344,7 +344,7 @@ func defaultMatchesVisibleOptions(defaultValue *apiextensionsv1.JSON, visible ma
 func (c *DebugSessionAPIController) buildTemplateResponse(
 	template *breakglassv1alpha1.DebugSessionTemplate,
 	requester debugTemplateRequester,
-	allClusterNames []string,
+	clusterMap map[string]*breakglassv1alpha1.ClusterConfig,
 	availableClusterCount int,
 ) DebugSessionTemplateResponse {
 	resp := DebugSessionTemplateResponse{
@@ -369,8 +369,13 @@ func (c *DebugSessionAPIController) buildTemplateResponse(
 		resp.PodTemplateRef = template.Spec.PodTemplateRef.Name
 	}
 	if template.Spec.Allowed != nil && requester.canRequest(effectiveDebugSessionAllowed(template, nil)) {
-		if allClusterNames != nil {
-			resp.AllowedClusters = resolveClusterPatterns(template.Spec.Allowed.Clusters, allClusterNames)
+		if clusterMap != nil {
+			for name, configured := range clusterMap {
+				if directTemplateAllowsCluster(template, name, configured) {
+					resp.AllowedClusters = append(resp.AllowedClusters, name)
+				}
+			}
+			sort.Strings(resp.AllowedClusters)
 		} else {
 			resp.AllowedClusters = template.Spec.Allowed.Clusters
 		}
@@ -459,7 +464,7 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 			continue
 		}
 
-		templates = append(templates, c.buildTemplateResponse(&t, requester, allClusterNames, availableClusterCount))
+		templates = append(templates, c.buildTemplateResponse(&t, requester, clusterMap, availableClusterCount))
 	}
 
 	sort.Slice(templates, func(i, j int) bool {
@@ -523,7 +528,7 @@ func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 	visibleBindings := visibleDebugSessionBindings(applicableBindings)
 	availableClusterCount := c.countAvailableClustersForTemplate(template, visibleBindings, clusterMap, allClusterNames, requester)
 
-	ctx.JSON(http.StatusOK, c.buildTemplateResponse(template, requester, allClusterNames, availableClusterCount))
+	ctx.JSON(http.StatusOK, c.buildTemplateResponse(template, requester, clusterMap, availableClusterCount))
 }
 
 // handleGetTemplateClusters returns cluster-specific details for a template
@@ -637,14 +642,12 @@ func (c *DebugSessionAPIController) countAvailableClustersForTemplate(
 		}
 	}
 
-	// Also check template's direct allowed.clusters patterns
+	// Also check direct template cluster patterns and selectors.
 	if requester.canRequest(effectiveDebugSessionAllowed(template, nil)) &&
 		debugSchedulingOptionsAvailableForRequester(template, nil, requester) &&
-		template.Spec.Allowed != nil &&
-		len(template.Spec.Allowed.Clusters) > 0 {
-		resolvedClusters := resolveClusterPatterns(template.Spec.Allowed.Clusters, allClusterNames)
-		for _, clusterName := range resolvedClusters {
-			if clusterMap[clusterName] != nil {
+		template.Spec.Allowed != nil {
+		for _, clusterName := range allClusterNames {
+			if directTemplateAllowsCluster(template, clusterName, clusterMap[clusterName]) {
 				seenClusters[clusterName] = true
 			}
 		}
@@ -764,18 +767,16 @@ func (c *DebugSessionAPIController) resolveTemplateClusters(template *breakglass
 		result = append(result, detail)
 	}
 
-	// Then, resolve clusters from template's allowed.clusters (fallback, no binding)
+	// Then resolve direct template cluster patterns and selectors (no binding).
 	if requester.canRequest(effectiveDebugSessionAllowed(template, nil)) &&
 		debugSchedulingOptionsAvailableForRequester(template, nil, requester) &&
-		template.Spec.Allowed != nil &&
-		len(template.Spec.Allowed.Clusters) > 0 {
+		template.Spec.Allowed != nil {
 		allClusterNames := make([]string, 0, len(clusterMap))
 		for name := range clusterMap {
 			allClusterNames = append(allClusterNames, name)
 		}
-		allowedClusters := resolveClusterPatterns(template.Spec.Allowed.Clusters, allClusterNames)
-		for _, clusterName := range allowedClusters {
-			if seenClusters[clusterName] {
+		for _, clusterName := range allClusterNames {
+			if !directTemplateAllowsCluster(template, clusterName, clusterMap[clusterName]) || seenClusters[clusterName] {
 				continue
 			}
 			seenClusters[clusterName] = true
