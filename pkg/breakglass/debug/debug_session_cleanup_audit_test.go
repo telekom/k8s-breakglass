@@ -67,5 +67,6 @@ func TestCleanupStatusPatchFailureDoesNotEmitCleanupFailureAudit(t *testing.T) {
 	err := controller.cleanupResources(context.Background(), session)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "status patch failed")
+	require.NoError(t, auditManager.Close())
 	require.Empty(t, sink.Events(), "status persistence failure must not be classified as cleanup failure")
 }
