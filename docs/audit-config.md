@@ -233,7 +233,10 @@ These capture access to non-API endpoints:
 
 ### Debug Session Events
 - `debug_session.created` / `debug_session.started`
-- `debug_session.attached` / `debug_session.terminated` / `debug_session.rejected`
+- `debug_session.approved` / `debug_session.rejected`
+- `debug_session.renewed` / `debug_session.validation_failed`
+- `debug_session.cleanup_failed` / `debug_session.cleanup_recovered`
+- `debug_session.attached` / `debug_session.terminated`
 - `debug_session.failed` / `debug_session.expired` / `debug_session.approval_timeout`
 - `debug_session.binding_unresolved`
 - `debug_session.command` / `debug_session.file_access`
