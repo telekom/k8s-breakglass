@@ -5,10 +5,11 @@ package ssa
 
 import (
 	"encoding/json"
+	"testing"
+
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"testing"
 )
 
 func TestDebugSessionStatusFromPreservesIdleRetentionAcrossSerialization(t *testing.T) {

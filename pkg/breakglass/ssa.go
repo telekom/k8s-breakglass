@@ -50,8 +50,9 @@ func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *brea
 			session.Namespace, session.Name, current.Status.State, session.Status.State)
 	}
 	desiredStatus := session.Status
-	StampDebugSessionRetention(&desiredStatus, time.Now())
-	if err := validateDebugSessionStatusMutation(current.Status, desiredStatus, time.Now()); err != nil {
+	now := time.Now().UTC()
+	StampDebugSessionRetention(&desiredStatus, now)
+	if err := validateDebugSessionStatusMutation(current.Status, desiredStatus, now); err != nil {
 		return fmt.Errorf("apply DebugSession %s/%s status: %w", session.Namespace, session.Name, err)
 	}
 	// Set observedGeneration for kstatus compliance
@@ -106,8 +107,9 @@ func PatchDebugSessionStatusWithReader(
 	base := live.DeepCopy()
 	patched := live.DeepCopy()
 	mutate(&patched.Status)
-	StampDebugSessionRetention(&patched.Status, time.Now())
-	if err := validateDebugSessionStatusMutation(base.Status, patched.Status, time.Now()); err != nil {
+	now := time.Now().UTC()
+	StampDebugSessionRetention(&patched.Status, now)
+	if err := validateDebugSessionStatusMutation(base.Status, patched.Status, now); err != nil {
 		return fmt.Errorf("patch DebugSession %s/%s status: %w", session.Namespace, session.Name, err)
 	}
 	if patched.Generation > 0 {
