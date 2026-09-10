@@ -792,6 +792,16 @@ type AutoApproveConfig struct {
 
 // DebugSessionConstraints defines limits on debug sessions.
 type DebugSessionConstraints struct {
+	// idleTimeout expires an active session after this duration without a
+	// successful server-observed debug operation. Empty preserves legacy behavior.
+	// +optional
+	IdleTimeout string `json:"idleTimeout,omitempty"`
+
+	// retainFor keeps the session object and its terminal evidence after cleanup.
+	// Empty uses the legacy one-month retention default.
+	// +optional
+	RetainFor string `json:"retainFor,omitempty"`
+
 	// maxDuration is the maximum allowed session duration.
 	// +optional
 	// +kubebuilder:default="4h"
@@ -1321,6 +1331,12 @@ func validateDebugSessionTemplateSpec(template *DebugSessionTemplate) field.Erro
 		}
 		if template.Spec.Constraints.DefaultDuration != "" {
 			allErrs = append(allErrs, validateDurationFormat(template.Spec.Constraints.DefaultDuration, specPath.Child("constraints").Child("defaultDuration"))...)
+		}
+		if template.Spec.Constraints.IdleTimeout != "" {
+			allErrs = append(allErrs, validateDurationFormat(template.Spec.Constraints.IdleTimeout, specPath.Child("constraints").Child("idleTimeout"))...)
+		}
+		if template.Spec.Constraints.RetainFor != "" {
+			allErrs = append(allErrs, validateDurationFormat(template.Spec.Constraints.RetainFor, specPath.Child("constraints").Child("retainFor"))...)
 		}
 	}
 
