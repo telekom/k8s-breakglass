@@ -13,11 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   images through the signed utility-image release matrix, with their existing
   runtime behavior gates and multi-architecture build contexts.
 
+- DebugSession cluster bindings can narrow template extra-deploy variables
+  (option subsets, validation bounds/regexes, required or disabled state, and
+  defaults) without widening the template policy. Effective constraints are
+  surfaced by the template-cluster API and frontend form.
+
 - The debug-session-catalogue Helm chart provides administrator-authored,
   restricted DebugSession profiles for workload, network, storage, dump-access,
   and cluster-validation diagnostics.
 
 ### Fixed
+
+- Preserve the UI-selected binding when only one is visible, honor direct template cluster selectors consistently, and retain compatible templates in binding selector resolution.
+
+- Canonicalize approved binding snapshots before status persistence, reject malformed captured binding references, and activate complete approved snapshots after live template deletion while preserving live access fences.
 
 - Preserve per-template accounting repair intervals and metric publication order; align the built-in rejected mock session and CLI rejection test with `Rejected`.
 
@@ -29,6 +38,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reconciliation, cleanup, CLI filters, and the frontend.
 - Make terminal cleanup accounting idempotent and avoid decrementing active
   counts for sessions rejected before activation.
+
+- Activate fresh zero-variable debug sessions from a persisted Pending decision, preserve approved pod-template references after live edits, reject empty-policy constraint bypasses, and filter disabled supplied values from both renderers. Invalid bindings no longer shadow direct template cluster grants.
+
+- Persist complete debug-session approval snapshots before activation, preserve all template runtime policy through typed SSA, reject semantically empty binding provenance, and omit internal recovery variable policy from session REST responses.
+
+- Reject incomplete binding snapshots and impossible or widening variable constraints; preserve restricted binding defaults consistently through API admission and activation, and discard stale UI option selections after binding changes.
+
+- Preserve disabled binding variables and inline workload templates through SSA, apply binding-specific validation messages/defaults, and safely recover legacy Pending snapshots without reading approval policy from live configuration.
+
+- Retry final quota-admission completion after same-UID resource-version
+  conflicts, while refusing terminal or replacement sessions.
+
+- Reapply binding variable intersections during controller reconciliation and
+  activation, reject invalid bindings during discovery, and keep all-disabled
+  binding variable lists explicit in the API response.
 
 - If a debug session expires after an ephemeral-container intent is persisted
   but before the target write, record the operation as Failed without touching
@@ -55,6 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ephemeral-container identity, target, actor, digest, and timestamp fields.
 
 - Bind ephemeral-container operation evidence to the authenticated provider identity and cap new distinct injection admissions at 256 identities, including prepared reservations, while retaining existing history and recovery evidence.
+- Keep an explicitly empty primary cluster `extraDeployVariables` array in
+  template-cluster discovery responses when a binding disables all variables.
 
 - Recover tracked resources after bounded create timeouts when session and
   operation markers and requested content match the persisted object.

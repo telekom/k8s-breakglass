@@ -1055,6 +1055,45 @@ describe("DebugSessionCreate", () => {
   // Binding Source Labels
   // -----------------------------------------------------------------
   describe("binding source labels", () => {
+    it("keeps an explicitly empty binding variable list from falling back to the template", async () => {
+      const templates = defaultTemplates();
+      (templates[0] as unknown as Record<string, unknown>).extraDeployVariables = [
+        { name: "target", displayName: "Target", inputType: "text" },
+      ];
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            bindingOptions: [
+              {
+                bindingRef: { name: "binding-restricted", namespace: "breakglass" },
+                extraDeployVariables: [],
+              },
+            ],
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper(templates);
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string };
+        hasExtraDeployVariables: boolean;
+        effectiveExtraDeployVariables: unknown[];
+      };
+      vm.goToStep2();
+      await flushPromises();
+      vm.form.cluster = "prod-east";
+      await flushPromises();
+
+      expect(vm.hasExtraDeployVariables).toBe(false);
+      expect(vm.effectiveExtraDeployVariables).toEqual([]);
+      expect(wrapper.find('[data-testid="extra-variables-section"]').exists()).toBe(false);
+    });
+
     it("shows binding source reference on binding option cards", async () => {
       mockGetTemplateClusters.mockResolvedValue({
         templateName: "standard-debug",
@@ -1162,6 +1201,27 @@ describe("DebugSessionCreate", () => {
       expect(vm.hasExtraDeployVariables).toBeFalsy();
     });
 
+    it.each([true, false])("submits the sole visible binding (options=%s)", async (withOptions) => {
+      const bindingRef = { name: "visible", namespace: "default" };
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        clusters: [{ name: "prod-east", bindingRef, ...(withOptions ? { bindingOptions: [{ bindingRef }] } : {}) }],
+      });
+      const wrapper = await createWrapper();
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        handleSubmit: () => Promise<void>;
+        form: { cluster: string; reason: string };
+      };
+      vm.goToStep2();
+      await flushPromises();
+      vm.form.cluster = "prod-east";
+      vm.form.reason = "Investigating production issue";
+      await flushPromises();
+      await vm.handleSubmit();
+      expect(mockCreateSession).toHaveBeenCalledWith(expect.objectContaining({ bindingRef: "default/visible" }));
+    });
+
     it("does not submit when extra deploy variables are invalid", async () => {
       const templates = defaultTemplates();
       (templates[0] as unknown as Record<string, unknown>).extraDeployVariables = [
@@ -1200,6 +1260,68 @@ describe("DebugSessionCreate", () => {
       await vm.handleSubmit();
 
       expect(mockCreateSession).not.toHaveBeenCalled();
+    });
+
+    it("reconciles single and multi-select values when the binding changes", async () => {
+      const templates = defaultTemplates();
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            bindingOptions: [
+              {
+                bindingRef: { name: "power", namespace: "default" },
+                extraDeployVariables: [
+                  {
+                    name: "mode",
+                    inputType: "select",
+                    options: [
+                      { value: "power", displayName: "Power" },
+                      { value: "safe", displayName: "Safe" },
+                    ],
+                  },
+                  {
+                    name: "targets",
+                    inputType: "multiSelect",
+                    options: [
+                      { value: "debug", displayName: "Debug" },
+                      { value: "safe", displayName: "Safe" },
+                    ],
+                  },
+                  { name: "reasonCode", inputType: "text" },
+                ],
+              },
+              {
+                bindingRef: { name: "safe", namespace: "default" },
+                extraDeployVariables: [
+                  { name: "mode", inputType: "select", options: [{ value: "safe", displayName: "Safe" }] },
+                  { name: "targets", inputType: "multiSelect", options: [{ value: "safe", displayName: "Safe" }] },
+                  { name: "reasonCode", inputType: "text" },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper(templates);
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        form: { cluster: string; extraDeployValues: Record<string, unknown> };
+      };
+      vm.goToStep2();
+      await flushPromises();
+      vm.form.cluster = "prod-east";
+      vm.form.extraDeployValues = { mode: "power", targets: ["debug", "safe"], reasonCode: "typed" };
+      await flushPromises();
+
+      await wrapper.findAll('[data-testid="binding-option-card"]')[1]!.trigger("click");
+      await flushPromises();
+
+      expect(vm.form.extraDeployValues).toEqual({ targets: ["safe"], reasonCode: "typed" });
     });
   });
 

@@ -14,6 +14,21 @@ configurations.
 
 ## Overview
 
+### Binding-level narrowing
+
+`DebugSessionClusterBinding.spec.extraDeployVariables` may narrow variables
+defined by the referenced template for a cluster or team. Each entry names an
+existing template variable; its `options` list is an allow-list subset,
+`validation` may tighten numeric/string bounds or add a regular expression,
+`required` and `disabled` may only become stricter, and `default` must satisfy
+the resulting policy. Unknown variables/options and attempts to relax a
+template bound are rejected. Omitting the field preserves the existing
+template-only behavior.
+
+The controller validates the same effective schema for sessions created
+directly through Kubernetes and snapshots the original template policy so regex
+intersections remain enforced after approval or a restart.
+
 Instead of creating many specialized templates (e.g., `netshoot-standard`, `netshoot-host-network`, `netshoot-customer-test`), you can create one unified template with variables that users select at request time:
 
 ```yaml

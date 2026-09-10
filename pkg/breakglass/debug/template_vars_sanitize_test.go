@@ -32,3 +32,16 @@ func TestTemplateVarsPreservedBeforeSerialization(t *testing.T) {
 		}
 	}
 }
+
+func TestDisabledVariableDefaultsDoNotReachEitherRenderer(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{ExtraDeployValues: map[string]apiextensionsv1.JSON{"disabled": {Raw: []byte(`"injected"`)}, "enabled": {Raw: []byte(`"allowed"`)}}}}
+	spec := &breakglassv1alpha1.DebugSessionTemplateSpec{ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{{Name: "disabled", Disabled: true, Default: &apiextensionsv1.JSON{Raw: []byte(`"hidden"`)}}}}
+	for _, values := range []map[string]string{(&DebugSessionController{}).buildVarsFromSession(session, spec), (&AuxiliaryResourceManager{}).buildVarsFromSession(session, spec)} {
+		if _, present := values["disabled"]; present {
+			t.Fatal("disabled default or supplied value reached renderer")
+		}
+		if values["enabled"] != "allowed" {
+			t.Fatal("enabled requester value was lost")
+		}
+	}
+}

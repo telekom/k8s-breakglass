@@ -55,12 +55,42 @@ func CoerceExtraDeployValues(
 			result[name] = jsonVal
 			continue
 		}
-
 		coerced := coerceJSONValue(jsonVal, varDef.InputType)
 		result[name] = coerced
 	}
 
 	return result
+}
+
+// ValidateExtraDeployValueNames rejects values that are outside a binding's
+// effective request surface. Unknown values remain supported for templates
+// without binding constraints for backwards compatibility; callers should set
+// rejectUnknown only when a binding explicitly narrows variables.
+func ValidateExtraDeployValueNames(
+	values map[string]apiextensionsv1.JSON,
+	variables []ExtraDeployVariable,
+	rejectUnknown bool,
+	fldPath *field.Path,
+) field.ErrorList {
+	if !rejectUnknown {
+		return nil
+	}
+	defined := make(map[string]ExtraDeployVariable, len(variables))
+	for _, variable := range variables {
+		defined[variable.Name] = variable
+	}
+	var errs field.ErrorList
+	for name := range values {
+		variable, ok := defined[name]
+		if !ok {
+			errs = append(errs, field.Forbidden(fldPath.Key(name),
+				fmt.Sprintf("variable %q is not allowed by the binding", name)))
+		} else if variable.Disabled {
+			errs = append(errs, field.Forbidden(fldPath.Key(name),
+				fmt.Sprintf("variable %q is disabled", name)))
+		}
+	}
+	return errs
 }
 
 // coerceJSONValue converts a JSON value to the correct type for the given inputType.
@@ -297,7 +327,19 @@ func validateTextValue(value apiextensionsv1.JSON, validation *VariableValidatio
 			fmt.Sprintf("length must be at most %d", *validation.MaxLength)))
 	}
 
-	// Validate pattern
+	// Internal additional patterns are template-derived intersections and do
+	// not own the user-facing error message. The binding/template pattern may
+	// use PatternError for the boundary the user configured.
+	for _, pattern := range validation.AdditionalPatterns {
+		matched, err := regexp.MatchString(pattern, strVal)
+		if err != nil {
+			allErrs = append(allErrs, field.Invalid(fldPath, strVal,
+				fmt.Sprintf("invalid pattern %q: %v", pattern, err)))
+		} else if !matched {
+			allErrs = append(allErrs, field.Invalid(fldPath, strVal,
+				fmt.Sprintf("must match pattern %q", pattern)))
+		}
+	}
 	if validation.Pattern != "" {
 		matched, err := regexp.MatchString(validation.Pattern, strVal)
 		if err != nil {

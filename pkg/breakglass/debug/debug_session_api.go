@@ -748,7 +748,7 @@ func (c *DebugSessionAPIController) handleGetDebugSession(ctx *gin.Context) {
 
 	canApprove := c.canActOnDebugSessionApproval(apiCtx, session, identity, nil)
 	ctx.JSON(http.StatusOK, DebugSessionDetailResponse{
-		DebugSession: *session,
+		DebugSession: publicDebugSession(session),
 		CanApprove:   canApprove,
 		CanReject:    canApprove,
 	})
@@ -1188,20 +1188,83 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 	}
 
-	// Coerce extraDeployValues types based on template variable definitions.
+	// Resolve binding-level variable constraints before coercion and validation.
+	// The effective definitions are the intersection of template and binding
+	// policy; a binding can never add variables or widen a template rule.
+	effectiveVariables, err := breakglassv1alpha1.EffectiveExtraDeployVariables(
+		template.Spec.ExtraDeployVariables,
+		func() []breakglassv1alpha1.ExtraDeployVariableConstraint {
+			if resolvedBinding == nil {
+				return nil
+			}
+			return resolvedBinding.Spec.ExtraDeployVariables
+		}(),
+	)
+	if err != nil {
+		reqLog.Warnw("Binding extra deploy variable constraints are invalid", "error", err)
+		apiresponses.RespondBadRequest(ctx, err.Error())
+		return
+	}
+	if resolvedBinding != nil {
+		nameErrs := breakglassv1alpha1.ValidateExtraDeployValueNames(
+			req.ExtraDeployValues,
+			effectiveVariables,
+			len(resolvedBinding.Spec.ExtraDeployVariables) > 0,
+			field.NewPath("extraDeployValues"),
+		)
+		if len(nameErrs) > 0 {
+			messages := make([]string, 0, len(nameErrs))
+			for _, validationErr := range nameErrs {
+				messages = append(messages, validationErr.Error())
+			}
+			apiresponses.RespondBadRequestWithDetails(ctx, "extraDeployValues validation failed", strings.Join(messages, "; "))
+			return
+		}
+	}
+
+	// Coerce extraDeployValues types based on the effective variable definitions.
 	// HTML form inputs and YAML defaults can produce string-encoded numbers/booleans
 	// (e.g., "5" instead of 5). Normalize them before validation and storage so
 	// templates render correct YAML (e.g., `storage: 5Gi` not `storage: "5"Gi`).
 	if len(req.ExtraDeployValues) > 0 {
-		req.ExtraDeployValues = breakglassv1alpha1.CoerceExtraDeployValues(req.ExtraDeployValues, template.Spec.ExtraDeployVariables)
+		req.ExtraDeployValues = breakglassv1alpha1.CoerceExtraDeployValues(req.ExtraDeployValues, effectiveVariables)
+	}
+	// Binding defaults are persisted in the session input so rendering remains
+	// self-contained even if the binding changes after session creation. Keep
+	// the historical no-binding behavior, where template defaults are applied
+	// by the renderer rather than copied into the session spec.
+	if resolvedBinding != nil && len(resolvedBinding.Spec.ExtraDeployVariables) > 0 {
+		if req.ExtraDeployValues == nil {
+			req.ExtraDeployValues = make(map[string]apiextensionsv1.JSON)
+		}
+		for _, constraint := range resolvedBinding.Spec.ExtraDeployVariables {
+			if constraint.Default == nil {
+				continue
+			}
+			for _, variable := range effectiveVariables {
+				if variable.Name != constraint.Name {
+					continue
+				}
+				if !variable.Disabled && variable.Default != nil {
+					if _, provided := req.ExtraDeployValues[variable.Name]; !provided {
+						req.ExtraDeployValues[variable.Name] = *variable.Default.DeepCopy()
+					}
+				}
+			}
+		}
 	}
 
-	// Validate extraDeployValues against template's extraDeployVariables
+	// Validate extraDeployValues against the effective variable definitions.
 	// This includes checking allowedGroups on variables and options
-	if len(req.ExtraDeployValues) > 0 || len(template.Spec.ExtraDeployVariables) > 0 {
-		valErrs := breakglassv1alpha1.ValidateExtraDeployValuesWithGroups(
+	if len(req.ExtraDeployValues) > 0 || len(effectiveVariables) > 0 {
+		var constraints []breakglassv1alpha1.ExtraDeployVariableConstraint
+		if resolvedBinding != nil {
+			constraints = resolvedBinding.Spec.ExtraDeployVariables
+		}
+		valErrs := breakglassv1alpha1.ValidateExtraDeployValuesWithBinding(
 			req.ExtraDeployValues,
-			template.Spec.ExtraDeployVariables,
+			effectiveVariables,
+			constraints,
 			userGroups,
 			field.NewPath("extraDeployValues"),
 		)
@@ -1384,7 +1447,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 
 	metrics.DebugSessionsCreated.WithLabelValues(req.Cluster, req.TemplateRef).Inc()
 
-	response := DebugSessionDetailResponse{DebugSession: *session}
+	response := DebugSessionDetailResponse{DebugSession: publicDebugSession(session)}
 	if len(warnings) > 0 {
 		response.Warnings = warnings
 		reqLog.Infow("Session created with warnings", "warnings", warnings)
@@ -1885,4 +1948,11 @@ func stringInSlice(value string, values []string) bool {
 		}
 	}
 	return false
+}
+
+// publicDebugSession omits controller-only recovery policy from API responses.
+func publicDebugSession(session *breakglassv1alpha1.DebugSession) breakglassv1alpha1.DebugSession {
+	public := session.DeepCopy()
+	public.Status.ResolvedTemplateVariablePolicy = nil
+	return *public
 }

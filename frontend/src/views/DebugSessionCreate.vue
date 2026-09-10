@@ -81,6 +81,7 @@ watch(
   () => form.cluster,
   () => {
     form.selectedBindingIndex = 0;
+    reconcileExtraDeployValues();
   },
 );
 
@@ -88,6 +89,7 @@ watch(
 watch(
   () => form.selectedBindingIndex,
   () => {
+    reconcileExtraDeployValues();
     const binding = selectedBindingOption.value;
     if (binding) {
       // Reset scheduling option based on new binding's options
@@ -151,8 +153,52 @@ const userGroups = ref<string[]>([]);
 
 // Check if template has extra deploy variables
 const hasExtraDeployVariables = computed(() => {
-  return !!(selectedTemplate.value?.extraDeployVariables && selectedTemplate.value.extraDeployVariables.length > 0);
+  const variables =
+    selectedBindingOption.value?.extraDeployVariables ||
+    selectedClusterDetail.value?.extraDeployVariables ||
+    selectedTemplate.value?.extraDeployVariables;
+  return !!(variables && variables.length > 0);
 });
+
+const effectiveExtraDeployVariables = computed(() => {
+  return (
+    selectedBindingOption.value?.extraDeployVariables ||
+    selectedClusterDetail.value?.extraDeployVariables ||
+    selectedTemplate.value?.extraDeployVariables ||
+    []
+  );
+});
+
+function reconcileExtraDeployValues() {
+  const variables = new Map(
+    effectiveExtraDeployVariables.value
+      .filter((variable) => !variable.disabled)
+      .map((variable) => [variable.name, variable]),
+  );
+  const values = Object.fromEntries(
+    Object.entries(form.extraDeployValues).flatMap(([name, value]) => {
+      const variable = variables.get(name);
+      if (!variable) return [];
+
+      if (variable.inputType === "select" && variable.options) {
+        return variable.options.some((option) => !option.disabled && option.value === value) ? [[name, value]] : [];
+      }
+      if (variable.inputType === "multiSelect" && Array.isArray(value) && variable.options) {
+        return [
+          [
+            name,
+            value.filter((entry) => variable.options?.some((option) => !option.disabled && option.value === entry)),
+          ],
+        ];
+      }
+      return [[name, value]];
+    }),
+  );
+
+  if (JSON.stringify(values) !== JSON.stringify(form.extraDeployValues)) {
+    form.extraDeployValues = values;
+  }
+}
 
 // Get the selected cluster's detailed info
 const selectedClusterDetail = computed(() => {
@@ -574,6 +620,7 @@ onMounted(async () => {
 });
 
 async function handleSubmit() {
+  reconcileExtraDeployValues();
   if (!isValid.value || submitting.value) return;
 
   submitting.value = true;
@@ -586,9 +633,9 @@ async function handleSubmit() {
       reason: form.reason,
     };
 
-    // Include selected binding reference when multiple bindings are available
-    if (hasMultipleBindings.value && selectedBindingOption.value) {
-      const binding = selectedBindingOption.value.bindingRef;
+    // Preserve the visible selection even when it is the only binding option.
+    const binding = selectedBindingOption.value?.bindingRef || selectedClusterDetail.value?.bindingRef;
+    if (binding) {
       request.bindingRef = `${binding.namespace}/${binding.name}`;
     }
 
@@ -602,9 +649,17 @@ async function handleSubmit() {
       request.selectedSchedulingOption = form.selectedSchedulingOption;
     }
 
-    // Include extraDeployValues if the template has variables and user has provided values
-    if (selectedTemplate.value?.extraDeployVariables?.length && Object.keys(form.extraDeployValues).length > 0) {
-      request.extraDeployValues = form.extraDeployValues;
+    // Include only values in the selected binding's effective request surface.
+    // A user can change bindings after entering values; stale values must not
+    // be sent to a narrower binding (the API rejects them as well).
+    const allowedVariableNames = new Set(
+      effectiveExtraDeployVariables.value.filter((variable) => !variable.disabled).map((variable) => variable.name),
+    );
+    const effectiveValues = Object.fromEntries(
+      Object.entries(form.extraDeployValues).filter(([name]) => allowedVariableNames.has(name)),
+    );
+    if (allowedVariableNames.size > 0 && Object.keys(effectiveValues).length > 0) {
+      request.extraDeployValues = effectiveValues;
     }
 
     const session = await debugSessionService.createSession(request);
@@ -817,7 +872,7 @@ function handleTemplateChange(ev: Event) {
         :impersonation-info="impersonationInfo"
         :required-auxiliary-resources="requiredAuxiliaryResources"
         :has-extra-deploy-variables="hasExtraDeployVariables"
-        :extra-deploy-variables="selectedTemplate?.extraDeployVariables || []"
+        :extra-deploy-variables="effectiveExtraDeployVariables"
         :user-groups="userGroups"
         :selected-scheduling-option="form.selectedSchedulingOption"
         :target-namespace="form.targetNamespace"

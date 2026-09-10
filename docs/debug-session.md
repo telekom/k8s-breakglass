@@ -1221,7 +1221,9 @@ template only when the authenticated requester can use the template directly or
 through at least one active matching `DebugSessionClusterBinding`. Cluster
 entries, binding options, scheduling options, and extra deploy variables that
 the requester cannot use at session creation time are omitted from discovery
-responses.
+responses. The primary cluster detail keeps an explicitly empty
+`extraDeployVariables` array when a binding disables every template variable,
+so clients can distinguish that result from a response without the field.
 
 Response includes per-cluster details:
 
@@ -2072,3 +2074,13 @@ Active accounting uses the CRD selectable `spec.templateRef` field to bound each
 Active-session accounting uses authoritative, paginated template-scoped reads. Lifecycle transitions update counts immediately; periodic repairs are coalesced per template for 30 seconds within each controller and skip unchanged template status writes. Failed accounting retries remain immediate. Optional pod-template usage metadata failures are logged and retried on the next periodic repair without blocking session cleanup.
 
 Accounting scans and gauge publication are serialized per template within each controller, so an older scan cannot overwrite a newer lifecycle count. Completed operations release their locks; bounded periodic bookkeeping evicts only the oldest template instead of resetting other repair intervals.
+
+On upgrade, a Pending session with complete persisted approval snapshots can initialize its missing variable-policy snapshot only as an exact copy of the stored template variables, and only when the stored binding contains no variable constraints. Pending retries preserve those original snapshots, including inline workload templates and disabled variables through SSA persistence, despite live template or binding rotation. Missing constrained provenance fails closed with a recreate-session message; the controller never reconstructs approved policy from live configuration. Binding defaults populate only explicitly defaulted binding variables, leaving unrelated hidden template defaults out of requester inputs.
+
+Persisted binding provenance must contain both the binding reference and a semantically valid binding object snapshot (including nonempty template-reference and cluster names, or valid selectors), or explicitly contain neither. Missing, null, empty, or malformed snapshots fail closed even when no extra variables are configured. A missing legacy variable-policy snapshot cannot bypass stored binding constraints merely because the original template defines no variables. The complete approved snapshot is persisted before auto-activation starts, and typed SSA persistence preserves rendered overrides and the remaining runtime policy fields. The internal recovery variable policy remains stored in Kubernetes status but is omitted from session REST responses. Binding discovery skips invalid variable policies and refuses an all-invalid match set. Binding option narrowing must leave enough enabled choices for `minItems`; numeric, length, and item bounds cannot widen template policy. Disabled defaults never reach workload or auxiliary renderers. An exact effective binding default is equivalent to omitting the value for group validation, including after persistence; non-default values still require the variable and option groups.
+
+Switching the selected cluster or binding removes stale select values and prunes unavailable multi-select options before submission; typed text values and the no-binding template fallback remain available.
+
+Fresh auto-approved sessions persist `Pending` with their approval snapshot before activation. An empty original variable policy is valid when the captured binding provenance is complete and has no variable constraints; it is never used to bypass constraints. Activation checks pod-template references from the approved snapshot, and disabled variables exclude both defaults and supplied values from workload and auxiliary rendering. Invalid discovered bindings do not shadow a direct template cluster grant; valid matching bindings retain precedence.
+
+Approval snapshots use their canonical persisted JSON representation: runtime-only regex intersections are reconstructed from the stored original policy and binding, and empty policy slices normalize to nil under the separate capture marker. Once complete approval is recorded, deleting the live template does not invalidate the captured activation decision; current session identity, approval, cluster readiness and expiry fences still apply. Binding references must retain valid nonempty name and namespace values.

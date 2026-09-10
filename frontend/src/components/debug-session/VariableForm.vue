@@ -28,6 +28,7 @@ const showAdvancedInternal = computed({
 // Filter variables based on user groups
 const visibleVariables = computed(() => {
   return props.variables.filter((v) => {
+    if (v.disabled) return false;
     // If no allowedGroups specified, variable is visible to all
     if (!v.allowedGroups || v.allowedGroups.length === 0) {
       return true;
@@ -446,6 +447,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
             v-for="option in variable.options || []"
             :key="option.value"
             :value="option.value"
+            :disabled="option.disabled"
           >
             {{ option.displayName || option.value }}
           </scale-dropdown-select-item>
@@ -479,6 +481,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
               :key="option.value"
               :checked="isMultiSelectChecked(variable, option.value)"
               :label="option.displayName || option.value"
+              :disabled="option.disabled"
               @scale-change="
                 handleMultiSelectToggle(variable, option.value, ($event.target as HTMLInputElement).checked)
               "
@@ -596,6 +599,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
               v-for="option in variable.options || []"
               :key="option.value"
               :value="option.value"
+              :disabled="option.disabled"
             >
               {{ option.displayName || option.value }}
             </scale-dropdown-select-item>
@@ -628,6 +632,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
                 :key="option.value"
                 :checked="isMultiSelectChecked(variable, option.value)"
                 :label="option.displayName || option.value"
+                :disabled="option.disabled"
                 @scale-change="
                   handleMultiSelectToggle(variable, option.value, ($event.target as HTMLInputElement).checked)
                 "
