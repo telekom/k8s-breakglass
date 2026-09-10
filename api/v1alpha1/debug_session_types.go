@@ -239,6 +239,18 @@ type DebugSessionStatus struct {
 	// +optional
 	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
 
+	// LastActivity is the latest successful operation observed by the server.
+	// +optional
+	LastActivity *metav1.Time `json:"lastActivity,omitempty"`
+
+	// ActivityCount counts successful server-observed debug operations.
+	// +optional
+	ActivityCount int64 `json:"activityCount,omitempty"`
+
+	// RetainedUntil is the earliest time this terminal session may be removed.
+	// +optional
+	RetainedUntil *metav1.Time `json:"retainedUntil,omitempty"`
+
 	// renewalCount tracks how many times the session has been renewed.
 	// +optional
 	RenewalCount int32 `json:"renewalCount,omitempty"`
