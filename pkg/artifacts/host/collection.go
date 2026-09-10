@@ -60,7 +60,7 @@ func (c *collectionController) create(ctx *gin.Context) {
 		ctx.Status(http.StatusForbidden)
 		return
 	}
-	if session.Status.ResolvedTemplate == nil || session.Status.ResolvedTemplate.ArtifactCollection == nil || !slices.Contains(session.Status.ResolvedTemplate.ArtifactCollection.AllowedRecipes, request.Recipe) || session.Status.ConnectionLease == nil {
+	if session.Status.ResolvedTemplate == nil || session.Status.ResolvedTemplate.ArtifactCollection == nil || !slices.Contains(session.Status.ResolvedTemplate.ArtifactCollection.AllowedRecipes, request.Recipe) || session.Status.ConnectionLease == nil || session.Status.ConnectionLease.Epoch < 1 {
 		ctx.Status(http.StatusForbidden)
 		return
 	}

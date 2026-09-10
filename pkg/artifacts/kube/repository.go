@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -203,6 +204,9 @@ func recordingFromObject(object *breakglassv1alpha1.DebugSessionArtifact) *backe
 // Create reserves one immutable artifact identity. Kubernetes Create is the
 // arbitration point for bounded per-session reservation slots.
 func (repository *Repository) Create(ctx context.Context, record backend.Record) (backend.Record, error) {
+	if record.RecipeVersion < 1 || record.RecipeVersion > math.MaxInt32 || record.Expected.RedactionVersion < 1 || record.Expected.RedactionVersion > math.MaxInt32 {
+		return backend.Record{}, errors.New("artifact recipe or redaction version is out of range")
+	}
 	object := &breakglassv1alpha1.DebugSessionArtifact{ObjectMeta: metav1.ObjectMeta{Name: record.ArtifactID, Namespace: repository.objectNamespace(record.Namespace)}, Spec: breakglassv1alpha1.DebugSessionArtifactSpec{
 		ArtifactID: record.ArtifactID, SessionRef: breakglassv1alpha1.ArtifactSessionReference{Namespace: record.Namespace, Name: record.SessionName, UID: record.SessionUID}, TargetClusterUID: record.TargetClusterUID, TargetPod: reservationTargetPod(record), TargetNodeUID: record.TargetNodeUID, ConnectionLeaseUID: record.ConnectionLeaseUID, Recipe: record.Recipe, RecipeVersion: int32(record.RecipeVersion), PlanDigest: record.PlanDigest, RuntimeBindingDigest: record.RuntimeBindingDigest, TargetIdentityDigest: record.TargetIdentityDigest, OperationEpoch: record.OperationEpoch, UploadJTIHash: record.UploadJTIHash, UploadKeyID: record.UploadKeyID, ReservationNonce: record.ReservationNonce, Recording: apiRecording(record.Recording), RedactionProfile: record.Expected.RedactionProfile, RedactionVersion: int32(record.Expected.RedactionVersion), Node: record.Expected.Node, MaxBytes: record.MaxBytes, TimeoutSeconds: 300, ExpiresAt: metav1.NewTime(record.ExpiresAt), Inputs: breakglassv1alpha1.ArtifactInputs{MaxArchiveBytes: record.MaxBytes, DetailLevel: record.Expected.Inputs.DetailLevel, MaxAgeMinutes: record.Expected.Inputs.MaxAgeMinutes}}}
 	if err := repository.client.Create(ctx, object); err != nil {

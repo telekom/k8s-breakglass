@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -356,6 +357,9 @@ func (reconciler *Reconciler) spokeClient(ctx context.Context, object *breakglas
 }
 
 func (reconciler *Reconciler) validateSpokeWrite(ctx context.Context, object *breakglassv1alpha1.DebugSessionArtifact, session *breakglassv1alpha1.DebugSession, target *breakglassv1alpha1.ClusterConfig, targetClient ctrlclient.Client) error {
+	if object.Spec.OperationEpoch > math.MaxInt64 {
+		return errors.New("artifact operation epoch exceeds lease range")
+	}
 	if object.Spec.TargetPod != nil {
 		ref := object.Spec.TargetPod
 		var pod corev1.Pod

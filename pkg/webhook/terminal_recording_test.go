@@ -81,5 +81,4 @@ func TestEarlyDebugSessionDeniesDirectExecWhenRecordingIsRequired(t *testing.T) 
 			assert.Equal(t, "session", state.debugSessionName)
 		})
 	}
-
 }

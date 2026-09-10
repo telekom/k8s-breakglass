@@ -5,6 +5,7 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -13,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -74,4 +76,50 @@ func TestRepositoryUsesConfiguredArtifactNamespace(t *testing.T) {
 	listed, err := repository.ListBySession(context.Background(), "sessions", "session", "session-uid")
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
+}
+
+func TestCreateRejectsUnrepresentableVersionsBeforeWrite(t *testing.T) {
+	for _, value := range []int{-1, 0, 1 << 31} {
+		for _, recipe := range []bool{false, true} {
+			record := backend.Record{RecipeVersion: 1}
+			record.Expected.RedactionVersion = 1
+			if recipe {
+				record.RecipeVersion = value
+			} else {
+				record.Expected.RedactionVersion = value
+			}
+			_, err := (&Repository{}).Create(context.Background(), record)
+			require.ErrorContains(t, err, "version is out of range")
+		}
+	}
+}
+
+type versionBoundaryClient struct {
+	ctrlclient.Client
+	stored breakglassv1alpha1.DebugSessionArtifact
+}
+
+func (c *versionBoundaryClient) Create(_ context.Context, object ctrlclient.Object, _ ...ctrlclient.CreateOption) error {
+	data, err := json.Marshal(object)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, &c.stored); err != nil {
+		return err
+	}
+	object.SetUID("assigned-uid")
+	return nil
+}
+
+func TestCreatePreservesLargestRepresentableVersions(t *testing.T) {
+	c := &versionBoundaryClient{}
+	repository, err := NewRepository(c)
+	require.NoError(t, err)
+	record := backend.Record{Namespace: "hub", ArtifactID: "bounds", RecipeVersion: 1<<31 - 1}
+	record.Expected.RedactionVersion = 1<<31 - 1
+	created, err := repository.Create(context.Background(), record)
+	require.NoError(t, err)
+	require.Equal(t, "assigned-uid", created.ArtifactUID)
+	require.EqualValues(t, record.RecipeVersion, c.stored.Spec.RecipeVersion)
+	require.EqualValues(t, record.Expected.RedactionVersion, c.stored.Spec.RedactionVersion)
 }

@@ -273,6 +273,17 @@ func TestRegisteredCollectorAdmissionCreatesJobWithReservedToken(t *testing.T) {
 		router.ServeHTTP(response, request)
 		return response
 	}
+	for _, epoch := range []int64{-1, 0} {
+		session.Status.ConnectionLease.Epoch = epoch
+		require.NoError(t, hub.Update(ctx, session))
+		denied := send(`{"recipe":"system-summary.v1","podNamespace":"target","podName":"approved"}`)
+		require.Equal(t, http.StatusForbidden, denied.Code)
+		var reservations breakglassv1alpha1.DebugSessionArtifactList
+		require.NoError(t, hub.List(ctx, &reservations))
+		require.Empty(t, reservations.Items)
+	}
+	session.Status.ConnectionLease.Epoch = 1
+	require.NoError(t, hub.Update(ctx, session))
 	denied := send(`{"recipe":"system-summary.v1","podNamespace":"target","podName":"approved","image":"evil"}`)
 	require.Equal(t, http.StatusBadRequest, denied.Code)
 	response := send(`{"recipe":"system-summary.v1","podNamespace":"target","podName":"approved"}`)

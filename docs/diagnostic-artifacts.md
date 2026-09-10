@@ -142,3 +142,9 @@ Session lease renewal re-reads the owning session after reading the Lease,
 rejects changed identity or elapsed hard/idle expiry, and clamps the Lease to
 the already committed session deadline. A delayed Lease read cannot extend
 access after session authorization has ended.
+
+Artifact admission rejects nonpositive lease epochs and recipe/redaction versions
+outside the positive int32 range before persistence. Recording frame lengths must
+fit the signed byte-count range and the remaining bounded recording before copying.
+The S3 client uses the minimum AWS SDK versions fixing GO-2026-5764
+(EventStream 1.7.8 and S3 1.97.3).

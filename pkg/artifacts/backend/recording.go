@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"reflect"
 	"time"
@@ -272,16 +273,20 @@ func validateRecordingFrames(ctx context.Context, source io.Reader, size int64) 
 			return 0, err
 		}
 		length := binary.BigEndian.Uint64(header[2:10])
-		if header[0] != 1 || (header[1] != 'i' && header[1] != 'o') || string(header[10:]) != string(previous[:]) || length > uint64(remaining-42) || remaining < 42 {
+		if length > math.MaxInt64 || remaining < 42 {
+			return 0, errors.New("invalid terminal recording frame length")
+		}
+		payloadLength := int64(length)
+		if header[0] != 1 || (header[1] != 'i' && header[1] != 'o') || string(header[10:]) != string(previous[:]) || payloadLength > remaining-42 {
 			return 0, errors.New("invalid terminal recording frame")
 		}
 		digest := sha256.New()
 		_, _ = digest.Write(header[:])
-		if _, err := io.CopyN(digest, source, int64(length)); err != nil {
+		if _, err := io.CopyN(digest, source, payloadLength); err != nil {
 			return 0, fmt.Errorf("read terminal frame: %w", err)
 		}
 		copy(previous[:], digest.Sum(nil))
-		remaining -= 42 + int64(length)
+		remaining -= 42 + payloadLength
 		frames++
 	}
 	if frames == 0 {
