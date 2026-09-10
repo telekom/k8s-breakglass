@@ -43,7 +43,9 @@ func TestStampDebugSessionRetentionPreservesConfiguredDuration(t *testing.T) {
 func TestActivityCannotReviveSessionAfterLiveReadCrossesIdleDeadline(t *testing.T) {
 	for _, delay := range []bool{false, true} {
 		t.Run(map[bool]string{false: "successful activity", true: "idle expires during read"}[delay], func(t *testing.T) {
-			deadline := time.Now().Add(2 * time.Second).Truncate(time.Second)
+			// Kubernetes metav1.Time persists whole seconds; keep at least four
+			// seconds for setup before deliberately crossing the stored deadline.
+			deadline := time.Now().Add(5 * time.Second).Truncate(time.Second)
 			activity := metav1.NewTime(deadline.Add(-time.Minute))
 			expiry := metav1.NewTime(time.Now().Add(time.Hour))
 			session := &breakglassv1alpha1.DebugSession{
@@ -97,20 +99,31 @@ func TestUnsetDebugRetentionKeepsLegacyCleanupFallback(t *testing.T) {
 }
 
 func TestActiveSessionWithoutOperationsExpiresFromStartAndRetainsEvidence(t *testing.T) {
-	started := metav1.NewTime(time.Now().Add(-2 * time.Minute))
-	expiry := metav1.NewTime(time.Now().Add(time.Hour))
-	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "unused", Namespace: "default", UID: "unused-uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, StartsAt: &started, ExpiresAt: &expiry, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m", RetainFor: "2h"}}}}
-	hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).WithStatusSubresource(session).Build()
-	require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), session))
-	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
-	_, err := controller.handleActive(context.Background(), session)
-	require.NoError(t, err)
-	var stored breakglassv1alpha1.DebugSession
-	require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
-	require.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, stored.Status.State)
-	require.Contains(t, stored.Status.Message, "inactivity")
-	require.NotNil(t, stored.Status.RetainedUntil)
-	require.True(t, stored.Status.RetainedUntil.After(time.Now().Add(time.Hour)))
+	for _, hardExpired := range []bool{false, true} {
+		t.Run(map[bool]string{false: "idle expiry", true: "hard expiry takes precedence"}[hardExpired], func(t *testing.T) {
+			started := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+			expiry := metav1.NewTime(time.Now().Add(time.Hour))
+			if hardExpired {
+				expiry = metav1.NewTime(time.Now().Add(-time.Minute))
+			}
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "unused", Namespace: "default", UID: "unused-uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, StartsAt: &started, ExpiresAt: &expiry, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m", RetainFor: "2h"}}}}
+			hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).WithStatusSubresource(session).Build()
+			require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), session))
+			controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+			_, err := controller.handleActive(context.Background(), session)
+			require.NoError(t, err)
+			var stored breakglassv1alpha1.DebugSession
+			require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+			require.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, stored.Status.State)
+			if hardExpired {
+				require.Equal(t, "Session expired", stored.Status.Message)
+			} else {
+				require.Equal(t, "Session expired due to inactivity", stored.Status.Message)
+			}
+			require.NotNil(t, stored.Status.RetainedUntil)
+			require.True(t, stored.Status.RetainedUntil.After(time.Now().Add(time.Hour)))
+		})
+	}
 }
 
 func TestBindingIdleAndRetentionPreserveTemplateLimits(t *testing.T) {
