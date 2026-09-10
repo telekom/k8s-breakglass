@@ -7,7 +7,6 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -20,9 +19,11 @@ import (
 )
 
 // BindingResolver resolves the live session identity used by every metadata
-// and byte request. Implementations must fail closed for stale or revoked
-// sessions and must not read an identity from request-controlled fields.
-type BindingResolver func(context.Context, string, string, string) (backend.SessionBinding, error)
+// and byte request. It receives the authenticated Gin context so the resolver
+// can apply the same issuer/subject/group checks as the debug-session API.
+// Implementations must fail closed for stale or revoked sessions and must not
+// read an identity from request-controlled fields.
+type BindingResolver func(*gin.Context, string, string, string) (backend.SessionBinding, error)
 
 // ReadController registers the authenticated artifact metadata and download
 // API. It has no storage-provider configuration or URL surface.
@@ -50,7 +51,7 @@ func (controller *ReadController) Register(group *gin.RouterGroup) error {
 }
 
 func (controller *ReadController) handleList(context *gin.Context) {
-	binding, err := controller.resolve(context.Request.Context(), context.Param("namespace"), context.Param("session"), "")
+	binding, err := controller.resolve(context, context.Param("namespace"), context.Param("session"), "")
 	if err != nil {
 		context.Status(http.StatusNotFound)
 		return
@@ -65,7 +66,7 @@ func (controller *ReadController) handleList(context *gin.Context) {
 
 func (controller *ReadController) handleDownload(context *gin.Context) {
 	namespace, session, artifactID := context.Param("namespace"), context.Param("session"), context.Param("artifactID")
-	binding, err := controller.resolve(context.Request.Context(), namespace, session, artifactID)
+	binding, err := controller.resolve(context, namespace, session, artifactID)
 	if err != nil {
 		context.Status(http.StatusNotFound)
 		return

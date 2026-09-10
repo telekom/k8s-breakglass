@@ -44,6 +44,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -1700,6 +1701,45 @@ func (c *DebugSessionAPIController) newDebugSessionReadAuthorizer(identity debug
 
 func (c *DebugSessionAPIController) canReadDebugSession(ctx context.Context, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) (bool, error) {
 	return c.newDebugSessionReadAuthorizer(identity).canRead(ctx, session)
+}
+
+// ArtifactReadBinding authenticates a diagnostic-artifact reader against the
+// same live identity and session rules as the debug-session API. It deliberately
+// carries only the session identity; target and lease fences are supplied by
+// the artifact host's independently configured binding source.
+type ArtifactReadBinding struct {
+	Namespace string
+	Name      string
+	UID       types.UID
+}
+
+// AuthorizeArtifactRead applies request identity, exact session lookup, live
+// state, expiry, and debug-session read authorization for artifact reads.
+func (c *DebugSessionAPIController) AuthorizeArtifactRead(ctx *gin.Context, namespace, name string) (ArtifactReadBinding, error) {
+	if ctx == nil || ctx.Request == nil || namespace == "" || name == "" {
+		return ArtifactReadBinding{}, errors.New("artifact session binding is invalid")
+	}
+	identity, ok := debugSessionRequestIdentity(ctx)
+	if !ok {
+		return ArtifactReadBinding{}, errors.New("artifact session reader is unauthenticated")
+	}
+	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
+	defer cancel()
+	session, err := c.getDebugSessionByName(apiCtx, name, namespace)
+	if err != nil {
+		return ArtifactReadBinding{}, fmt.Errorf("resolve artifact session: %w", err)
+	}
+	if session.Namespace != namespace || session.Name != name || session.Status.State != breakglassv1alpha1.DebugSessionStateActive || session.Status.ExpiresAt == nil || !time.Now().Before(session.Status.ExpiresAt.Time) {
+		return ArtifactReadBinding{}, errors.New("artifact session is not active")
+	}
+	allowed, err := c.canReadDebugSession(apiCtx, session, identity)
+	if err != nil {
+		return ArtifactReadBinding{}, fmt.Errorf("authorize artifact session: %w", err)
+	}
+	if !allowed {
+		return ArtifactReadBinding{}, errors.New("artifact session read is forbidden")
+	}
+	return ArtifactReadBinding{Namespace: session.Namespace, Name: session.Name, UID: session.UID}, nil
 }
 
 func (a *debugSessionReadAuthorizer) canRead(ctx context.Context, session *breakglassv1alpha1.DebugSession) (bool, error) {

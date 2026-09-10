@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add explicit diagnostic-artifact host construction for S3 or single-replica
+  local storage, exact namespace-scoped credential reads, token key rotation,
+  live-session authorization, and API/controller registration seams.
+
 - Add the provider-independent diagnostic artifact backend primitives, typed
   immutable `DebugSessionArtifact` contract, bounded archive upload service,
   versioned S3 adapter, and fixed least-privilege collector Job renderer.

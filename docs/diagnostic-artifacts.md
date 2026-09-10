@@ -49,3 +49,12 @@ annotation because Kubernetes labels cannot hold a 64-character digest.
 The feature remains disabled until the CRD, controller wiring, RBAC, storage
 configuration, API integration, fault matrix, and exact-head CI gates are
 reviewed together.
+
+When enabled, the host initializer requires an explicit `backend` of `s3` or
+`local`, a pinned collector image, an HTTPS controller URL, a bounded upload
+limit, and a token Secret name. Secret names are resolved only in the
+configured Breakglass namespace using exact uncached `get` calls. S3 uses the
+fixed `accessKeyID`, `secretAccessKey`, and optional `sessionToken` keys; local
+storage must satisfy its one-replica RWO/Recreate contract and is never an
+automatic fallback. The host also requires the live lease binding source, so
+an enabled deployment fails closed when that dependency is absent.
