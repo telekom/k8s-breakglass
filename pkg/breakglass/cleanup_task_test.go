@@ -1615,7 +1615,7 @@ func TestDebugSessionRetentionUsesExplicitDeadlineOrLegacyConfiguredFallback(t *
 }
 
 func TestDebugSessionCleanupPreservesPendingResourcesAndExpiresIdle(t *testing.T) {
-	for _, name := range []string{"idle", "deployed", "unknown auxiliary", "pod template", "cleaned auxiliary", "intentionally retained auxiliary", "retained parent unknown child", "completed operation", "failed operation", "prepared operation", "unknown operation", "copied pod"} {
+	for _, name := range []string{"idle", "deployed", "unknown auxiliary", "pod template", "deleted pod template", "blank pod template", "retained created only", "retained name only", "retained empty child", "cleaned auxiliary", "intentionally retained auxiliary", "retained parent unknown child", "completed operation", "failed operation", "prepared operation", "unknown operation", "copied pod"} {
 		t.Run(name, func(t *testing.T) {
 			past := metav1.NewTime(time.Now().Add(-time.Hour))
 			future := metav1.NewTime(time.Now().Add(time.Hour))
@@ -1639,6 +1639,24 @@ func TestDebugSessionCleanupPreservesPendingResourcesAndExpiresIdle(t *testing.T
 				ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{{CreateOperationID: "prepared", ResourceName: "unknown"}}
 			case "pod template":
 				ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{{CreateOperationID: "prepared", ResourceName: "unknown"}}
+			case "deleted pod template":
+				ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{{Deleted: true, Created: true, UID: "history"}}
+			case "blank pod template":
+				ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{{}}
+			case "retained created only", "retained name only", "retained empty child":
+				ds.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "keep", DeleteAfter: false}}}
+				resource := breakglassv1alpha1.AuxiliaryResourceStatus{Name: "keep"}
+				if name == "retained created only" {
+					resource.Created = true
+				}
+				if name == "retained name only" {
+					resource.ResourceName = "unknown"
+				}
+				if name == "retained empty child" {
+					resource.UID = "retained"
+					resource.AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{{}}
+				}
+				ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{resource}
 			case "intentionally retained auxiliary":
 				ds.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "keep", DeleteAfter: false}}}
 				ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "keep", Created: true, UID: "retained-uid"}}
@@ -1655,7 +1673,7 @@ func TestDebugSessionCleanupPreservesPendingResourcesAndExpiresIdle(t *testing.T
 			routine.cleanupExpiredDebugSessions(context.Background())
 			var stored breakglassv1alpha1.DebugSession
 			err := hub.Get(context.Background(), client.ObjectKeyFromObject(ds), &stored)
-			if name == "cleaned auxiliary" || name == "intentionally retained auxiliary" || name == "completed operation" || name == "failed operation" {
+			if name == "deleted pod template" || name == "cleaned auxiliary" || name == "intentionally retained auxiliary" || name == "completed operation" || name == "failed operation" {
 				require.True(t, apierrors.IsNotFound(err))
 				return
 			}

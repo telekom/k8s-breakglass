@@ -344,3 +344,52 @@ func TestIdleExpiryDuringEphemeralTargetUpdatePreservesOutcome(t *testing.T) {
 		})
 	}
 }
+
+func TestPendingRecordingFailurePreservesEffectiveRetention(t *testing.T) {
+	for _, scenario := range []string{"template", "binding", "existing snapshot", "existing retention"} {
+		t.Run(scenario, func(t *testing.T) {
+			template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: true}, Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: "2h"}}}
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "pending", Namespace: "default", UID: "session-uid"}, Spec: breakglassv1alpha1.DebugSessionSpec{TemplateRef: template.Name, Cluster: "cluster"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending}}
+			binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: "4h"}}}
+			objects := []ctrlclient.Object{template, session}
+			want := 2 * time.Hour
+			if scenario == "binding" {
+				session.Spec.BindingRef = &breakglassv1alpha1.BindingReference{Name: binding.Name, Namespace: binding.Namespace}
+				objects = append(objects, binding)
+				want = 4 * time.Hour
+			}
+			if scenario == "existing snapshot" {
+				session.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: "6h"}}
+				want = 6 * time.Hour
+			}
+			originalDeadline := metav1.NewTime(time.Now().Add(8 * time.Hour).Truncate(time.Second))
+			if scenario == "existing retention" {
+				session.Status.RetainedUntil = &originalDeadline
+			}
+			hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(objects...).WithStatusSubresource(session).Build()
+			require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), session))
+			controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+			before := time.Now()
+			_, err := controller.handlePending(context.Background(), session)
+			require.NoError(t, err)
+			var stored breakglassv1alpha1.DebugSession
+			require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+			require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, stored.Status.State)
+			require.Contains(t, stored.Status.Message, "terminal-byte transport")
+			require.NotNil(t, stored.Status.RetainedUntil)
+			if scenario == "existing retention" {
+				require.Equal(t, originalDeadline, *stored.Status.RetainedUntil)
+			} else {
+				require.WithinDuration(t, before.Add(want), stored.Status.RetainedUntil.Time, 2*time.Second)
+			}
+			require.Empty(t, stored.Status.AllowedPods)
+			require.Empty(t, stored.Status.DeployedResources)
+			require.Nil(t, stored.Status.Approval)
+			deadline := stored.Status.RetainedUntil.DeepCopy()
+			_, err = controller.failSession(context.Background(), &stored, "retry")
+			require.NoError(t, err)
+			require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+			require.Equal(t, deadline, stored.Status.RetainedUntil)
+		})
+	}
+}

@@ -17,9 +17,8 @@ limitations under the License.
 package breakglass
 
 import (
-	"github.com/telekom/k8s-breakglass/pkg/utils"
-
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
 
 // IsBindingActive checks if a DebugSessionClusterBinding is currently active.

@@ -56,10 +56,16 @@ func DebugSessionDeletesAuxiliaryResource(session *breakglassv1alpha1.DebugSessi
 
 // DebugSessionAuxiliaryStatusHasCleanupResidual preserves unknown outcomes even for retained resources.
 func DebugSessionAuxiliaryStatusHasCleanupResidual(session *breakglassv1alpha1.DebugSession, status breakglassv1alpha1.AuxiliaryResourceStatus) bool {
-	return !status.Deleted && ((status.UID == "" && status.CreateOperationID != "") || (DebugSessionDeletesAuxiliaryResource(session, status.Name) && (status.Created || status.UID != "")))
+	return !status.Deleted && (status.Created || status.CreateOperationID != "" || status.UID != "" || status.ResourceName != "") && (status.UID == "" || DebugSessionDeletesAuxiliaryResource(session, status.Name))
 }
 
 // DebugSessionAuxiliaryChildHasCleanupResidual preserves unknown child outcomes independently of its parent.
 func DebugSessionAuxiliaryChildHasCleanupResidual(session *breakglassv1alpha1.DebugSession, parent string, child breakglassv1alpha1.AdditionalResourceRef) bool {
-	return !child.Deleted && ((child.UID == "" && child.CreateOperationID != "") || DebugSessionDeletesAuxiliaryResource(session, parent))
+	return !child.Deleted && (child.UID == "" || DebugSessionDeletesAuxiliaryResource(session, parent))
+}
+
+// DebugSessionPodTemplateStatusHasCleanupResidual treats every unconfirmed
+// deletion as outstanding, including partially populated creation evidence.
+func DebugSessionPodTemplateStatusHasCleanupResidual(status breakglassv1alpha1.PodTemplateResourceStatus) bool {
+	return !status.Deleted
 }
