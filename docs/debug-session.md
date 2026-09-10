@@ -1346,7 +1346,10 @@ have not started yet defer synchronization until their start time is available;
 normal reconciliation retries without warning. Once a Job has started, the
 sync adjusts its relative deadline in either direction to match the latest
 committed session expiry. Kubernetes measures this deadline from the Job start
-time, so delayed startup requires a subsequent controller reconciliation;
+time and stores it as an integer number of seconds. The controller floors
+fractional seconds, so the resulting deadline may end less than one second
+early but never extends beyond the committed expiry. Delayed startup requires a
+subsequent controller reconciliation;
 controller downtime can delay that adjustment and cleanup.
 Only the requester or an active `owner`/`participant` status entry can renew a
 session; `viewer` entries and participants with `leftAt` set cannot renew.

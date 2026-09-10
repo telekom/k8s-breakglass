@@ -112,16 +112,14 @@ func InformerSyncCheck(cache CacheSyncer) func(req *http.Request) error {
 }
 
 type controllerSetupPlan struct {
-	registerControllerIndexes bool
-	registerReconcilers       bool
-	attachCachedReconcilers   bool
+	registerReconcilers     bool
+	attachCachedReconcilers bool
 }
 
 func newControllerSetupPlan(enableControllers bool) controllerSetupPlan {
 	return controllerSetupPlan{
-		registerControllerIndexes: true,
-		registerReconcilers:       enableControllers,
-		attachCachedReconcilers:   enableControllers,
+		registerReconcilers:     enableControllers,
+		attachCachedReconcilers: enableControllers,
 	}
 }
 
@@ -162,17 +160,13 @@ func Setup(
 	}
 	log.Info("Health check handlers registered")
 
-	if plan.registerControllerIndexes {
-		if err := indexer.RegisterCommonFieldIndexes(ctx, mgr.GetFieldIndexer(), log); err != nil {
-			return fmt.Errorf("failed to register common field indexes: %w", err)
-		}
+	if err := indexer.RegisterCommonFieldIndexes(ctx, mgr.GetFieldIndexer(), log); err != nil {
+		return fmt.Errorf("failed to register common field indexes: %w", err)
+	}
 
-		// Assert that all expected indexes are registered
-		if err := indexer.AssertIndexesRegistered(log); err != nil {
-			return fmt.Errorf("index registration assertion failed: %w", err)
-		}
-	} else {
-		log.Infow("Controller field indexes disabled via --enable-controllers=false")
+	// Assert that all expected indexes are registered
+	if err := indexer.AssertIndexesRegistered(log); err != nil {
+		return fmt.Errorf("index registration assertion failed: %w", err)
 	}
 
 	if plan.registerReconcilers {

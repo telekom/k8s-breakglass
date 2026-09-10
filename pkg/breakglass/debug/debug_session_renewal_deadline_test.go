@@ -258,6 +258,33 @@ func TestTrackedJobDeadlineUsesCommittedExpiry(t *testing.T) {
 			require.NoError(t, target.Get(context.Background(), client.ObjectKeyFromObject(job), updated))
 			require.NotNil(t, updated.Spec.ActiveDeadlineSeconds)
 			require.Equal(t, int64(tc.committed/time.Second), *updated.Spec.ActiveDeadlineSeconds)
+			deadlineExpiry := start.Add(time.Duration(*updated.Spec.ActiveDeadlineSeconds) * time.Second)
+			require.False(t, deadlineExpiry.After(expiry.Time))
 		})
 	}
+}
+
+func TestTrackedJobDeadlineFloorsFractionalCommittedExpiry(t *testing.T) {
+	start := metav1.NewTime(time.Now().UTC())
+	expiry := metav1.NewTime(start.Add(120*time.Second + 500*time.Millisecond))
+	deadline := int64(60)
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "fractional-debug-job", Namespace: "default", UID: "job-uid"},
+		Status:     batchv1.JobStatus{StartTime: &start},
+		Spec:       batchv1.JobSpec{ActiveDeadlineSeconds: &deadline},
+	}
+	session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{
+		DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{
+			APIVersion: "batch/v1", Kind: "Job", Name: job.Name, Namespace: job.Namespace, UID: string(job.UID), Source: "debug-pod",
+		}},
+	}}
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(job).Build()
+	require.NoError(t, syncTrackedDebugJobDeadlines(context.Background(), target, session, expiry, nil))
+
+	updated := &batchv1.Job{}
+	require.NoError(t, target.Get(context.Background(), client.ObjectKeyFromObject(job), updated))
+	require.NotNil(t, updated.Spec.ActiveDeadlineSeconds)
+	require.Equal(t, int64(120), *updated.Spec.ActiveDeadlineSeconds)
+	deadlineExpiry := start.Add(time.Duration(*updated.Spec.ActiveDeadlineSeconds) * time.Second)
+	require.False(t, deadlineExpiry.After(expiry.Time))
 }
