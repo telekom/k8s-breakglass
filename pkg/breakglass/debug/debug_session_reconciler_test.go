@@ -18,6 +18,7 @@ package debug
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -34,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -113,6 +115,39 @@ func TestHandlePendingPersistsEffectiveBindingVariables(t *testing.T) {
 	require.Len(t, stored.Status.ResolvedTemplate.ExtraDeployVariables, 1)
 	assert.True(t, stored.Status.ResolvedTemplate.ExtraDeployVariables[0].Disabled)
 	assert.Len(t, stored.Status.ResolvedTemplateVariablePolicy, 1)
+}
+
+func TestHandlePendingPersistsBindingRegexIntersectionAcrossJSONRoundTrip(t *testing.T) {
+	scheme := testScheme()
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+		Mode:                 breakglassv1alpha1.DebugSessionModeKubectlDebug,
+		ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{{Name: "target", InputType: breakglassv1alpha1.InputTypeText, Validation: &breakglassv1alpha1.VariableValidation{Pattern: `^safe-`}}},
+	}}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "breakglass"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+		TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template"}, Clusters: []string{"cluster"},
+		ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariableConstraint{{Name: "target", Validation: &breakglassv1alpha1.VariableValidation{Pattern: `-prod$`}}},
+	}}
+	session := newTestDebugSession("session", "template", "cluster", "user")
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template, binding, session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+
+	_, err := controller.handlePending(context.Background(), session)
+	require.NoError(t, err)
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+	raw, err := json.Marshal(&stored)
+	require.NoError(t, err)
+	var persisted breakglassv1alpha1.DebugSession
+	require.NoError(t, json.Unmarshal(raw, &persisted))
+	require.Len(t, persisted.Status.ResolvedTemplateVariablePolicy, 1)
+
+	effective, err := breakglassv1alpha1.EffectiveExtraDeployVariables(persisted.Status.ResolvedTemplateVariablePolicy, binding.Spec.ExtraDeployVariables)
+	require.NoError(t, err)
+	valid := map[string]apiextensionsv1.JSON{"target": {Raw: []byte(`"safe-prod"`)}}
+	assert.Empty(t, breakglassv1alpha1.ValidateExtraDeployValues(valid, effective, field.NewPath("spec", "extraDeployValues")))
+	assert.NotEmpty(t, breakglassv1alpha1.ValidateExtraDeployValues(map[string]apiextensionsv1.JSON{"target": {Raw: []byte(`"safe-only"`)}}, effective, field.NewPath("spec", "extraDeployValues")))
+	assert.NotEmpty(t, breakglassv1alpha1.ValidateExtraDeployValues(map[string]apiextensionsv1.JSON{"target": {Raw: []byte(`"prod-only"`)}}, effective, field.NewPath("spec", "extraDeployValues")))
 }
 
 // Helper to create a basic DebugPodTemplate

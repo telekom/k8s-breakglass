@@ -293,6 +293,9 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	if status.ResolvedTemplate != nil {
 		result.WithResolvedTemplate(DebugSessionTemplateSpecFrom(status.ResolvedTemplate))
 	}
+	for i := range status.ResolvedTemplateVariablePolicy {
+		result.WithResolvedTemplateVariablePolicy(ExtraDeployVariableFrom(&status.ResolvedTemplateVariablePolicy[i]))
+	}
 
 	// Set resolved binding
 	if status.ResolvedBinding != nil {
@@ -967,7 +970,92 @@ func DebugSessionTemplateSpecFrom(t *breakglassv1alpha1.DebugSessionTemplateSpec
 	if t.Audit != nil {
 		result.WithAudit(DebugSessionAuditConfigFrom(t.Audit))
 	}
+	for i := range t.ExtraDeployVariables {
+		result.WithExtraDeployVariables(ExtraDeployVariableFrom(&t.ExtraDeployVariables[i]))
+	}
 
+	return result
+}
+
+func ExtraDeployVariableFrom(v *breakglassv1alpha1.ExtraDeployVariable) *ac.ExtraDeployVariableApplyConfiguration {
+	if v == nil {
+		return nil
+	}
+	result := ac.ExtraDeployVariable().WithName(v.Name)
+	if v.DisplayName != "" {
+		result.WithDisplayName(v.DisplayName)
+	}
+	if v.Description != "" {
+		result.WithDescription(v.Description)
+	}
+	if v.InputType != "" {
+		result.WithInputType(v.InputType)
+	}
+	for i := range v.Options {
+		option := ac.SelectOption().WithValue(v.Options[i].Value)
+		if v.Options[i].DisplayName != "" {
+			option.WithDisplayName(v.Options[i].DisplayName)
+		}
+		if v.Options[i].Description != "" {
+			option.WithDescription(v.Options[i].Description)
+		}
+		if v.Options[i].Disabled {
+			option.WithDisabled(true)
+		}
+		if len(v.Options[i].AllowedGroups) > 0 {
+			option.WithAllowedGroups(v.Options[i].AllowedGroups...)
+		}
+		result.WithOptions(option)
+	}
+	if v.Default != nil {
+		result.WithDefault(*v.Default.DeepCopy())
+	}
+	if v.Required {
+		result.WithRequired(true)
+	}
+	if v.Validation != nil {
+		validation := ac.VariableValidation()
+		if v.Validation.Pattern != "" {
+			validation.WithPattern(v.Validation.Pattern)
+		}
+		if v.Validation.PatternError != "" {
+			validation.WithPatternError(v.Validation.PatternError)
+		}
+		if v.Validation.MinLength != nil {
+			validation.WithMinLength(*v.Validation.MinLength)
+		}
+		if v.Validation.MaxLength != nil {
+			validation.WithMaxLength(*v.Validation.MaxLength)
+		}
+		if v.Validation.Min != "" {
+			validation.WithMin(v.Validation.Min)
+		}
+		if v.Validation.Max != "" {
+			validation.WithMax(v.Validation.Max)
+		}
+		if v.Validation.MinStorage != "" {
+			validation.WithMinStorage(v.Validation.MinStorage)
+		}
+		if v.Validation.MaxStorage != "" {
+			validation.WithMaxStorage(v.Validation.MaxStorage)
+		}
+		if v.Validation.MinItems != nil {
+			validation.WithMinItems(*v.Validation.MinItems)
+		}
+		if v.Validation.MaxItems != nil {
+			validation.WithMaxItems(*v.Validation.MaxItems)
+		}
+		result.WithValidation(validation)
+	}
+	if len(v.AllowedGroups) > 0 {
+		result.WithAllowedGroups(v.AllowedGroups...)
+	}
+	if v.Advanced {
+		result.WithAdvanced(true)
+	}
+	if v.Group != "" {
+		result.WithGroup(v.Group)
+	}
 	return result
 }
 

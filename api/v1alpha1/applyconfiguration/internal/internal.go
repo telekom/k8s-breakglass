@@ -1763,6 +1763,12 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: resolvedTemplate
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplateSpec
+    - name: resolvedTemplateVariablePolicy
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ExtraDeployVariable
+          elementRelationship: atomic
     - name: startsAt
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time

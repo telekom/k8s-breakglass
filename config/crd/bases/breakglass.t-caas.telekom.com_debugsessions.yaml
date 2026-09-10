@@ -6229,6 +6229,162 @@ spec:
                     - Job
                     type: string
                 type: object
+              resolvedTemplateVariablePolicy:
+                description: |-
+                  resolvedTemplateVariablePolicy stores the original template variable
+                  definitions used to reconstruct binding regex intersections after the
+                  effective policy is serialized.
+                items:
+                  description: |-
+                    ExtraDeployVariable defines a user-provided variable for template rendering.
+                    Variables are available as {{ .vars.<name> }} in all templates.
+                  properties:
+                    advanced:
+                      description: |-
+                        advanced marks this variable as advanced/expert.
+                        Advanced variables may be hidden behind an "Advanced" toggle in UI.
+                      type: boolean
+                    allowedGroups:
+                      description: |-
+                        allowedGroups restricts who can set this variable.
+                        If empty, all users with template access can set it.
+                      items:
+                        type: string
+                      type: array
+                    default:
+                      description: |-
+                        default is the default value if user doesn't provide one.
+                        Type must match inputType.
+                      x-kubernetes-preserve-unknown-fields: true
+                    description:
+                      description: description provides help text for the user.
+                      type: string
+                    disabled:
+                      description: |-
+                        disabled prevents this variable from being requested through a binding.
+                        Template variables are enabled by default; bindings may only set this to
+                        true, never use it to re-enable a disabled variable.
+                      type: boolean
+                    displayName:
+                      description: displayName is the human-readable label shown in
+                        the UI.
+                      type: string
+                    group:
+                      description: group organizes variables into collapsible sections
+                        in the UI.
+                      type: string
+                    inputType:
+                      default: text
+                      description: inputType defines the UI input control and value
+                        type.
+                      enum:
+                      - boolean
+                      - text
+                      - number
+                      - storageSize
+                      - select
+                      - multiSelect
+                      type: string
+                    name:
+                      description: |-
+                        name is the variable name, used as {{ .vars.<name> }} in templates.
+                        Must be a valid Go identifier (letters, digits, underscores, starting with letter).
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-zA-Z][a-zA-Z0-9_]*$
+                      type: string
+                    options:
+                      description: |-
+                        options provides choices for select/multiSelect input types.
+                        Required when inputType is select or multiSelect.
+                      items:
+                        description: SelectOption defines a choice for select/multiSelect
+                          inputs.
+                        properties:
+                          allowedGroups:
+                            description: allowedGroups restricts who can select this
+                              option.
+                            items:
+                              type: string
+                            type: array
+                          description:
+                            description: description provides additional context shown
+                              as tooltip/help.
+                            type: string
+                          disabled:
+                            description: |-
+                              disabled prevents this option from being selected.
+                              Useful for showing unavailable options.
+                            type: boolean
+                          displayName:
+                            description: displayName is shown in the UI (defaults
+                              to value if empty).
+                            type: string
+                          value:
+                            description: value is the actual value stored and used
+                              in templates.
+                            minLength: 1
+                            type: string
+                        required:
+                        - value
+                        type: object
+                      type: array
+                    required:
+                      description: |-
+                        required indicates this variable must be provided by the user.
+                        Variables without defaults are implicitly required.
+                      type: boolean
+                    validation:
+                      description: validation defines constraints for the input value.
+                      properties:
+                        max:
+                          description: max is the maximum value for number inputs
+                            (as string).
+                          type: string
+                        maxItems:
+                          description: maxItems is the maximum selections for multiSelect
+                            inputs.
+                          minimum: 1
+                          type: integer
+                        maxLength:
+                          description: maxLength is the maximum string length for
+                            text inputs.
+                          minimum: 1
+                          type: integer
+                        maxStorage:
+                          description: maxStorage is the maximum size for storageSize
+                            inputs (e.g., "1Ti").
+                          type: string
+                        min:
+                          description: min is the minimum value for number inputs
+                            (as string).
+                          type: string
+                        minItems:
+                          description: minItems is the minimum selections for multiSelect
+                            inputs.
+                          minimum: 0
+                          type: integer
+                        minLength:
+                          description: minLength is the minimum string length for
+                            text inputs.
+                          minimum: 0
+                          type: integer
+                        minStorage:
+                          description: minStorage is the minimum size for storageSize
+                            inputs (e.g., "1Gi").
+                          type: string
+                        pattern:
+                          description: pattern is a regex pattern for text inputs.
+                          type: string
+                        patternError:
+                          description: patternError is a custom error message when
+                            pattern fails.
+                          type: string
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
               startsAt:
                 description: startsAt is when the session became active.
                 format: date-time
