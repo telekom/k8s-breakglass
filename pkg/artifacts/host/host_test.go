@@ -154,3 +154,14 @@ func ptrMicroTime(value metav1.MicroTime) *metav1.MicroTime { return &value }
 func tokenClaimsForTest() token.Claims {
 	return token.Claims{Method: "PUT", Route: "/api/debugSessionArtifactUploads/ns/session/dsa-0123456789abcdef01234567", SessionNamespace: "ns", SessionName: "session", SessionUID: "uid", ArtifactID: "dsa-0123456789abcdef01234567", ArtifactPlanDigest: strings.Repeat("a", 64), RuntimeBindingDigest: strings.Repeat("b", 64), TargetIdentityDigest: strings.Repeat("c", 64), OperationEpoch: 1, Recipe: "system-summary.v1", RecipeVersion: 1, JTI: "AAAAAAAAAAAAAAAAAAAAAA"}
 }
+
+func TestArtifactSessionFenceHonorsExactIdleBoundary(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	start, expiry := metav1.NewTime(now.Add(-time.Minute)), metav1.NewTime(now.Add(time.Hour))
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, StartsAt: &start, ExpiresAt: &expiry, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m"}}}}
+	binding := backend.SessionBinding{UID: "session-uid"}
+	require.True(t, artifactSessionIsLive(session, binding, now.Add(-time.Nanosecond)))
+	require.False(t, artifactSessionIsLive(session, binding, now))
+	session.Status.ResolvedTemplate.Constraints.IdleTimeout = ""
+	require.True(t, artifactSessionIsLive(session, binding, now))
+}

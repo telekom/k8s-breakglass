@@ -27,6 +27,8 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	artifactjob "github.com/telekom/k8s-breakglass/pkg/artifacts/job"
 	artifactkube "github.com/telekom/k8s-breakglass/pkg/artifacts/kube"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 )
 
 const artifactFinalizer = "breakglass.t-caas.telekom.com/debug-session-artifact"
@@ -43,6 +45,9 @@ type TargetClientProvider interface {
 	ReleasePrivilegedOperationClusterConfig(*breakglassv1alpha1.ClusterConfig)
 }
 
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessionartifacts,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessionartifacts/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessionartifacts/finalizers,verbs=update
 type Reconciler struct {
 	ctrlclient.Client
 	Service         *backend.Service
@@ -369,11 +374,12 @@ func (reconciler *Reconciler) validateSpokeWrite(ctx context.Context, object *br
 	if reconciler.Now != nil {
 		now = reconciler.Now
 	}
+	decisionTime := now()
 	liveState := backend.State(liveArtifact.Status.State)
 	if liveState == "" {
 		liveState = backend.StatePending
 	}
-	if finalSession.UID != session.UID || !finalSession.DeletionTimestamp.IsZero() || finalSession.Spec.Cluster != session.Spec.Cluster || finalSession.Spec.TargetNamespace != session.Spec.TargetNamespace || finalSession.Status.State != breakglassv1alpha1.DebugSessionStateActive || finalSession.Status.ExpiresAt == nil || !now().Before(finalSession.Status.ExpiresAt.Time) || liveArtifact.UID != object.UID || !liveArtifact.DeletionTimestamp.IsZero() || liveState != backend.StatePending && liveState != backend.StateUploading || liveArtifact.Spec.TargetClusterUID != object.Spec.TargetClusterUID || liveArtifact.Spec.PlanDigest != object.Spec.PlanDigest || !now().Before(liveArtifact.Spec.ExpiresAt.Time) {
+	if finalSession.UID != session.UID || !finalSession.DeletionTimestamp.IsZero() || finalSession.Spec.Cluster != session.Spec.Cluster || finalSession.Spec.TargetNamespace != session.Spec.TargetNamespace || finalSession.Status.State != breakglassv1alpha1.DebugSessionStateActive || finalSession.Status.ExpiresAt == nil || !decisionTime.Before(finalSession.Status.ExpiresAt.Time) || breakglass.DebugSessionIdleExpired(&finalSession, decisionTime) || finalSession.Annotations[quotas.AdmissionAnnotation] == quotas.Pending || liveArtifact.UID != object.UID || !liveArtifact.DeletionTimestamp.IsZero() || liveState != backend.StatePending && liveState != backend.StateUploading || liveArtifact.Spec.TargetClusterUID != object.Spec.TargetClusterUID || liveArtifact.Spec.PlanDigest != object.Spec.PlanDigest || !decisionTime.Before(liveArtifact.Spec.ExpiresAt.Time) {
 		return errors.New("artifact identity changed before spoke write")
 	}
 	return nil

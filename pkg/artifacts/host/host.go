@@ -29,6 +29,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/storage/local"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/storage/s3"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/token"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/quotas"
@@ -168,6 +169,10 @@ func (source repositoryBindingSource) ResolveArtifactBinding(ctx context.Context
 		TargetClusterUID:     record.TargetClusterUID,
 		TargetIdentityDigest: record.TargetIdentityDigest,
 		OperationEpoch:       record.OperationEpoch,
+		TargetPodNamespace:   record.TargetPodNamespace,
+		TargetPodName:        record.TargetPodName,
+		TargetPodUID:         record.TargetPodUID,
+		TargetNodeUID:        record.TargetNodeUID,
 	}, nil
 }
 
@@ -374,7 +379,7 @@ func (authorizer *liveSessionAuthorizer) AuthorizeArtifact(ctx context.Context, 
 }
 
 func artifactSessionIsLive(session *breakglassv1alpha1.DebugSession, binding backend.SessionBinding, now time.Time) bool {
-	return session != nil && session.Annotations[quotas.AdmissionAnnotation] != quotas.Pending && session.DeletionTimestamp == nil && string(session.UID) == binding.UID && session.Status.State == breakglassv1alpha1.DebugSessionStateActive && session.Status.ExpiresAt != nil && now.Before(session.Status.ExpiresAt.Time)
+	return session != nil && session.Annotations[quotas.AdmissionAnnotation] != quotas.Pending && session.DeletionTimestamp == nil && string(session.UID) == binding.UID && session.Status.State == breakglassv1alpha1.DebugSessionStateActive && session.Status.ExpiresAt != nil && now.Before(session.Status.ExpiresAt.Time) && !breakglass.DebugSessionIdleExpired(session, now)
 }
 
 type readBindingResolver struct {
