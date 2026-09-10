@@ -585,8 +585,7 @@ func TestManager(t *testing.T) {
 	manager.SessionRequested(context.Background(), "session-2", "prod-admin", "user2@example.com", "debugging")
 	manager.SessionApproved(context.Background(), "session-3", "prod-admin", "approver@example.com", "user3@example.com")
 
-	// Wait for async processing
-	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, manager.Close())
 
 	mu.Lock()
 	assert.GreaterOrEqual(t, len(receivedEvents), 3)
@@ -600,8 +599,6 @@ func TestManager(t *testing.T) {
 	}
 	mu.Unlock()
 
-	err := manager.Close()
-	require.NoError(t, err)
 }
 
 func TestManagerEmitSync(t *testing.T) {
@@ -814,15 +811,23 @@ func TestManagerHelperMethods(t *testing.T) {
 	manager.AccessDecision(ctx, "user@test.com", []string{"g1"}, "pods", "p2", "ns1", "c1", "delete", false, "s5")
 	manager.PolicyViolation(ctx, "user@test.com", []string{"g1"}, "pods", "p3", "ns1", "c1", "deny-policy", "violation")
 	manager.DebugSessionCreated(ctx, "ds1", "user@test.com", "c1", "template1")
+	manager.DebugSessionStarted(ctx, "ds-started", "debug-ns", "user@test.com", "c1", "template1")
 	manager.DebugSessionTerminated(ctx, "ds2", "admin@test.com", "expired")
 
-	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, manager.Close())
 
 	mu.Lock()
-	assert.Len(t, events, 8)
+	assert.Len(t, events, 9)
+	var started *Event
+	for _, event := range events {
+		if event.Type == EventDebugSessionStarted {
+			started = event
+			break
+		}
+	}
+	require.NotNil(t, started)
+	assert.Equal(t, "debug-ns", started.Target.Namespace)
 	mu.Unlock()
-
-	_ = manager.Close()
 }
 
 func TestDefaultManagerConfig(t *testing.T) {

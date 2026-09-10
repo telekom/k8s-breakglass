@@ -826,15 +826,16 @@ func (m *Manager) DebugSessionCreated(ctx context.Context, sessionName, user, cl
 }
 
 // DebugSessionStarted emits an audit event after a debug session is activated.
-func (m *Manager) DebugSessionStarted(ctx context.Context, sessionName, user, cluster, templateName string) {
+func (m *Manager) DebugSessionStarted(ctx context.Context, sessionName, namespace, user, cluster, templateName string) {
 	m.Emit(ctx, &Event{
 		Type:     EventDebugSessionStarted,
 		Severity: SeverityInfo,
 		Actor:    Actor{User: user},
 		Target: Target{
-			Kind:    "DebugSession",
-			Name:    sessionName,
-			Cluster: cluster,
+			Kind:      "DebugSession",
+			Name:      sessionName,
+			Namespace: namespace,
+			Cluster:   cluster,
 		},
 		Details:        map[string]interface{}{"templateName": templateName},
 		RequestContext: &RequestContext{DebugSessionName: sessionName},
