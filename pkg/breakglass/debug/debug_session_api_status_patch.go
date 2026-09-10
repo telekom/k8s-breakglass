@@ -19,6 +19,7 @@ package debug
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -46,6 +47,9 @@ func (c *DebugSessionAPIController) recordDebugSessionActivity(ctx context.Conte
 	if session == nil || session.UID == "" {
 		return
 	}
+	// A completed target operation still needs bounded bookkeeping after request cancellation.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
 	// Target mutation status writes advance the resource version. Re-read the
 	// same session UID instead of treating the API's pre-operation object as current.
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
