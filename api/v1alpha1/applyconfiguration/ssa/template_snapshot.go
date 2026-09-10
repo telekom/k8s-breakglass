@@ -115,7 +115,9 @@ func ImpersonationConfigFrom(t *breakglassv1alpha1.ImpersonationConfig) *ac.Impe
 	if t.ServiceAccountRef != nil {
 		result.WithServiceAccountRef(ServiceAccountReferenceFrom(t.ServiceAccountRef))
 	}
-	result.WithMode(t.Mode)
+	if t.Mode != "" {
+		result.WithMode(t.Mode)
+	}
 	result.WithUserName(t.UserName)
 	result.WithUID(t.UID)
 	if t.Groups != nil {
@@ -145,7 +147,9 @@ func AuxiliaryResourceFrom(t *breakglassv1alpha1.AuxiliaryResource) *ac.Auxiliar
 	result.WithTemplate(t.Template)
 	result.WithCreateBefore(t.CreateBefore)
 	result.WithDeleteAfter(t.DeleteAfter)
-	result.WithFailurePolicy(t.FailurePolicy)
+	if t.FailurePolicy != "" {
+		result.WithFailurePolicy(t.FailurePolicy)
+	}
 	result.WithOptional(t.Optional)
 	return result
 }

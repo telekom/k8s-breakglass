@@ -115,7 +115,7 @@ func TestBindingDefaultAdmissionDoesNotMaterializeHiddenTemplateDefaults(t *test
 
 func TestPersistedBindingProvenanceFailsBeforeWorkloadCreation(t *testing.T) {
 	for _, state := range []breakglassv1alpha1.DebugSessionState{breakglassv1alpha1.DebugSessionStatePending, breakglassv1alpha1.DebugSessionStatePendingApproval} {
-		for _, raw := range []string{"missing", "null", "[]", "{}", `{"unknown":true}`, `{"templateRef":{"name":"template"},"clusters":["spoke"],"extraDeployVariables":[{"name":"absent","disabled":true}]}`} {
+		for _, raw := range []string{"missing", "null", "[]", "{}", `{"unknown":true}`, `{"templateRef":{},"clusters":[""]}`, `{"templateRef":{"name":" "},"clusters":["spoke"]}`, `{"templateRef":{"name":"template"},"clusters":[" "]}`, `{"templateRef":{"name":"template"},"clusters":["spoke"],"extraDeployVariables":[{"name":"absent","disabled":true}]}`} {
 			t.Run(string(state)+"/"+raw, func(t *testing.T) {
 				c, ds, template, target := newDeploymentFenceFixture(t)
 				ds.Status.State = state
