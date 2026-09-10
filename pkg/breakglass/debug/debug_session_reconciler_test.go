@@ -2555,7 +2555,12 @@ func TestUpdateTemplateStatus(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("increment active session count", func(t *testing.T) {
-		err := ctrl.updateTemplateStatus(ctx, sessionTemplate, true)
+		session := newTestDebugSession("accounting-live", sessionTemplate.Name, "cluster", "user")
+		session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+		now := metav1.Now()
+		session.Status.StartsAt = &now
+		require.NoError(t, fakeClient.Create(ctx, session))
+		err := ctrl.reconcileActiveAccounting(ctx, session, true)
 		require.NoError(t, err)
 
 		// Verify template status was updated
@@ -2573,7 +2578,9 @@ func TestUpdateTemplateStatus(t *testing.T) {
 	})
 
 	t.Run("decrement active session count", func(t *testing.T) {
-		err := ctrl.updateTemplateStatus(ctx, sessionTemplate, false)
+		session := newTestDebugSession("accounting-live", sessionTemplate.Name, "cluster", "user")
+		require.NoError(t, client.IgnoreNotFound(fakeClient.Delete(ctx, session)))
+		err := ctrl.reconcileActiveAccounting(ctx, session, false)
 		require.NoError(t, err)
 
 		// Verify template status was decremented
@@ -2585,7 +2592,9 @@ func TestUpdateTemplateStatus(t *testing.T) {
 
 	t.Run("does not go below zero", func(t *testing.T) {
 		// Decrement again - should stay at 0
-		err := ctrl.updateTemplateStatus(ctx, sessionTemplate, false)
+		session := newTestDebugSession("accounting-live", sessionTemplate.Name, "cluster", "user")
+		require.NoError(t, client.IgnoreNotFound(fakeClient.Delete(ctx, session)))
+		err := ctrl.reconcileActiveAccounting(ctx, session, false)
 		require.NoError(t, err)
 
 		updatedTemplate := &breakglassv1alpha1.DebugSessionTemplate{}

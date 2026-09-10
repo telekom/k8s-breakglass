@@ -491,8 +491,14 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		}
 		c.sendDebugSessionExpiredEmail(*notificationSession)
 		log.Info("Debug session expired")
-		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
+		if err := c.reconcileActiveAccounting(ctx, ds, false); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	}
+
+	if err := c.reconcileActiveAccounting(ctx, ds, true); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Renewal commits session status before touching the spoke Job. Reconcile
@@ -528,21 +534,8 @@ func (c *DebugSessionController) terminalizeActiveSessionWithoutExpiry(ctx conte
 	}
 	c.log.Errorw("Debug session failed closed because its active lease is missing",
 		"debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
-	// This is an Active -> Failed transition, so release the active aggregates
-	// at the transition boundary.  handleFailedCleanup intentionally does not
-	// decrement them: it may run repeatedly while spoke cleanup is retried.
-	metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
-	if ds.Spec.TemplateRef != "" {
-		template, templateErr := c.getTemplate(ctx, ds.Spec.TemplateRef)
-		if templateErr == nil {
-			if updateErr := c.updateTemplateStatus(ctx, template, false); updateErr != nil {
-				c.log.Warnw("Failed to decrement template active session count after failed debug session",
-					"template", ds.Spec.TemplateRef, "error", updateErr)
-			}
-		} else {
-			c.log.Warnw("Failed to load template after failed debug session",
-				"template", ds.Spec.TemplateRef, "error", templateErr)
-		}
+	if err := c.reconcileActiveAccounting(ctx, ds, false); err != nil {
+		return ctrl.Result{}, err
 	}
 	metrics.DebugSessionsFailed.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()
 	return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
@@ -568,6 +561,9 @@ func (c *DebugSessionController) sendDebugSessionExpiredEmail(ds breakglassv1alp
 // but reconciliation keeps retrying the delete until the status lists are empty.
 func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	if !hasTrackedSpokeResources(ds) {
+		if err := c.reconcileActiveAccounting(ctx, ds, false); err != nil {
+			return ctrl.Result{}, err
+		}
 		releaseSessionMetricSeries(ds.Name)
 		return ctrl.Result{}, nil // Nothing left on the spoke: genuinely terminal.
 	}
@@ -592,6 +588,9 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 	}
 
 	log.Infow("Cleanup of spoke resources completed for failed debug session")
+	if err := c.reconcileActiveAccounting(ctx, ds, false); err != nil {
+		return ctrl.Result{}, err
+	}
 	releaseSessionMetricSeries(ds.Name)
 	return ctrl.Result{}, nil
 }

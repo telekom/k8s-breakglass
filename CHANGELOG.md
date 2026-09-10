@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reconcile debug-session active counts from live state across clusters, retrying template conflicts without duplicate decrements.
+
 - Persist DebugSession rejection as a terminal `Rejected` state across API,
   reconciliation, cleanup, CLI filters, and the frontend.
 - Make terminal cleanup accounting idempotent and avoid decrementing active

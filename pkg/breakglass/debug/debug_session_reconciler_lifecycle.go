@@ -1211,84 +1211,80 @@ func IsPodInDebugSession(namespace, name string, allowedPods []breakglassv1alpha
 	return false
 }
 
-// updateTemplateStatus updates the DebugSessionTemplate and DebugPodTemplate status
-// to reflect active session counts and usage tracking.
-// incrementActive: true when activating a session, false when deactivating (cleanup/expiry)
-func (c *DebugSessionController) updateTemplateStatus(ctx context.Context, template *breakglassv1alpha1.DebugSessionTemplate, incrementActive bool) error {
-	log := c.log.With("template", template.Name)
-
-	// Re-fetch template to get latest version
-	currentTemplate := &breakglassv1alpha1.DebugSessionTemplate{}
-	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: template.Name}, currentTemplate); err != nil {
-		return fmt.Errorf("failed to get template: %w", err)
-	}
-
-	// Update active session count
-	if incrementActive {
-		currentTemplate.Status.ActiveSessionCount++
-		now := metav1.Now()
-		currentTemplate.Status.LastUsedAt = &now
-	} else {
-		if currentTemplate.Status.ActiveSessionCount > 0 {
-			currentTemplate.Status.ActiveSessionCount--
-		}
-	}
-
-	// Update the template status using SSA
-	if err := ssa.ApplyDebugSessionTemplateStatus(ctx, c.client, currentTemplate); err != nil {
-		return fmt.Errorf("failed to update template status: %w", err)
-	}
-
-	log.Debugw("Updated template status",
-		"activeSessionCount", currentTemplate.Status.ActiveSessionCount,
-		"lastUsedAt", currentTemplate.Status.LastUsedAt,
-		"incrementActive", incrementActive)
-
-	// Also update the DebugPodTemplate.status.usedBy if a pod template is referenced
-	if currentTemplate.Spec.PodTemplateRef != nil && currentTemplate.Spec.PodTemplateRef.Name != "" {
-		if err := c.updatePodTemplateUsedBy(ctx, currentTemplate.Spec.PodTemplateRef.Name, template.Name); err != nil {
-			log.Warnw("Failed to update pod template usedBy", "podTemplate", currentTemplate.Spec.PodTemplateRef.Name, "error", err)
-			// Non-fatal
-		}
-	}
-
-	return nil
-}
-
-// reconcileActiveAccounting derives active counts from live DebugSessions so
-// repeated cleanup and concurrent transitions converge without one-shot
-// increment/decrement markers.
+// reconcileActiveAccounting derives aggregates from authoritative session state.
+// Template CAS retries repeat the list; periodic Active reconciliation repairs
+// snapshots raced by a session transition without replaying increment/decrement.
 func (c *DebugSessionController) reconcileActiveAccounting(ctx context.Context, ds *breakglassv1alpha1.DebugSession, markUsed bool) error {
-	var sessions breakglassv1alpha1.DebugSessionList
-	if err := c.client.List(ctx, &sessions); err != nil {
-		return fmt.Errorf("list DebugSessions: %w", err)
-	}
-	var active int32
-	for i := range sessions.Items {
-		session := &sessions.Items[i]
-		if session.Spec.Cluster == ds.Spec.Cluster && session.Spec.TemplateRef == ds.Spec.TemplateRef && session.Status.State == breakglassv1alpha1.DebugSessionStateActive {
-			active++
+	reader := c.approvalReader()
+	var templateUID types.UID
+	var podTemplateName string
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		template := &breakglassv1alpha1.DebugSessionTemplate{}
+		templateExists := ds.Spec.TemplateRef != ""
+		if templateExists {
+			if err := reader.Get(ctx, ctrlclient.ObjectKey{Name: ds.Spec.TemplateRef}, template); err != nil {
+				if !apierrors.IsNotFound(err) {
+					return fmt.Errorf("read accounting template: %w", err)
+				}
+				templateExists = false
+			}
+			if templateExists {
+				if templateUID != "" && template.UID != templateUID {
+					return fmt.Errorf("accounting template identity changed")
+				}
+				templateUID = template.UID
+			}
 		}
-	}
-	metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Set(float64(active))
-	if ds.Spec.TemplateRef == "" {
+		var total, clusterCount int32
+		var latestStart *metav1.Time
+		continuation := ""
+		for {
+			var sessions breakglassv1alpha1.DebugSessionList
+			if err := reader.List(ctx, &sessions, &ctrlclient.ListOptions{Limit: 500, Continue: continuation}); err != nil {
+				return fmt.Errorf("list accounting sessions: %w", err)
+			}
+			for i := range sessions.Items {
+				session := &sessions.Items[i]
+				if session.Spec.TemplateRef != ds.Spec.TemplateRef {
+					continue
+				}
+				if session.Status.State == breakglassv1alpha1.DebugSessionStateActive {
+					total++
+					if session.Spec.Cluster == ds.Spec.Cluster {
+						clusterCount++
+					}
+				}
+				if session.Status.StartsAt != nil && (latestStart == nil || latestStart.Before(session.Status.StartsAt)) {
+					latestStart = session.Status.StartsAt.DeepCopy()
+				}
+			}
+			continuation = sessions.Continue
+			if continuation == "" {
+				break
+			}
+		}
+		if templateExists {
+			base := template.DeepCopy()
+			template.Status.ActiveSessionCount = total
+			if latestStart != nil && (template.Status.LastUsedAt == nil || template.Status.LastUsedAt.Before(latestStart)) {
+				template.Status.LastUsedAt = latestStart
+			}
+			if err := c.client.Status().Patch(ctx, template, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
+				return fmt.Errorf("patch accounting template: %w", err)
+			}
+			if (markUsed || latestStart != nil) && template.Spec.PodTemplateRef != nil {
+				podTemplateName = template.Spec.PodTemplateRef.Name
+			}
+		}
+		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Set(float64(clusterCount))
 		return nil
-	}
-	template, err := c.getTemplate(ctx, ds.Spec.TemplateRef)
+	})
 	if err != nil {
-		return fmt.Errorf("get template %q: %w", ds.Spec.TemplateRef, err)
+		return err
 	}
-	template.Status.ActiveSessionCount = active
-	if markUsed {
-		now := metav1.Now()
-		template.Status.LastUsedAt = &now
-	}
-	if err := ssa.ApplyDebugSessionTemplateStatus(ctx, c.client, template); err != nil {
-		return fmt.Errorf("apply template active session count: %w", err)
-	}
-	if markUsed && template.Spec.PodTemplateRef != nil && template.Spec.PodTemplateRef.Name != "" {
-		if err := c.updatePodTemplateUsedBy(ctx, template.Spec.PodTemplateRef.Name, template.Name); err != nil {
-			return fmt.Errorf("update pod template used-by: %w", err)
+	if podTemplateName != "" {
+		if err := c.updatePodTemplateUsedBy(ctx, podTemplateName, ds.Spec.TemplateRef); err != nil {
+			return fmt.Errorf("update pod template usage: %w", err)
 		}
 	}
 	return nil

@@ -2064,3 +2064,5 @@ If a tracked-resource create response is lost to a bounded timeout, the
 controller recovers only a live object carrying the session and operation
 markers and matching the requested content, then records its returned UID. Canceled, permanent, and non-timeout
 transport errors do not trigger adoption.
+
+Active accounting is recomputed from live session state: template counts include all clusters, while active gauges remain per cluster and template. Optimistic template conflicts repeat the live list, and Active reconciliation repairs accounting after a transient publication failure. Accounting failures do not prevent spoke resource cleanup.
