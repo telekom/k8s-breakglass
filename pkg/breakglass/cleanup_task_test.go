@@ -1613,3 +1613,53 @@ func TestDebugSessionRetentionUsesExplicitDeadlineOrLegacyConfiguredFallback(t *
 		})
 	}
 }
+
+func TestDebugSessionCleanupPreservesPendingResourcesAndExpiresIdle(t *testing.T) {
+	for _, name := range []string{"idle", "deployed", "unknown auxiliary", "pod template", "cleaned auxiliary", "intentionally retained auxiliary", "retained parent unknown child"} {
+		t.Run(name, func(t *testing.T) {
+			past := metav1.NewTime(time.Now().Add(-time.Hour))
+			future := metav1.NewTime(time.Now().Add(time.Hour))
+			ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "cleanup", Namespace: "default", UID: "cleanup-uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateTerminated, RetainedUntil: &past}}
+			switch name {
+			case "idle":
+				ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
+				ds.Status.RetainedUntil = nil
+				ds.Status.ExpiresAt = &future
+				ds.Status.LastActivity = &past
+				ds.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m", RetainFor: "2h"}}
+			case "deployed":
+				ds.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{{Name: "pending"}}
+			case "unknown auxiliary":
+				ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{{CreateOperationID: "prepared", ResourceName: "unknown"}}
+			case "pod template":
+				ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{{CreateOperationID: "prepared", ResourceName: "unknown"}}
+			case "intentionally retained auxiliary":
+				ds.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "keep", DeleteAfter: false}}}
+				ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "keep", Created: true, UID: "retained-uid"}}
+			case "retained parent unknown child":
+				ds.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "keep", DeleteAfter: false}}}
+				ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "keep", Created: true, UID: "retained-uid", AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{{CreateOperationID: "unknown-child"}}}}
+			case "cleaned auxiliary":
+				ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{{Created: true, Deleted: true}}
+			}
+			scheme := runtime.NewScheme()
+			require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+			hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
+			routine := CleanupRoutine{Log: zaptest.NewLogger(t).Sugar(), Manager: &SessionManager{Client: hub}}
+			routine.cleanupExpiredDebugSessions(context.Background())
+			var stored breakglassv1alpha1.DebugSession
+			err := hub.Get(context.Background(), client.ObjectKeyFromObject(ds), &stored)
+			if name == "cleaned auxiliary" || name == "intentionally retained auxiliary" {
+				require.True(t, apierrors.IsNotFound(err))
+				return
+			}
+			require.NoError(t, err)
+			if name == "idle" {
+				require.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, stored.Status.State)
+				require.Equal(t, "Session expired due to inactivity", stored.Status.Message)
+				require.NotNil(t, stored.Status.RetainedUntil)
+				require.True(t, stored.Status.RetainedUntil.After(time.Now().Add(time.Hour)))
+			}
+		})
+	}
+}
