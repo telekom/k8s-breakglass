@@ -4,21 +4,38 @@ package v1alpha1
 
 import (
 	"context"
+	"strings"
+	"testing"
+
 	"github.com/stretchr/testify/require"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"strings"
-	"testing"
 )
 
 func TestLegacyVariablePolicyAdmissionOnlyCopiesPersistedUnconstrainedPolicy(t *testing.T) {
 	original := []ExtraDeployVariable{{Name: "mode", InputType: InputTypeText, Disabled: true}}
-	for _, scenario := range []string{"safe", "changed", "constrained", "uncaptured", "active", "second-write"} {
+	for _, scenario := range []string{"safe", "changed", "constrained", "uncaptured", "active", "second-write", "missing-spec", "null", "array", "missing-reference"} {
 		t.Run(scenario, func(t *testing.T) {
 			old := &DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "legacy", Namespace: "ns"}, Spec: DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "user"}, Status: DebugSessionStatus{State: DebugSessionStatePending, ResolvedTemplate: &DebugSessionTemplateSpec{ExtraDeployVariables: original}, ResolvedBindingSnapshotCaptured: true}}
 			next := old.DeepCopy()
 			next.Status.ResolvedTemplateVariablePolicy = old.Status.ResolvedTemplate.DeepCopy().ExtraDeployVariables
 			switch scenario {
+			case "missing-spec":
+				old.Status.ResolvedBinding = &ResolvedBindingRef{Name: "binding"}
+				next.Status.ResolvedBinding = old.Status.ResolvedBinding.DeepCopy()
+			case "null", "array", "missing-reference":
+				raw := "null"
+				if scenario == "array" {
+					raw = "[]"
+				}
+				if scenario == "missing-reference" {
+					raw = "{}"
+				} else {
+					old.Status.ResolvedBinding = &ResolvedBindingRef{Name: "binding"}
+					next.Status.ResolvedBinding = old.Status.ResolvedBinding.DeepCopy()
+				}
+				old.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: []byte(raw)}
+				next.Status.ResolvedBindingSpec = old.Status.ResolvedBindingSpec.DeepCopy()
 			case "changed":
 				next.Status.ResolvedTemplateVariablePolicy[0].Disabled = false
 			case "constrained":

@@ -841,6 +841,9 @@ func releaseSessionMetricSeries(sessionName string) {
 // activateSession deploys debug resources and marks session as active
 func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
+	if ds.Status.ResolvedTemplate != nil && !breakglassv1alpha1.HasCompleteResolvedBindingSnapshot(ds.Status) {
+		return c.failSession(ctx, ds, "approved binding provenance is incomplete; recreate this session")
+	}
 	if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplateVariablePolicy == nil && len(ds.Status.ResolvedTemplate.ExtraDeployVariables) != 0 {
 		policy := ds.Status.ResolvedTemplate.DeepCopy().ExtraDeployVariables
 		if !breakglassv1alpha1.CanInitializeLegacyVariablePolicy(ds.Status, policy) {
@@ -1071,7 +1074,7 @@ func effectiveTemplateForBinding(
 		return nil, fmt.Errorf("extra deploy values are not allowed by binding: %s", nameErrs[0].Error())
 	}
 	if len(values) > 0 || len(effectiveVariables) > 0 {
-		if errs := breakglassv1alpha1.ValidateExtraDeployValuesWithGroups(values, effectiveVariables, groups, field.NewPath("extraDeployValues")); len(errs) > 0 {
+		if errs := breakglassv1alpha1.ValidateExtraDeployValuesWithBinding(values, effectiveVariables, constraints, groups, field.NewPath("extraDeployValues")); len(errs) > 0 {
 			return nil, fmt.Errorf("extra deploy values are invalid: %s", errs[0].Error())
 		}
 	}
@@ -1368,7 +1371,65 @@ func (c *DebugSessionController) deferOnUnresolvedBinding(
 // This enables binding configuration to be applied even when BindingRef is not explicitly set.
 // Returns nil if no matching binding is found.
 func (c *DebugSessionController) findBindingForSession(ctx context.Context, template *breakglassv1alpha1.DebugSessionTemplate, clusterName string) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
-	return utils.FindDebugSessionBinding(ctx, c.approvalReader(), template, clusterName)
+	bindingList := &breakglassv1alpha1.DebugSessionClusterBindingList{}
+	if err := c.approvalReader().List(ctx, bindingList); err != nil {
+		return nil, fmt.Errorf("failed to list cluster bindings: %w", err)
+	}
+
+	// Get cluster config for label-based matching
+	var clusterConfig *breakglassv1alpha1.ClusterConfig
+	clusterConfigList := &breakglassv1alpha1.ClusterConfigList{}
+	if err := c.approvalReader().List(ctx, clusterConfigList); err != nil {
+		return nil, fmt.Errorf("list cluster configs for binding quota resolution: %w", err)
+	}
+	for i := range clusterConfigList.Items {
+		if clusterConfigList.Items[i].Name == clusterName {
+			if clusterConfig != nil {
+				return nil, fmt.Errorf("ambiguous cluster config for binding quota resolution")
+			}
+			clusterConfig = &clusterConfigList.Items[i]
+		}
+	}
+
+	sort.Slice(bindingList.Items, func(i, j int) bool {
+		a, b := bindingList.Items[i], bindingList.Items[j]
+		return a.Namespace+"/"+a.Name < b.Namespace+"/"+b.Name
+	})
+	var invalidPolicy error
+	for i := range bindingList.Items {
+		binding := &bindingList.Items[i]
+		if !breakglass.IsBindingActive(binding) {
+			continue
+		}
+
+		// Check if binding references this template
+		if !c.bindingMatchesTemplate(binding, template) {
+			continue
+		}
+
+		if binding.Spec.ClusterSelector != nil && clusterConfig == nil && !slices.Contains(binding.Spec.Clusters, clusterName) {
+			return nil, fmt.Errorf("cluster config required to resolve binding selector")
+		}
+
+		// Check if binding matches this cluster
+		if !c.bindingMatchesCluster(binding, clusterName, clusterConfig) {
+			continue
+		}
+
+		if _, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, binding.Spec.ExtraDeployVariables); err != nil {
+			invalidPolicy = fmt.Errorf("matching binding has invalid variable policy: %w", err)
+			c.log.Warnw("Skipping invalid binding variable policy", "binding", binding.Name, "error", err)
+			continue
+		}
+
+		// Found a matching binding
+		return binding, nil
+	}
+
+	if invalidPolicy != nil {
+		return nil, invalidPolicy
+	}
+	return nil, nil // No matching binding found (not an error)
 }
 
 func (c *DebugSessionController) approvalReader() ctrlclient.Reader {
