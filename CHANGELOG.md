@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Derive provider-compatible diagnostic artifact keys from immutable resource UIDs, preserving isolation and recovery of existing uploads.
+
 - Recheck artifact upload token, session binding, plan/runtime/recipe claims, and
   expiry immediately before provider publication and before making an artifact
   available; stream downloads through the same live authorization fence.

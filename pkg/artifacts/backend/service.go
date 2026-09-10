@@ -33,7 +33,7 @@ func artifactStorageKey(record Record) (string, error) {
 		return "", errors.New("artifact UID is required for storage key")
 	}
 	sum := sha256.Sum256([]byte("breakglass-artifact-v1:" + record.ArtifactUID))
-	return "sha256-" + hex.EncodeToString(sum[:]), nil
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // State is monotonic. Unknown means the provider result is ambiguous and may

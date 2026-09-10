@@ -57,4 +57,6 @@ configured Breakglass namespace using exact uncached `get` calls. S3 uses the
 fixed `accessKeyID`, `secretAccessKey`, and optional `sessionToken` keys; local
 storage must satisfy its one-replica RWO/Recreate contract and is never an
 automatic fallback. The host also requires the live lease binding source, so
-an enabled deployment fails closed when that dependency is absent.
+an enabled deployment fails closed when the durable lease fence is absent.
+
+Provider object keys are 64 lowercase hexadecimal SHA-256 characters derived from the immutable artifact resource UID with a domain separator. Public artifact IDs remain unchanged. Same-named artifacts with different resource UIDs occupy separate provider objects, including during upload recovery and cleanup.

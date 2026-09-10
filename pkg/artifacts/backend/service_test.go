@@ -126,7 +126,7 @@ func TestArtifactStorageKeyRequiresUIDAndIsOpaque(t *testing.T) {
 	key, err := artifactStorageKey(Record{ArtifactID: "public-id", ArtifactUID: "uid-a"})
 	require.NoError(t, err)
 	require.NotEqual(t, "public-id", key)
-	require.Len(t, key, len("sha256-")+64)
+	require.Len(t, key, 64)
 }
 
 func TestCleanupPendingArtifactNeedsNoProviderObject(t *testing.T) {
