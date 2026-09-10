@@ -48,6 +48,7 @@ type TargetClientProvider interface {
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessionartifacts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessionartifacts/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessionartifacts/finalizers,verbs=update
+
 type Reconciler struct {
 	ctrlclient.Client
 	Service         *backend.Service
