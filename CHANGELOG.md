@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added API helper coverage for authenticated diagnostic artifact collection,
+  inventory, and download requests.
+
+### Added
+
 - Add explicit diagnostic-artifact host construction for S3 or single-replica
   local storage, exact namespace-scoped credential reads, token key rotation,
   live-session authorization, and API/controller registration seams.
