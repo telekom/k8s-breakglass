@@ -180,6 +180,12 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.KeycloakGroupSyncApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("KubectlDebugConfig"):
 		return &apiv1alpha1.KubectlDebugConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("KubectlDebugEphemeralContainerIntent"):
+		return &apiv1alpha1.KubectlDebugEphemeralContainerIntentApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("KubectlDebugOperation"):
+		return &apiv1alpha1.KubectlDebugOperationApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("KubectlDebugOperationTargetPod"):
+		return &apiv1alpha1.KubectlDebugOperationTargetPodApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("KubectlDebugStatus"):
 		return &apiv1alpha1.KubectlDebugStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("KubernetesSinkSpec"):

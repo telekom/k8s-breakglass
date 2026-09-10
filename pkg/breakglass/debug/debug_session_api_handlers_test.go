@@ -40,6 +40,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 type stagedDebugSessionReader struct {
@@ -560,6 +561,69 @@ func TestHandleInjectEphemeralContainer_ActiveSessionExpired(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 	assertErrorResponse(t, rr, "BAD_REQUEST")
 	assert.Contains(t, rr.Body.String(), "expired session")
+}
+
+func TestHandleInjectEphemeralContainer_RejectsUnsafeSecurityContextBeforeIntent(t *testing.T) {
+	session := newActiveKubectlDebugSession("active-session", "test-user", time.Now().Add(time.Hour))
+	session.UID = "session-uid"
+	session.Status.ResolvedTemplate.KubectlDebug = &breakglassv1alpha1.KubectlDebugConfig{
+		EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{Enabled: true},
+	}
+	_, controller := setupTestRouter(t, session)
+	updates := 0
+	targetClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "app:v1"}}},
+	}).WithInterceptorFuncs(interceptor.Funcs{SubResourceUpdate: func(ctx context.Context, cl client.Client, name string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+		if name == "ephemeralcontainers" {
+			updates++
+		}
+		return cl.Update(ctx, obj)
+	}}).Build()
+	controller.WithClusterClients(&mockClientProvider{clients: map[string]client.Client{"test-cluster": targetClient}})
+	router := setupAuthenticatedDebugSessionRouter(t, controller, "test-user", "", nil)
+	value := true
+	body, err := json.Marshal(InjectEphemeralContainerRequest{
+		Namespace:       "default",
+		PodName:         "target",
+		ContainerName:   "debugger",
+		Image:           "busybox",
+		SecurityContext: &corev1.SecurityContext{WindowsOptions: &corev1.WindowsSecurityContextOptions{HostProcess: &value}},
+	})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, "/api/debugSessions/active-session/injectEphemeralContainer", bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assertErrorResponse(t, rr, "FORBIDDEN")
+	assert.Zero(t, updates)
+	stored := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, controller.client.Get(context.Background(), client.ObjectKeyFromObject(session), stored))
+	assert.Nil(t, stored.Status.KubectlDebugStatus)
+
+	safeBody, err := json.Marshal(InjectEphemeralContainerRequest{
+		Namespace:       "default",
+		PodName:         "target",
+		ContainerName:   "safe-debugger",
+		Image:           "busybox",
+		SecurityContext: &corev1.SecurityContext{},
+	})
+	require.NoError(t, err)
+	safeReq, err := http.NewRequest(http.MethodPost, "/api/debugSessions/active-session/injectEphemeralContainer", bytes.NewReader(safeBody))
+	require.NoError(t, err)
+	safeReq.Header.Set("Content-Type", "application/json")
+	safeResponse := httptest.NewRecorder()
+	router.ServeHTTP(safeResponse, safeReq)
+
+	assert.Equal(t, http.StatusOK, safeResponse.Code)
+	assert.Equal(t, 1, updates)
+	storedPod := &corev1.Pod{}
+	require.NoError(t, targetClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "target"}, storedPod))
+	require.Len(t, storedPod.Spec.EphemeralContainers, 1)
+	assert.Equal(t, "safe-debugger", storedPod.Spec.EphemeralContainers[0].Name)
 }
 
 func TestHandleInjectEphemeralContainer_UserNotParticipant(t *testing.T) {

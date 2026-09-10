@@ -155,7 +155,8 @@ func validateDebugSessionStatusMutation(oldStatus, newStatus breakglassv1alpha1.
 	}
 	if oldStatus.State == breakglassv1alpha1.DebugSessionStateActive &&
 		!oldExpiryMissing && !now.Before(oldStatus.ExpiresAt.Time) &&
-		newStatus.State == breakglassv1alpha1.DebugSessionStateActive {
+		newStatus.State == breakglassv1alpha1.DebugSessionStateActive &&
+		!breakglassv1alpha1.AllowsExpiredActiveEphemeralOperationFailure(oldStatus, newStatus, now) {
 		return fmt.Errorf("expired active session cannot receive a non-terminal status update")
 	}
 	if oldStatus.ExpiresAt != nil && !oldStatus.ExpiresAt.IsZero() &&
