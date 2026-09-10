@@ -55,7 +55,7 @@
       "context": "utils/images/dump-reader",
       "file": "utils/images/dump-reader/Dockerfile",
       "smokeCommand": ["help"],
-      "smokeOutput": "dump-reader: inspect existing dump artifacts",
+      "smokeOutput": "dump-reader: inspect existing dump files without generating or modifying them",
       "requiredChecks": ["Intent / storage-diagnostics and dump-access behavior"],
       "behaviorWorkflows": [".github/workflows/catalogue-utility-integration.yml"]
     },
