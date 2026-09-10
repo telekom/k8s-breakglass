@@ -1,10 +1,20 @@
+// SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+// SPDX-License-Identifier: Apache-2.0
+
 package debug
 
 import (
+	"context"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"testing"
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -22,9 +32,93 @@ func TestDebugSessionIdleDeadlineUsesServerActivity(t *testing.T) {
 }
 
 func TestStampDebugSessionRetentionPreservesConfiguredDuration(t *testing.T) {
-	status := &breakglassv1alpha1.DebugSessionStatus{}
-	stampDebugSessionRetention(status, &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: "2h"}})
+	status := &breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateTerminated}
+	status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: "2h"}}
+	breakglass.StampDebugSessionRetention(status, time.Now())
 	if status.RetainedUntil == nil || time.Until(status.RetainedUntil.Time) < time.Hour {
 		t.Fatalf("retention not stamped: %#v", status.RetainedUntil)
 	}
+}
+
+func TestActivityCannotReviveSessionAfterLiveReadCrossesIdleDeadline(t *testing.T) {
+	for _, delay := range []bool{false, true} {
+		t.Run(map[bool]string{false: "successful activity", true: "idle expires during read"}[delay], func(t *testing.T) {
+			deadline := time.Now().Add(2 * time.Second).Truncate(time.Second)
+			activity := metav1.NewTime(deadline.Add(-time.Minute))
+			expiry := metav1.NewTime(time.Now().Add(time.Hour))
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "activity", Namespace: "default", UID: "session-uid"},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expiry, LastActivity: &activity,
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m"}},
+				},
+			}
+			hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).WithStatusSubresource(session).Build()
+			require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), session))
+			reads := 0
+			reader := interceptor.NewClient(hub, interceptor.Funcs{Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+				reads++
+				if reads == 1 {
+					require.True(t, time.Now().Before(deadline))
+				}
+				if delay && reads == 1 {
+					time.Sleep(time.Until(deadline) + time.Millisecond)
+				}
+				return cl.Get(ctx, key, obj, opts...)
+			}})
+			if !delay {
+				outcome := session.DeepCopy()
+				outcome.Status.Message = "operation outcome persisted"
+				require.NoError(t, hub.Status().Update(context.Background(), outcome))
+				require.NotEqual(t, session.ResourceVersion, outcome.ResourceVersion)
+			}
+			controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), hub, nil, nil).WithAPIReader(reader)
+			controller.recordDebugSessionActivity(context.Background(), session)
+			var stored breakglassv1alpha1.DebugSession
+			require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+			if delay {
+				require.Zero(t, stored.Status.ActivityCount)
+				require.True(t, stored.Status.LastActivity.Equal(&activity))
+			} else {
+				require.EqualValues(t, 1, stored.Status.ActivityCount)
+				require.True(t, stored.Status.LastActivity.After(activity.Time))
+			}
+		})
+	}
+}
+
+func TestUnsetDebugRetentionKeepsLegacyCleanupFallback(t *testing.T) {
+	status := &breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateTerminated}
+	breakglass.StampDebugSessionRetention(status, time.Now())
+	require.Nil(t, status.RetainedUntil)
+	status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{}}
+	breakglass.StampDebugSessionRetention(status, time.Now())
+	require.Nil(t, status.RetainedUntil)
+}
+
+func TestActiveSessionWithoutOperationsExpiresFromStartAndRetainsEvidence(t *testing.T) {
+	started := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+	expiry := metav1.NewTime(time.Now().Add(time.Hour))
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "unused", Namespace: "default", UID: "unused-uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, StartsAt: &started, ExpiresAt: &expiry, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m", RetainFor: "2h"}}}}
+	hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).WithStatusSubresource(session).Build()
+	require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), session))
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+	_, err := controller.handleActive(context.Background(), session)
+	require.NoError(t, err)
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, stored.Status.State)
+	require.Contains(t, stored.Status.Message, "inactivity")
+	require.NotNil(t, stored.Status.RetainedUntil)
+	require.True(t, stored.Status.RetainedUntil.After(time.Now().Add(time.Hour)))
+}
+
+func TestBindingIdleAndRetentionPreserveTemplateLimits(t *testing.T) {
+	template := &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "5m", RetainFor: "24h"}
+	widened := mergeDebugSessionConstraints(template, &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "10m", RetainFor: "1h"})
+	require.Equal(t, "5m", widened.IdleTimeout)
+	require.Equal(t, "24h", widened.RetainFor)
+	narrowed := mergeDebugSessionConstraints(template, &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "2m", RetainFor: "48h"})
+	require.Equal(t, "2m", narrowed.IdleTimeout)
+	require.Equal(t, "48h", narrowed.RetainFor)
 }

@@ -362,7 +362,7 @@ func (h *KubectlDebugHandler) liveSessionForMutation(
 		return nil, kubectlDebugPolicyErrorf("debug session changed during mutation authorization")
 	}
 	if !live.DeletionTimestamp.IsZero() || live.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
-		live.Status.ExpiresAt == nil || !time.Now().UTC().Before(live.Status.ExpiresAt.Time) {
+		live.Status.ExpiresAt == nil || isDebugSessionExpired(live, time.Now().UTC()) {
 		return nil, kubectlDebugPolicyErrorf("debug session is no longer active")
 	}
 	identity := h.operationIdentity(user)
