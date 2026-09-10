@@ -2011,3 +2011,8 @@ Tracked-resource cleanup keeps the recorded resource UID and cleanup status afte
 an accepted deletion until the original resource is absent. Finalizers and
 failed verification reads keep cleanup pending; a same-name replacement is
 left untouched.
+
+If a tracked-resource create response is lost to a bounded timeout, the
+controller recovers only a live object carrying the session and operation
+markers, then records its returned UID. Canceled, permanent, and non-timeout
+transport errors do not trigger adoption.

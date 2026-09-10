@@ -262,7 +262,7 @@ func applyOwnedTrackedResource(ctx context.Context, target client.Client, obj cl
 }
 
 func recoverTrackedCreateResult(ctx context.Context, target client.Client, obj client.Object, session *breakglassv1alpha1.DebugSession, createErr error) error {
-	if !apierrors.IsAlreadyExists(createErr) && !apierrors.IsTimeout(createErr) && !apierrors.IsServerTimeout(createErr) {
+	if !apierrors.IsAlreadyExists(createErr) && !isAmbiguousCreateError(createErr) {
 		return fmt.Errorf("create tracked resource: %w", createErr)
 	}
 	if session == nil || session.UID == "" {

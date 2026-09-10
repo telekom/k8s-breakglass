@@ -6,7 +6,10 @@ package debug
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -486,6 +489,8 @@ func TestCreateRecoveryAfterAmbiguousCreate(t *testing.T) {
 	}{
 		{name: "request timeout recovers", createErr: apierrors.NewTimeoutError("create timed out", 1)},
 		{name: "server timeout recovers", createErr: apierrors.NewServerTimeout(schema.GroupResource{Group: "", Resource: "configmaps"}, "create", 1)},
+		{name: "wrapped context deadline recovers", createErr: fmt.Errorf("transport: %w", context.DeadlineExceeded)},
+		{name: "wrapped URL timeout recovers", createErr: &url.Error{Op: "POST", URL: "https://api.invalid", Err: &net.DNSError{Err: "timed out", IsTimeout: true}}},
 		{name: "foreign operation is rejected", createErr: apierrors.NewTimeoutError("create timed out", 1), foreign: true, wantErr: "different operation identity"},
 		{name: "read failure is retained", createErr: apierrors.NewTimeoutError("create timed out", 1), readError: true, wantErr: "read existing resource"},
 	} {
@@ -505,8 +510,9 @@ func TestCreateRecoveryAfterAmbiguousCreate(t *testing.T) {
 							return err
 						}
 					} else {
-						obj.SetUID("created")
-						if err := cl.Create(ctx, obj, opts...); err != nil {
+						created := obj.DeepCopyObject().(client.Object)
+						created.SetUID("created")
+						if err := cl.Create(ctx, created, opts...); err != nil {
 							return err
 						}
 					}
@@ -533,6 +539,40 @@ func TestCreateRecoveryAfterAmbiguousCreate(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.Equal(t, types.UID("created"), desired.UID)
+		})
+	}
+}
+
+func TestCreateRecoveryDoesNotAdoptNonAmbiguousOrCanceledResults(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		createErr error
+	}{
+		{name: "non-timeout transport error", createErr: &net.OpError{Op: "write", Net: "tcp", Err: errors.New("connection reset")}},
+		{name: "forbidden API error", createErr: apierrors.NewForbidden(corev1.Resource("configmaps"), "tracked", errors.New("denied"))},
+		{name: "canceled request", createErr: context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+			desired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "tracked", Namespace: "ns"}}
+			_, err := stampCreateOperation(desired, session)
+			require.NoError(t, err)
+			target := fake.NewClientBuilder().WithScheme(testScheme()).WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					created := obj.DeepCopyObject().(client.Object)
+					created.SetUID("created")
+					require.NoError(t, cl.Create(ctx, created, opts...))
+					return tc.createErr
+				},
+				Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+					t.Fatal("non-ambiguous create failures must not trigger recovery reads")
+					return nil
+				},
+			}).Build()
+
+			err = applyOwnedTrackedResource(context.Background(), target, desired, session)
+			require.ErrorIs(t, err, tc.createErr)
+			require.Empty(t, desired.UID)
 		})
 	}
 }
