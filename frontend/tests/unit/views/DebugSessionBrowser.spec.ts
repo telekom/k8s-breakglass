@@ -224,7 +224,7 @@ describe("DebugSessionBrowser", () => {
       const wrapper = mount(DebugSessionBrowser, {
         global: {
           plugins: [router],
-          provide: {[AuthKey as symbol]: mockAuth},
+          provide: { [AuthKey as symbol]: mockAuth },
           stubs: {
             PageHeader: true,
             LoadingState: true,
@@ -234,7 +234,7 @@ describe("DebugSessionBrowser", () => {
               inheritAttrs: false,
               template: '<button v-bind="$attrs"><slot /></button>',
             },
-            "scale-tag": {template: '<span v-bind="$attrs"><slot /></span>'},
+            "scale-tag": { template: '<span v-bind="$attrs"><slot /></span>' },
             "scale-text-field": true,
             "scale-checkbox": true,
             "scale-modal": true,
@@ -249,7 +249,7 @@ describe("DebugSessionBrowser", () => {
       expect(wrapper.find('[data-testid="debug-sessions-empty-state"]').exists()).toBe(true);
 
       const rejectedFilter = wrapper.find('[data-testid="state-filter-Rejected"]');
-      Object.defineProperty(rejectedFilter.element, "checked", {value: true, configurable: true});
+      Object.defineProperty(rejectedFilter.element, "checked", { value: true, configurable: true });
       await rejectedFilter.trigger("scale-change");
       await flushPromises();
 
