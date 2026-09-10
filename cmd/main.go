@@ -518,15 +518,21 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 	var artifactClose func() error
 	var artifactControllers []api.APIController
 	if cfg.Artifacts.Enabled {
-		if artifactDeps == nil {
-			return nil, fmt.Errorf("diagnostic artifacts are enabled but host lease/binding dependencies were not supplied")
+		var deps artifacthost.Dependencies
+		if artifactDeps != nil {
+			deps = *artifactDeps
 		}
-		deps := *artifactDeps
 		deps.Client = uncachedClient
 		deps.Reader = reconcilerMgr.GetAPIReader()
 		deps.Manager = reconcilerMgr
 		deps.DebugAPI = debugSessionAPICtrl
 		deps.Log = log
+		if deps.Lease == nil {
+			leaseService := debug.NewConnectionLeaseService(uncachedClient).
+				WithLiveReader(reconcilerMgr.GetAPIReader()).
+				WithNamespace(cliConfig.BreakglassNamespace)
+			deps.Lease = artifacthost.NewConnectionLeaseFence(reconcilerMgr.GetAPIReader(), leaseService)
+		}
 		components, buildErr := artifacthost.Build(ctx, cfg.Artifacts, cliConfig.BreakglassNamespace, deps)
 		if buildErr != nil {
 			return nil, fmt.Errorf("build diagnostic artifact host: %w", buildErr)

@@ -82,8 +82,8 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	if !artifactConfig.Enabled {
 		return nil, nil
 	}
-	if ctx == nil || deps.Client == nil || deps.Reader == nil || deps.Manager == nil || deps.DebugAPI == nil || deps.Lease == nil || deps.BindingSource == nil {
-		return nil, errors.New("enabled diagnostic artifacts require uncached clients, manager, debug API, lease fence, and binding source")
+	if ctx == nil || deps.Client == nil || deps.Reader == nil || deps.Manager == nil || deps.DebugAPI == nil || deps.Lease == nil {
+		return nil, errors.New("enabled diagnostic artifacts require uncached clients, manager, debug API, and lease fence")
 	}
 	if len(validation.IsDNS1123Label(namespace)) != 0 {
 		return nil, errors.New("artifact backend namespace is invalid")
@@ -109,6 +109,9 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	if err != nil {
 		return nil, err
 	}
+	if deps.BindingSource == nil {
+		deps.BindingSource = repositoryBindingSource{repository: repository}
+	}
 	store, closeStore, err := openStore(ctx, artifactConfig, deps.Client, namespace)
 	if err != nil {
 		return nil, err
@@ -132,6 +135,72 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 		return nil, err
 	}
 	return &Components{Service: service, Controller: reconciler, APIControllers: []rootapi.APIController{uploadController, readController}, Close: closeStore}, nil
+}
+
+// repositoryBindingSource reads the immutable session and target binding from
+// the administrator-owned artifact record. The live lease fence is applied
+// separately for every operation; this source never authorizes from a cache.
+type repositoryBindingSource struct {
+	repository backend.Repository
+}
+
+func (source repositoryBindingSource) ResolveArtifactBinding(ctx context.Context, namespace, sessionName, artifactID string) (backend.SessionBinding, error) {
+	if source.repository == nil || namespace == "" || sessionName == "" || artifactID == "" {
+		return backend.SessionBinding{}, backend.ErrForbidden
+	}
+	record, err := source.repository.Get(ctx, namespace, sessionName, artifactID)
+	if err != nil || record.Namespace != namespace || record.SessionName != sessionName || record.SessionUID == "" || record.TargetClusterUID == "" || record.TargetIdentityDigest == "" || record.OperationEpoch == 0 {
+		return backend.SessionBinding{}, backend.ErrForbidden
+	}
+	return backend.SessionBinding{
+		Namespace:            record.Namespace,
+		Name:                 record.SessionName,
+		UID:                  record.SessionUID,
+		TargetClusterUID:     record.TargetClusterUID,
+		TargetIdentityDigest: record.TargetIdentityDigest,
+		OperationEpoch:       record.OperationEpoch,
+	}, nil
+}
+
+// NewConnectionLeaseFence adapts the durable DebugSession connection lease to
+// the provider-neutral artifact authorization contract. The adapter checks
+// the session's persisted lease identity and then performs the lease's live
+// UID, holder, target, epoch, and expiry validation.
+func NewConnectionLeaseFence(reader ctrlclient.Reader, leases *debug.ConnectionLeaseService) LeaseFence {
+	return &connectionLeaseFence{reader: reader, leases: leases}
+}
+
+type connectionLeaseFence struct {
+	reader ctrlclient.Reader
+	leases *debug.ConnectionLeaseService
+}
+
+func (fence *connectionLeaseFence) AuthorizeArtifact(ctx context.Context, binding backend.SessionBinding) error {
+	if fence == nil || fence.reader == nil || fence.leases == nil || binding.Namespace == "" || binding.Name == "" || binding.UID == "" || binding.TargetClusterUID == "" || binding.OperationEpoch == 0 || binding.OperationEpoch > uint64(1<<63-1) {
+		return backend.ErrForbidden
+	}
+	var session breakglassv1alpha1.DebugSession
+	if err := fence.reader.Get(ctx, types.NamespacedName{Namespace: binding.Namespace, Name: binding.Name}, &session); err != nil {
+		return backend.ErrForbidden
+	}
+	lease := session.Status.ConnectionLease
+	if lease == nil || string(session.UID) != binding.UID || string(lease.TargetUID) != binding.TargetClusterUID || lease.Epoch != int64(binding.OperationEpoch) || lease.ExpiresAt.IsZero() {
+		return backend.ErrForbidden
+	}
+	ref := debug.ConnectionLeaseRef{
+		Namespace:     lease.Namespace,
+		Name:          lease.Name,
+		UID:           lease.UID,
+		HolderUID:     lease.HolderUID,
+		TargetUID:     lease.TargetUID,
+		ProfileDigest: lease.ProfileDigest,
+		Epoch:         lease.Epoch,
+		ExpiresAt:     lease.ExpiresAt.Time,
+	}
+	if err := fence.leases.Validate(ctx, ref, -1); err != nil {
+		return backend.ErrForbidden
+	}
+	return nil
 }
 
 func controllerOrigin(raw string) (string, error) {

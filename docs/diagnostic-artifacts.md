@@ -56,7 +56,16 @@ limit, and a token Secret name. Secret names are resolved only in the
 configured Breakglass namespace using exact uncached `get` calls. S3 uses the
 fixed `accessKeyID`, `secretAccessKey`, and optional `sessionToken` keys; local
 storage must satisfy its one-replica RWO/Recreate contract and is never an
-automatic fallback. The host also requires the live lease binding source, so
-an enabled deployment fails closed when the durable lease fence is absent.
+automatic fallback. The host reads the live session's persisted connection
+lease with an uncached API reader and validates lease UID, holder, target UID,
+epoch, and expiry before each artifact operation. The binding source reads the
+immutable artifact record in the configured backend namespace, so request
+parameters cannot select a different target or session.
+
+Artifact creation must commit the one-time upload JTI commitment before the
+collector Secret is issued. The creation route must provide that commitment
+through a controller-owned seam rather than asking the collector or API caller
+to expose the raw token; replacing the current random JTI issuance with that
+durable handoff is still required before enabling the feature.
 
 Provider object keys are 64 lowercase hexadecimal SHA-256 characters derived from the immutable artifact resource UID with a domain separator. Public artifact IDs remain unchanged. Same-named artifacts with different resource UIDs occupy separate provider objects, including during upload recovery and cleanup.
