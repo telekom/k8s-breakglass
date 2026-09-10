@@ -7,9 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	coordinationv1 "k8s.io/api/coordination/v1"
 	"strconv"
-	"time"
+
+	coordinationv1 "k8s.io/api/coordination/v1"
 
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -83,8 +83,4 @@ func (c *terminalRecordingLeaseConnection) Close(ctx context.Context) error {
 	err := c.service.Revoke(ctx, c.ref)
 	c.service = nil
 	return err
-}
-
-func (c *terminalRecordingLeaseConnection) expiresBefore(now time.Time) bool {
-	return c == nil || !now.Before(c.binding.ExpiresAt)
 }
