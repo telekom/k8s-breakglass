@@ -2014,5 +2014,5 @@ left untouched.
 
 If a tracked-resource create response is lost to a bounded timeout, the
 controller recovers only a live object carrying the session and operation
-markers, then records its returned UID. Canceled, permanent, and non-timeout
+markers and matching the requested content, then records its returned UID. Canceled, permanent, and non-timeout
 transport errors do not trigger adoption.

@@ -15,8 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Recover tracked resources after bounded create timeouts when immutable
-  session and operation markers verify the persisted object.
+- Recover tracked resources after bounded create timeouts when session and
+  operation markers and requested content match the persisted object.
 
 - Preserve numeric dotted IP addresses and image versions when redacting
   JWT-shaped diagnostic stream values.
