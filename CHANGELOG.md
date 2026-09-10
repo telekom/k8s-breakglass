@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Repeat debug-session participant issuer and target Pod UID checks at the final
+  authorization fence, failing closed when either live identity has changed.
+
 - Apply provisional quota admission checks in the shared authorization and
   token validity helpers, and preserve concurrently recorded same-name copied
   pod replacements by merging on the persisted UID with legacy fallback.

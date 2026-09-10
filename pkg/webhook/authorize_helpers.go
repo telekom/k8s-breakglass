@@ -947,7 +947,7 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 		if s.sar.Spec.ResourceAttributes != nil {
 			ra = s.sar.Spec.ResourceAttributes
 		}
-		if ok, reason := wc.liveDebugSessionAccess(s.ctx, username, s.clusterName, ra,
+		if ok, reason := wc.liveDebugSessionAccess(s.ctx, username, s.issuer, s.clusterName, ra,
 			s.debugSessionNamespace, s.debugSessionName, s.debugSessionUID); !ok {
 			s.allowed = false
 			s.allowSource = ""

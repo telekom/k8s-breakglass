@@ -505,7 +505,7 @@ func (wc *WebhookController) listLiveDebugSessionsForAuthorization(ctx context.C
 // liveDebugSessionAccess is the final authorization fence for a debug-session
 // allow. It reads the exact candidate through the uncached reader and repeats
 // every identity/state/pod/participant/lease check at one decision instant.
-func (wc *WebhookController) liveDebugSessionAccess(ctx context.Context, username, clusterName string, ra *authorizationv1.ResourceAttributes, namespace, name, uid string) (bool, string) {
+func (wc *WebhookController) liveDebugSessionAccess(ctx context.Context, username, issuer, clusterName string, ra *authorizationv1.ResourceAttributes, namespace, name, uid string) (bool, string) {
 	if wc.sesManager == nil || ra == nil || namespace == "" || name == "" {
 		return false, ""
 	}
@@ -530,17 +530,29 @@ func (wc *WebhookController) liveDebugSessionAccess(ctx context.Context, usernam
 		return false, ""
 	}
 	podAllowed := false
+	var allowedPodUID string
 	for _, pod := range ds.Status.AllowedPods {
-		if pod.Namespace == ra.Namespace && pod.Name == ra.Name {
+		if pod.Namespace == ra.Namespace && pod.Name == ra.Name && pod.UID != "" {
 			podAllowed = true
+			allowedPodUID = pod.UID
 			break
 		}
 	}
 	if !podAllowed || !ds.Status.AllowedPodOperations.IsOperationAllowed(ra.Subresource) {
 		return false, ""
 	}
+	targetPod, err := wc.fetchPodFromCluster(ctx, clusterName, ra.Namespace, ra.Name)
+	if err != nil || targetPod == nil || targetPod.UID == "" || string(targetPod.UID) != allowedPodUID {
+		return false, ""
+	}
+	reader := client.Reader(wc.sesManager.Reader())
 	for _, participant := range ds.Status.Participants {
-		if participant.User == username && participant.LeftAt == nil && canDebugSessionParticipantAccessPodOperations(participant.Role) {
+		if participant.User == username && participant.LeftAt == nil &&
+			debugParticipantIssuerMatches(ctx, reader, participant, issuer) &&
+			canDebugSessionParticipantAccessPodOperations(participant.Role) {
+			if !time.Now().Before(ds.Status.ExpiresAt.Time) {
+				return false, ""
+			}
 			return true, fmt.Sprintf("Allowed by debug session %s (role: %s, operation: %s)", ds.Name, participant.Role, ra.Subresource)
 		}
 	}
