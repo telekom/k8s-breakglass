@@ -837,7 +837,10 @@ func (m *Manager) DebugSessionStarted(ctx context.Context, sessionName, namespac
 			Namespace: namespace,
 			Cluster:   cluster,
 		},
-		Details:        map[string]interface{}{"templateName": templateName},
+		Details: map[string]interface{}{
+			"cluster":      cluster,
+			"templateName": templateName,
+		},
 		RequestContext: &RequestContext{DebugSessionName: sessionName},
 	})
 }

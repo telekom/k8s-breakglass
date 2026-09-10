@@ -826,6 +826,7 @@ func TestManagerHelperMethods(t *testing.T) {
 	}
 	require.NotNil(t, started)
 	assert.Equal(t, "debug-ns", started.Target.Namespace)
+	assert.Equal(t, "c1", started.Details["cluster"])
 	mu.Unlock()
 }
 

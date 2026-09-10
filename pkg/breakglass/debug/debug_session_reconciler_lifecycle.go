@@ -476,22 +476,19 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	// attempt actually retired.
 	cleanupBaseline := ds.Status.DeepCopy()
 	wasCleanupFailed := cleanupConditionFailed(ds)
-	finishCleanup := func(cleanupErr error) error {
-		setCleanupCondition(ds, cleanupErr)
+	finishCleanup := func(operationErr error) error {
+		setCleanupCondition(ds, operationErr)
 		patchErr := c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline)
-		if patchErr != nil {
-			cleanupErr = errors.Join(cleanupErr, patchErr)
-		}
 		if c.shouldEmitAudit(ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
-				if cleanupErr != nil {
+				if operationErr != nil {
 					auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, cleanupResidualIdentities(ds))
 				} else if wasCleanupFailed && patchErr == nil && !cleanupConditionFailed(ds) {
 					auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
 				}
 			}
 		}
-		return cleanupErr
+		return errors.Join(operationErr, patchErr)
 	}
 
 	if c.ccProvider == nil {
