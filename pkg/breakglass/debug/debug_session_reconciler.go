@@ -230,7 +230,7 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		if ds.Status.ExpiresAt == nil || ds.Status.ExpiresAt.IsZero() {
 			return c.terminalizeActiveSessionWithoutExpiry(ctx, ds)
 		}
-		if !time.Now().Before(ds.Status.ExpiresAt.Time) {
+		if isDebugSessionExpired(ds, time.Now()) {
 			return c.handleActive(ctx, ds)
 		}
 	}
@@ -239,6 +239,9 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 			if errors.Is(err, quotas.ErrFull) {
 				if ds.Status.State == breakglassv1alpha1.DebugSessionStateActive && ds.Status.ExpiresAt != nil && !ds.Status.ExpiresAt.IsZero() {
 					delay := time.Until(ds.Status.ExpiresAt.Time)
+					if idle, ok := debugSessionIdleDeadline(ds); ok && time.Until(idle) < delay {
+						delay = time.Until(idle)
+					}
 					if delay > 0 {
 						return ctrl.Result{RequeueAfter: delay}, nil
 					}
@@ -438,22 +441,6 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 	if ds.Status.ExpiresAt == nil || ds.Status.ExpiresAt.IsZero() {
 		return c.terminalizeActiveSessionWithoutExpiry(ctx, ds)
 	}
-	if idle, ok := debugSessionIdleDeadline(ds); ok {
-		if !time.Now().UTC().Before(idle) {
-			if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
-				status.State = breakglassv1alpha1.DebugSessionStateExpired
-				status.Message = "Session expired due to inactivity"
-				stampDebugSessionRetention(status, ds.Status.ResolvedTemplate)
-			}); err != nil {
-				if apierrors.IsConflict(err) {
-					return ctrl.Result{}, nil
-				}
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
-		}
-	}
-
 	// Resolve any target mutation whose status outcome was interrupted by a
 	// controller restart or an ambiguous target API response before handling
 	// expiry. Prepared intent is durable in the session status, so this read-only
@@ -464,31 +451,14 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		log.Warnw("Failed to recover prepared kubectl-debug operations", "error", err)
 	}
 
-	// Emit expiring-soon status message when within grace period
-	if ds.Status.ExpiresAt != nil && ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry != "" {
-		grace, err := breakglassv1alpha1.ParseDuration(ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry)
-		if err == nil {
-			until := time.Until(ds.Status.ExpiresAt.Time)
-			if until > 0 && until <= grace && ds.Status.Message != "Session expiring soon" {
-				if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
-					status.Message = "Session expiring soon"
-				}); err != nil {
-					if apierrors.IsConflict(err) {
-						log.Debugw("skipping expiring-soon status update after concurrent debug session change", "error", err)
-						return ctrl.Result{}, nil
-					}
-					return ctrl.Result{}, err
-				}
-			}
-		}
-	}
-
 	// Check expiration
-	if ds.Status.ExpiresAt != nil && time.Now().After(ds.Status.ExpiresAt.Time) {
+	if isDebugSessionExpired(ds, time.Now()) {
 		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 			status.State = breakglassv1alpha1.DebugSessionStateExpired
 			status.Message = "Session expired"
-			stampDebugSessionRetention(status, ds.Status.ResolvedTemplate)
+			if breakglass.DebugSessionIdleExpired(ds, time.Now()) && time.Now().Before(ds.Status.ExpiresAt.Time) {
+				status.Message = "Session expired due to inactivity"
+			}
 		}); err != nil {
 			if apierrors.IsConflict(err) {
 				log.Debugw("skipping expiration status update after concurrent debug session change", "error", err)
@@ -511,6 +481,25 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
 
+	// Emit expiring-soon status message when within grace period
+	if ds.Status.ExpiresAt != nil && ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry != "" {
+		grace, err := breakglassv1alpha1.ParseDuration(ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry)
+		if err == nil {
+			until := time.Until(ds.Status.ExpiresAt.Time)
+			if until > 0 && until <= grace && ds.Status.Message != "Session expiring soon" {
+				if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+					status.Message = "Session expiring soon"
+				}); err != nil {
+					if apierrors.IsConflict(err) {
+						log.Debugw("skipping expiring-soon status update after concurrent debug session change", "error", err)
+						return ctrl.Result{}, nil
+					}
+					return ctrl.Result{}, err
+				}
+			}
+		}
+	}
+
 	// Renewal commits session status before touching the spoke Job. Reconcile
 	// from that durable expiry so a target failure or a lost API response
 	// converges without counting the renewal again.
@@ -525,9 +514,13 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 
 	// Calculate next requeue based on expiration
 	if ds.Status.ExpiresAt != nil {
-		until := time.Until(ds.Status.ExpiresAt.Time)
-		if idle, ok := debugSessionIdleDeadline(ds); ok && idle.Sub(time.Now()) > 0 && idle.Sub(time.Now()) < until {
-			until = idle.Sub(time.Now())
+		now := time.Now()
+		until := ds.Status.ExpiresAt.Sub(now)
+		if idle, ok := debugSessionIdleDeadline(ds); ok && idle.Sub(now) < until {
+			until = idle.Sub(now)
+		}
+		if until <= 0 {
+			return ctrl.Result{RequeueAfter: time.Millisecond}, nil
 		}
 		if until > 0 && until < DefaultDebugSessionRequeue {
 			return ctrl.Result{RequeueAfter: until + time.Second}, nil
@@ -538,35 +531,7 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 }
 
 func debugSessionIdleDeadline(ds *breakglassv1alpha1.DebugSession) (time.Time, bool) {
-	if ds == nil || ds.Status.ResolvedTemplate == nil || ds.Status.ResolvedTemplate.Constraints == nil || ds.Status.ResolvedTemplate.Constraints.IdleTimeout == "" {
-		return time.Time{}, false
-	}
-	last := time.Now().UTC()
-	if ds.Status.LastActivity != nil && !ds.Status.LastActivity.IsZero() {
-		last = ds.Status.LastActivity.Time
-	}
-	if ds.Status.LastActivity == nil && ds.Status.StartsAt != nil && !ds.Status.StartsAt.IsZero() {
-		last = ds.Status.StartsAt.Time
-	}
-	d, err := breakglassv1alpha1.ParseDuration(ds.Status.ResolvedTemplate.Constraints.IdleTimeout)
-	if err != nil || d <= 0 {
-		return time.Now().UTC(), true
-	}
-	return last.Add(d), true
-}
-
-func stampDebugSessionRetention(status *breakglassv1alpha1.DebugSessionStatus, template *breakglassv1alpha1.DebugSessionTemplateSpec) {
-	if status == nil || status.RetainedUntil != nil {
-		return
-	}
-	d := 30 * 24 * time.Hour
-	if template != nil && template.Constraints != nil && template.Constraints.RetainFor != "" {
-		if parsed, err := breakglassv1alpha1.ParseDuration(template.Constraints.RetainFor); err == nil && parsed > 0 {
-			d = parsed
-		}
-	}
-	retained := metav1.NewTime(time.Now().UTC().Add(d))
-	status.RetainedUntil = &retained
+	return breakglass.DebugSessionIdleDeadline(ds)
 }
 
 func (c *DebugSessionController) terminalizeActiveSessionWithoutExpiry(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {

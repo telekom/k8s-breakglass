@@ -27,6 +27,8 @@ import (
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func (c *DebugSessionAPIController) patchDebugSessionStatusWithOptimisticLock(
@@ -41,24 +43,33 @@ func (c *DebugSessionAPIController) patchDebugSessionStatusWithOptimisticLock(
 }
 
 func (c *DebugSessionAPIController) recordDebugSessionActivity(ctx context.Context, session *breakglassv1alpha1.DebugSession) {
-	if session == nil {
+	if session == nil || session.UID == "" {
 		return
 	}
-	now := metav1.Now()
-	if isDebugSessionExpired(session, now.Time) {
-		return
-	}
-	if err := c.patchDebugSessionStatusWithOptimisticLock(ctx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
-		candidate := session.DeepCopy()
-		candidate.Status = *status
-		if status.State != breakglassv1alpha1.DebugSessionStateActive || isDebugSessionExpired(candidate, now.Time) {
-			return
+	// Target mutation status writes advance the resource version. Re-read the
+	// same session UID instead of treating the API's pre-operation object as current.
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var live breakglassv1alpha1.DebugSession
+		if err := c.reader().Get(ctx, ctrlclient.ObjectKeyFromObject(session), &live); err != nil {
+			return fmt.Errorf("read session activity: %w", err)
 		}
-		if status.LastActivity == nil || status.LastActivity.Time.Before(now.Time) {
-			status.LastActivity = &now
+		if live.UID != session.UID || !live.DeletionTimestamp.IsZero() {
+			return nil
 		}
-		status.ActivityCount++
-	}); err != nil {
+		return c.patchDebugSessionStatusWithOptimisticLock(ctx, &live, func(status *breakglassv1alpha1.DebugSessionStatus) {
+			now := metav1.Now()
+			candidate := live.DeepCopy()
+			candidate.Status = *status
+			if status.State != breakglassv1alpha1.DebugSessionStateActive || isDebugSessionExpired(candidate, now.Time) {
+				return
+			}
+			if status.LastActivity == nil || status.LastActivity.Time.Before(now.Time) {
+				status.LastActivity = &now
+			}
+			status.ActivityCount++
+		})
+	})
+	if err != nil {
 		c.log.Warnw("successful debug operation was not recorded as activity", "session", session.Name, "error", err)
 	}
 }

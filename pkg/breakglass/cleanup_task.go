@@ -16,6 +16,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // ActivityCleaner is the interface for pruning orphaned activity tracker entries.
@@ -347,10 +348,11 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 				if now.Before(ds.Status.RetainedUntil.Time) {
 					continue
 				}
-				if err := routine.Manager.Delete(ctx, &ds); err != nil {
+				if err := routine.Manager.Delete(ctx, &ds, client.Preconditions{UID: &ds.UID, ResourceVersion: &ds.ResourceVersion}); err != nil {
 					routine.Log.Errorw("error deleting debug session past retention", "error", err)
 					continue
 				}
+				deletedCount++
 				continue
 			}
 			retentionStart := ds.CreationTimestamp.Time

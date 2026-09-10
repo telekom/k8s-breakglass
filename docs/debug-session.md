@@ -2059,3 +2059,9 @@ If a tracked-resource create response is lost to a bounded timeout, the
 controller recovers only a live object carrying the session and operation
 markers and matching the requested content, then records its returned UID. Canceled, permanent, and non-timeout
 transport errors do not trigger adoption.
+
+### Inactivity and terminal evidence retention
+
+Templates may set `constraints.idleTimeout` to expire an Active session after no successful server-observed debug operation. The initial baseline is the activation `startsAt`; successful API operations advance `lastActivity` and `activityCount`. This records completed server operations, not every byte of a long-running terminal stream. Idle expiry cannot extend the hard session expiry. API actions, kubectl mutations, and the final authorization webhook response reject an elapsed idle deadline, including when it passes during target lookup. Missing baseline or invalid configured idle duration fails closed.
+
+`constraints.retainFor` sets a durable `retainedUntil` when the session becomes terminal. This retains session evidence; it does not delay revocation or resource cleanup. With no explicit retention setting, the existing cleanup policy remains unchanged: `DEBUG_SESSION_RETENTION_PERIOD`, default seven days, using the legacy expiry/creation baseline. A binding may shorten the template's idle timeout or lengthen its minimum evidence-retention period. Existing sessions without idle configuration retain their prior behavior.
