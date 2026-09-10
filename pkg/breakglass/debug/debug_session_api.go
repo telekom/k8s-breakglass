@@ -31,7 +31,7 @@ import (
 	"github.com/gin-gonic/gin"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
-	artifactstorage "github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
+	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/jsonutil"
@@ -46,6 +46,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -79,7 +80,7 @@ type DebugSessionAPIController struct {
 	brandingName            string
 	baseURL                 string
 	recordingStreams        atomic.Int32
-	recordingStore          artifactstorage.Store
+	recordingArtifacts      *backend.Service
 	recordingConnections    TerminalRecordingConnectionProvider
 	terminalTargetResolver  terminalTargetResolver
 	terminalExecutorFactory terminalExecutorFactory
@@ -136,6 +137,9 @@ func (c *DebugSessionAPIController) WithClusterClients(provider ClientProviderIn
 // If not set, the controller falls back to the cached client for reads.
 func (c *DebugSessionAPIController) WithAPIReader(reader ctrlclient.Reader) *DebugSessionAPIController {
 	c.apiReader = reader
+	if c.connectionLeases != nil {
+		c.connectionLeases.WithLiveReader(reader)
+	}
 	return c
 }
 
@@ -174,6 +178,7 @@ func (c *DebugSessionAPIController) Register(rg *gin.RouterGroup) error {
 	rg.POST("/:name/reject", breakglass.InstrumentedHandler("handleRejectDebugSession", c.handleRejectDebugSession))
 
 	// Kubectl-debug mode endpoints
+	rg.GET("/:name/terminal", breakglass.InstrumentedHandler("handleListTerminalRecordings", c.handleListTerminalRecordings))
 	rg.POST("/:name/terminal", breakglass.InstrumentedHandler("handleTerminalRecording", c.handleTerminalRecording))
 	rg.GET("/:name/terminal/:id", breakglass.InstrumentedHandler("handleReplayTerminalRecording", c.handleReplayTerminalRecording))
 	rg.POST("/:name/injectEphemeralContainer", breakglass.InstrumentedHandler("handleInjectEphemeralContainer", c.handleInjectEphemeralContainer))
@@ -1715,6 +1720,45 @@ func (c *DebugSessionAPIController) canReadDebugSession(ctx context.Context, ses
 	return c.newDebugSessionReadAuthorizer(identity).canRead(ctx, session)
 }
 
+// ArtifactReadBinding authenticates a diagnostic-artifact reader against the
+// same live identity and session rules as the debug-session API. It deliberately
+// carries only the session identity; target and lease fences are supplied by
+// the artifact host's independently configured binding source.
+type ArtifactReadBinding struct {
+	Namespace string
+	Name      string
+	UID       types.UID
+}
+
+// AuthorizeArtifactRead applies request identity, exact session lookup, live
+// state, expiry, and debug-session read authorization for artifact reads.
+func (c *DebugSessionAPIController) AuthorizeArtifactRead(ctx *gin.Context, namespace, name string) (ArtifactReadBinding, error) {
+	if ctx == nil || ctx.Request == nil || namespace == "" || name == "" {
+		return ArtifactReadBinding{}, errors.New("artifact session binding is invalid")
+	}
+	identity, ok := debugSessionRequestIdentity(ctx)
+	if !ok {
+		return ArtifactReadBinding{}, errors.New("artifact session reader is unauthenticated")
+	}
+	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
+	defer cancel()
+	session, err := c.getDebugSessionByName(apiCtx, name, namespace)
+	if err != nil {
+		return ArtifactReadBinding{}, fmt.Errorf("resolve artifact session: %w", err)
+	}
+	if session.Namespace != namespace || session.Name != name || session.Status.State != breakglassv1alpha1.DebugSessionStateActive || session.Status.ExpiresAt == nil || !time.Now().Before(session.Status.ExpiresAt.Time) {
+		return ArtifactReadBinding{}, errors.New("artifact session is not active")
+	}
+	allowed, err := c.canReadDebugSession(apiCtx, session, identity)
+	if err != nil {
+		return ArtifactReadBinding{}, fmt.Errorf("authorize artifact session: %w", err)
+	}
+	if !allowed {
+		return ArtifactReadBinding{}, errors.New("artifact session read is forbidden")
+	}
+	return ArtifactReadBinding{Namespace: session.Namespace, Name: session.Name, UID: session.UID}, nil
+}
+
 func (a *debugSessionReadAuthorizer) canRead(ctx context.Context, session *breakglassv1alpha1.DebugSession) (bool, error) {
 	identity := a.identity
 	if debugSessionIdentityMatchesProvider(identity, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
@@ -1897,4 +1941,22 @@ func stringInSlice(value string, values []string) bool {
 		}
 	}
 	return false
+}
+
+// AuthorizeArtifactCollection returns the exact active session only to a
+// participant who may operate its debug resources. Read-only approvers do not
+// gain permission to start collectors.
+func (c *DebugSessionAPIController) AuthorizeArtifactCollection(ctx *gin.Context, namespace, name string) (*breakglassv1alpha1.DebugSession, error) {
+	identity, ok := debugSessionRequestIdentity(ctx)
+	if !ok {
+		return nil, errors.New("artifact requester is unauthenticated")
+	}
+	session, err := c.getDebugSessionByName(ctx.Request.Context(), name, namespace)
+	if err != nil {
+		return nil, err
+	}
+	if session.UID == "" || session.Status.ExpiresAt == nil || session.Annotations[quotas.AdmissionAnnotation] == quotas.Pending || !session.DeletionTimestamp.IsZero() || session.Status.State != breakglassv1alpha1.DebugSessionStateActive || isDebugSessionExpired(session, time.Now()) || !c.canUserOperateDebugResources(session, identity) {
+		return nil, errors.New("artifact collection is forbidden")
+	}
+	return session, nil
 }

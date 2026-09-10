@@ -1154,14 +1154,6 @@ func TestKubectlDebugStatusFrom(t *testing.T) {
 					CreatedAt:         now,
 				},
 			},
-			TerminalRecordings: []breakglassv1alpha1.TerminalRecordingRef{
-				{
-					ID: "recording-id", Namespace: "app-ns", PodName: "target-pod", PodUID: "pod-uid",
-					ContainerName: "shell", Operation: "exec", SHA256: "sha256", Size: 42,
-					Backend: "local-v1", BackendInstanceID: "instance", RuntimeBindingDigest: "binding",
-					VersionID: "version", StartedAt: now, CompletedAt: now, ExpiresAt: now,
-				},
-			},
 		}
 
 		result := KubectlDebugStatusFrom(status)
@@ -1169,12 +1161,7 @@ func TestKubectlDebugStatusFrom(t *testing.T) {
 		require.NotNil(t, result)
 		require.Len(t, result.EphemeralContainersInjected, 1)
 		require.Len(t, result.CopiedPods, 1)
-		require.Len(t, result.TerminalRecordings, 1)
 		assert.Equal(t, "copy-uid", *result.CopiedPods[0].UID)
-		assert.Equal(t, "recording-id", *result.TerminalRecordings[0].ID)
-		assert.Equal(t, "pod-uid", *result.TerminalRecordings[0].PodUID)
-		assert.Equal(t, int64(42), *result.TerminalRecordings[0].Size)
-		assert.Equal(t, "version", *result.TerminalRecordings[0].VersionID)
 	})
 }
 

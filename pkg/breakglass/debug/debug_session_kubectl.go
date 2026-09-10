@@ -41,11 +41,18 @@ import (
 
 // KubectlDebugHandler handles kubectl-debug mode operations
 type KubectlDebugHandler struct {
-	identity   debugSessionReadIdentity
-	client     ctrlclient.Client
-	reader     ctrlclient.Reader
-	apiReader  ctrlclient.Reader
-	ccProvider ClientProviderInterface
+	identity                 debugSessionReadIdentity
+	client                   ctrlclient.Client
+	reader                   ctrlclient.Reader
+	apiReader                ctrlclient.Reader
+	ccProvider               ClientProviderInterface
+	connectionLeaseValidator func(context.Context, *breakglassv1alpha1.DebugSession) error
+}
+
+// WithConnectionLeaseValidator installs the controller-owned access fence.
+func (h *KubectlDebugHandler) WithConnectionLeaseValidator(validate func(context.Context, *breakglassv1alpha1.DebugSession) error) *KubectlDebugHandler {
+	h.connectionLeaseValidator = validate
+	return h
 }
 
 // withIdentity binds live mutation checks to the authenticated principal.
@@ -378,6 +385,11 @@ func (h *KubectlDebugHandler) liveSessionForMutation(
 		}
 		if !allowed {
 			return nil, kubectlDebugPolicyErrorf("user is not an active debug-session participant")
+		}
+	}
+	if h.connectionLeaseValidator != nil {
+		if err := h.connectionLeaseValidator(ctx, live); err != nil {
+			return nil, kubectlDebugPolicyErrorf("connection lease is no longer valid: %w", err)
 		}
 	}
 	return live, nil
@@ -1278,16 +1290,9 @@ func (h *KubectlDebugHandler) CleanupKubectlDebugResources(ctx context.Context, 
 	})
 }
 
-// clearKubectlDebugResources removes spoke-resource inventory while retaining
-// durable terminal-recording references for their independent retention cycle.
+// clearKubectlDebugResources removes completed spoke inventory. Artifact retention is independent.
 func clearKubectlDebugResources(status *breakglassv1alpha1.DebugSessionStatus) {
-	if status.KubectlDebugStatus == nil || len(status.KubectlDebugStatus.TerminalRecordings) == 0 {
-		status.KubectlDebugStatus = nil
-		return
-	}
-	status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{
-		TerminalRecordings: append([]breakglassv1alpha1.TerminalRecordingRef(nil), status.KubectlDebugStatus.TerminalRecordings...),
-	}
+	status.KubectlDebugStatus = nil
 }
 
 // Helper functions

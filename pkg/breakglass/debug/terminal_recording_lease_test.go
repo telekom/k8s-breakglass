@@ -26,6 +26,7 @@ func TestTerminalLeaseRequiresPublishedGenerationAndConfiguredNamespace(t *testi
 			hub := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
 				Create: func(ctx context.Context, cl ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.CreateOption) error {
 					creates++
+					obj.SetUID("created-lease-uid")
 					require.IsType(t, &coordinationv1.Lease{}, obj)
 					require.Equal(t, "execution", obj.GetNamespace())
 					return cl.Create(ctx, obj, opts...)

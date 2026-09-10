@@ -18,12 +18,13 @@ import (
 )
 
 const (
-	connectionLeaseEpochAnnotation      = "breakglass.telekom.com/connection-epoch"
-	connectionLeaseTargetUIDAnnotation  = "breakglass.telekom.com/connection-target-uid"
-	connectionLeaseProfileAnnotation    = "breakglass.telekom.com/connection-profile-digest"
-	connectionLeaseSessionAnnotation    = "breakglass.telekom.com/connection-session-uid"
-	connectionLeaseGenerationAnnotation = "breakglass.telekom.com/connection-generation"
-	connectionLeaseSecretUIDAnnotation  = "breakglass.telekom.com/connection-secret-uid"
+	connectionLeaseEpochAnnotation             = "breakglass.telekom.com/connection-epoch"
+	connectionLeaseTargetUIDAnnotation         = "breakglass.telekom.com/connection-target-uid"
+	connectionLeaseProfileAnnotation           = "breakglass.telekom.com/connection-profile-digest"
+	connectionLeaseSessionAnnotation           = "breakglass.telekom.com/connection-session-uid"
+	connectionLeaseGenerationAnnotation        = "breakglass.telekom.com/connection-generation"
+	connectionLeasePendingGenerationAnnotation = "breakglass.telekom.com/connection-pending-generation"
+	connectionLeaseSecretUIDAnnotation         = "breakglass.telekom.com/connection-secret-uid"
 )
 
 // ConnectionLeaseProof identifies the immutable authorization decision used to
@@ -77,11 +78,8 @@ func (s *ConnectionLeaseService) StageGeneration(ctx context.Context, ref Connec
 	if generation < 1 {
 		return ConnectionGeneration{}, fmt.Errorf("connection generation must be positive")
 	}
-	lease := &coordinationv1.Lease{}
-	if err := s.client.Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, lease); err != nil {
-		return ConnectionGeneration{}, fmt.Errorf("read connection lease for staging: %w", err)
-	}
-	if err := s.Validate(ctx, ref, -1); err != nil {
+	lease, err := s.validatedLease(ctx, ref)
+	if err != nil {
 		return ConnectionGeneration{}, err
 	}
 	current, err := strconv.ParseInt(lease.Annotations[connectionLeaseGenerationAnnotation], 10, 64)
@@ -92,7 +90,7 @@ func (s *ConnectionLeaseService) StageGeneration(ctx context.Context, ref Connec
 		return ConnectionGeneration{}, fmt.Errorf("connection generation is not monotonic")
 	}
 	lease = lease.DeepCopy()
-	lease.Annotations[connectionLeaseGenerationAnnotation] = strconv.FormatInt(generation, 10)
+	lease.Annotations[connectionLeasePendingGenerationAnnotation] = strconv.FormatInt(generation, 10)
 	if err := s.client.Update(ctx, lease); err != nil {
 		return ConnectionGeneration{}, fmt.Errorf("stage connection generation: %w", err)
 	}
@@ -107,7 +105,7 @@ func (s *ConnectionLeaseService) PublishReady(ctx context.Context, staged Connec
 	if ready == nil {
 		return ConnectionGeneration{}, fmt.Errorf("connection generation readiness callback is required")
 	}
-	if err := s.Validate(ctx, staged.Lease, staged.Generation); err != nil {
+	if _, err := s.validatedLease(ctx, staged.Lease); err != nil {
 		return ConnectionGeneration{}, err
 	}
 	uid, err := ready(ctx)
@@ -117,17 +115,16 @@ func (s *ConnectionLeaseService) PublishReady(ctx context.Context, staged Connec
 		}
 		return ConnectionGeneration{}, fmt.Errorf("publish connection generation: %w", err)
 	}
-	lease := &coordinationv1.Lease{}
-	if err := s.client.Get(ctx, types.NamespacedName{Namespace: staged.Lease.Namespace, Name: staged.Lease.Name}, lease); err != nil {
-		return ConnectionGeneration{}, fmt.Errorf("read connection lease before publish: %w", err)
+	lease, err := s.validatedLease(ctx, staged.Lease)
+	if err != nil {
+		return ConnectionGeneration{}, fmt.Errorf("connection lease changed during generation readiness: %w", err)
 	}
-	if lease.UID != staged.Lease.UID || lease.ResourceVersion != staged.Lease.ResourceVersion {
-		return ConnectionGeneration{}, fmt.Errorf("connection lease changed during generation readiness")
-	}
-	if lease.Annotations[connectionLeaseGenerationAnnotation] != strconv.FormatInt(staged.Generation, 10) {
+	if lease.Annotations[connectionLeasePendingGenerationAnnotation] != strconv.FormatInt(staged.Generation, 10) {
 		return ConnectionGeneration{}, fmt.Errorf("connection generation changed during readiness")
 	}
 	lease = lease.DeepCopy()
+	lease.Annotations[connectionLeaseGenerationAnnotation] = strconv.FormatInt(staged.Generation, 10)
+	delete(lease.Annotations, connectionLeasePendingGenerationAnnotation)
 	lease.Annotations[connectionLeaseSecretUIDAnnotation] = string(uid)
 	if err := s.client.Update(ctx, lease); err != nil {
 		return ConnectionGeneration{}, fmt.Errorf("publish connection generation: %w", err)
@@ -144,11 +141,28 @@ func (s *ConnectionLeaseService) PublishReady(ctx context.Context, staged Connec
 // owned connection and attachment consumers.
 type ConnectionLeaseService struct {
 	client    ctrlclient.Client
+	reader    ctrlclient.Reader
 	namespace string
 }
 
 func NewConnectionLeaseService(client ctrlclient.Client) *ConnectionLeaseService {
-	return &ConnectionLeaseService{client: client}
+	return &ConnectionLeaseService{client: client, reader: client}
+}
+
+// WithLiveReader configures the uncached reader used for lease fences. Lease
+// ownership is security-sensitive and must never be established from cache.
+func (s *ConnectionLeaseService) WithLiveReader(reader ctrlclient.Reader) *ConnectionLeaseService {
+	if reader != nil {
+		s.reader = reader
+	}
+	return s
+}
+
+func (s *ConnectionLeaseService) liveReader() ctrlclient.Reader {
+	if s.reader != nil {
+		return s.reader
+	}
+	return s.client
 }
 
 // WithNamespace restricts leases to the controller-owned execution namespace.
@@ -186,7 +200,7 @@ func (s *ConnectionLeaseService) AcquireForSession(ctx context.Context, ds *brea
 	if err != nil {
 		return breakglassv1alpha1.DebugSessionConnectionLease{}, err
 	}
-	return breakglassv1alpha1.DebugSessionConnectionLease{Namespace: ref.Namespace, Name: ref.Name, UID: ref.UID, ResourceVersion: ref.ResourceVersion, HolderUID: ref.HolderUID, TargetUID: ref.TargetUID, ProfileDigest: ref.ProfileDigest, Epoch: ref.Epoch, ExpiresAt: metav1.NewTime(ref.ExpiresAt)}, nil
+	return breakglassv1alpha1.DebugSessionConnectionLease{Namespace: ref.Namespace, Name: ref.Name, UID: ref.UID, HolderUID: ref.HolderUID, TargetUID: ref.TargetUID, ProfileDigest: ref.ProfileDigest, Epoch: ref.Epoch, ExpiresAt: metav1.NewTime(ref.ExpiresAt)}, nil
 }
 
 func (s *ConnectionLeaseService) ValidateSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
@@ -194,7 +208,7 @@ func (s *ConnectionLeaseService) ValidateSession(ctx context.Context, ds *breakg
 		return fmt.Errorf("connection lease is missing")
 	}
 	l := ds.Status.ConnectionLease
-	return s.Validate(ctx, ConnectionLeaseRef{Namespace: l.Namespace, Name: l.Name, UID: l.UID, ResourceVersion: l.ResourceVersion, HolderUID: l.HolderUID, TargetUID: l.TargetUID, ProfileDigest: l.ProfileDigest, Epoch: l.Epoch, ExpiresAt: l.ExpiresAt.Time}, -1)
+	return s.Validate(ctx, ConnectionLeaseRef{Namespace: l.Namespace, Name: l.Name, UID: l.UID, HolderUID: l.HolderUID, TargetUID: l.TargetUID, ProfileDigest: l.ProfileDigest, Epoch: l.Epoch, ExpiresAt: l.ExpiresAt.Time}, -1)
 }
 
 func (s *ConnectionLeaseService) RevokeSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
@@ -202,7 +216,7 @@ func (s *ConnectionLeaseService) RevokeSession(ctx context.Context, ds *breakgla
 		return nil
 	}
 	l := ds.Status.ConnectionLease
-	return s.Revoke(ctx, ConnectionLeaseRef{Namespace: l.Namespace, Name: l.Name, UID: l.UID, ResourceVersion: l.ResourceVersion, HolderUID: l.HolderUID, TargetUID: l.TargetUID, ProfileDigest: l.ProfileDigest, Epoch: l.Epoch, ExpiresAt: l.ExpiresAt.Time})
+	return s.Revoke(ctx, ConnectionLeaseRef{Namespace: l.Namespace, Name: l.Name, UID: l.UID, HolderUID: l.HolderUID, TargetUID: l.TargetUID, ProfileDigest: l.ProfileDigest, Epoch: l.Epoch, ExpiresAt: l.ExpiresAt.Time})
 }
 
 func connectionLeaseName(p ConnectionLeaseProof) string {
@@ -222,12 +236,16 @@ func (s *ConnectionLeaseService) Acquire(ctx context.Context, proof ConnectionLe
 	key := types.NamespacedName{Namespace: proof.Namespace, Name: connectionLeaseName(proof)}
 	for attempt := 0; attempt < 3; attempt++ {
 		lease := &coordinationv1.Lease{}
-		err := s.client.Get(ctx, key, lease)
-		now := time.Now().UTC()
+		err := s.liveReader().Get(ctx, key, lease)
 		if apierrors.IsNotFound(err) {
+			now := time.Now().UTC()
+			duration, err := leaseDuration(proof.ExpiresAt, now)
+			if err != nil {
+				return ConnectionLeaseRef{}, err
+			}
 			obj := &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace, Annotations: map[string]string{
 				connectionLeaseEpochAnnotation: "1", connectionLeaseTargetUIDAnnotation: string(proof.TargetUID), connectionLeaseProfileAnnotation: proof.ProfileDigest, connectionLeaseSessionAnnotation: string(proof.SessionUID), connectionLeaseGenerationAnnotation: "0",
-			}}, Spec: coordinationv1.LeaseSpec{HolderIdentity: connPtr(string(proof.SessionUID)), LeaseDurationSeconds: connPtr(int32(leaseMax(1, int(proof.ExpiresAt.Sub(now).Seconds())))), RenewTime: connPtr(metav1.MicroTime{Time: now})}}
+			}}, Spec: coordinationv1.LeaseSpec{HolderIdentity: connPtr(string(proof.SessionUID)), LeaseDurationSeconds: connPtr(duration), RenewTime: connPtr(metav1.MicroTime{Time: now})}}
 			if err := s.client.Create(ctx, obj); err != nil {
 				if apierrors.IsAlreadyExists(err) {
 					continue
@@ -238,6 +256,10 @@ func (s *ConnectionLeaseService) Acquire(ctx context.Context, proof ConnectionLe
 		}
 		if err != nil {
 			return ConnectionLeaseRef{}, fmt.Errorf("read connection lease: %w", err)
+		}
+		now := time.Now().UTC()
+		if lease.DeletionTimestamp != nil {
+			return ConnectionLeaseRef{}, fmt.Errorf("connection lease is being deleted")
 		}
 		if lease.Spec.HolderIdentity != nil && *lease.Spec.HolderIdentity != string(proof.SessionUID) && leaseActive(lease, now) {
 			return ConnectionLeaseRef{}, fmt.Errorf("connection target is already leased")
@@ -254,8 +276,12 @@ func (s *ConnectionLeaseService) Acquire(ctx context.Context, proof ConnectionLe
 			epoch++
 		}
 		lease = lease.DeepCopy()
+		duration, err := leaseDuration(proof.ExpiresAt, now)
+		if err != nil {
+			return ConnectionLeaseRef{}, err
+		}
 		lease.Spec.HolderIdentity = connPtr(string(proof.SessionUID))
-		lease.Spec.LeaseDurationSeconds = connPtr(int32(leaseMax(1, int(proof.ExpiresAt.Sub(now).Seconds()))))
+		lease.Spec.LeaseDurationSeconds = connPtr(duration)
 		lease.Spec.RenewTime = connPtr(metav1.MicroTime{Time: now})
 		lease.Annotations[connectionLeaseSessionAnnotation] = string(proof.SessionUID)
 		lease.Annotations[connectionLeaseEpochAnnotation] = strconv.FormatInt(epoch, 10)
@@ -271,23 +297,41 @@ func (s *ConnectionLeaseService) Acquire(ctx context.Context, proof ConnectionLe
 }
 
 func (s *ConnectionLeaseService) Validate(ctx context.Context, ref ConnectionLeaseRef, generation int64) error {
-	lease := &coordinationv1.Lease{}
-	if err := s.client.Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, lease); err != nil {
-		return fmt.Errorf("read connection lease: %w", err)
-	}
-	epoch, err := leaseEpoch(lease)
+	lease, err := s.validatedLease(ctx, ref)
 	if err != nil {
 		return err
 	}
-	if lease.UID != ref.UID || lease.ResourceVersion != ref.ResourceVersion || lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != string(ref.HolderUID) || epoch != ref.Epoch || lease.Annotations[connectionLeaseTargetUIDAnnotation] != string(ref.TargetUID) || lease.Annotations[connectionLeaseProfileAnnotation] != ref.ProfileDigest || (generation >= 0 && lease.Annotations[connectionLeaseGenerationAnnotation] != strconv.FormatInt(generation, 10)) || !leaseActive(lease, time.Now().UTC()) {
+	if generation >= 0 && lease.Annotations[connectionLeaseGenerationAnnotation] != strconv.FormatInt(generation, 10) {
 		return fmt.Errorf("connection lease is stale or expired")
 	}
 	return nil
 }
 
+func (s *ConnectionLeaseService) validatedLease(ctx context.Context, ref ConnectionLeaseRef) (*coordinationv1.Lease, error) {
+	if err := validateLeaseRef(ref); err != nil {
+		return nil, err
+	}
+	lease := &coordinationv1.Lease{}
+	if err := s.liveReader().Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, lease); err != nil {
+		return nil, fmt.Errorf("read connection lease: %w", err)
+	}
+	epoch, err := leaseEpoch(lease)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	if lease.DeletionTimestamp != nil || lease.UID != ref.UID || lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != string(ref.HolderUID) || epoch != ref.Epoch || lease.Annotations[connectionLeaseTargetUIDAnnotation] != string(ref.TargetUID) || lease.Annotations[connectionLeaseProfileAnnotation] != ref.ProfileDigest || !leaseActive(lease, now) || !now.Before(ref.ExpiresAt) {
+		return nil, fmt.Errorf("connection lease is stale or expired")
+	}
+	return lease, nil
+}
+
 func (s *ConnectionLeaseService) Revoke(ctx context.Context, ref ConnectionLeaseRef) error {
+	if err := validateLeaseRef(ref); err != nil {
+		return err
+	}
 	current := &coordinationv1.Lease{}
-	if err := s.client.Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, current); err != nil {
+	if err := s.liveReader().Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, current); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
@@ -297,11 +341,11 @@ func (s *ConnectionLeaseService) Revoke(ctx context.Context, ref ConnectionLease
 	if err != nil {
 		return err
 	}
-	if current.UID != ref.UID || current.ResourceVersion != ref.ResourceVersion || epoch != ref.Epoch || current.Spec.HolderIdentity == nil || *current.Spec.HolderIdentity != string(ref.HolderUID) || current.Annotations[connectionLeaseTargetUIDAnnotation] != string(ref.TargetUID) || current.Annotations[connectionLeaseProfileAnnotation] != ref.ProfileDigest {
+	if current.UID != ref.UID || epoch != ref.Epoch || current.Spec.HolderIdentity == nil || *current.Spec.HolderIdentity != string(ref.HolderUID) || current.Annotations[connectionLeaseTargetUIDAnnotation] != string(ref.TargetUID) || current.Annotations[connectionLeaseProfileAnnotation] != ref.ProfileDigest {
 		return fmt.Errorf("connection lease ownership changed before revoke")
 	}
 	uid := ref.UID
-	rv := ref.ResourceVersion
+	rv := current.ResourceVersion
 	err = s.client.Delete(ctx, &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace}}, &ctrlclient.DeleteOptions{Raw: &metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &rv}}})
 	if apierrors.IsNotFound(err) {
 		return nil
@@ -314,25 +358,32 @@ func (s *ConnectionLeaseService) Revoke(ctx context.Context, ref ConnectionLease
 
 // Renew extends only the current holder's lease and never changes its epoch.
 func (s *ConnectionLeaseService) Renew(ctx context.Context, ref ConnectionLeaseRef, expiresAt time.Time) error {
-	if expiresAt.IsZero() || !time.Now().Before(expiresAt) {
+	if err := validateLeaseRef(ref); err != nil {
+		return err
+	}
+	if expiresAt.IsZero() {
 		return fmt.Errorf("connection lease renewal is expired")
 	}
 	for attempt := 0; attempt < 3; attempt++ {
 		lease := &coordinationv1.Lease{}
-		if err := s.client.Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, lease); err != nil {
+		if err := s.liveReader().Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, lease); err != nil {
 			return fmt.Errorf("read connection lease for renewal: %w", err)
 		}
 		epoch, err := leaseEpoch(lease)
 		if err != nil {
 			return err
 		}
-		if lease.UID != ref.UID || lease.ResourceVersion != ref.ResourceVersion || epoch != ref.Epoch || lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != string(ref.HolderUID) || lease.Annotations[connectionLeaseTargetUIDAnnotation] != string(ref.TargetUID) || lease.Annotations[connectionLeaseProfileAnnotation] != ref.ProfileDigest {
+		now := time.Now().UTC()
+		if lease.DeletionTimestamp != nil || !now.Before(expiresAt) || !now.Before(ref.ExpiresAt) || lease.UID != ref.UID || epoch != ref.Epoch || lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != string(ref.HolderUID) || lease.Annotations[connectionLeaseTargetUIDAnnotation] != string(ref.TargetUID) || lease.Annotations[connectionLeaseProfileAnnotation] != ref.ProfileDigest || !leaseActive(lease, now) {
 			return fmt.Errorf("connection lease ownership changed before renewal")
 		}
 		lease = lease.DeepCopy()
-		now := time.Now().UTC()
+		duration, err := leaseDuration(expiresAt, now)
+		if err != nil {
+			return err
+		}
 		lease.Spec.RenewTime = connPtr(metav1.MicroTime{Time: now})
-		lease.Spec.LeaseDurationSeconds = connPtr(int32(leaseMax(1, int(expiresAt.Sub(now).Seconds()))))
+		lease.Spec.LeaseDurationSeconds = connPtr(duration)
 		if err := s.client.Update(ctx, lease); err != nil {
 			if apierrors.IsConflict(err) {
 				continue
@@ -349,15 +400,10 @@ func (s *ConnectionLeaseService) RenewSession(ctx context.Context, ds *breakglas
 		return nil
 	}
 	l := ds.Status.ConnectionLease
-	ref := ConnectionLeaseRef{Namespace: l.Namespace, Name: l.Name, UID: l.UID, ResourceVersion: l.ResourceVersion, HolderUID: l.HolderUID, TargetUID: l.TargetUID, ProfileDigest: l.ProfileDigest, Epoch: l.Epoch, ExpiresAt: l.ExpiresAt.Time}
+	ref := ConnectionLeaseRef{Namespace: l.Namespace, Name: l.Name, UID: l.UID, HolderUID: l.HolderUID, TargetUID: l.TargetUID, ProfileDigest: l.ProfileDigest, Epoch: l.Epoch, ExpiresAt: l.ExpiresAt.Time}
 	if err := s.Renew(ctx, ref, expiresAt); err != nil {
 		return err
 	}
-	current := &coordinationv1.Lease{}
-	if err := s.client.Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, current); err != nil {
-		return fmt.Errorf("read renewed connection lease: %w", err)
-	}
-	l.ResourceVersion = current.ResourceVersion
 	l.ExpiresAt = metav1.NewTime(expiresAt)
 	return nil
 }
@@ -368,6 +414,13 @@ func leaseEpoch(l *coordinationv1.Lease) (int64, error) {
 		return 0, fmt.Errorf("connection lease epoch is invalid")
 	}
 	return n, nil
+}
+
+func validateLeaseRef(ref ConnectionLeaseRef) error {
+	if ref.Namespace == "" || ref.Name == "" || ref.UID == "" || ref.HolderUID == "" || ref.TargetUID == "" || ref.ProfileDigest == "" || ref.ExpiresAt.IsZero() {
+		return fmt.Errorf("connection lease capability is incomplete")
+	}
+	return nil
 }
 func connectionLeaseRef(l *coordinationv1.Lease, p ConnectionLeaseProof) ConnectionLeaseRef {
 	e, _ := leaseEpoch(l)
@@ -383,9 +436,13 @@ func leaseActive(l *coordinationv1.Lease, now time.Time) bool {
 	return now.Before(l.Spec.RenewTime.Add(time.Duration(*l.Spec.LeaseDurationSeconds) * time.Second))
 }
 func connPtr[T any](v T) *T { return &v }
-func leaseMax(a, b int) int {
-	if a > b {
-		return a
+func leaseDuration(expiresAt, now time.Time) (int32, error) {
+	seconds := int64(expiresAt.Sub(now) / time.Second)
+	if seconds < 1 {
+		return 0, fmt.Errorf("connection lease expiry is too near")
 	}
-	return b
+	if seconds > int64(^uint32(0)>>1) {
+		return int32(^uint32(0) >> 1), nil
+	}
+	return int32(seconds), nil
 }

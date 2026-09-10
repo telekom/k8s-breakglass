@@ -9,11 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add explicit diagnostic-artifact host construction for S3 or single-replica
+  local storage, exact namespace-scoped credential reads, token key rotation,
+  live-session authorization, and API/controller registration seams.
+
+- Add the provider-independent diagnostic artifact backend primitives, typed
+  immutable `DebugSessionArtifact` contract, bounded archive upload service,
+  versioned S3 adapter, and fixed least-privilege collector Job renderer.
+
+- Add durable controller-owned DebugSession connection leases with target and
+  session fencing, opaque epochs, absolute expiry, live-reader checks, and
+  UID-preconditioned terminal revocation.
+- Track artifact collector resources by exact spoke UID and resource version,
+  with target-cluster writes fenced by the live session and expiry deadline.
+
 - The debug-session-catalogue Helm chart provides administrator-authored,
   restricted DebugSession profiles for workload, network, storage, dump-access,
   and cluster-validation diagnostics.
 
 ### Fixed
+
+- Reserve terminal evidence in the shared artifact backend before execution, preserve incomplete streams after revocation, and replay retained evidence without exposing provider storage details.
 
 - Recheck terminal stream and replay authorization at byte boundaries, stop
   unrecorded input at the recording limit, and require a real full-duplex
@@ -30,6 +46,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve partial terminal evidence across stream failures, keep artifact
   publication when status updates conflict, and retry retention cleanup after
   backend or already-deleted-object races.
+- Derive provider-compatible diagnostic artifact keys from immutable resource UIDs, preserving isolation and recovery of existing uploads.
+
+- Recheck artifact upload token, session binding, plan/runtime/recipe claims, and
+  expiry immediately before provider publication and before making an artifact
+  available; stream downloads through the same live authorization fence.
+
+- Retain ambiguous cleanup evidence when status lost the object digest, require
+  repeated empty inventory observations, reject stale artifact UID/resource
+  versions, and render collector Jobs with ordered execution, a bounded digest
+  annotation, and the required output filesystem group.
 
 - Recover tracked resources after bounded create timeouts when session and
   operation markers and requested content match the persisted object.
@@ -1853,3 +1879,8 @@ non-buggy case:
 [0.0.3]: https://github.com/telekom/k8s-breakglass/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/telekom/k8s-breakglass/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/telekom/k8s-breakglass/releases/tag/v0.0.1
+
+- Wire opt-in diagnostic collection admission through bounded durable reservations,
+  restart-safe upload nonce binding, fixed spoke Jobs and guarded artifact access.
+- Add a shared durable terminal-recording reservation, finalization, recovery and
+  retained replay contract with independent cleanup and immutable target metadata.

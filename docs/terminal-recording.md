@@ -15,18 +15,18 @@ an ownership epoch alone is never accepted as readiness. Claims are created
 only in the configured controller execution namespace. This is distinct from the narrated/demo recordings under
 `e2e/` and `docs/demos/`.
 
-The artifact backend is enabled explicitly with `BREAKGLASS_RECORDING_STORAGE_ENABLED=true`,
-`BREAKGLASS_RECORDING_ARTIFACT_ROOT`, `BREAKGLASS_RECORDING_STAGING_ROOT`, and
-`BREAKGLASS_RECORDING_INSTANCE_ID`,
-plus the private-root, encryption, and single-writer acknowledgements described
-by the startup configuration. Without that explicit configuration, templates
-requesting recording remain fail closed.
+Recording uses the shared [diagnostic artifact backend](diagnostic-artifacts.md),
+including its administrator-configured local or S3 store, keyring, staging
+limits, and independent artifact controller. No separate recording environment
+variables or store are used. The connection provider must also have a published
+credential generation; configuring storage alone does not establish readiness.
 
 The recorder uses a bounded framed stream with separate input and output
 directions. Each frame carries the previous frame's SHA-256 digest, so a
 finalized artifact can be verified without placing terminal bytes or
 credentials in DebugSession status or audit details. `POST
 /debugSessions/:name/terminal` is the only recording transport and
+`GET /debugSessions/:name/terminal` lists retained recordings, and
 `GET /debugSessions/:name/terminal/:id` replays an unexpired exact artifact
 version for an authorized session reader. The replay path pins backend
 identity, runtime binding digest, and version ID. The private transport binding
@@ -49,9 +49,21 @@ captured, and closes the lease in a separate bounded context. A lease expiry or
 revocation cancels the stream before publication. Direct
 target `pods/exec` and `pods/attach` authorization is denied while recording is
 required; clients must use the controller endpoint. Retention metadata is
-stored with the exact artifact reference and expired objects are eligible for
-exact-version cleanup by the configured backend. Status publication conflicts
-retain the immutable artifact for later inventory and retry.
+stored in an independent `DebugSessionArtifact` before target execution. Captured
+bytes and final metadata are published through that reservation even after
+stream expiry or revocation; incomplete streams are marked `complete: false`.
+The shared artifact controller recovers ambiguous publication and performs
+exact-version cleanup without depending on the session status or its lifetime.
+Replay permits retained terminal sessions, but requires the original live session
+UID and current reader authorization. Deleting or replacing the session denies
+replay even while its independent evidence remains retained.
+
+The immutable retention deadline is the admitted stream expiry plus
+`audit.recordingRetention` (default 90 days). Ending a stream early does not
+shorten this deadline. Reservation uses a bounded shared set of 128 artifact slots
+per session; a slot is reusable only after its artifact has been fully cleaned up.
+An interrupted process can leave a pending reservation without captured content;
+such a record is not advertised as a completed recording.
 
 When terminal recording is enabled, a supplied retention value is validated as
 a positive duration at admission. The controller does not copy template

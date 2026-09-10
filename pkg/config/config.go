@@ -215,6 +215,54 @@ type Server struct {
 	AllowOIDCProxyRedirects *bool `yaml:"allowOIDCProxyRedirects,omitempty"`
 }
 
+// Artifacts configures the opt-in diagnostic artifact transport. Storage
+// credentials and provider endpoints are intentionally not represented here;
+// those are administrator-owned runtime dependencies supplied to the backend.
+type Artifacts struct {
+	Enabled          bool           `yaml:"enabled,omitempty"`
+	Backend          string         `yaml:"backend,omitempty"`
+	StagingDir       string         `yaml:"stagingDir,omitempty"`
+	CollectorImage   string         `yaml:"collectorImage,omitempty"`
+	ControllerURL    string         `yaml:"controllerURL,omitempty"`
+	UploadMaxBytes   int64          `yaml:"uploadMaxBytes,omitempty"`
+	TokenSecretName  string         `yaml:"tokenSecretName,omitempty"`
+	TokenSignerKeyID string         `yaml:"tokenSignerKeyID,omitempty"`
+	S3               *ArtifactS3    `yaml:"s3,omitempty"`
+	Local            *ArtifactLocal `yaml:"local,omitempty"`
+}
+
+// ArtifactS3 contains administrator-owned S3 settings. The credential Secret
+// is always read from the configured breakglass namespace by the host startup
+// initializer; request and CRD data cannot select it.
+type ArtifactS3 struct {
+	Endpoint              string `yaml:"endpoint,omitempty"`
+	Region                string `yaml:"region,omitempty"`
+	Bucket                string `yaml:"bucket,omitempty"`
+	Prefix                string `yaml:"prefix,omitempty"`
+	InstanceID            string `yaml:"instanceID,omitempty"`
+	UsePathStyle          bool   `yaml:"usePathStyle,omitempty"`
+	RequireVersioned      bool   `yaml:"requireVersioned,omitempty"`
+	CredentialsSecretName string `yaml:"credentialsSecretName,omitempty"`
+}
+
+// ArtifactLocal contains the explicit single-replica PVC contract. It is
+// never selected as a fallback when S3 configuration is incomplete.
+type ArtifactLocal struct {
+	PrivateRootAcknowledged bool   `yaml:"privateRootAcknowledged,omitempty"`
+	ArtifactRoot            string `yaml:"artifactRoot,omitempty"`
+	StagingRoot             string `yaml:"stagingRoot,omitempty"`
+	InstanceID              string `yaml:"instanceID,omitempty"`
+	ExpectedUID             int    `yaml:"expectedUID,omitempty"`
+	ExpectedGID             int    `yaml:"expectedGID,omitempty"`
+	ServingReplicas         int    `yaml:"servingReplicas,omitempty"`
+	AccessMode              string `yaml:"accessMode,omitempty"`
+	DeploymentStrategy      string `yaml:"deploymentStrategy,omitempty"`
+	EncryptionAcknowledged  bool   `yaml:"encryptionAcknowledged,omitempty"`
+	SnapshotPolicy          string `yaml:"snapshotPolicy,omitempty"`
+	MaximumObjectBytes      int64  `yaml:"maximumObjectBytes,omitempty"`
+	MinimumFreeBytes        int64  `yaml:"minimumFreeBytes,omitempty"`
+}
+
 // ServerTimeouts configures HTTP server timeouts.
 // Zero or unset values are replaced with production defaults via the GetX() accessor methods.
 type ServerTimeouts struct {
@@ -379,6 +427,7 @@ type Config struct {
 	Frontend   Frontend
 	Kubernetes Kubernetes
 	Telemetry  Telemetry
+	Artifacts  Artifacts
 }
 
 // Telemetry configures OpenTelemetry tracing.

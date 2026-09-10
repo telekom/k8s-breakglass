@@ -8,18 +8,19 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
-	artifactstorage "github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
+	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -70,8 +71,8 @@ type terminalTargetResolver func(context.Context, *breakglassv1alpha1.DebugSessi
 
 type terminalExecutorFactory func(*rest.Config, string, string, string, string, []string) (remotecommand.Executor, error)
 
-func (c *DebugSessionAPIController) WithTerminalRecordingStore(store artifactstorage.Store) *DebugSessionAPIController {
-	c.recordingStore = store
+func (c *DebugSessionAPIController) WithTerminalRecordingArtifacts(service *backend.Service) *DebugSessionAPIController {
+	c.recordingArtifacts = service
 	return c
 }
 
@@ -81,7 +82,7 @@ func (c *DebugSessionAPIController) WithTerminalRecordingConnections(provider Te
 }
 
 func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
-	if c.recordingStore == nil || c.recordingConnections == nil || (c.ccProvider == nil && c.terminalTargetResolver == nil) {
+	if c.recordingArtifacts == nil || c.recordingConnections == nil || (c.ccProvider == nil && c.terminalTargetResolver == nil) {
 		apiresponses.RespondServiceUnavailable(ctx, "terminal recording transport is not configured")
 		return
 	}
@@ -112,7 +113,7 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to get debug session")
 		return
 	}
-	if session.Status.State != breakglassv1alpha1.DebugSessionStateActive || session.Status.ExpiresAt == nil || !time.Now().Before(session.Status.ExpiresAt.Time) {
+	if session.Status.State != breakglassv1alpha1.DebugSessionStateActive || isDebugSessionExpired(session, time.Now().UTC()) {
 		apiresponses.RespondForbidden(ctx, "debug session is not active")
 		return
 	}
@@ -222,12 +223,45 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}
-	startedAt := time.Now().UTC()
-	recorder := NewTerminalRecorder(defaultTerminalRecordingMaxBytes)
 	if err := http.NewResponseController(ctx.Writer).EnableFullDuplex(); err != nil {
 		apiresponses.RespondServiceUnavailable(ctx, "full-duplex terminal transport is unavailable")
 		return
 	}
+	epoch, err := strconv.ParseUint(binding.Epoch, 10, 64)
+	if err != nil || epoch == 0 {
+		apiresponses.RespondForbidden(ctx, "invalid recording lease epoch")
+		return
+	}
+	retention := terminalRecordingDefaultRetention
+	if configured := session.Status.ResolvedTemplate.Audit.RecordingRetention; configured != "" {
+		retention, err = breakglassv1alpha1.ParseDuration(configured)
+		if err != nil || retention <= 0 {
+			apiresponses.RespondForbidden(ctx, "invalid recording retention")
+			return
+		}
+	}
+	plan, err := json.Marshal(struct {
+		Operation, Container string
+		Command              []string
+	}{operation, ctx.Query("container"), ctx.QueryArray("command")})
+	if err != nil {
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to bind recording operation")
+		return
+	}
+	metadata := backend.RecordingMetadata{FormatVersion: 1, StartedAt: time.Now().UTC(), StreamExpiresAt: binding.ExpiresAt, PodNamespace: namespace, PodName: podName, PodUID: targetUID, ContainerName: ctx.Query("container"), Operation: operation, LeaseUID: binding.LeaseUID, LeaseEpoch: binding.Epoch, Generation: binding.Generation}
+	reservation, err := c.recordingArtifacts.ReserveRecording(apiCtx, backend.Record{
+		Namespace: session.Namespace, SessionName: session.Name, SessionUID: string(session.UID), TargetClusterUID: targetClusterUID,
+		TargetPodNamespace: namespace, TargetPodName: podName, TargetPodUID: targetUID,
+		TargetIdentityDigest: sha256Hex(namespace + "\x00" + podName + "\x00" + targetUID), RuntimeBindingDigest: binding.RuntimeBindingDigest,
+		PlanDigest: sha256Hex(string(plan)), OperationEpoch: epoch, MaxBytes: defaultTerminalRecordingMaxBytes,
+		ExpiresAt: binding.ExpiresAt.Add(retention), Recording: &metadata,
+	}, connection.Validate)
+	if err != nil {
+		apiresponses.RespondServiceUnavailable(ctx, "failed to reserve terminal evidence")
+		return
+	}
+	metadata = *reservation.Recording
+	recorder := NewTerminalRecorder(reservation.MaxBytes)
 	ctx.Header("Content-Type", "application/octet-stream")
 	ctx.Header("Trailer", "X-Breakglass-Recording-ID, X-Breakglass-Recording-SHA256, X-Breakglass-Recording-Status")
 	streamWriter := &terminalRecordingFlushWriter{writer: ctx.Writer}
@@ -247,32 +281,26 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	recording, streamErr := streamTerminalWithLease(apiCtx, connection, binding.ExpiresAt, executor, guardedInput, guardedOutput, guardedOutput, recorder, abortTransport)
 	finalizeCtx, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx.Request.Context()), terminalRecordingFinalizeTimeout)
 	defer finalizeCancel()
-	validatedBinding := connection.Binding()
-	if err := connection.Validate(finalizeCtx); err != nil || !terminalRecordingBindingMatches(validatedBinding, session, targetUID) || !terminalRecordingBindingsEqual(validatedBinding, binding) {
-		ctx.Header("X-Breakglass-Recording-Status", "rejected")
-		apiresponses.RespondForbidden(ctx, "terminal recording connection expired")
-		return
+	metadata.FinishedAt = time.Now().UTC()
+	metadata.Complete = streamErr == nil && apiCtx.Err() == nil && metadata.FinishedAt.Before(binding.ExpiresAt)
+	metadata.Frames = recording.Frames
+	// Publication preserves already-admitted evidence after disconnection or expiry.
+	// The durable reservation, not a now-revoked stream lease, fences this write.
+	var published backend.PublicRecord
+	for attempt := 0; attempt < 3; attempt++ {
+		published, err = c.recordingArtifacts.FinalizeRecording(finalizeCtx, reservation, bytes.NewReader(recording.Bytes), metadata)
+		if err == nil || finalizeCtx.Err() != nil {
+			break
+		}
 	}
-	ref, _, err := persistTerminalRecording(finalizeCtx, c.recordingStore, session, pod, operation, ctx.Query("container"), binding, startedAt, recording)
+	ctx.Header("X-Breakglass-Recording-ID", reservation.ArtifactID)
 	if err != nil {
-		ctx.Header("X-Breakglass-Recording-Status", "failed")
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to finalize terminal recording")
+		ctx.Header("X-Breakglass-Recording-Status", "finalization-pending")
 		return
 	}
-	if err := c.patchDebugSessionStatusWithOptimisticLock(finalizeCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
-		kubectlStatus := ensureKubectlDebugStatus(status)
-		kubectlStatus.TerminalRecordings = append(kubectlStatus.TerminalRecordings, ref)
-	}); err != nil {
-		// The immutable artifact is the evidence of the operation. Keep it when
-		// status publication conflicts so a later reconciliation can inventory it.
-		ctx.Header("X-Breakglass-Recording-Status", "published-status-pending")
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to record terminal metadata")
-		return
-	}
-	ctx.Header("X-Breakglass-Recording-ID", ref.ID)
-	ctx.Header("X-Breakglass-Recording-SHA256", ref.SHA256)
-	if streamErr != nil {
-		ctx.Header("X-Breakglass-Recording-Status", "failed")
+	ctx.Header("X-Breakglass-Recording-SHA256", published.SHA256)
+	if !metadata.Complete {
+		ctx.Header("X-Breakglass-Recording-Status", "incomplete")
 		return
 	}
 	ctx.Header("X-Breakglass-Recording-Status", "completed")
@@ -365,12 +393,30 @@ func terminalRecordingBindingMatches(binding TerminalRecordingConnectionBinding,
 	return binding.Namespace == session.Namespace && binding.SessionUID == string(session.UID) && binding.TargetPodUID == targetUID && binding.LeaseUID != "" && binding.Epoch != "" && binding.Generation != "" && binding.RuntimeBindingDigest != "" && !binding.ExpiresAt.IsZero() && !binding.ExpiresAt.After(session.Status.ExpiresAt.Time) && time.Now().Before(binding.ExpiresAt)
 }
 
-func terminalRecordingBindingsEqual(left, right TerminalRecordingConnectionBinding) bool {
-	return left.Namespace == right.Namespace && left.SessionUID == right.SessionUID && left.TargetPodUID == right.TargetPodUID && left.TargetClusterUID == right.TargetClusterUID && left.LeaseUID == right.LeaseUID && left.Epoch == right.Epoch && left.Generation == right.Generation && left.RuntimeBindingDigest == right.RuntimeBindingDigest && left.ExpiresAt.Equal(right.ExpiresAt)
+func (c *DebugSessionAPIController) recordingReplayAuthority(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) func(context.Context) error {
+	return func(ctx context.Context) error {
+		checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		var live breakglassv1alpha1.DebugSession
+		if err := c.reader().Get(checkCtx, ctrlclient.ObjectKeyFromObject(session), &live); err != nil {
+			return fmt.Errorf("read recording session: %w", err)
+		}
+		if live.UID != session.UID || !live.DeletionTimestamp.IsZero() {
+			return backend.ErrForbidden
+		}
+		allowed, err := c.canReadDebugSession(checkCtx, &live, identity)
+		if err != nil {
+			return fmt.Errorf("authorize recording replay: %w", err)
+		}
+		if !allowed {
+			return backend.ErrForbidden
+		}
+		return nil
+	}
 }
 
-func (c *DebugSessionAPIController) handleReplayTerminalRecording(ctx *gin.Context) {
-	if c.recordingStore == nil {
+func (c *DebugSessionAPIController) handleListTerminalRecordings(ctx *gin.Context) {
+	if c.recordingArtifacts == nil {
 		apiresponses.RespondServiceUnavailable(ctx, "terminal recording storage is not configured")
 		return
 	}
@@ -379,97 +425,61 @@ func (c *DebugSessionAPIController) handleReplayTerminalRecording(ctx *gin.Conte
 		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
-	requestCtx := ctx.Request.Context()
-	session, err := c.getDebugSessionByName(requestCtx, ctx.Param("name"), ctx.Query("namespace"))
+	session, err := c.getDebugSessionByName(ctx.Request.Context(), ctx.Param("name"), ctx.Query("namespace"))
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			apiresponses.RespondNotFoundSimple(ctx, "debug session not found")
-			return
-		}
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to get debug session")
+		apiresponses.RespondNotFoundSimple(ctx, "debug session not found")
 		return
 	}
-	canRead, err := c.canReadDebugSession(requestCtx, session, identity)
-	if err != nil || !canRead {
-		apiresponses.RespondForbidden(ctx, "user is not allowed to read this debug session")
+	records, err := c.recordingArtifacts.Recordings(ctx.Request.Context(), session.Namespace, session.Name, string(session.UID), c.recordingReplayAuthority(session, identity))
+	if err != nil {
+		apiresponses.RespondForbidden(ctx, "recordings are not available to this user")
 		return
 	}
-	var ref *breakglassv1alpha1.TerminalRecordingRef
-	if session.Status.KubectlDebugStatus != nil {
-		for i := range session.Status.KubectlDebugStatus.TerminalRecordings {
-			candidate := &session.Status.KubectlDebugStatus.TerminalRecordings[i]
-			if candidate.ID == ctx.Param("id") {
-				ref = candidate
-				break
-			}
-		}
+	ctx.JSON(http.StatusOK, records)
+}
+
+func (c *DebugSessionAPIController) handleReplayTerminalRecording(ctx *gin.Context) {
+	if c.recordingArtifacts == nil {
+		apiresponses.RespondServiceUnavailable(ctx, "terminal recording storage is not configured")
+		return
 	}
-	if ref == nil {
+	identity, ok := debugSessionRequestIdentity(ctx)
+	if !ok {
+		apiresponses.RespondUnauthorized(ctx)
+		return
+	}
+	session, err := c.getDebugSessionByName(ctx.Request.Context(), ctx.Param("name"), ctx.Query("namespace"))
+	if err != nil {
+		apiresponses.RespondNotFoundSimple(ctx, "debug session not found")
+		return
+	}
+	authorize := c.recordingReplayAuthority(session, identity)
+	if err := authorize(ctx.Request.Context()); err != nil {
+		apiresponses.RespondForbidden(ctx, "recording access denied")
+		return
+	}
+	reservation, err := c.recordingArtifacts.Recording(ctx.Request.Context(), session.Namespace, session.Name, ctx.Param("id"))
+	if err != nil || reservation.SessionUID != string(session.UID) {
 		apiresponses.RespondNotFoundSimple(ctx, "terminal recording not found")
 		return
 	}
-	if !time.Now().Before(ref.ExpiresAt.Time) {
-		ctx.Status(http.StatusGone)
-		return
-	}
-	if ref.Backend != c.recordingStore.Backend() || ref.BackendInstanceID != c.recordingStore.BackendInstanceID() {
-		apiresponses.RespondServiceUnavailable(ctx, "terminal recording storage identity changed")
-		return
-	}
-	object := terminalRecordingObject(*ref)
-	expected := artifactstorage.Metadata{BackendInstanceID: ref.BackendInstanceID, Key: ref.ID, VersionID: ref.VersionID, RuntimeBindingDigest: ref.RuntimeBindingDigest, Size: ref.Size, SHA256: ref.SHA256}
-	replayCtx, cancel := context.WithDeadline(requestCtx, ref.ExpiresAt.Time)
+	replayCtx, cancel := context.WithDeadline(ctx.Request.Context(), reservation.ExpiresAt)
 	defer cancel()
-	reader, metadata, err := c.recordingStore.OpenVersion(replayCtx, object, expected)
+	reader, record, err := c.recordingArtifacts.DownloadRecording(replayCtx, reservation, authorize)
 	if err != nil {
-		apiresponses.RespondNotFoundSimple(ctx, "terminal recording is unavailable")
+		if errors.Is(err, backend.ErrExpired) {
+			ctx.Status(http.StatusGone)
+		} else {
+			apiresponses.RespondForbidden(ctx, "terminal recording unavailable")
+		}
 		return
 	}
 	defer reader.Close()
-	if metadata.BackendInstanceID != ref.BackendInstanceID || metadata.Key != ref.ID || metadata.VersionID != ref.VersionID || metadata.RuntimeBindingDigest != ref.RuntimeBindingDigest || metadata.Size != ref.Size || metadata.SHA256 != ref.SHA256 {
-		apiresponses.RespondServiceUnavailable(ctx, "terminal recording metadata changed")
-		return
-	}
-	if !time.Now().Before(ref.ExpiresAt.Time) {
-		ctx.Status(http.StatusGone)
-		return
-	}
-	authorize := func(checkCtx context.Context) error {
-		checkCtx, cancel := context.WithTimeout(checkCtx, 2*time.Second)
-		defer cancel()
-		live := &breakglassv1alpha1.DebugSession{}
-		if err := c.reader().Get(checkCtx, ctrlclient.ObjectKeyFromObject(session), live); err != nil {
-			return err
-		}
-		if live.UID != session.UID || !live.DeletionTimestamp.IsZero() {
-			return fmt.Errorf("recording session identity changed")
-		}
-		allowed, err := c.canReadDebugSession(checkCtx, live, identity)
-		if err != nil || !allowed {
-			return fmt.Errorf("recording reader authority changed")
-		}
-		if live.Status.KubectlDebugStatus == nil {
-			return fmt.Errorf("recording reference was revoked")
-		}
-		for _, current := range live.Status.KubectlDebugStatus.TerminalRecordings {
-			if current.ID == ref.ID && current == *ref && time.Now().Before(current.ExpiresAt.Time) {
-				return nil
-			}
-		}
-		return fmt.Errorf("recording reference expired or changed")
-	}
-	if err := authorize(requestCtx); err != nil {
-		ctx.Status(http.StatusForbidden)
-		return
-	}
 	stopClose := context.AfterFunc(replayCtx, func() { _ = reader.Close() })
 	defer stopClose()
-	guarded := authorizedRecordingReader{ctx: replayCtx, reader: reader, authorize: authorize}
 	ctx.Header("Content-Type", "application/octet-stream")
-	ctx.Header("X-Breakglass-Recording-SHA256", metadata.SHA256)
-	if _, err := io.CopyN(authorizedRecordingWriter{ctx: replayCtx, writer: ctx.Writer, authorize: authorize}, guarded, ref.Size); err != nil && !errors.Is(err, io.EOF) {
-		return
-	}
+	ctx.Header("X-Breakglass-Recording-SHA256", record.SHA256)
+	_, _ = io.CopyN(authorizedRecordingWriter{ctx: replayCtx, writer: ctx.Writer, authorize: authorize}, reader, record.Size)
 }
 
 func terminalRecordingRequest(ctx *gin.Context) (string, string, string, error) {
@@ -512,27 +522,6 @@ func newTerminalRecordingExecutor(restConfig *rest.Config, namespace, podName, o
 		return nil, fmt.Errorf("create target terminal executor: %w", err)
 	}
 	return executor, nil
-}
-
-func persistTerminalRecording(ctx context.Context, store artifactstorage.Store, session *breakglassv1alpha1.DebugSession, pod *corev1.Pod, operation, container string, binding TerminalRecordingConnectionBinding, startedAt time.Time, recording TerminalRecording) (breakglassv1alpha1.TerminalRecordingRef, artifactstorage.Metadata, error) {
-	artifactID := sha256Hex(string(session.UID) + ":" + string(pod.UID) + ":" + uuid.NewString())
-	object := artifactstorage.Object{Key: artifactID, RuntimeBindingDigest: binding.RuntimeBindingDigest, Size: int64(len(recording.Bytes)), SHA256: recording.SHA256}
-	metadata, err := store.PutIfAbsent(ctx, object, bytes.NewReader(recording.Bytes))
-	if err != nil {
-		return breakglassv1alpha1.TerminalRecordingRef{}, metadata, fmt.Errorf("publish terminal recording: %w", err)
-	}
-	retention := terminalRecordingDefaultRetention
-	if session.Status.ResolvedTemplate != nil && session.Status.ResolvedTemplate.Audit != nil && session.Status.ResolvedTemplate.Audit.RecordingRetention != "" {
-		if parsed, parseErr := breakglassv1alpha1.ParseDuration(session.Status.ResolvedTemplate.Audit.RecordingRetention); parseErr == nil && parsed > 0 {
-			retention = parsed
-		}
-	}
-	completedAt := time.Now().UTC()
-	return breakglassv1alpha1.TerminalRecordingRef{ID: artifactID, Namespace: pod.Namespace, PodName: pod.Name, PodUID: string(pod.UID), ContainerName: container, Operation: operation, SHA256: recording.SHA256, Size: int64(len(recording.Bytes)), Backend: store.Backend(), BackendInstanceID: store.BackendInstanceID(), RuntimeBindingDigest: binding.RuntimeBindingDigest, VersionID: metadata.VersionID, StartedAt: metav1.NewTime(startedAt), CompletedAt: metav1.NewTime(completedAt), ExpiresAt: metav1.NewTime(completedAt.Add(retention))}, metadata, nil
-}
-
-func terminalRecordingObject(ref breakglassv1alpha1.TerminalRecordingRef) artifactstorage.Object {
-	return artifactstorage.Object{Key: ref.ID, RuntimeBindingDigest: ref.RuntimeBindingDigest, Size: ref.Size, SHA256: ref.SHA256}
 }
 
 func sha256Hex(value string) string {

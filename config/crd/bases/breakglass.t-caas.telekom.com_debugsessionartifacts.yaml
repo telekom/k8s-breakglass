@@ -1,0 +1,558 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: debugsessionartifacts.breakglass.t-caas.telekom.com
+spec:
+  group: breakglass.t-caas.telekom.com
+  names:
+    kind: DebugSessionArtifact
+    listKind: DebugSessionArtifactList
+    plural: debugsessionartifacts
+    shortNames:
+    - dsa
+    singular: debugsessionartifact
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.sessionRef.name
+      name: Session
+      type: string
+    - jsonPath: .spec.recipe
+      name: Recipe
+      type: string
+    - jsonPath: .status.state
+      name: State
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              DebugSessionArtifactSpec is immutable after creation. Provider credentials,
+              endpoints, bucket names, object keys, and arbitrary execution controls are
+              intentionally absent.
+            properties:
+              artifactID:
+                description: artifactID is the public opaque artifact identifier.
+                pattern: ^dsa-[0-9a-f]{24}$
+                type: string
+              expiresAt:
+                description: expiresAt is the retention deadline after which access
+                  is denied.
+                format: date-time
+                type: string
+              inputs:
+                description: inputs contains only recipe-specific bounded values.
+                properties:
+                  detailLevel:
+                    description: detailLevel is the system-summary detail level.
+                    enum:
+                    - basic
+                    - extended
+                    type: string
+                  maxAgeMinutes:
+                    description: maxAgeMinutes bounds crashdump collection age.
+                    format: int64
+                    maximum: 10080
+                    minimum: 1
+                    type: integer
+                  maxArchiveBytes:
+                    description: maxArchiveBytes is the server-selected compressed
+                      archive limit.
+                    format: int64
+                    minimum: 1
+                    type: integer
+                required:
+                - maxArchiveBytes
+                type: object
+              maxBytes:
+                description: maxBytes is the immutable artifact reservation.
+                format: int64
+                maximum: 536870912
+                minimum: 1
+                type: integer
+              node:
+                description: node pins crashdump collection to the selected node.
+                maxLength: 253
+                type: string
+              operationEpoch:
+                description: operationEpoch fences tokens issued before a session
+                  identity change.
+                format: int64
+                minimum: 1
+                type: integer
+              planDigest:
+                description: planDigest binds the rendered Job and uploader contract.
+                pattern: ^[0-9a-f]{64}$
+                type: string
+              recipe:
+                description: recipe is an immutable allowlisted recipe identifier.
+                enum:
+                - system-summary.v1
+                - crashdump-collection.v1
+                - terminal-recording.v1
+                type: string
+              recipeVersion:
+                description: recipeVersion is the immutable recipe schema version.
+                format: int32
+                maximum: 9999
+                minimum: 1
+                type: integer
+              recording:
+                description: recording binds a controller-owned terminal stream, never
+                  a collector request.
+                properties:
+                  complete:
+                    description: complete is controller-supplied recording metadata.
+                    type: boolean
+                  containerName:
+                    description: containerName is controller-supplied recording metadata.
+                    type: string
+                  finishedAt:
+                    description: finishedAt is controller-supplied recording metadata.
+                    format: date-time
+                    type: string
+                  formatVersion:
+                    description: formatVersion is controller-supplied recording metadata.
+                    enum:
+                    - 1
+                    format: int32
+                    type: integer
+                  frames:
+                    description: frames is controller-supplied recording metadata.
+                    format: int64
+                    type: integer
+                  generation:
+                    description: generation is controller-supplied recording metadata.
+                    type: string
+                  leaseEpoch:
+                    description: leaseEpoch is controller-supplied recording metadata.
+                    type: string
+                  leaseUID:
+                    description: leaseUID is controller-supplied recording metadata.
+                    type: string
+                  operation:
+                    description: operation is controller-supplied recording metadata.
+                    enum:
+                    - exec
+                    - attach
+                    type: string
+                  podName:
+                    description: podName is controller-supplied recording metadata.
+                    type: string
+                  podNamespace:
+                    description: podNamespace is controller-supplied recording metadata.
+                    type: string
+                  podUID:
+                    description: podUID is controller-supplied recording metadata.
+                    type: string
+                  startedAt:
+                    description: startedAt is controller-supplied recording metadata.
+                    format: date-time
+                    type: string
+                  streamExpiresAt:
+                    description: streamExpiresAt is controller-supplied recording
+                      metadata.
+                    format: date-time
+                    type: string
+                required:
+                - formatVersion
+                - operation
+                type: object
+              redactionProfile:
+                description: redactionProfile selects the server-owned metadata redaction
+                  policy.
+                pattern: ^[a-z][a-z0-9.-]{0,63}$
+                type: string
+              redactionVersion:
+                description: redactionVersion is the policy version used by the collector.
+                format: int32
+                maximum: 9999
+                minimum: 1
+                type: integer
+              reservationNonce:
+                description: reservationNonce distinguishes recreated slots without
+                  exposing a token identifier.
+                pattern: ^[0-9a-f]{32}$
+                type: string
+              runtimeBindingDigest:
+                description: runtimeBindingDigest binds the target runtime identity
+                  and operation.
+                pattern: ^[0-9a-f]{64}$
+                type: string
+              sessionRef:
+                description: sessionRef identifies the exact session that owns this
+                  artifact.
+                properties:
+                  name:
+                    description: name is the session name.
+                    minLength: 1
+                    type: string
+                  namespace:
+                    description: namespace is the session namespace.
+                    minLength: 1
+                    type: string
+                  uid:
+                    description: uid is the immutable session UID.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                - namespace
+                - uid
+                type: object
+              targetClusterUID:
+                description: targetClusterUID binds collection and access to one target
+                  identity.
+                minLength: 1
+                type: string
+              targetIdentityDigest:
+                description: targetIdentityDigest binds immutable target identity
+                  details.
+                pattern: ^[0-9a-f]{64}$
+                type: string
+              targetNodeUID:
+                description: targetNodeUID binds node-local collection to an exact
+                  node incarnation.
+                type: string
+              targetPod:
+                description: targetPod is the original approved Pod used to resolve
+                  collection authority.
+                properties:
+                  name:
+                    description: name is the session name.
+                    minLength: 1
+                    type: string
+                  namespace:
+                    description: namespace is the session namespace.
+                    minLength: 1
+                    type: string
+                  uid:
+                    description: uid is the immutable session UID.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                - namespace
+                - uid
+                type: object
+              timeoutSeconds:
+                description: timeoutSeconds is the immutable collector Job deadline.
+                format: int32
+                maximum: 3600
+                minimum: 1
+                type: integer
+              uploadJTIHash:
+                description: uploadJTIHash binds the one-time upload lease without
+                  persisting the token identifier.
+                pattern: ^[0-9a-f]{64}$
+                type: string
+              uploadKeyID:
+                description: uploadKeyID identifies the existing controller signing
+                  key used by this reservation.
+                type: string
+            required:
+            - artifactID
+            - expiresAt
+            - inputs
+            - maxBytes
+            - operationEpoch
+            - planDigest
+            - recipe
+            - recipeVersion
+            - redactionProfile
+            - redactionVersion
+            - runtimeBindingDigest
+            - sessionRef
+            - targetClusterUID
+            - targetIdentityDigest
+            - timeoutSeconds
+            - uploadJTIHash
+            type: object
+            x-kubernetes-validations:
+            - message: artifact specification is immutable
+              rule: self == oldSelf
+            - message: terminal recording metadata is required only for the terminal
+                recording recipe
+              rule: (self.recipe == 'terminal-recording.v1') == has(self.recording)
+          status:
+            description: |-
+              DebugSessionArtifactStatus is safe to expose to API readers. Provider
+              object keys, URLs, version IDs, credentials, and secret references are not
+              persisted here.
+            properties:
+              availableAt:
+                description: availableAt records successful validated upload.
+                format: date-time
+                type: string
+              cleanupAmbiguous:
+                description: cleanupAmbiguous requires operator/reconciler evidence
+                  before finalization.
+                type: boolean
+              conditions:
+                description: conditions contain bounded lifecycle evidence.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                maxItems: 8
+                type: array
+              createdAt:
+                description: createdAt records artifact admission.
+                format: date-time
+                type: string
+              deletedAt:
+                description: deletedAt records successful exact-version cleanup.
+                format: date-time
+                type: string
+              lifecycleRevision:
+                description: lifecycleRevision is the CAS revision for durable state
+                  transitions.
+                format: int64
+                minimum: 0
+                type: integer
+              observedGeneration:
+                description: observedGeneration is the last processed object generation.
+                format: int64
+                type: integer
+              outbox:
+                description: outbox is the bounded provider operation state.
+                properties:
+                  attempt:
+                    description: attempt is bounded by the controller's retry policy.
+                    format: int32
+                    maximum: 3
+                    minimum: 0
+                    type: integer
+                  kind:
+                    description: kind is the current durable provider operation.
+                    enum:
+                    - Upload
+                    - Delete
+                    type: string
+                  lastError:
+                    description: lastError is a bounded redacted classification, never
+                      a provider URL or credential.
+                    maxLength: 512
+                    type: string
+                  leaseExpiresAt:
+                    description: leaseExpiresAt bounds abandoned work recovery.
+                    format: date-time
+                    type: string
+                  leaseOwner:
+                    description: leaseOwner identifies the controller worker holding
+                      the operation lease.
+                    maxLength: 128
+                    type: string
+                required:
+                - attempt
+                - kind
+                type: object
+              recording:
+                description: recording records bounded terminal completion metadata.
+                properties:
+                  complete:
+                    description: complete is controller-supplied recording metadata.
+                    type: boolean
+                  containerName:
+                    description: containerName is controller-supplied recording metadata.
+                    type: string
+                  finishedAt:
+                    description: finishedAt is controller-supplied recording metadata.
+                    format: date-time
+                    type: string
+                  formatVersion:
+                    description: formatVersion is controller-supplied recording metadata.
+                    enum:
+                    - 1
+                    format: int32
+                    type: integer
+                  frames:
+                    description: frames is controller-supplied recording metadata.
+                    format: int64
+                    type: integer
+                  generation:
+                    description: generation is controller-supplied recording metadata.
+                    type: string
+                  leaseEpoch:
+                    description: leaseEpoch is controller-supplied recording metadata.
+                    type: string
+                  leaseUID:
+                    description: leaseUID is controller-supplied recording metadata.
+                    type: string
+                  operation:
+                    description: operation is controller-supplied recording metadata.
+                    enum:
+                    - exec
+                    - attach
+                    type: string
+                  podName:
+                    description: podName is controller-supplied recording metadata.
+                    type: string
+                  podNamespace:
+                    description: podNamespace is controller-supplied recording metadata.
+                    type: string
+                  podUID:
+                    description: podUID is controller-supplied recording metadata.
+                    type: string
+                  startedAt:
+                    description: startedAt is controller-supplied recording metadata.
+                    format: date-time
+                    type: string
+                  streamExpiresAt:
+                    description: streamExpiresAt is controller-supplied recording
+                      metadata.
+                    format: date-time
+                    type: string
+                required:
+                - formatVersion
+                - operation
+                type: object
+              resources:
+                description: |-
+                  resources records the exact spoke Secret and Job inventory for restart
+                  cleanup. It is bounded to the controller's fixed resource set.
+                items:
+                  description: |-
+                    ArtifactResourceReference identifies one spoke resource created for this
+                    artifact. UID and resourceVersion make restart cleanup safe against name
+                    reuse and replacement; this is intentionally not an owner reference because
+                    the artifact and resource live in different clusters.
+                  properties:
+                    kind:
+                      description: kind is the Kubernetes resource kind.
+                      type: string
+                    name:
+                      description: name is the spoke resource name.
+                      type: string
+                    namespace:
+                      description: namespace is the spoke namespace.
+                      type: string
+                    operationID:
+                      description: operationID is the persisted create intent marker
+                        used for recovery.
+                      type: string
+                    resourceVersion:
+                      description: resourceVersion is the version observed after creation.
+                      type: string
+                    uid:
+                      description: uid is the exact UID observed after creation.
+                      type: string
+                  required:
+                  - kind
+                  - name
+                  - namespace
+                  - operationID
+                  - resourceVersion
+                  - uid
+                  type: object
+                maxItems: 2
+                type: array
+              sha256:
+                description: sha256 is the validated compressed archive digest.
+                pattern: ^[0-9a-f]{64}$
+                type: string
+              size:
+                description: size is the validated compressed archive size.
+                format: int64
+                minimum: 0
+                type: integer
+              state:
+                description: state is the monotonic lifecycle state.
+                enum:
+                - Pending
+                - Uploading
+                - Available
+                - Deleting
+                - Deleted
+                - Expired
+                - Revoked
+                - Unknown
+                type: string
+              targetCluster:
+                description: targetCluster is the immutable ClusterConfig name used
+                  for spoke cleanup.
+                type: string
+              targetNamespace:
+                description: targetNamespace is the approved spoke namespace used
+                  for collection.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

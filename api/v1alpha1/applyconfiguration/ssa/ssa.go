@@ -314,8 +314,6 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	return result
 }
 
-// DebugSessionConnectionLeaseFrom converts a DebugSessionConnectionLease to
-// its ApplyConfiguration.
 func DebugSessionConnectionLeaseFrom(lease *breakglassv1alpha1.DebugSessionConnectionLease) *ac.DebugSessionConnectionLeaseApplyConfiguration {
 	if lease == nil {
 		return nil
@@ -324,7 +322,6 @@ func DebugSessionConnectionLeaseFrom(lease *breakglassv1alpha1.DebugSessionConne
 		WithNamespace(lease.Namespace).
 		WithName(lease.Name).
 		WithUID(lease.UID).
-		WithResourceVersion(lease.ResourceVersion).
 		WithHolderUID(lease.HolderUID).
 		WithTargetUID(lease.TargetUID).
 		WithProfileDigest(lease.ProfileDigest).
@@ -822,9 +819,6 @@ func KubectlDebugStatusFrom(k *breakglassv1alpha1.KubectlDebugStatus) *ac.Kubect
 	for i := range k.CopiedPods {
 		result.WithCopiedPods(CopiedPodRefFrom(&k.CopiedPods[i]))
 	}
-	for i := range k.TerminalRecordings {
-		result.WithTerminalRecordings(TerminalRecordingRefFrom(&k.TerminalRecordings[i]))
-	}
 
 	return result
 }
@@ -873,29 +867,6 @@ func CopiedPodRefFrom(c *breakglassv1alpha1.CopiedPodRef) *ac.CopiedPodRefApplyC
 	return result
 }
 
-// TerminalRecordingRefFrom converts a TerminalRecordingRef to its ApplyConfiguration.
-func TerminalRecordingRefFrom(r *breakglassv1alpha1.TerminalRecordingRef) *ac.TerminalRecordingRefApplyConfiguration {
-	if r == nil {
-		return nil
-	}
-	return ac.TerminalRecordingRef().
-		WithID(r.ID).
-		WithNamespace(r.Namespace).
-		WithPodName(r.PodName).
-		WithPodUID(r.PodUID).
-		WithContainerName(r.ContainerName).
-		WithOperation(r.Operation).
-		WithSHA256(r.SHA256).
-		WithSize(r.Size).
-		WithBackend(r.Backend).
-		WithBackendInstanceID(r.BackendInstanceID).
-		WithRuntimeBindingDigest(r.RuntimeBindingDigest).
-		WithVersionID(r.VersionID).
-		WithStartedAt(r.StartedAt).
-		WithCompletedAt(r.CompletedAt).
-		WithExpiresAt(r.ExpiresAt)
-}
-
 // DebugSessionTemplateSpecFrom converts a DebugSessionTemplateSpec to its ApplyConfiguration.
 func DebugSessionTemplateSpecFrom(t *breakglassv1alpha1.DebugSessionTemplateSpec) *ac.DebugSessionTemplateSpecApplyConfiguration {
 	if t == nil {
@@ -903,6 +874,9 @@ func DebugSessionTemplateSpecFrom(t *breakglassv1alpha1.DebugSessionTemplateSpec
 	}
 
 	result := ac.DebugSessionTemplateSpec()
+	if t.ArtifactCollection != nil {
+		result.WithArtifactCollection(ac.DebugSessionArtifactCollection().WithAllowedRecipes(t.ArtifactCollection.AllowedRecipes...))
+	}
 
 	if t.DisplayName != "" {
 		result.WithDisplayName(t.DisplayName)

@@ -67,6 +67,9 @@ const (
 
 // DebugSessionTemplateSpec defines the desired state of DebugSessionTemplate.
 type DebugSessionTemplateSpec struct {
+	// artifactCollection explicitly enables fixed diagnostic recipes for active participants.
+	// +optional
+	ArtifactCollection *DebugSessionArtifactCollection `json:"artifactCollection,omitempty"`
 	// displayName is a human-readable name for this template.
 	// +optional
 	DisplayName string `json:"displayName,omitempty"`
@@ -1372,4 +1375,13 @@ type DebugSessionTemplateList struct {
 
 func init() {
 	SchemeBuilder.Register(&DebugSessionTemplate{}, &DebugSessionTemplateList{})
+}
+
+// DebugSessionArtifactCollection enables only controller-owned fixed recipes.
+type DebugSessionArtifactCollection struct {
+	// allowedRecipes is the administrator-selected collection allowlist.
+	// +kubebuilder:validation:MaxItems=2
+	// +kubebuilder:validation:items:Enum=system-summary.v1;crashdump-collection.v1
+	// +required
+	AllowedRecipes []string `json:"allowedRecipes"`
 }

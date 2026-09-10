@@ -19,15 +19,14 @@ import (
 // DebugSessionConnectionLease records the durable fencing identity for a
 // controller-owned target connection.
 type DebugSessionConnectionLeaseApplyConfiguration struct {
-	Namespace       *string    `json:"namespace,omitempty"`
-	Name            *string    `json:"name,omitempty"`
-	UID             *types.UID `json:"uid,omitempty"`
-	ResourceVersion *string    `json:"resourceVersion,omitempty"`
-	HolderUID       *types.UID `json:"holderUID,omitempty"`
-	TargetUID       *types.UID `json:"targetUID,omitempty"`
-	ProfileDigest   *string    `json:"profileDigest,omitempty"`
-	Epoch           *int64     `json:"epoch,omitempty"`
-	ExpiresAt       *v1.Time   `json:"expiresAt,omitempty"`
+	Namespace     *string    `json:"namespace,omitempty"`
+	Name          *string    `json:"name,omitempty"`
+	UID           *types.UID `json:"uid,omitempty"`
+	HolderUID     *types.UID `json:"holderUID,omitempty"`
+	TargetUID     *types.UID `json:"targetUID,omitempty"`
+	ProfileDigest *string    `json:"profileDigest,omitempty"`
+	Epoch         *int64     `json:"epoch,omitempty"`
+	ExpiresAt     *v1.Time   `json:"expiresAt,omitempty"`
 }
 
 // DebugSessionConnectionLeaseApplyConfiguration constructs a declarative configuration of the DebugSessionConnectionLease type for use with
@@ -57,14 +56,6 @@ func (b *DebugSessionConnectionLeaseApplyConfiguration) WithName(value string) *
 // If called multiple times, the UID field is set to the value of the last call.
 func (b *DebugSessionConnectionLeaseApplyConfiguration) WithUID(value types.UID) *DebugSessionConnectionLeaseApplyConfiguration {
 	b.UID = &value
-	return b
-}
-
-// WithResourceVersion sets the ResourceVersion field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the ResourceVersion field is set to the value of the last call.
-func (b *DebugSessionConnectionLeaseApplyConfiguration) WithResourceVersion(value string) *DebugSessionConnectionLeaseApplyConfiguration {
-	b.ResourceVersion = &value
 	return b
 }
 

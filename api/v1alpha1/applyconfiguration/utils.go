@@ -28,6 +28,16 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.AllowedPodOperationsApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("AllowedPodRef"):
 		return &apiv1alpha1.AllowedPodRefApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ArtifactInputs"):
+		return &apiv1alpha1.ArtifactInputsApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ArtifactOutboxStatus"):
+		return &apiv1alpha1.ArtifactOutboxStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ArtifactRecordingMetadata"):
+		return &apiv1alpha1.ArtifactRecordingMetadataApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ArtifactResourceReference"):
+		return &apiv1alpha1.ArtifactResourceReferenceApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ArtifactSessionReference"):
+		return &apiv1alpha1.ArtifactSessionReferenceApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("AuditConfig"):
 		return &apiv1alpha1.AuditConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("AuditConfigSpec"):
@@ -116,6 +126,14 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.DebugSessionApprovalApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionApprovers"):
 		return &apiv1alpha1.DebugSessionApproversApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionArtifact"):
+		return &apiv1alpha1.DebugSessionArtifactApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionArtifactCollection"):
+		return &apiv1alpha1.DebugSessionArtifactCollectionApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionArtifactSpec"):
+		return &apiv1alpha1.DebugSessionArtifactSpecApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionArtifactStatus"):
+		return &apiv1alpha1.DebugSessionArtifactStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionAuditConfig"):
 		return &apiv1alpha1.DebugSessionAuditConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionClusterBinding"):
@@ -270,8 +288,6 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.SMTPConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TemplateReference"):
 		return &apiv1alpha1.TemplateReferenceApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("TerminalRecordingRef"):
-		return &apiv1alpha1.TerminalRecordingRefApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TerminalSharingConfig"):
 		return &apiv1alpha1.TerminalSharingConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TerminalSharingStatus"):

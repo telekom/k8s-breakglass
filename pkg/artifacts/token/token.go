@@ -451,3 +451,22 @@ func RetirementDeadline(keyID string, references []KeyReference, lateDrain time.
 	}
 	return deadline.UTC()
 }
+
+// DeriveUploadJTI reproduces a reservation nonce without storing credential
+// material. The key ID is persisted with the immutable reservation, so rotation
+// never silently rebinds an existing upload to a new key.
+func (keyring *Keyring) DeriveUploadJTI(keyID, binding string) (string, string, error) {
+	if keyring == nil || binding == "" {
+		return "", "", errors.New("artifact reservation key is unavailable")
+	}
+	if keyID == "" {
+		keyID = keyring.signer
+	}
+	key, ok := keyring.keys[keyID]
+	if !ok {
+		return "", "", errors.New("artifact reservation key is unavailable")
+	}
+	digest := hmac.New(sha256.New, key)
+	_, _ = digest.Write([]byte("breakglass-reservation-jti-v1\x00" + keyID + "\x00" + binding))
+	return base64.RawURLEncoding.EncodeToString(digest.Sum(nil)), keyID, nil
+}

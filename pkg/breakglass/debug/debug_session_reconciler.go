@@ -31,7 +31,7 @@ import (
 	"unicode"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	artifactstorage "github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
+	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
@@ -103,14 +103,14 @@ type DebugSessionController struct {
 	// preparation and before the next authorization fence.
 	targetClientFactory    func(*rest.Config) (ctrlclient.Client, error)
 	beforeDebugTargetWrite func(string)
-	recordingStore         artifactstorage.Store
+	recordingArtifacts     *backend.Service
 	recordingConnections   TerminalRecordingConnectionProvider
 }
 
-// WithTerminalRecordingStore configures the explicit artifact backend used by
+// WithTerminalRecordingArtifacts configures the shared artifact backend used by
 // controller-owned terminal recording. A nil store keeps recording disabled.
-func (c *DebugSessionController) WithTerminalRecordingStore(store artifactstorage.Store) *DebugSessionController {
-	c.recordingStore = store
+func (c *DebugSessionController) WithTerminalRecordingArtifacts(service *backend.Service) *DebugSessionController {
+	c.recordingArtifacts = service
 	return c
 }
 
@@ -122,11 +122,14 @@ func (c *DebugSessionController) WithTerminalRecordingConnections(provider Termi
 }
 
 func (c *DebugSessionController) terminalRecordingConfigured() bool {
-	return c.recordingStore != nil && c.recordingConnections != nil
+	return c.recordingArtifacts != nil && c.recordingConnections != nil
 }
 
 func (c *DebugSessionController) WithAPIReader(reader ctrlclient.Reader) *DebugSessionController {
 	c.apiReader = reader
+	if c.connectionLeases != nil {
+		c.connectionLeases.WithLiveReader(reader)
+	}
 	return c
 }
 
@@ -150,6 +153,9 @@ func (c *DebugSessionController) WithLiveReader(reader ctrlclient.Reader) *Debug
 	if reader != nil {
 		c.reader = reader
 		c.apiReader = reader
+		if c.connectionLeases != nil {
+			c.connectionLeases.WithLiveReader(reader)
+		}
 	}
 	return c
 }
@@ -508,6 +514,12 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
+	if c.connectionLeases != nil && ds.Status.ConnectionLease != nil {
+		if err := c.connectionLeases.RenewSession(ctx, ds, ds.Status.ExpiresAt.Time); err != nil {
+			log.Warnw("Failed to converge debug session connection lease; will retry", "error", err)
+			return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+		}
+	}
 
 	// Renewal commits session status before touching the spoke Job. Reconcile
 	// from that durable expiry so a target failure or a lost API response
@@ -581,11 +593,16 @@ func (c *DebugSessionController) sendDebugSessionExpiredEmail(ds breakglassv1alp
 // remains terminal for state-machine purposes — the state is never changed here —
 // but reconciliation keeps retrying the delete until the status lists are empty.
 func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
-	if err := c.revokeTerminalRecordingLease(ctx, ds); err != nil {
-		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, err
+	if !hasTrackedSpokeResources(ds) {
+		if c.connectionLeases != nil {
+			if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
+				return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+			}
+		}
+		releaseSessionMetricSeries(ds.Name)
+		return ctrl.Result{}, nil // Nothing left on the spoke: genuinely terminal.
 	}
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
-	recordingCleanupErr := c.cleanupExpiredTerminalRecordings(ctx, ds)
 
 	if hasTrackedSpokeResources(ds) {
 		if err := c.cleanupResources(ctx, ds); err != nil {
@@ -601,9 +618,15 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 	// cleanupResources clears the status lists as it succeeds. If anything is still
 	// tracked, the cleanup was incomplete even though it reported no error, so the
 	// session is not yet safe to abandon.
-	if hasTrackedSpokeResources(ds) || recordingCleanupErr != nil {
+	if hasTrackedSpokeResources(ds) {
 		log.Warnw("Cleanup reported success but spoke resources are still tracked; will retry")
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	}
+	if c.connectionLeases != nil {
+		if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
+			log.Errorw("Failed to revoke debug session connection lease", "error", err)
+			return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+		}
 	}
 
 	log.Infow("Cleanup of spoke resources completed for failed debug session")
@@ -653,9 +676,11 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 		// Requeue to retry cleanup
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
-	if err := c.cleanupExpiredTerminalRecordings(ctx, ds); err != nil {
-		log.Warnw("Terminal recording retention cleanup will be retried", "error", err)
-		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	if c.connectionLeases != nil {
+		if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
+			log.Errorw("Failed to revoke debug session connection lease", "error", err)
+			return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+		}
 	}
 
 	// Decrement active gauge for terminated sessions. Expired sessions are
@@ -777,6 +802,21 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
 	}
+	if c.connectionLeases != nil && c.ccProvider != nil {
+		_, configured, err := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("read target before acquiring connection lease: %w", err)
+		}
+		lease, err := c.connectionLeases.AcquireForSession(ctx, ds, configured.UID)
+		c.ccProvider.ReleasePrivilegedOperationClusterConfig(configured)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("acquire connection lease: %w", err)
+		}
+		ds.Status.ConnectionLease = &lease
+		if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
 	if err := c.ensureTerminalRecordingConfigured(template); err != nil {
 		return c.failSession(ctx, ds, err.Error())
 	}
@@ -862,6 +902,11 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 }
 
 func (c *DebugSessionController) validateActivationBeforePublish(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	if c.connectionLeases != nil && c.ccProvider != nil {
+		if err := c.connectionLeases.ValidateSession(ctx, ds); err != nil {
+			return fmt.Errorf("connection lease is no longer valid: %w", err)
+		}
+	}
 	if c.ccProvider != nil {
 		_, configuredCluster, err := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)
 		if err != nil {

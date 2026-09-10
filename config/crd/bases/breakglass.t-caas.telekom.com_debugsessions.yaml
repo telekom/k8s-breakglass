@@ -1322,8 +1322,6 @@ spec:
                     type: string
                   profileDigest:
                     type: string
-                  resourceVersion:
-                    type: string
                   targetUID:
                     description: |-
                       UID is a type that holds unique ID values, including UUIDs.  Because we
@@ -1343,7 +1341,6 @@ spec:
                 - name
                 - namespace
                 - profileDigest
-                - resourceVersion
                 - targetUID
                 - uid
                 type: object
@@ -1476,89 +1473,6 @@ spec:
                       - injectedBy
                       - namespace
                       - podName
-                      type: object
-                    type: array
-                  terminalRecordings:
-                    description: |-
-                      terminalRecordings lists finalized controller-owned terminal recordings.
-                      Raw terminal bytes are stored only in the configured artifact backend.
-                    items:
-                      description: |-
-                        TerminalRecordingRef identifies one finalized terminal recording artifact.
-                        It contains correlation metadata only; terminal bytes never enter status.
-                      properties:
-                        backend:
-                          description: backend identifies the explicitly configured
-                            artifact backend.
-                          type: string
-                        backendInstanceID:
-                          description: backendInstanceID pins the exact storage instance
-                            that published the artifact.
-                          type: string
-                        completedAt:
-                          description: completedAt is when the stream was finalized.
-                          format: date-time
-                          type: string
-                        containerName:
-                          description: containerName is the target container, when
-                            specified.
-                          type: string
-                        expiresAt:
-                          description: expiresAt is when retention cleanup may remove
-                            the artifact.
-                          format: date-time
-                          type: string
-                        id:
-                          description: id is the immutable artifact key.
-                          type: string
-                        namespace:
-                          description: namespace is the target Pod namespace.
-                          type: string
-                        operation:
-                          description: operation is exec or attach.
-                          type: string
-                        podName:
-                          description: podName is the target Pod name.
-                          type: string
-                        podUID:
-                          description: podUID is the immutable target Pod identity.
-                          type: string
-                        runtimeBindingDigest:
-                          description: |-
-                            runtimeBindingDigest binds reads and deletes to the immutable session/target
-                            authorization tuple used when the artifact was published.
-                          type: string
-                        sha256:
-                          description: sha256 is the digest of the finalized framed
-                            bytes.
-                          type: string
-                        size:
-                          description: size is the finalized framed byte count.
-                          format: int64
-                          type: integer
-                        startedAt:
-                          description: startedAt is when the stream began.
-                          format: date-time
-                          type: string
-                        versionID:
-                          description: versionID identifies the exact durable artifact
-                            version.
-                          type: string
-                      required:
-                      - backend
-                      - backendInstanceID
-                      - completedAt
-                      - expiresAt
-                      - id
-                      - namespace
-                      - operation
-                      - podName
-                      - podUID
-                      - runtimeBindingDigest
-                      - sha256
-                      - size
-                      - startedAt
-                      - versionID
                       type: object
                     type: array
                 type: object
@@ -2853,6 +2767,23 @@ spec:
                         items:
                           type: string
                         type: array
+                    type: object
+                  artifactCollection:
+                    description: artifactCollection explicitly enables fixed diagnostic
+                      recipes for active participants.
+                    properties:
+                      allowedRecipes:
+                        description: allowedRecipes is the administrator-selected
+                          collection allowlist.
+                        items:
+                          enum:
+                          - system-summary.v1
+                          - crashdump-collection.v1
+                          type: string
+                        maxItems: 2
+                        type: array
+                    required:
+                    - allowedRecipes
                     type: object
                   audit:
                     description: audit configures audit logging for debug sessions.
