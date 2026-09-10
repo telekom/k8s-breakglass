@@ -514,12 +514,16 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		cleanupErrors = append(cleanupErrors, err)
 	}
 
-	if len(ds.Status.DeployedResources) == 0 &&
-		len(ds.Status.AuxiliaryResourceStatuses) == 0 &&
-		len(ds.Status.PodTemplateResourceStatuses) == 0 {
+	if !cleanupNeedsTargetCluster(ds) {
 		// AllowedPods are authorization references, not spoke resources. Remove
 		// this attempt's baseline refs while the status merge retains newer refs.
 		ds.Status.AllowedPods = nil
+		if hasPreparedKubectlDebugOperation(ds) {
+			cleanupErrors = append(cleanupErrors, errors.New("prepared kubectl-debug operation remains unresolved"))
+		}
+		if hasUnresolvedCleanupIntent(ds) {
+			cleanupErrors = append(cleanupErrors, errors.New("cleanup intent remains unresolved"))
+		}
 		return finishCleanup(errors.Join(cleanupErrors...))
 	}
 
@@ -596,8 +600,9 @@ func setCleanupCondition(ds *breakglassv1alpha1.DebugSession, cleanupErr error) 
 
 func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 	identities := make([]string, 0, maxCleanupResidualIdentities)
+	seen := make(map[string]struct{}, maxCleanupResidualIdentities)
 	add := func(kind, namespace, name, uid string) {
-		if len(identities) >= maxCleanupResidualIdentities || name == "" {
+		if name == "" {
 			return
 		}
 		identity := kind + "/" + name
@@ -606,6 +611,13 @@ func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 		}
 		if uid != "" {
 			identity += " (uid=" + uid + ")"
+		}
+		if _, exists := seen[identity]; exists {
+			return
+		}
+		seen[identity] = struct{}{}
+		if len(identities) >= maxCleanupResidualIdentities {
+			return
 		}
 		if len(identity) > maxCleanupIdentityLength {
 			identity = identity[:maxCleanupIdentityLength-len("...")] + "..."
@@ -616,17 +628,17 @@ func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 		add(ref.Kind, ref.Namespace, ref.Name, ref.UID)
 	}
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
-		if auxiliaryStatusHasOutstandingResource(status) {
+		if auxiliaryStatusHasCleanupResidual(ds, status) {
 			add(status.Kind, status.Namespace, status.ResourceName, status.UID)
 		}
 		for _, ref := range status.AdditionalResources {
-			if !ref.Deleted {
+			if !ref.Deleted && ((ref.UID == "" && ref.CreateOperationID != "") || shouldDeleteAuxiliaryResource(ds, status.Name)) {
 				add(ref.Kind, ref.Namespace, ref.ResourceName, ref.UID)
 			}
 		}
 	}
 	for _, status := range ds.Status.PodTemplateResourceStatuses {
-		if !status.Deleted {
+		if !status.Deleted && (status.Created || status.UID != "" || status.CreateOperationID != "") {
 			add(status.Kind, status.Namespace, status.ResourceName, status.UID)
 		}
 	}
@@ -636,6 +648,13 @@ func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 		}
 		for _, ref := range status.EphemeralContainersInjected {
 			add("EphemeralContainer", ref.Namespace, ref.PodName+"/"+ref.ContainerName, ref.PodUID)
+		}
+		if hasPreparedKubectlDebugOperation(ds) {
+			for _, operation := range status.Operations {
+				if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared {
+					add("KubectlDebugOperation", "", operation.ID, "")
+				}
+			}
 		}
 	}
 	return identities
@@ -719,7 +738,7 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 				// transition metadata describes the actual persisted state.
 				if liveCondition := current.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)); liveCondition != nil && liveCondition.Status == metav1.ConditionTrue {
 					mergedCondition.Status = metav1.ConditionTrue
-					mergedCondition.ObservedGeneration = liveCondition.ObservedGeneration
+					mergedCondition.ObservedGeneration = current.Generation
 					mergedCondition.LastTransitionTime = liveCondition.LastTransitionTime
 					mergedCondition.Reason = "CleanupFailed"
 					mergedCondition.Message = boundedCleanupConditionMessage(current)
@@ -730,6 +749,19 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 					mergedCondition.Reason = "CleanupFailed"
 					mergedCondition.Message = boundedCleanupConditionMessage(current)
 				}
+			} else if mergedCondition.Status == metav1.ConditionTrue {
+				// A cleanup attempt can race with a writer that adds or removes
+				// inventory. Keep the live transition timestamp when the failure
+				// remains true, but recompute generation and bounded identities from
+				// the merged status rather than persisting stale cleanup evidence.
+				if liveCondition := current.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)); liveCondition != nil && liveCondition.Status == metav1.ConditionTrue {
+					mergedCondition.LastTransitionTime = liveCondition.LastTransitionTime
+				} else {
+					mergedCondition.LastTransitionTime = metav1.Now()
+				}
+				mergedCondition.ObservedGeneration = current.Generation
+				mergedCondition.Reason = "CleanupFailed"
+				mergedCondition.Message = boundedCleanupConditionMessage(current)
 			}
 			current.SetCondition(*mergedCondition)
 		}
@@ -773,8 +805,61 @@ func cleanupStatusHasResiduals(session *breakglassv1alpha1.DebugSession) bool {
 			return true
 		}
 	}
+	if hasPreparedKubectlDebugOperation(session) {
+		return true
+	}
 	return status.KubectlDebugStatus != nil &&
 		(len(status.KubectlDebugStatus.CopiedPods) > 0 || len(status.KubectlDebugStatus.EphemeralContainersInjected) > 0)
+}
+
+func cleanupNeedsTargetCluster(session *breakglassv1alpha1.DebugSession) bool {
+	status := session.Status
+	if len(status.DeployedResources) > 0 {
+		return true
+	}
+	for _, resource := range status.AuxiliaryResourceStatuses {
+		if !auxiliaryStatusHasCleanupResidual(session, resource) {
+			for _, child := range resource.AdditionalResources {
+				if !child.Deleted && shouldDeleteAuxiliaryResource(session, resource.Name) && child.UID != "" {
+					return true
+				}
+			}
+			continue
+		}
+		if resource.UID != "" || resource.CreateOperationID == "" {
+			return true
+		}
+		for _, child := range resource.AdditionalResources {
+			if !child.Deleted && shouldDeleteAuxiliaryResource(session, resource.Name) && child.UID != "" {
+				return true
+			}
+		}
+	}
+	for _, resource := range status.PodTemplateResourceStatuses {
+		if !resource.Deleted && (resource.Created || resource.UID != "") {
+			return true
+		}
+	}
+	return false
+}
+
+func hasUnresolvedCleanupIntent(session *breakglassv1alpha1.DebugSession) bool {
+	for _, resource := range session.Status.AuxiliaryResourceStatuses {
+		if !resource.Deleted && resource.UID == "" && resource.CreateOperationID != "" {
+			return true
+		}
+		for _, child := range resource.AdditionalResources {
+			if !child.Deleted && child.UID == "" && child.CreateOperationID != "" {
+				return true
+			}
+		}
+	}
+	for _, resource := range session.Status.PodTemplateResourceStatuses {
+		if !resource.Deleted && resource.UID == "" && resource.CreateOperationID != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func auxiliaryStatusHasCleanupResidual(session *breakglassv1alpha1.DebugSession, status breakglassv1alpha1.AuxiliaryResourceStatus) bool {

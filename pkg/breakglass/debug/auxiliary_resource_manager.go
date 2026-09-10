@@ -216,7 +216,7 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 
 	for i, status := range session.Status.AuxiliaryResourceStatuses {
 		deleteAfter := shouldDeleteAuxiliaryResource(session, status.Name)
-		if !status.Deleted && !status.Created && status.UID == "" {
+		if !status.Deleted && status.UID == "" && status.CreateOperationID != "" {
 			if status.CreateOperationID != "" {
 				err := fmt.Errorf("auxiliary resource %q creation outcome is unresolved", status.Name)
 				cleanupErrors = append(cleanupErrors, err)
