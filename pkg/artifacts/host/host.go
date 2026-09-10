@@ -133,18 +133,25 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	}
 	issuerAdapter := &uploadTokenIssuer{keyring: keyring, now: time.Now}
 	reconciler := &artifactcontroller.Reconciler{Client: deps.Manager.GetClient(), LiveReader: deps.Reader, ClusterProvider: deps.ClusterProvider, Service: service, TokenIssuer: issuerAdapter, Image: artifactConfig.CollectorImage, ControllerURL: strings.TrimSuffix(artifactConfig.ControllerURL, "/"), Log: deps.Log}
+	controllers, err := artifactAPIControllers(service, deps, artifactConfig.UploadMaxBytes)
+	if err != nil {
+		_ = closeStore()
+		return nil, err
+	}
+	return &Components{Service: service, Controller: reconciler, APIControllers: controllers, Close: closeStore}, nil
+}
+
+func artifactAPIControllers(service *backend.Service, deps Dependencies, maximum int64) ([]rootapi.APIController, error) {
 	resolver := newReadBindingResolver(deps.DebugAPI, deps.BindingSource)
 	uploadController, err := artifactapi.NewUploadController(service)
 	if err != nil {
-		_ = closeStore()
 		return nil, err
 	}
-	readController, err := artifactapi.NewReadController(service, resolver)
+	readController, err := artifactapi.NewReadController(service, resolver, deps.DebugAPI.Handlers()...)
 	if err != nil {
-		_ = closeStore()
 		return nil, err
 	}
-	return &Components{Service: service, Controller: reconciler, APIControllers: []rootapi.APIController{uploadController, readController, &collectionController{service: service, debug: deps.DebugAPI, provider: deps.ClusterProvider, maximum: artifactConfig.UploadMaxBytes}}, Close: closeStore}, nil
+	return []rootapi.APIController{uploadController, readController, &collectionController{service: service, debug: deps.DebugAPI, provider: deps.ClusterProvider, maximum: maximum}}, nil
 }
 
 // repositoryBindingSource reads the immutable session and target binding from

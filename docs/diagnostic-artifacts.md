@@ -71,11 +71,6 @@ epoch, and expiry before each artifact operation. The binding source reads the
 immutable artifact record in the configured backend namespace, so request
 parameters cannot select a different target or session.
 
-Artifact creation must commit the one-time upload JTI commitment before the
-collector Secret is issued. The creation route must provide that commitment
-through a controller-owned seam rather than asking the collector or API caller
-to expose the raw token; replacing the current random JTI issuance with that
-durable handoff is still required before enabling the feature.
 
 Provider object keys are 64 lowercase hexadecimal SHA-256 characters derived from the immutable artifact resource UID with a domain separator. Public artifact IDs remain unchanged. Same-named artifacts with different resource UIDs occupy separate provider objects, including during upload recovery and cleanup.
 
@@ -148,3 +143,9 @@ outside the positive int32 range before persistence. Recording frame lengths mus
 fit the signed byte-count range and the remaining bounded recording before copying.
 The S3 client uses the minimum AWS SDK versions fixing GO-2026-5764
 (EventStream 1.7.8 and S3 1.97.3).
+
+Human collection and read routes apply the same authentication middleware as
+DebugSession routes. Collector uploads use only their reserved upload token.
+Artifact-enabled processes require controllers enabled so admitted work and
+retention cleanup are reconciled. Binding expiry is inclusive: a binding is no
+longer active at its exact deadline.

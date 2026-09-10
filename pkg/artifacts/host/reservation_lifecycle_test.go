@@ -26,9 +26,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	artifactapi "github.com/telekom/k8s-breakglass/pkg/artifacts/api"
+	rootapi "github.com/telekom/k8s-breakglass/pkg/api"
 	artifactcontroller "github.com/telekom/k8s-breakglass/pkg/artifacts/controller"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
+	"github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
@@ -261,14 +262,41 @@ func TestRegisteredCollectorAdmissionCreatesJobWithReservedToken(t *testing.T) {
 		return c.Create(ctx, o, opts...)
 	}})
 	provider := lifecycleTarget{client: spoke, config: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: "cluster-uid"}}}
-	debugAPI := debug.NewDebugSessionAPIController(zap.NewNop().Sugar(), hub, nil, nil).WithAPIReader(hub)
-	controller := &collectionController{service: svc, debug: debugAPI, provider: provider, maximum: archive.MaxSystemSummaryArchiveBytes}
-	router := gin.New()
-	router.Use(func(c *gin.Context) { c.Set("legacy_identity_allowed", true); c.Set("username", "owner"); c.Next() })
-	require.NoError(t, controller.Register(router.Group("/artifacts")))
+	authCalls := 0
+	middleware := func(c *gin.Context) {
+		authCalls++
+		if c.GetHeader("Authorization") != "Bearer authenticated-test-user" {
+			c.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
+		c.Set("legacy_identity_allowed", true)
+		c.Set("username", "owner")
+		c.Next()
+	}
+	debugAPI := debug.NewDebugSessionAPIController(zap.NewNop().Sugar(), hub, nil, middleware).WithAPIReader(hub)
+	controllers, err := artifactAPIControllers(svc, Dependencies{DebugAPI: debugAPI, ClusterProvider: provider, BindingSource: repositoryBindingSource{repository: repo}}, archive.MaxSystemSummaryArchiveBytes)
+	require.NoError(t, err)
+	server := rootapi.NewServer(zap.NewNop(), config.Config{Server: config.Server{AllowedOrigins: []string{"https://test.example"}}}, true, nil)
+	require.NoError(t, server.RegisterAll(controllers))
+	router := server.Handler()
+	for _, endpoint := range []struct{ method, path string }{{http.MethodPost, "/api/debugSessionArtifacts/hub/session"}, {http.MethodGet, "/api/debugSessionArtifacts/hub/session"}, {http.MethodGet, "/api/debugSessionArtifacts/hub/session/artifact"}} {
+		for _, credential := range []string{"", "Bearer invalid"} {
+			request := httptest.NewRequest(endpoint.method, endpoint.path, nil)
+			request.Header.Set("Authorization", credential)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			require.Equal(t, http.StatusUnauthorized, response.Code)
+		}
+	}
+	beforeUpload := authCalls
+	unauthorizedUpload := httptest.NewRecorder()
+	router.ServeHTTP(unauthorizedUpload, httptest.NewRequest(http.MethodPut, "/api/debugSessionArtifactUploads/hub/session/artifact", nil))
+	require.Equal(t, http.StatusNotFound, unauthorizedUpload.Code)
+	require.Equal(t, beforeUpload, authCalls, "upload uses its token gate, not human authentication")
 	send := func(body string) *httptest.ResponseRecorder {
-		request := httptest.NewRequest(http.MethodPost, "/artifacts/hub/session", strings.NewReader(body))
+		request := httptest.NewRequest(http.MethodPost, "/api/debugSessionArtifacts/hub/session", strings.NewReader(body))
 		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer authenticated-test-user")
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
 		return response
@@ -306,22 +334,30 @@ func TestRegisteredCollectorAdmissionCreatesJobWithReservedToken(t *testing.T) {
 	require.Equal(t, "registry.example/collector@sha256:"+strings.Repeat("c", 64), job.Spec.Template.Spec.InitContainers[0].Image)
 	route := "/api/debugSessionArtifactUploads/hub/session/" + record.ArtifactID
 	body := validLocalArchive(t, record.Expected)
-	result, err := svc.Upload(ctx, string(secret.Data["token"]), route, bytes.NewReader(body))
-	require.NoError(t, err)
+	uploadRequest := httptest.NewRequest(http.MethodPut, route, bytes.NewReader(body))
+	uploadRequest.Header.Set("Authorization", "Bearer "+string(secret.Data["token"]))
+	uploadResponse := httptest.NewRecorder()
+	beforeUpload = authCalls
+	router.ServeHTTP(uploadResponse, uploadRequest)
+	require.Equal(t, http.StatusCreated, uploadResponse.Code, uploadResponse.Body.String())
+	require.Equal(t, beforeUpload, authCalls)
+	var result backend.PublicRecord
+	require.NoError(t, json.Unmarshal(uploadResponse.Body.Bytes(), &result))
 	require.Equal(t, backend.StateAvailable, result.State)
 
-	readController, err := artifactapi.NewReadController(svc, newReadBindingResolver(debugAPI, repositoryBindingSource{repository: repo}))
-	require.NoError(t, err)
-	require.NoError(t, readController.Register(router.Group("/artifacts")))
 	listed := httptest.NewRecorder()
-	router.ServeHTTP(listed, httptest.NewRequest(http.MethodGet, "/artifacts/hub/session", nil))
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/debugSessionArtifacts/hub/session", nil)
+	listRequest.Header.Set("Authorization", "Bearer authenticated-test-user")
+	router.ServeHTTP(listed, listRequest)
 	require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
 	var listedArtifacts []backend.PublicRecord
 	require.NoError(t, json.Unmarshal(listed.Body.Bytes(), &listedArtifacts))
 	require.Len(t, listedArtifacts, 1)
 	require.Equal(t, record.ArtifactID, listedArtifacts[0].ArtifactID)
 	downloaded := httptest.NewRecorder()
-	router.ServeHTTP(downloaded, httptest.NewRequest(http.MethodGet, "/artifacts/hub/session/"+record.ArtifactID, nil))
+	downloadRequest := httptest.NewRequest(http.MethodGet, "/api/debugSessionArtifacts/hub/session/"+record.ArtifactID, nil)
+	downloadRequest.Header.Set("Authorization", "Bearer authenticated-test-user")
+	router.ServeHTTP(downloaded, downloadRequest)
 	require.Equal(t, http.StatusOK, downloaded.Code, downloaded.Body.String())
 	require.Equal(t, body, downloaded.Body.Bytes())
 

@@ -182,6 +182,10 @@ func run() error {
 		return fmt.Errorf("load config for breakglass controller: %w", err)
 	}
 
+	if err := validateArtifactDeployment(cfg.Artifacts.Enabled, cliConfig.EnableControllers); err != nil {
+		return err
+	}
+
 	system.SetLogRedaction(cfg.Server.RedactLogs)
 	if cfg.Server.RedactLogs {
 		log.Infow("Log redaction enabled via config")
@@ -872,4 +876,11 @@ func resolveOTelSamplingRate(cliValue float64, configValue *float64, defaultValu
 		return *configValue
 	}
 	return defaultValue
+}
+
+func validateArtifactDeployment(artifactsEnabled, controllersEnabled bool) error {
+	if artifactsEnabled && !controllersEnabled {
+		return fmt.Errorf("artifacts.enabled requires --enable-controllers=true for collection and cleanup")
+	}
+	return nil
 }

@@ -112,14 +112,16 @@ func DebugBindingMatchesCluster(binding *breakglassv1alpha1.DebugSessionClusterB
 
 // IsDebugSessionBindingActive preserves the binding effective and expiry boundaries.
 func IsDebugSessionBindingActive(binding *breakglassv1alpha1.DebugSessionClusterBinding) bool {
+	return isDebugSessionBindingActiveAt(binding, metav1.Now())
+}
+
+func isDebugSessionBindingActiveAt(binding *breakglassv1alpha1.DebugSessionClusterBinding, now metav1.Time) bool {
 	if binding.Spec.Disabled {
 		return false
 	}
 
-	now := metav1.Now()
-
 	// Check if binding has expired
-	if binding.Spec.ExpiresAt != nil && binding.Spec.ExpiresAt.Before(&now) {
+	if binding.Spec.ExpiresAt != nil && !now.Before(binding.Spec.ExpiresAt) {
 		return false
 	}
 

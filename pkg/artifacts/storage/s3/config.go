@@ -8,6 +8,7 @@ package s3
 
 import (
 	"errors"
+	"net/netip"
 	"net/url"
 	"strings"
 )
@@ -62,6 +63,24 @@ func (config Config) validate() (Config, error) {
 func validBucket(value string) bool {
 	if len(value) < 3 || len(value) > 63 || strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") || strings.Contains(value, "..") {
 		return false
+	}
+	if _, err := netip.ParseAddr(value); err == nil {
+		return false
+	}
+	for _, label := range strings.Split(value, ".") {
+		if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return false
+		}
+	}
+	for _, prefix := range []string{"xn--", "sthree-", "amzn-s3-demo-"} {
+		if strings.HasPrefix(value, prefix) {
+			return false
+		}
+	}
+	for _, suffix := range []string{"-s3alias", "--ol-s3", ".mrap", "--x-s3", "--table-s3"} {
+		if strings.HasSuffix(value, suffix) {
+			return false
+		}
 	}
 	for _, r := range value {
 		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '.' && r != '-' {

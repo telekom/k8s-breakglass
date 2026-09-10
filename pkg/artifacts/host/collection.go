@@ -37,7 +37,7 @@ type collectionRequest struct {
 }
 
 func (c *collectionController) BasePath() string            { return "debugSessionArtifacts" }
-func (c *collectionController) Handlers() []gin.HandlerFunc { return nil }
+func (c *collectionController) Handlers() []gin.HandlerFunc { return c.debug.Handlers() }
 func (c *collectionController) Register(group *gin.RouterGroup) error {
 	group.POST("/:namespace/:session", c.create)
 	return nil

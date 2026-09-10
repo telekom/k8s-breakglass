@@ -12,8 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added API helper coverage for authenticated diagnostic artifact collection,
   inventory, and download requests.
 
-### Added
-
 - Add explicit diagnostic-artifact host construction for S3 or single-replica
   local storage, exact namespace-scoped credential reads, token key rotation,
   live-session authorization, and API/controller registration seams.
@@ -38,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and cluster-validation diagnostics.
 
 ### Fixed
+
+- Authenticate artifact collection and reads with the DebugSession middleware, reject controller-less artifact startup and invalid bucket names, and exclude bindings at their exact expiry.
 
 - Reject overflowing artifact frame lengths, lease epochs and schema versions; update AWS SDK dependencies for GO-2026-5764.
 

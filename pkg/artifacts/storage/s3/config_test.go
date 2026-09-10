@@ -97,3 +97,14 @@ func TestPublicationDoesNotRetryAfterAmbiguousProviderResponse(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, 1, transport.calls)
 }
+
+func TestBucketProviderGrammar(t *testing.T) {
+	for _, bucket := range []string{"abc", "artifacts-1", "team.artifacts", strings.Repeat("a", 63)} {
+		_, err := (Config{Region: "eu-central-1", Bucket: bucket, InstanceID: "instance-0123456789", RequireVersioned: true}).validate()
+		require.NoError(t, err, bucket)
+	}
+	for _, bucket := range []string{"ab", strings.Repeat("a", 64), "-artifacts", "artifacts-", "team.-artifacts", "team-.artifacts", "team..artifacts", "192.168.0.1", "ARTIFACTS", "xn--artifacts", "sthree-artifacts", "amzn-s3-demo-artifacts", "artifacts-s3alias", "artifacts--ol-s3", "artifacts.mrap", "artifacts--x-s3", "artifacts--table-s3"} {
+		_, err := (Config{Region: "eu-central-1", Bucket: bucket, InstanceID: "instance-0123456789", RequireVersioned: true}).validate()
+		require.Error(t, err, bucket)
+	}
+}

@@ -216,8 +216,8 @@ type Server struct {
 }
 
 // Artifacts configures the opt-in diagnostic artifact transport. Storage
-// credentials and provider endpoints are intentionally not represented here;
-// those are administrator-owned runtime dependencies supplied to the backend.
+// credentials are referenced by exact Secret name; provider endpoints and
+// storage contracts are administrator-owned settings, never request inputs.
 type Artifacts struct {
 	Enabled          bool           `yaml:"enabled,omitempty"`
 	Backend          string         `yaml:"backend,omitempty"`
