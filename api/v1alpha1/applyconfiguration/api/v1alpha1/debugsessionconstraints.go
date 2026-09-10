@@ -13,6 +13,12 @@ package v1alpha1
 //
 // DebugSessionConstraints defines limits on debug sessions.
 type DebugSessionConstraintsApplyConfiguration struct {
+	// idleTimeout expires an active session after this duration without a
+	// successful server-observed debug operation. Empty preserves legacy behavior.
+	IdleTimeout *string `json:"idleTimeout,omitempty"`
+	// retainFor keeps the session object and its terminal evidence after cleanup.
+	// Empty preserves the cleanup service's configured retention policy.
+	RetainFor *string `json:"retainFor,omitempty"`
 	// maxDuration is the maximum allowed session duration.
 	MaxDuration *string `json:"maxDuration,omitempty"`
 	// defaultDuration is the default session duration if not specified.
@@ -34,6 +40,22 @@ type DebugSessionConstraintsApplyConfiguration struct {
 // apply.
 func DebugSessionConstraints() *DebugSessionConstraintsApplyConfiguration {
 	return &DebugSessionConstraintsApplyConfiguration{}
+}
+
+// WithIdleTimeout sets the IdleTimeout field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the IdleTimeout field is set to the value of the last call.
+func (b *DebugSessionConstraintsApplyConfiguration) WithIdleTimeout(value string) *DebugSessionConstraintsApplyConfiguration {
+	b.IdleTimeout = &value
+	return b
+}
+
+// WithRetainFor sets the RetainFor field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RetainFor field is set to the value of the last call.
+func (b *DebugSessionConstraintsApplyConfiguration) WithRetainFor(value string) *DebugSessionConstraintsApplyConfiguration {
+	b.RetainFor = &value
+	return b
 }
 
 // WithMaxDuration sets the MaxDuration field in the declarative configuration to the given value

@@ -9,6 +9,7 @@ import (
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -49,6 +50,7 @@ func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *brea
 			session.Namespace, session.Name, current.Status.State, session.Status.State)
 	}
 	desiredStatus := session.Status
+	StampDebugSessionRetention(&desiredStatus, time.Now())
 	if err := validateDebugSessionStatusMutation(current.Status, desiredStatus, time.Now()); err != nil {
 		return fmt.Errorf("apply DebugSession %s/%s status: %w", session.Namespace, session.Name, err)
 	}
@@ -104,6 +106,7 @@ func PatchDebugSessionStatusWithReader(
 	base := live.DeepCopy()
 	patched := live.DeepCopy()
 	mutate(&patched.Status)
+	StampDebugSessionRetention(&patched.Status, time.Now())
 	if err := validateDebugSessionStatusMutation(base.Status, patched.Status, time.Now()); err != nil {
 		return fmt.Errorf("patch DebugSession %s/%s status: %w", session.Namespace, session.Name, err)
 	}
@@ -120,6 +123,18 @@ func PatchDebugSessionStatusWithReader(
 }
 
 func validateDebugSessionStatusMutation(oldStatus, newStatus breakglassv1alpha1.DebugSessionStatus, now time.Time) error {
+	if newStatus.ActivityCount < oldStatus.ActivityCount {
+		return fmt.Errorf("activityCount must not decrease")
+	}
+	for _, pair := range [][2]*metav1.Time{{oldStatus.LastActivity, newStatus.LastActivity}, {oldStatus.RetainedUntil, newStatus.RetainedUntil}} {
+		if pair[0] != nil && !pair[0].IsZero() && (pair[1] == nil || pair[1].Before(pair[0])) {
+			return fmt.Errorf("activity and retention timestamps must not regress")
+		}
+	}
+	if oldStatus.State == breakglassv1alpha1.DebugSessionStateActive && DebugSessionIdleExpired(&breakglassv1alpha1.DebugSession{Status: oldStatus}, now) && !isTerminalDebugSessionState(newStatus.State) {
+		return fmt.Errorf("idle-expired session must become terminal")
+	}
+
 	if isTerminalDebugSessionState(oldStatus.State) && newStatus.State != oldStatus.State {
 		return fmt.Errorf("terminal state %q cannot change to %q", oldStatus.State, newStatus.State)
 	}
