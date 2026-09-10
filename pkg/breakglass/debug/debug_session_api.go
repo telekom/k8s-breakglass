@@ -1257,9 +1257,14 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// Validate extraDeployValues against the effective variable definitions.
 	// This includes checking allowedGroups on variables and options
 	if len(req.ExtraDeployValues) > 0 || len(effectiveVariables) > 0 {
-		valErrs := breakglassv1alpha1.ValidateExtraDeployValuesWithGroups(
+		var constraints []breakglassv1alpha1.ExtraDeployVariableConstraint
+		if resolvedBinding != nil {
+			constraints = resolvedBinding.Spec.ExtraDeployVariables
+		}
+		valErrs := breakglassv1alpha1.ValidateExtraDeployValuesWithBinding(
 			req.ExtraDeployValues,
 			effectiveVariables,
+			constraints,
 			userGroups,
 			field.NewPath("extraDeployValues"),
 		)

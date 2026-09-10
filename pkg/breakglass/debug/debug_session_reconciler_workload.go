@@ -1471,7 +1471,7 @@ func (c *DebugSessionController) buildVarsFromSession(
 	// Apply defaults from template variable definitions
 	if templateSpec != nil {
 		for _, varDef := range templateSpec.ExtraDeployVariables {
-			if varDef.Default != nil && len(varDef.Default.Raw) > 0 {
+			if !varDef.Disabled && varDef.Default != nil && len(varDef.Default.Raw) > 0 {
 				vars[varDef.Name] = extractJSONValueForPod(varDef.Default.Raw)
 			}
 		}

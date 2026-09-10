@@ -32,3 +32,13 @@ func TestTemplateVarsPreservedBeforeSerialization(t *testing.T) {
 		}
 	}
 }
+
+func TestDisabledVariableDefaultsDoNotReachEitherRenderer(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{}
+	spec := &breakglassv1alpha1.DebugSessionTemplateSpec{ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{{Name: "disabled", Disabled: true, Default: &apiextensionsv1.JSON{Raw: []byte(`"hidden"`)}}}}
+	for _, values := range []map[string]string{(&DebugSessionController{}).buildVarsFromSession(session, spec), (&AuxiliaryResourceManager{}).buildVarsFromSession(session, spec)} {
+		if _, present := values["disabled"]; present {
+			t.Fatal("disabled default reached renderer")
+		}
+	}
+}

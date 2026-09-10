@@ -3,6 +3,8 @@ package v1alpha1
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
@@ -97,4 +99,27 @@ func TestBindingPatternErrorBelongsToNarrowPattern(t *testing.T) {
 	if len(errors) != 1 || errors[0].Detail != "binding error" {
 		t.Fatalf("unexpected errors: %v", errors)
 	}
+}
+
+func TestBindingRejectsWideningAndImpossibleSelection(t *testing.T) {
+	for _, pair := range []struct{ base, narrow *VariableValidation }{
+		{&VariableValidation{MinLength: intPtr(2)}, &VariableValidation{MinLength: intPtr(1)}},
+		{&VariableValidation{MaxLength: intPtr(2)}, &VariableValidation{MaxLength: intPtr(3)}},
+		{&VariableValidation{MinItems: intPtr(2)}, &VariableValidation{MinItems: intPtr(1)}},
+		{&VariableValidation{MaxItems: intPtr(2)}, &VariableValidation{MaxItems: intPtr(3)}},
+	} {
+		_, err := mergeVariableValidation(pair.base, pair.narrow)
+		require.ErrorContains(t, err, "widen")
+	}
+	_, err := EffectiveExtraDeployVariables([]ExtraDeployVariable{{Name: "modes", InputType: InputTypeMultiSelect, Validation: &VariableValidation{MinItems: intPtr(2)}, Options: []SelectOption{{Value: "one"}, {Value: "two"}}}}, []ExtraDeployVariableConstraint{{Name: "modes", AllowedValues: []string{"one"}}})
+	require.ErrorContains(t, err, "minItems")
+}
+
+func TestDisabledTemplateVariablesAreNormalizedWithoutConstraints(t *testing.T) {
+	variables := []ExtraDeployVariable{{Name: "hidden", Disabled: true, Required: true, Default: &apiextensionsv1.JSON{Raw: []byte(`"secret"`)}}}
+	result, err := EffectiveExtraDeployVariables(variables, nil)
+	require.NoError(t, err)
+	require.Nil(t, result[0].Default)
+	require.False(t, result[0].Required)
+	require.NotNil(t, variables[0].Default)
 }

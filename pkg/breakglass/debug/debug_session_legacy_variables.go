@@ -14,7 +14,7 @@ import (
 )
 
 func (c *DebugSessionController) resumePersistedPending(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
-	if !ds.Status.ResolvedBindingSnapshotCaptured {
+	if !breakglassv1alpha1.HasCompleteResolvedBindingSnapshot(ds.Status) {
 		return c.failSession(ctx, ds, "legacy approval provenance is incomplete; recreate this session")
 	}
 	if ds.Status.ResolvedTemplateVariablePolicy == nil && len(ds.Status.ResolvedTemplate.ExtraDeployVariables) != 0 {

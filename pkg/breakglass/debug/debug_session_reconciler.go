@@ -721,6 +721,9 @@ func releaseSessionMetricSeries(sessionName string) {
 // activateSession deploys debug resources and marks session as active
 func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
+	if ds.Status.ResolvedTemplate != nil && !breakglassv1alpha1.HasCompleteResolvedBindingSnapshot(ds.Status) {
+		return c.failSession(ctx, ds, "approved binding provenance is incomplete; recreate this session")
+	}
 	if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplateVariablePolicy == nil && len(ds.Status.ResolvedTemplate.ExtraDeployVariables) != 0 {
 		policy := ds.Status.ResolvedTemplate.DeepCopy().ExtraDeployVariables
 		if !breakglassv1alpha1.CanInitializeLegacyVariablePolicy(ds.Status, policy) {
@@ -911,7 +914,7 @@ func effectiveTemplateForBinding(
 		return nil, fmt.Errorf("extra deploy values are not allowed by binding: %s", nameErrs[0].Error())
 	}
 	if len(values) > 0 || len(effectiveVariables) > 0 {
-		if errs := breakglassv1alpha1.ValidateExtraDeployValuesWithGroups(values, effectiveVariables, groups, field.NewPath("extraDeployValues")); len(errs) > 0 {
+		if errs := breakglassv1alpha1.ValidateExtraDeployValuesWithBinding(values, effectiveVariables, constraints, groups, field.NewPath("extraDeployValues")); len(errs) > 0 {
 			return nil, fmt.Errorf("extra deploy values are invalid: %s", errs[0].Error())
 		}
 	}
@@ -1238,6 +1241,7 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 		a, b := bindingList.Items[i], bindingList.Items[j]
 		return a.Namespace+"/"+a.Name < b.Namespace+"/"+b.Name
 	})
+	var invalidPolicy error
 	for i := range bindingList.Items {
 		binding := &bindingList.Items[i]
 		if !breakglass.IsBindingActive(binding) {
@@ -1258,10 +1262,19 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 			continue
 		}
 
+		if _, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, binding.Spec.ExtraDeployVariables); err != nil {
+			invalidPolicy = fmt.Errorf("matching binding has invalid variable policy: %w", err)
+			c.log.Warnw("Skipping invalid binding variable policy", "binding", binding.Name, "error", err)
+			continue
+		}
+
 		// Found a matching binding
 		return binding, nil
 	}
 
+	if invalidPolicy != nil {
+		return nil, invalidPolicy
+	}
 	return nil, nil // No matching binding found (not an error)
 }
 

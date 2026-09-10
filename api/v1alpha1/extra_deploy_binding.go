@@ -1,10 +1,13 @@
 package v1alpha1
 
 import (
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strconv"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
@@ -16,6 +19,10 @@ func EffectiveExtraDeployVariables(template []ExtraDeployVariable, constraints [
 	result := make([]ExtraDeployVariable, len(template))
 	for i := range template {
 		result[i] = *template[i].DeepCopy()
+		if result[i].Disabled {
+			result[i].Default = nil
+			result[i].Required = false
+		}
 	}
 	if len(constraints) == 0 {
 		return result, nil
@@ -147,6 +154,18 @@ func applyExtraDeployVariableConstraint(variable *ExtraDeployVariable, constrain
 		}
 	}
 
+	if !variable.Disabled && variable.InputType == InputTypeMultiSelect && variable.Validation != nil && variable.Validation.MinItems != nil {
+		selectable := 0
+		for _, option := range variable.Options {
+			if !option.Disabled {
+				selectable++
+			}
+		}
+		if *variable.Validation.MinItems > selectable {
+			return fmt.Errorf("minItems exceeds selectable options")
+		}
+	}
+
 	if constraint.Default != nil {
 		if variable.Disabled {
 			return fmt.Errorf("disabled variable cannot define a default")
@@ -193,8 +212,14 @@ func mergeVariableValidation(base, narrow *VariableValidation) (*VariableValidat
 		merged.PatternError = narrow.PatternError
 		merged.AdditionalPatterns = append(patterns, narrow.AdditionalPatterns...)
 	}
+	if narrow.MinLength != nil && merged.MinLength != nil && *narrow.MinLength < *merged.MinLength {
+		return nil, fmt.Errorf("minLength would widen template bound")
+	}
 	if narrow.MinLength != nil && (merged.MinLength == nil || *narrow.MinLength > *merged.MinLength) {
 		merged.MinLength = intPtr(*narrow.MinLength)
+	}
+	if narrow.MaxLength != nil && merged.MaxLength != nil && *narrow.MaxLength > *merged.MaxLength {
+		return nil, fmt.Errorf("maxLength would widen template bound")
 	}
 	if narrow.MaxLength != nil && (merged.MaxLength == nil || *narrow.MaxLength < *merged.MaxLength) {
 		merged.MaxLength = intPtr(*narrow.MaxLength)
@@ -216,8 +241,14 @@ func mergeVariableValidation(base, narrow *VariableValidation) (*VariableValidat
 	if err != nil {
 		return nil, fmt.Errorf("maxStorage: %w", err)
 	}
+	if narrow.MinItems != nil && merged.MinItems != nil && *narrow.MinItems < *merged.MinItems {
+		return nil, fmt.Errorf("minItems would widen template bound")
+	}
 	if narrow.MinItems != nil && (merged.MinItems == nil || *narrow.MinItems > *merged.MinItems) {
 		merged.MinItems = intPtr(*narrow.MinItems)
+	}
+	if narrow.MaxItems != nil && merged.MaxItems != nil && *narrow.MaxItems > *merged.MaxItems {
+		return nil, fmt.Errorf("maxItems would widen template bound")
 	}
 	if narrow.MaxItems != nil && (merged.MaxItems == nil || *narrow.MaxItems < *merged.MaxItems) {
 		merged.MaxItems = intPtr(*narrow.MaxItems)
@@ -405,4 +436,34 @@ func ValidateExtraDeployVariableConstraints(constraints []ExtraDeployVariableCon
 		}
 	}
 	return errs
+}
+
+// ValidateExtraDeployValuesWithBinding treats an exact effective binding default
+// like an omitted value. Both produce the same approved render value; callers
+// must first resolve and validate the effective definitions. Non-default values
+// retain all requester group restrictions, without trusting a caller-supplied flag.
+func ValidateExtraDeployValuesWithBinding(values map[string]apiextensionsv1.JSON, variables []ExtraDeployVariable, constraints []ExtraDeployVariableConstraint, groups []string, path *field.Path) field.ErrorList {
+	requestValues := make(map[string]apiextensionsv1.JSON, len(values))
+	for name, value := range values {
+		requestValues[name] = value
+	}
+	for _, constraint := range constraints {
+		if constraint.Default == nil {
+			continue
+		}
+		for _, variable := range variables {
+			if variable.Name != constraint.Name || variable.Disabled || variable.Default == nil {
+				continue
+			}
+			value, provided := requestValues[variable.Name]
+			if !provided {
+				continue
+			}
+			var actual, defaultValue any
+			if json.Unmarshal(value.Raw, &actual) == nil && json.Unmarshal(variable.Default.Raw, &defaultValue) == nil && reflect.DeepEqual(actual, defaultValue) {
+				delete(requestValues, variable.Name)
+			}
+		}
+	}
+	return ValidateExtraDeployValuesWithGroups(requestValues, variables, groups, path)
 }
