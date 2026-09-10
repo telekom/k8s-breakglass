@@ -342,6 +342,9 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 		if ds.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
 			ds.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
 			ds.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
+			if debugSessionCleanupOutstanding(&ds) {
+				continue
+			}
 			// Prefer the session's durable retention deadline; legacy sessions fall
 			// back to the historical expiry/creation based retention window.
 			if ds.Status.RetainedUntil != nil && !ds.Status.RetainedUntil.IsZero() {
@@ -366,7 +369,7 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 						"state", ds.Status.State,
 						"retentionPeriod", DebugSessionRetentionPeriod.String())...)
 
-				if err := routine.Manager.Delete(ctx, &ds); err != nil {
+				if err := routine.Manager.Delete(ctx, &ds, client.Preconditions{UID: &ds.UID, ResourceVersion: &ds.ResourceVersion}); err != nil {
 					routine.Log.Errorw("error deleting debug session past retention",
 						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
 					continue
@@ -382,10 +385,21 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 
 		// Check if active session has expired
 		if ds.Status.State == breakglassv1alpha1.DebugSessionStateActive {
-			if ds.Status.ExpiresAt != nil && now.After(ds.Status.ExpiresAt.Time) {
+			if DebugSessionIdleExpired(&ds, now) || (ds.Status.ExpiresAt != nil && !now.Before(ds.Status.ExpiresAt.Time)) {
+				expired := false
 				if err := PatchDebugSessionStatusWithOptimisticLock(ctx, routine.Manager, &ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+					checkedAt := time.Now().UTC()
+					current := &breakglassv1alpha1.DebugSession{Status: *status}
+					hardExpired := status.ExpiresAt != nil && !checkedAt.Before(status.ExpiresAt.Time)
+					if status.State != breakglassv1alpha1.DebugSessionStateActive || (!hardExpired && !DebugSessionIdleExpired(current, checkedAt)) {
+						return
+					}
 					status.State = breakglassv1alpha1.DebugSessionStateExpired
 					status.Message = "Session expired (cleanup routine)"
+					if !hardExpired {
+						status.Message = "Session expired due to inactivity"
+					}
+					expired = true
 				}); err != nil {
 					if apierrors.IsConflict(err) {
 						routine.Log.Debugw("skipping expired debug session status update after concurrent change",
@@ -394,6 +408,9 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 					}
 					routine.Log.Errorw("error updating expired debug session status",
 						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
+					continue
+				}
+				if !expired {
 					continue
 				}
 				routine.Log.Infow("Debug session expired, marking as Expired",
@@ -573,4 +590,31 @@ func buildDebugSessionNotificationRecipients(ds breakglassv1alpha1.DebugSession)
 		recipients = filtered
 	}
 	return recipients
+}
+
+// debugSessionCleanupOutstanding preserves evidence for completed and ambiguous spoke creates.
+func debugSessionCleanupOutstanding(ds *breakglassv1alpha1.DebugSession) bool {
+	if len(ds.Status.DeployedResources) > 0 || len(ds.Status.PodTemplateResourceStatuses) > 0 || len(ds.Status.AllowedPods) > 0 || ds.Status.KubectlDebugStatus != nil {
+		return true
+	}
+	for _, resource := range ds.Status.AuxiliaryResourceStatuses {
+		intentionallyRetained := false
+		if ds.Status.ResolvedTemplate != nil {
+			for _, configured := range ds.Status.ResolvedTemplate.AuxiliaryResources {
+				if configured.Name == resource.Name && !configured.DeleteAfter {
+					intentionallyRetained = true
+					break
+				}
+			}
+		}
+		if !resource.Deleted && (resource.Created || resource.CreateOperationID != "" || resource.UID != "" || resource.ResourceName != "") && (!intentionallyRetained || resource.UID == "") {
+			return true
+		}
+		for _, child := range resource.AdditionalResources {
+			if !child.Deleted && (!intentionallyRetained || child.UID == "") {
+				return true
+			}
+		}
+	}
+	return false
 }

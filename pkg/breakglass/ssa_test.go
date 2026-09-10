@@ -335,3 +335,42 @@ func TestPatchDebugSessionStatusWithOptimisticLockLeavesInputUnchangedOnConflict
 	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: "debug-session", Namespace: "default"}, &fetched))
 	assert.Equal(t, "live", fetched.Status.Message)
 }
+
+func TestDebugSessionLifecycleStatusGuardsPreserveLiveObject(t *testing.T) {
+	for _, name := range []string{"activity count", "activity timestamp", "retention timestamp", "nonterminal retention", "idle expired"} {
+		t.Run(name, func(t *testing.T) {
+			now := metav1.NewTime(time.Now().Add(-time.Hour))
+			future := metav1.NewTime(time.Now().Add(time.Hour))
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "guard", Namespace: "default", UID: "guard-uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future, LastActivity: &now, ActivityCount: 2}}
+			if name == "retention timestamp" {
+				session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+				session.Status.RetainedUntil = &future
+			}
+			if name == "idle expired" {
+				session.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m"}}
+			}
+			scheme := runtime.NewScheme()
+			require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+			hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).Build()
+			require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), session))
+			desired := session.DeepCopy()
+			switch name {
+			case "activity count":
+				desired.Status.ActivityCount--
+			case "activity timestamp":
+				desired.Status.LastActivity = nil
+			case "retention timestamp":
+				desired.Status.RetainedUntil = &now
+			case "nonterminal retention":
+				desired.Status.RetainedUntil = &future
+			case "idle expired":
+				desired.Status.Message = "continue"
+			}
+			require.Error(t, ApplyDebugSessionStatus(context.Background(), hub, desired))
+			require.Error(t, PatchDebugSessionStatusWithOptimisticLock(context.Background(), hub, session.DeepCopy(), func(status *breakglassv1alpha1.DebugSessionStatus) { *status = desired.Status }))
+			var stored breakglassv1alpha1.DebugSession
+			require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+			require.Equal(t, session.Status, stored.Status)
+		})
+	}
+}

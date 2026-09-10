@@ -750,6 +750,10 @@ func ValidateDebugSession(ds *DebugSession) *ValidationResult {
 		return result
 	}
 
+	if ds.Status.RetainedUntil != nil && !ds.Status.RetainedUntil.IsZero() && !isTerminalDebugSessionState(ds.Status.State) {
+		result.Errors = append(result.Errors, field.Invalid(field.NewPath("status", "retainedUntil"), ds.Status.RetainedUntil, "retainedUntil is only valid for terminal sessions"))
+	}
+
 	specPath := field.NewPath("spec")
 
 	// Validate required fields
@@ -907,6 +911,8 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 		}{
 			{name: "maxDuration", value: template.Spec.Constraints.MaxDuration},
 			{name: "defaultDuration", value: template.Spec.Constraints.DefaultDuration},
+			{name: "idleTimeout", value: template.Spec.Constraints.IdleTimeout},
+			{name: "retainFor", value: template.Spec.Constraints.RetainFor},
 		}
 		for _, item := range constraintDurations {
 			if item.value != "" {

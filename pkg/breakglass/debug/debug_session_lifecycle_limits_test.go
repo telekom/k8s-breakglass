@@ -5,6 +5,11 @@ package debug
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+
+	"github.com/gin-gonic/gin"
 	"testing"
 	"time"
 
@@ -59,6 +64,9 @@ func TestActivityCannotReviveSessionAfterLiveReadCrossesIdleDeadline(t *testing.
 			require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), session))
 			reads := 0
 			reader := interceptor.NewClient(hub, interceptor.Funcs{Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				reads++
 				if reads == 1 {
 					require.True(t, time.Now().Before(deadline))
@@ -75,7 +83,9 @@ func TestActivityCannotReviveSessionAfterLiveReadCrossesIdleDeadline(t *testing.
 				require.NotEqual(t, session.ResourceVersion, outcome.ResourceVersion)
 			}
 			controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), hub, nil, nil).WithAPIReader(reader)
-			controller.recordDebugSessionActivity(context.Background(), session)
+			activityCtx, cancel := context.WithCancel(context.Background())
+			cancel()
+			controller.recordDebugSessionActivity(activityCtx, session)
 			var stored breakglassv1alpha1.DebugSession
 			require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
 			if delay {
@@ -134,4 +144,38 @@ func TestBindingIdleAndRetentionPreserveTemplateLimits(t *testing.T) {
 	narrowed := mergeDebugSessionConstraints(template, &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "2m", RetainFor: "48h"})
 	require.Equal(t, "2m", narrowed.IdleTimeout)
 	require.Equal(t, "48h", narrowed.RetainFor)
+}
+
+func TestRenewRejectsIdleExpiryDuringFinalRead(t *testing.T) {
+	deadline := time.Now().Add(5 * time.Second).Truncate(time.Second)
+	activity := metav1.NewTime(deadline.Add(-time.Minute))
+	expiry := metav1.NewTime(time.Now().Add(time.Hour).Truncate(time.Second))
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "renew-idle", Namespace: "default", UID: "renew-uid"}, Spec: breakglassv1alpha1.DebugSessionSpec{RequestedBy: "alice@example.com"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expiry, LastActivity: &activity, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m"}}}}
+	hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).WithStatusSubresource(session).Build()
+	reads := 0
+	reader := interceptor.NewClient(hub, interceptor.Funcs{Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+		reads++
+		if reads == 2 {
+			time.Sleep(time.Until(deadline) + time.Millisecond)
+		}
+		return cl.Get(ctx, key, obj, opts...)
+	}})
+	controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), hub, nil, nil).WithAPIReader(reader)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true)
+		c.Set("username", "alice@example.com")
+		c.Next()
+	})
+	require.NoError(t, controller.Register(router.Group("/api/v1/"+controller.BasePath())))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/renew-idle/renew?namespace=default", strings.NewReader(`{"extendBy":"1h"}`))
+	req.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+	require.Equal(t, 2, reads)
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	require.Zero(t, stored.Status.RenewalCount)
+	require.True(t, stored.Status.ExpiresAt.Equal(&expiry))
 }
