@@ -1615,12 +1615,18 @@ func TestDebugSessionRetentionUsesExplicitDeadlineOrLegacyConfiguredFallback(t *
 }
 
 func TestDebugSessionCleanupPreservesPendingResourcesAndExpiresIdle(t *testing.T) {
-	for _, name := range []string{"idle", "deployed", "unknown auxiliary", "pod template", "cleaned auxiliary", "intentionally retained auxiliary", "retained parent unknown child"} {
+	for _, name := range []string{"idle", "deployed", "unknown auxiliary", "pod template", "cleaned auxiliary", "intentionally retained auxiliary", "retained parent unknown child", "completed operation", "failed operation", "prepared operation", "unknown operation", "copied pod"} {
 		t.Run(name, func(t *testing.T) {
 			past := metav1.NewTime(time.Now().Add(-time.Hour))
 			future := metav1.NewTime(time.Now().Add(time.Hour))
 			ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "cleanup", Namespace: "default", UID: "cleanup-uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateTerminated, RetainedUntil: &past}}
 			switch name {
+			case "completed operation", "failed operation", "prepared operation", "unknown operation":
+				state := map[string]breakglassv1alpha1.KubectlDebugOperationState{"completed operation": breakglassv1alpha1.KubectlDebugOperationCompleted, "failed operation": breakglassv1alpha1.KubectlDebugOperationFailed, "prepared operation": breakglassv1alpha1.KubectlDebugOperationPrepared, "unknown operation": breakglassv1alpha1.KubectlDebugOperationUnknown}[name]
+				ds.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{{ID: "operation", State: state}}}
+			case "copied pod":
+				ds.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{CopiedPods: []breakglassv1alpha1.CopiedPodRef{{CopyName: "pending-cleanup"}}}
+
 			case "idle":
 				ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
 				ds.Status.RetainedUntil = nil
@@ -1649,7 +1655,7 @@ func TestDebugSessionCleanupPreservesPendingResourcesAndExpiresIdle(t *testing.T
 			routine.cleanupExpiredDebugSessions(context.Background())
 			var stored breakglassv1alpha1.DebugSession
 			err := hub.Get(context.Background(), client.ObjectKeyFromObject(ds), &stored)
-			if name == "cleaned auxiliary" || name == "intentionally retained auxiliary" {
+			if name == "cleaned auxiliary" || name == "intentionally retained auxiliary" || name == "completed operation" || name == "failed operation" {
 				require.True(t, apierrors.IsNotFound(err))
 				return
 			}
@@ -1661,5 +1667,26 @@ func TestDebugSessionCleanupPreservesPendingResourcesAndExpiresIdle(t *testing.T
 				require.True(t, stored.Status.RetainedUntil.After(time.Now().Add(time.Hour)))
 			}
 		})
+	}
+}
+
+func TestDebugSessionRetentionExemptsOnlyKnownRetainedDeployedAuxiliary(t *testing.T) {
+	ref := breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "ConfigMap", Name: "evidence", Namespace: "default", UID: "evidence-uid", Source: "auxiliary:evidence"}
+	session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "evidence", DeleteAfter: false}}}, DeployedResources: []breakglassv1alpha1.DeployedResourceRef{ref}, AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "evidence", Created: true, APIVersion: ref.APIVersion, Kind: ref.Kind, ResourceName: ref.Name, Namespace: ref.Namespace, UID: ref.UID}}}}
+	require.False(t, debugSessionCleanupOutstanding(session))
+	for _, mutate := range []func(*breakglassv1alpha1.DebugSession){
+		func(ds *breakglassv1alpha1.DebugSession) { ds.Status.DeployedResources[0].UID = "" },
+		func(ds *breakglassv1alpha1.DebugSession) { ds.Status.DeployedResources[0].UID = "replacement" },
+		func(ds *breakglassv1alpha1.DebugSession) { ds.Status.DeployedResources[0].Source = "debug-pod" },
+		func(ds *breakglassv1alpha1.DebugSession) {
+			ds.Status.ResolvedTemplate.AuxiliaryResources[0].DeleteAfter = true
+		},
+		func(ds *breakglassv1alpha1.DebugSession) {
+			ds.Status.AuxiliaryResourceStatuses[0].AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{{CreateOperationID: "unknown"}}
+		},
+	} {
+		candidate := session.DeepCopy()
+		mutate(candidate)
+		require.True(t, debugSessionCleanupOutstanding(candidate))
 	}
 }

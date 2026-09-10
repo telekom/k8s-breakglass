@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   UID-preconditioned terminal revocation.
 - Track artifact collector resources by exact spoke UID and resource version,
   with target-cluster writes fenced by the live session and expiry deadline.
+- Publish the generic `dump-reader` and provider-neutral `cluster-validator`
+  images through the signed utility-image release matrix, with their existing
+  runtime behavior gates and multi-architecture build contexts.
+
 - Add DebugSession inactivity expiry and explicit terminal evidence retention, preserving the existing unset retention policy and enforcing idle expiry at final authorization and mutation checks.
 
 - The debug-session-catalogue Helm chart provides administrator-authored,
@@ -61,6 +65,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repeated empty inventory observations, reject stale artifact UID/resource
   versions, and render collector Jobs with ordered execution, a bounded digest
   annotation, and the required output filesystem group.
+- Preserve pending binding quotas and explicit retention during cluster deletion, reject renewal without a live deadline, and fence idle expiry after workload reads.
+
+- Allow debug-session retention cleanup after completed operation history while preserving unresolved outcomes and pending copied-pod cleanup.
+
 - Preserve debug-session cleanup evidence past retention, enforce inactivity in fallback cleanup, and retain explicit evidence deadlines when a cluster is deleted.
 
 - Retry final quota-admission completion after same-UID resource-version

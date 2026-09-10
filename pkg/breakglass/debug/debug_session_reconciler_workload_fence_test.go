@@ -265,3 +265,19 @@ func TestDeployDebugResourcesFencesEveryAuxiliaryDocument(t *testing.T) {
 	secondErr := target.Get(context.Background(), client.ObjectKey{Namespace: "breakglass-debug", Name: "second"}, second)
 	require.True(t, apierrors.IsNotFound(secondErr), "the second document must be fenced, got: %v", secondErr)
 }
+
+func TestDeployDebugResourcesRejectsIdleExpiryBeforeWrite(t *testing.T) {
+	c, ds, template, target := newDeploymentFenceFixture(t)
+	c.beforeDebugTargetWrite = func(_ string) {
+		live := &breakglassv1alpha1.DebugSession{}
+		require.NoError(t, c.client.Get(context.Background(), client.ObjectKeyFromObject(ds), live))
+		activity := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+		live.Status.LastActivity = &activity
+		live.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m"}}
+		require.NoError(t, c.client.Status().Update(context.Background(), live))
+	}
+	require.Error(t, c.deployDebugResources(context.Background(), ds, template))
+	var deployments appsv1.DeploymentList
+	require.NoError(t, target.List(context.Background(), &deployments))
+	require.Empty(t, deployments.Items)
+}

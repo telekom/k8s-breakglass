@@ -26,7 +26,7 @@ workflow_path = ARGV.fetch(0)
 workflow = YAML.safe_load(File.read(workflow_path), aliases: false)
 matrix = JSON.parse(ENV.fetch("UTILITY_MATRIX_JSON"))
 
-abort "utility matrix expansion: contract matrix must contain exactly five images" unless matrix.is_a?(Array) && matrix.length == 5
+abort "utility matrix expansion: contract matrix must contain exactly seven images" unless matrix.is_a?(Array) && matrix.length == 7
 
 scan = workflow.fetch("jobs").fetch("scan")
 strategy_matrix = scan.fetch("strategy").fetch("matrix")
@@ -47,6 +47,8 @@ def resolve_field(expression, image, platform)
     image.fetch("name")
   when "${{ matrix.image.context }}"
     image.fetch("context")
+  when "${{ matrix.image.buildContext || matrix.image.context }}"
+    image.fetch("buildContext", image.fetch("context"))
   when "${{ matrix.image.file }}"
     image.fetch("file")
   when "${{ matrix.platform }}"
@@ -69,7 +71,8 @@ end
 labels = []
 matrix.each do |image|
   platforms.each do |platform|
-    abort "utility matrix expansion: context mapping does not resolve" unless resolve_field(build_env.fetch("CONTEXT"), image, platform) == image.fetch("context")
+    expected_context = image.fetch("buildContext", image.fetch("context"))
+    abort "utility matrix expansion: context mapping does not resolve" unless resolve_field(build_env.fetch("CONTEXT"), image, platform) == expected_context
     abort "utility matrix expansion: Dockerfile mapping does not resolve" unless resolve_field(build_env.fetch("DOCKERFILE"), image, platform) == image.fetch("file")
     abort "utility matrix expansion: platform mapping does not resolve" unless resolve_field(build_env.fetch("PLATFORM"), image, platform) == platform
     labels << render_label(scan.fetch("name"), image, platform)
@@ -79,8 +82,8 @@ end
 expected_labels = matrix.flat_map do |image|
   platforms.map { |platform| "Utility image vulnerability (#{image.fetch("name")} / #{platform})" }
 end
-abort "utility matrix expansion: expected ten rendered labels" unless labels.length == 10 && labels.sort == expected_labels.sort
+abort "utility matrix expansion: expected fourteen rendered labels" unless labels.length == 14 && labels.sort == expected_labels.sort
 abort "utility matrix expansion: rendered labels are not unique" unless labels.uniq.length == labels.length
 RUBY
 
-printf '%s\n' 'utility matrix expansion behavioral proof passed (5 images x 2 platforms)'
+printf '%s\n' 'utility matrix expansion behavioral proof passed (7 images x 2 platforms)'

@@ -216,6 +216,14 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 		result.WithRetainedUntil(*status.RetainedUntil)
 	}
 
+	if status.LastActivity != nil {
+		result.WithLastActivity(*status.LastActivity)
+	}
+	result.WithActivityCount(status.ActivityCount)
+	if status.RetainedUntil != nil {
+		result.WithRetainedUntil(*status.RetainedUntil)
+	}
+
 	// Set observedGeneration for kstatus compliance
 	if status.ObservedGeneration > 0 {
 		result.WithObservedGeneration(status.ObservedGeneration)

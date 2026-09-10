@@ -594,8 +594,25 @@ func buildDebugSessionNotificationRecipients(ds breakglassv1alpha1.DebugSession)
 
 // debugSessionCleanupOutstanding preserves evidence for completed and ambiguous spoke creates.
 func debugSessionCleanupOutstanding(ds *breakglassv1alpha1.DebugSession) bool {
-	if len(ds.Status.DeployedResources) > 0 || len(ds.Status.PodTemplateResourceStatuses) > 0 || len(ds.Status.AllowedPods) > 0 || ds.Status.KubectlDebugStatus != nil {
+	for _, ref := range ds.Status.DeployedResources {
+		if !debugSessionResourceIntentionallyRetained(ds, ref) {
+			return true
+		}
+	}
+	if len(ds.Status.PodTemplateResourceStatuses) > 0 || len(ds.Status.AllowedPods) > 0 {
 		return true
+	}
+	// Completed operation history is retained evidence, not a pending cleanup.
+	// Preserve unresolved outcomes for recovery or operator investigation.
+	if status := ds.Status.KubectlDebugStatus; status != nil {
+		if len(status.CopiedPods) > 0 {
+			return true
+		}
+		for _, operation := range status.Operations {
+			if operation.State != breakglassv1alpha1.KubectlDebugOperationCompleted && operation.State != breakglassv1alpha1.KubectlDebugOperationFailed {
+				return true
+			}
+		}
 	}
 	for _, resource := range ds.Status.AuxiliaryResourceStatuses {
 		intentionallyRetained := false
@@ -613,6 +630,33 @@ func debugSessionCleanupOutstanding(ds *breakglassv1alpha1.DebugSession) bool {
 		for _, child := range resource.AdditionalResources {
 			if !child.Deleted && (!intentionallyRetained || child.UID == "") {
 				return true
+			}
+		}
+	}
+	return false
+}
+
+// Exempt only the exact observed auxiliary identity selected for retention.
+// Unknown create outcomes and name-reused resources still require cleanup review.
+func debugSessionResourceIntentionallyRetained(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
+	if ref.UID == "" || ds.Status.ResolvedTemplate == nil {
+		return false
+	}
+	for _, configured := range ds.Status.ResolvedTemplate.AuxiliaryResources {
+		if configured.DeleteAfter || ref.Source != "auxiliary:"+configured.Name {
+			continue
+		}
+		for _, status := range ds.Status.AuxiliaryResourceStatuses {
+			if status.Name != configured.Name {
+				continue
+			}
+			if status.UID == ref.UID && status.Kind == ref.Kind && status.APIVersion == ref.APIVersion && status.ResourceName == ref.Name && status.Namespace == ref.Namespace {
+				return true
+			}
+			for _, child := range status.AdditionalResources {
+				if child.UID == ref.UID && child.Kind == ref.Kind && child.APIVersion == ref.APIVersion && child.ResourceName == ref.Name && child.Namespace == ref.Namespace {
+					return true
+				}
 			}
 		}
 	}

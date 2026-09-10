@@ -86,6 +86,11 @@ jobs:
             context: utils/node-maintenance
           - name: diagnostic-artifact-collector
             context: utils/images/diagnostic-artifact-collector
+          - name: dump-reader
+            context: utils/images/dump-reader
+          - name: cluster-validator
+            context: utils/cluster-validator
+            buildContext: .
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -103,7 +108,8 @@ jobs:
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          context: ${{ matrix.context }}
+          context: ${{ matrix.buildContext || matrix.context }}
+          file: ${{ format('{0}/Dockerfile', matrix.context) }}
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ env.REGISTRY }}/${{ github.repository }}/utils/${{ matrix.name }}:${{ github.ref_name }}
@@ -112,6 +118,7 @@ jobs:
           build-args: |
             VERSION=${{ github.ref_name }}
             VCS_REF=${{ github.sha }}
+            GIT_COMMIT=${{ github.sha }}
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2

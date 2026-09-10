@@ -18,6 +18,7 @@ package config
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -322,7 +323,9 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 			}
 			base := live.DeepCopy()
 			live.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
-			breakglassv1alpha1.StampDebugSessionRetention(&live.Status, time.Now().UTC())
+			if err := r.stampDebugSessionTerminationRetention(ctx, live); err != nil {
+				return err
+			}
 			live.Status.Message = fmt.Sprintf("Session terminated: ClusterConfig %q was deleted", clusterName)
 			if live.Generation > 0 {
 				live.Status.ObservedGeneration = live.Generation
@@ -401,4 +404,69 @@ func (r *ClusterConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&breakglassv1alpha1.ClusterConfig{}).
 		Named("clusterconfig").
 		Complete(r)
+}
+
+// Pending sessions may not yet have a resolved template. Preserve explicit
+// retention without manufacturing an approval snapshot during cluster deletion.
+func (r *ClusterConfigReconciler) stampDebugSessionTerminationRetention(ctx context.Context, session *breakglassv1alpha1.DebugSession) error {
+	if session.Status.RetainedUntil != nil {
+		return nil
+	}
+	if session.Status.ResolvedTemplate != nil {
+		breakglassv1alpha1.StampDebugSessionRetention(&session.Status, time.Now().UTC())
+		return nil
+	}
+	var retention time.Duration
+	include := func(constraints *breakglassv1alpha1.DebugSessionConstraints) error {
+		if constraints == nil || constraints.RetainFor == "" {
+			return nil
+		}
+		duration, err := breakglassv1alpha1.ParseDuration(constraints.RetainFor)
+		if err != nil {
+			return fmt.Errorf("parse debug session retention: %w", err)
+		}
+		if duration <= 0 {
+			return fmt.Errorf("debug session retention must be positive")
+		}
+		if duration > retention {
+			retention = duration
+		}
+		return nil
+	}
+	template := &breakglassv1alpha1.DebugSessionTemplate{}
+	if session.Spec.TemplateRef != "" {
+		if err := r.Get(ctx, client.ObjectKey{Name: session.Spec.TemplateRef}, template); err != nil {
+			return fmt.Errorf("resolve debug session retention template: %w", err)
+		}
+		if err := include(template.Spec.Constraints); err != nil {
+			return err
+		}
+	}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
+	if session.Status.ResolvedBindingSpec != nil {
+		if err := json.Unmarshal(session.Status.ResolvedBindingSpec.Raw, &binding.Spec); err != nil {
+			return fmt.Errorf("decode debug session retention binding: %w", err)
+		}
+	} else if session.Spec.BindingRef != nil && !session.Status.ResolvedBindingSnapshotCaptured {
+		if err := r.Get(ctx, client.ObjectKey{Name: session.Spec.BindingRef.Name, Namespace: session.Spec.BindingRef.Namespace}, binding); err != nil {
+			return fmt.Errorf("resolve debug session retention binding: %w", err)
+		}
+	} else if !session.Status.ResolvedBindingSnapshotCaptured && session.Spec.TemplateRef != "" {
+		discovered, err := utils.FindDebugSessionBinding(ctx, r.Client, template, session.Spec.Cluster)
+		if err != nil {
+			return fmt.Errorf("resolve debug session retention binding: %w", err)
+		}
+		if discovered != nil {
+			binding = discovered
+		}
+	}
+
+	if err := include(binding.Spec.Constraints); err != nil {
+		return err
+	}
+	if retention > 0 {
+		until := metav1.NewTime(time.Now().UTC().Add(retention))
+		session.Status.RetainedUntil = &until
+	}
+	return nil
 }
