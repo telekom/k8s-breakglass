@@ -14,6 +14,8 @@ or request notifications. Provisional objects are visible but cannot grant
 breakglass access or progress to debug workloads without admission; this guard
 is applied in the shared clock-injected validity and token checks used by the
 authorization webhook as well as the ordinary wrappers.
+If an unrelated same-UID update wins the final annotation race, completion
+re-reads and retries; replacement or terminal sessions are never promoted.
 
 The ledger covers regular-session tuple uniqueness (user, cluster, granted
 group), global per-user limits, escalation-UID totals, debug template-UID totals,

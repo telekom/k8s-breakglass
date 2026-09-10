@@ -15,6 +15,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -216,15 +217,42 @@ func (c *SessionManager) admitSession(ctx context.Context, s *breakglassv1alpha1
 	if !c.quotaEnabled || s.Annotations[quotas.AdmissionAnnotation] == quotas.Ready {
 		return nil
 	}
-	before := s.DeepCopy()
-	if s.Annotations == nil {
-		s.Annotations = map[string]string{}
-	}
-	s.Annotations[quotas.AdmissionAnnotation] = quotas.Ready
-	if err := c.Client.Patch(ctx, s, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+	if err := c.completeSessionAdmission(ctx, s); err != nil {
 		return fmt.Errorf("complete session admission: %w", err)
 	}
 	return nil
+}
+
+// completeSessionAdmission publishes quota readiness from a fresh same-UID
+// object. Reservation is already durable, so an unrelated update must retry
+// the annotation write instead of leaving a permanently provisional session.
+func (c *SessionManager) completeSessionAdmission(ctx context.Context, session *breakglassv1alpha1.BreakglassSession) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := &breakglassv1alpha1.BreakglassSession{}
+		if err := c.Reader().Get(ctx, client.ObjectKeyFromObject(session), current); err != nil {
+			return err
+		}
+		if session.UID != "" && current.UID != session.UID {
+			return fmt.Errorf("session UID changed while completing admission")
+		}
+		if IsSessionTerminalState(current.Status.State) {
+			return fmt.Errorf("refusing to admit terminal session")
+		}
+		if current.Annotations[quotas.AdmissionAnnotation] == quotas.Ready {
+			*session = *current
+			return nil
+		}
+		before := current.DeepCopy()
+		if current.Annotations == nil {
+			current.Annotations = map[string]string{}
+		}
+		current.Annotations[quotas.AdmissionAnnotation] = quotas.Ready
+		if err := c.Client.Patch(ctx, current, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+			return err
+		}
+		*session = *current
+		return nil
+	})
 }
 
 // recoverSessionAdmissions finishes durable provisional admissions after an API

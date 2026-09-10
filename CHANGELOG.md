@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retry final quota-admission completion after same-UID resource-version
+  conflicts, while refusing terminal or replacement sessions.
+
 - Recover tracked resources after bounded create timeouts when session and
   operation markers and requested content match the persisted object.
 
