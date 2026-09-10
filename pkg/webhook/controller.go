@@ -383,9 +383,9 @@ func (wc *WebhookController) findDebugSessionAccessForIssuerInNamespace(ctx cont
 		if !ds.DeletionTimestamp.IsZero() || ds.Status.State != breakglassv1alpha1.DebugSessionStateActive || ds.Spec.Cluster != clusterName {
 			continue
 		}
-		// Debug sessions must always carry a live hard lease and idle deadline.
-		// Missing, equal, and past expiry are all denied; only strictly-future
-		// hard and idle deadlines grant access.
+		// Debug sessions require a strictly-future hard lease and, when idle
+		// expiry is configured, a valid future idle deadline. Missing, equal,
+		// and past required deadlines deny access.
 		fenceNow := time.Now().UTC()
 		if ds.Status.ExpiresAt == nil || !fenceNow.Before(ds.Status.ExpiresAt.Time) || breakglass.DebugSessionIdleExpired(ds, fenceNow) {
 			var expiresAt interface{}
