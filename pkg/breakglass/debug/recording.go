@@ -112,6 +112,16 @@ func (r *TerminalRecorder) Finalize() (TerminalRecording, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !r.closed {
+		// An empty successful terminal still has a valid framed evidence object;
+		// artifact stores intentionally reject zero-byte objects.
+		if r.bytes.Len() == 0 {
+			if r.maxBytes < terminalRecordingFrameHeaderSize {
+				return TerminalRecording{}, errTerminalRecordingLimit
+			}
+			frame := make([]byte, terminalRecordingFrameHeaderSize)
+			frame[0], frame[1] = terminalRecordingFrameVersion, terminalRecordingDirectionOutput
+			_, _ = r.bytes.Write(frame)
+		}
 		r.closed = true
 	}
 	payload := append([]byte(nil), r.bytes.Bytes()...)
@@ -168,7 +178,7 @@ func (r *recordingReader) Read(payload []byte) (int, error) {
 	n, err := r.reader.Read(payload)
 	if n > 0 {
 		if recordErr := r.recorder.Write(r.direction, payload[:n]); recordErr != nil {
-			return n, fmt.Errorf("record terminal input: %w", recordErr)
+			return 0, fmt.Errorf("record terminal input: %w", recordErr)
 		}
 	}
 	return n, err

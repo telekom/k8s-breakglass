@@ -29,7 +29,14 @@ credentials in DebugSession status or audit details. `POST
 version for an authorized session reader. The replay path pins backend
 identity, runtime binding digest, and version ID.
 
-The bounded artifact volume is 512 MiB (`defaultTerminalRecordingMaxBytes`).
+The bounded artifact volume is 512 MiB (`defaultTerminalRecordingMaxBytes`),
+with at most two concurrent streams per serving process. The HTTP transport
+requires full duplex: output is flushed before further input is supplied.
+Every input/output boundary rechecks the live session identity, participant
+issuer, allowed target Pod UID, profile, expiry, and connection lease. Target
+lookup is bracketed by live session checks. Rejected input is never forwarded
+to the target. Replay similarly rechecks live reader authorization and artifact
+retention before and after backend reads.
 The controller finalizes publication with a bounded detached context after a
 client disconnect or a remote stream failure, preserving any bytes already
 captured, and closes the lease in a separate bounded context. A lease expiry or

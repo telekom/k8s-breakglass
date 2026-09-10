@@ -152,15 +152,33 @@ func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
 		return &rest.Config{}, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "target", Name: "pod", UID: types.UID("pod-uid")}}, nil
 	}
 	controller.terminalExecutorFactory = func(*rest.Config, string, string, string, string, []string) (remotecommand.Executor, error) {
-		return &testTerminalExecutor{output: []byte("prompt")}, nil
+		return interactiveTerminalExecutor{}, nil
 	}
 	router := debugSessionAPITestRouter(t, controller, "alice", "", nil)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/session/terminal?namespace=hub&podNamespace=target&podName=pod&operation=exec&command=sh", strings.NewReader("input"))
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, req)
-	require.Equal(t, http.StatusOK, response.Code)
-	require.Equal(t, "prompt", response.Body.String())
-	require.NotEmpty(t, response.Header().Get("X-Breakglass-Recording-ID"))
+	server := httptest.NewServer(router)
+	defer server.Close()
+	input, inputWriter := io.Pipe()
+	defer input.Close()
+	defer inputWriter.Close()
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/debugSessions/session/terminal?namespace=hub&podNamespace=target&podName=pod&operation=exec&command=sh", input)
+	require.NoError(t, err)
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	response, err := httpClient.Do(req)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	prompt := make([]byte, len("prompt"))
+	_, err = io.ReadFull(response.Body, prompt)
+	require.NoError(t, err)
+	require.Equal(t, "prompt", string(prompt))
+	// The prompt must arrive before the request body is supplied or closed.
+	_, err = io.WriteString(inputWriter, "input")
+	require.NoError(t, err)
+	require.NoError(t, inputWriter.Close())
+	rest, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.Equal(t, "input", string(rest))
+	require.NotEmpty(t, response.Trailer.Get("X-Breakglass-Recording-ID"))
 	stored := &breakglassv1alpha1.DebugSession{}
 	require.NoError(t, cli.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), stored))
 	require.Len(t, stored.Status.KubectlDebugStatus.TerminalRecordings, 1)
@@ -229,4 +247,30 @@ func TestClearKubectlDebugResourcesRetainsRecordingInventory(t *testing.T) {
 	require.NotNil(t, status.KubectlDebugStatus)
 	require.Len(t, status.KubectlDebugStatus.TerminalRecordings, 1)
 	require.Empty(t, status.KubectlDebugStatus.EphemeralContainersInjected)
+}
+
+// interactiveTerminalExecutor follows the real protocol order: output first,
+// then read input. A buffered HTTP transport deadlocks this exchange.
+type interactiveTerminalExecutor struct{}
+
+func (interactiveTerminalExecutor) Stream(remotecommand.StreamOptions) error { return nil }
+func (interactiveTerminalExecutor) StreamWithContext(_ context.Context, options remotecommand.StreamOptions) error {
+	if _, err := io.WriteString(options.Stdout, "prompt"); err != nil {
+		return err
+	}
+	input, err := io.ReadAll(options.Stdin)
+	if err != nil {
+		return err
+	}
+	_, err = options.Stdout.Write(input)
+	return err
+}
+
+func TestRecordingInputLimitDoesNotForwardUnrecordedBytes(t *testing.T) {
+	recorder := NewTerminalRecorder(terminalRecordingFrameHeaderSize + 2)
+	input := &recordingReader{reader: strings.NewReader("unrecorded command"), recorder: recorder, direction: TerminalRecordingInput}
+	var target bytes.Buffer
+	_, err := io.Copy(&target, input)
+	require.Error(t, err)
+	require.Empty(t, target.Bytes())
 }

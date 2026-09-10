@@ -27,11 +27,16 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const terminalRecordingDefaultRetention = 90 * 24 * time.Hour
 
 const terminalRecordingFinalizeTimeout = 10 * time.Second
+
+// Each recorder is bounded to 512 MiB, including framing. Limit live streams
+// per serving process so authenticated clients cannot allocate unbounded buffers.
+const maximumConcurrentTerminalRecordings = 2
 
 // TerminalRecordingConnectionBinding is the immutable authorization tuple
 // supplied by the connection-lease service for one target stream.
@@ -78,6 +83,12 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		apiresponses.RespondServiceUnavailable(ctx, "terminal recording transport is not configured")
 		return
 	}
+	if c.recordingStreams.Add(1) > maximumConcurrentTerminalRecordings {
+		c.recordingStreams.Add(-1)
+		ctx.Status(http.StatusTooManyRequests)
+		return
+	}
+	defer c.recordingStreams.Add(-1)
 	identity, ok := debugSessionRequestIdentity(ctx)
 	if !ok {
 		apiresponses.RespondUnauthorized(ctx)
@@ -123,8 +134,19 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 
 	var restConfig *rest.Config
 	var pod *corev1.Pod
+	var validateTarget func(context.Context) error
 	if c.terminalTargetResolver != nil {
 		restConfig, pod, err = c.terminalTargetResolver(apiCtx, session, namespace, podName, targetUID)
+		validateTarget = func(checkCtx context.Context) error {
+			_, current, checkErr := c.terminalTargetResolver(checkCtx, session, namespace, podName, targetUID)
+			if checkErr != nil {
+				return checkErr
+			}
+			if current == nil || string(current.UID) != targetUID || !current.DeletionTimestamp.IsZero() {
+				return fmt.Errorf("terminal target identity changed")
+			}
+			return nil
+		}
 	} else {
 		var configured *breakglassv1alpha1.ClusterConfig
 		restConfig, configured, err = c.ccProvider.GetRESTConfigForPrivilegedOperation(apiCtx, session.Spec.Cluster)
@@ -135,6 +157,19 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 				err = clientErr
 			} else {
 				pod, err = kubeClient.CoreV1().Pods(namespace).Get(apiCtx, podName, metav1.GetOptions{})
+				validateTarget = func(checkCtx context.Context) error {
+					if checkErr := c.ccProvider.ValidatePrivilegedOperationClusterConfig(checkCtx, configured); checkErr != nil {
+						return checkErr
+					}
+					current, checkErr := kubeClient.CoreV1().Pods(namespace).Get(checkCtx, podName, metav1.GetOptions{})
+					if checkErr != nil {
+						return checkErr
+					}
+					if string(current.UID) != targetUID || !current.DeletionTimestamp.IsZero() {
+						return fmt.Errorf("terminal target identity changed")
+					}
+					return nil
+				}
 			}
 		}
 	}
@@ -163,8 +198,9 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		defer closeCancel()
 		_ = connection.Close(closeCtx)
 	}()
+	connection = authorizedTerminalConnection{TerminalRecordingConnection: connection, authorize: c.terminalRecordingAuthority(session, identity, namespace, podName, targetUID, operation, validateTarget)}
 	binding = connection.Binding()
-	if !terminalRecordingBindingMatches(binding, session, targetUID) {
+	if !terminalRecordingBindingMatches(binding, session, targetUID) || binding.RuntimeBindingDigest != strings.TrimPrefix(profileDigest, "sha256:") {
 		apiresponses.RespondForbidden(ctx, "terminal recording connection binding is invalid")
 		return
 	}
@@ -185,14 +221,15 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	startedAt := time.Now().UTC()
 	recorder := NewTerminalRecorder(defaultTerminalRecordingMaxBytes)
 	if err := http.NewResponseController(ctx.Writer).EnableFullDuplex(); err != nil {
-		// ResponseRecorder and a few reverse proxies do not expose full-duplex
-		// support. Streaming still works through their ordinary ResponseWriter.
-		ctx.Header("X-Breakglass-Recording-Transport", "buffered")
+		apiresponses.RespondServiceUnavailable(ctx, "full-duplex terminal transport is unavailable")
+		return
 	}
 	ctx.Header("Content-Type", "application/octet-stream")
 	ctx.Header("Trailer", "X-Breakglass-Recording-ID, X-Breakglass-Recording-SHA256, X-Breakglass-Recording-Status")
 	streamWriter := &terminalRecordingFlushWriter{writer: ctx.Writer}
-	recording, streamErr := streamTerminalWithLease(apiCtx, connection, binding.ExpiresAt, executor, ctx.Request.Body, streamWriter, streamWriter, recorder)
+	guardedInput := authorizedRecordingReader{ctx: apiCtx, reader: ctx.Request.Body, authorize: connection.Validate}
+	guardedOutput := authorizedRecordingWriter{ctx: apiCtx, writer: streamWriter, authorize: connection.Validate}
+	recording, streamErr := streamTerminalWithLease(apiCtx, connection, binding.ExpiresAt, executor, guardedInput, guardedOutput, guardedOutput, recorder)
 	finalizeCtx, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx.Request.Context()), terminalRecordingFinalizeTimeout)
 	defer finalizeCancel()
 	validatedBinding := connection.Binding()
@@ -248,6 +285,10 @@ func (w *terminalRecordingFlushWriter) WriteHeader(statusCode int) { w.writer.Wr
 func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingConnection, expiresAt time.Time, executor remotecommand.Executor, stdin io.Reader, stdout, stderr io.Writer, recorder *TerminalRecorder) (TerminalRecording, error) {
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if closer, ok := stdin.(io.Closer); ok {
+		stopClose := context.AfterFunc(streamCtx, func() { _ = closer.Close() })
+		defer stopClose()
+	}
 	if !expiresAt.IsZero() {
 		timer := time.AfterFunc(time.Until(expiresAt), cancel)
 		defer timer.Stop()
@@ -289,11 +330,11 @@ func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingCo
 }
 
 func terminalRecordingBindingMatches(binding TerminalRecordingConnectionBinding, session *breakglassv1alpha1.DebugSession, targetUID string) bool {
-	return binding.SessionUID == string(session.UID) && binding.TargetPodUID == targetUID && binding.Epoch != "" && binding.Generation != "" && binding.RuntimeBindingDigest != "" && !binding.ExpiresAt.IsZero() && !binding.ExpiresAt.After(session.Status.ExpiresAt.Time) && time.Now().Before(binding.ExpiresAt)
+	return binding.Namespace == session.Namespace && binding.SessionUID == string(session.UID) && binding.TargetPodUID == targetUID && binding.Epoch != "" && binding.Generation != "" && binding.RuntimeBindingDigest != "" && !binding.ExpiresAt.IsZero() && !binding.ExpiresAt.After(session.Status.ExpiresAt.Time) && time.Now().Before(binding.ExpiresAt)
 }
 
 func terminalRecordingBindingsEqual(left, right TerminalRecordingConnectionBinding) bool {
-	return left.SessionUID == right.SessionUID && left.TargetPodUID == right.TargetPodUID && left.Epoch == right.Epoch && left.Generation == right.Generation && left.RuntimeBindingDigest == right.RuntimeBindingDigest && left.ExpiresAt.Equal(right.ExpiresAt)
+	return left.Namespace == right.Namespace && left.SessionUID == right.SessionUID && left.TargetPodUID == right.TargetPodUID && left.Epoch == right.Epoch && left.Generation == right.Generation && left.RuntimeBindingDigest == right.RuntimeBindingDigest && left.ExpiresAt.Equal(right.ExpiresAt)
 }
 
 func (c *DebugSessionAPIController) handleReplayTerminalRecording(ctx *gin.Context) {
@@ -345,7 +386,9 @@ func (c *DebugSessionAPIController) handleReplayTerminalRecording(ctx *gin.Conte
 	}
 	object := terminalRecordingObject(*ref)
 	expected := artifactstorage.Metadata{BackendInstanceID: ref.BackendInstanceID, Key: ref.ID, VersionID: ref.VersionID, RuntimeBindingDigest: ref.RuntimeBindingDigest, Size: ref.Size, SHA256: ref.SHA256}
-	reader, metadata, err := c.recordingStore.OpenVersion(requestCtx, object, expected)
+	replayCtx, cancel := context.WithDeadline(requestCtx, ref.ExpiresAt.Time)
+	defer cancel()
+	reader, metadata, err := c.recordingStore.OpenVersion(replayCtx, object, expected)
 	if err != nil {
 		apiresponses.RespondNotFoundSimple(ctx, "terminal recording is unavailable")
 		return
@@ -359,9 +402,40 @@ func (c *DebugSessionAPIController) handleReplayTerminalRecording(ctx *gin.Conte
 		ctx.Status(http.StatusGone)
 		return
 	}
+	authorize := func(checkCtx context.Context) error {
+		checkCtx, cancel := context.WithTimeout(checkCtx, 2*time.Second)
+		defer cancel()
+		live := &breakglassv1alpha1.DebugSession{}
+		if err := c.reader().Get(checkCtx, ctrlclient.ObjectKeyFromObject(session), live); err != nil {
+			return err
+		}
+		if live.UID != session.UID || !live.DeletionTimestamp.IsZero() {
+			return fmt.Errorf("recording session identity changed")
+		}
+		allowed, err := c.canReadDebugSession(checkCtx, live, identity)
+		if err != nil || !allowed {
+			return fmt.Errorf("recording reader authority changed")
+		}
+		if live.Status.KubectlDebugStatus == nil {
+			return fmt.Errorf("recording reference was revoked")
+		}
+		for _, current := range live.Status.KubectlDebugStatus.TerminalRecordings {
+			if current.ID == ref.ID && current == *ref && time.Now().Before(current.ExpiresAt.Time) {
+				return nil
+			}
+		}
+		return fmt.Errorf("recording reference expired or changed")
+	}
+	if err := authorize(requestCtx); err != nil {
+		ctx.Status(http.StatusForbidden)
+		return
+	}
+	stopClose := context.AfterFunc(replayCtx, func() { _ = reader.Close() })
+	defer stopClose()
+	guarded := authorizedRecordingReader{ctx: replayCtx, reader: reader, authorize: authorize}
 	ctx.Header("Content-Type", "application/octet-stream")
 	ctx.Header("X-Breakglass-Recording-SHA256", metadata.SHA256)
-	if _, err := io.CopyN(ctx.Writer, reader, ref.Size); err != nil && !errors.Is(err, io.EOF) {
+	if _, err := io.CopyN(authorizedRecordingWriter{ctx: replayCtx, writer: ctx.Writer, authorize: authorize}, guarded, ref.Size); err != nil && !errors.Is(err, io.EOF) {
 		return
 	}
 }

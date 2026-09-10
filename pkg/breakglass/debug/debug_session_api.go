@@ -25,6 +25,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -77,6 +78,7 @@ type DebugSessionAPIController struct {
 	disableEmail            bool
 	brandingName            string
 	baseURL                 string
+	recordingStreams        atomic.Int32
 	recordingStore          artifactstorage.Store
 	recordingConnections    TerminalRecordingConnectionProvider
 	terminalTargetResolver  terminalTargetResolver

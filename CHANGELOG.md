@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Recheck terminal stream and replay authorization at byte boundaries, stop
+  unrecorded input at the recording limit, and require a real full-duplex
+  transport with bounded concurrent streams.
+
 - Add the bounded, hash-chained terminal-byte recorder primitive while keeping
   terminal recording fail closed until the controller proxy and durable store
   are configured.
