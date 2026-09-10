@@ -34,6 +34,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
@@ -836,31 +837,25 @@ func (m *AuxiliaryResourceManager) deleteResource(
 	if live.GetUID() == "" {
 		return fmt.Errorf("refusing to delete %s/%s: live UID is unavailable", status.Kind, status.ResourceName)
 	}
+	expectedUID := types.UID(status.UID)
 	if status.UID != "" {
-		if string(live.GetUID()) != status.UID {
+		if live.GetUID() != expectedUID {
 			return nil
 		}
-	} else if session == nil || session.UID == "" || status.CreateOperationID == "" ||
-		live.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) ||
-		live.GetAnnotations()[createOperationIDAnnotation] != status.CreateOperationID {
-		return fmt.Errorf("refusing to delete %s/%s: ownership identity is unavailable or changed", status.Kind, status.ResourceName)
+	} else {
+		var err error
+		expectedUID, err = legacyCleanupUID(session, live.GroupVersionKind(), status.Namespace, status.ResourceName)
+		if err != nil {
+			return fmt.Errorf("refusing to delete %s/%s: recorded UID is unavailable: %w", status.Kind, status.ResourceName, err)
+		}
+		if live.GetUID() != expectedUID {
+			return nil
+		}
 	}
 
-	var deleteErr error
-	if live.GetUID() != "" {
-		uid := live.GetUID()
-		deleteErr = targetClient.Delete(ctx, live, client.Preconditions{UID: &uid})
-	} else {
-		deleteErr = targetClient.Delete(ctx, live)
-	}
-	if err := deleteErr; err != nil {
-		if apierrors.IsNotFound(err) {
-			// Already deleted, that's fine
-			m.log.Debugw("Auxiliary resource already deleted",
-				"name", status.Name,
-				"resourceName", status.ResourceName)
-			return nil
-		}
+	tracked := live.DeepCopy()
+	tracked.SetUID(expectedUID)
+	if err := deleteTrackedResource(ctx, targetClient, session, tracked); err != nil {
 		return fmt.Errorf("failed to delete %s/%s: %w", status.Kind, status.ResourceName, err)
 	}
 
