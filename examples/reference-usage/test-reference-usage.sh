@@ -142,6 +142,7 @@ while IFS= read -r line; do
   esac
 done <"${log_file}"
 grep -F "kubectl delete --raw /api/v1/namespaces/reference-debug --request-timeout 60s" "${log_file}" >/dev/null
+test "$(grep -c "kubectl get namespace reference-debug --ignore-not-found --request-timeout 60s -o json" "${log_file}")" -ge 2
 
 printf '%s\n' 'uid-reference' >"${namespace_uid_file}"
 if REFERENCE_KUBECTL_LOG="${log_file}" REFERENCE_KUBECTL_STDIN_LOG="${stdin_log_file}" REFERENCE_NAMESPACE_UID_FILE="${namespace_uid_file}" \
@@ -265,5 +266,16 @@ REFERENCE_KUBECTL_LOG="${log_file}" REFERENCE_KUBECTL_STDIN_LOG="${stdin_log_fil
     grep -F "targetNamespace: '\''reference-debug'\''" "${CATALOGUE_VALUES_FILE}" >/dev/null
     grep -F "fullnameOverride: '\''debug-catalogue'\''" "${CATALOGUE_VALUES_FILE}" >/dev/null
   ' bash "${script_without_main}"
+
+rm -f "${namespace_uid_file}"
+REFERENCE_KUBECTL_LOG="${log_file}" REFERENCE_KUBECTL_STDIN_LOG="${stdin_log_file}" REFERENCE_NAMESPACE_UID_FILE="${namespace_uid_file}" PATH="${fake_bin}:${PATH}" \
+  KUBECONFIG="${test_root}/kubeconfig" bash -c '
+    source "$1"
+    trap - EXIT
+    REFERENCE_AUDIT_WEBHOOK_URL="https://audit.example.com/collect"
+    BREAKGLASS_API_URL="http://127.0.0.1:8080"
+    install_stack
+  ' bash "${script_without_main}"
+grep -F "kubectl create namespace reference-debug --request-timeout 60s -o json" "${log_file}" >/dev/null
 
 echo "reference usage script checks passed"
