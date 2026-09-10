@@ -334,12 +334,24 @@ func TestEmptyApprovedPolicyCannotSkipBindingConstraints(t *testing.T) {
 }
 
 func TestNewNoVariableSessionAPIActivation(t *testing.T) {
+	testNoVariableSessionAPIActivation(t, false)
+}
+func TestSelectorOnlyNoVariableSessionAPIActivation(t *testing.T) {
+	testNoVariableSessionAPIActivation(t, true)
+}
+
+func testNoVariableSessionAPIActivation(t *testing.T, selectorOnly bool) {
+	t.Helper()
 	for _, mode := range []breakglassv1alpha1.DebugSessionTemplateMode{breakglassv1alpha1.DebugSessionModeWorkload, breakglassv1alpha1.DebugSessionModeKubectlDebug} {
 		t.Run(string(mode), func(t *testing.T) {
 			c, prior, template, target := newDeploymentFenceFixture(t)
 			require.NoError(t, c.client.Delete(t.Context(), prior))
 			template.Spec.Mode = mode
-			template.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Users: []string{"alice@example.com"}}
+			template.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{ClusterSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"environment": "production"}}, Users: []string{"alice@example.com"}}
+			if !selectorOnly {
+				template.Spec.Allowed.ClusterSelector = nil
+				template.Spec.Allowed.Clusters = []string{"*"}
+			}
 			if mode == breakglassv1alpha1.DebugSessionModeKubectlDebug {
 				template.Spec.PodTemplateString = ""
 				template.Spec.WorkloadType = ""
@@ -348,6 +360,7 @@ func TestNewNoVariableSessionAPIActivation(t *testing.T) {
 			require.NoError(t, c.client.Update(t.Context(), template))
 			cc := &breakglassv1alpha1.ClusterConfig{}
 			require.NoError(t, c.client.Get(t.Context(), client.ObjectKey{Name: "spoke", Namespace: "default"}, cc))
+			cc.Labels = map[string]string{"environment": "production"}
 			cc.Status.Conditions = []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Verified"}}
 			require.NoError(t, c.client.Update(t.Context(), cc))
 			// Invalid matching policy must not shadow this direct template grant.
@@ -363,6 +376,23 @@ func TestNewNoVariableSessionAPIActivation(t *testing.T) {
 				ctx.Next()
 			})
 			require.NoError(t, api.Register(router.Group("/api/v1/"+api.BasePath())))
+			if selectorOnly {
+				// The same selector governs discovery, admission, and activation.
+				discovery := httptest.NewRecorder()
+				router.ServeHTTP(discovery, httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates/template/clusters", nil))
+				require.Equal(t, http.StatusOK, discovery.Code, discovery.Body.String())
+				require.Contains(t, discovery.Body.String(), `"name":"spoke"`)
+				cc.Labels["environment"] = "development"
+				require.NoError(t, c.client.Update(t.Context(), cc))
+				denied := httptest.NewRecorder()
+				deniedRequest := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(`{"templateRef":"template","cluster":"spoke"}`))
+				deniedRequest.Header.Set("Content-Type", "application/json")
+				router.ServeHTTP(denied, deniedRequest)
+				require.Equal(t, http.StatusForbidden, denied.Code, denied.Body.String())
+				cc.Labels["environment"] = "production"
+				require.NoError(t, c.client.Update(t.Context(), cc))
+			}
+
 			request := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(`{"templateRef":"template","cluster":"spoke"}`))
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
@@ -438,6 +468,48 @@ func TestApprovedSnapshotActivationAfterTemplateDeletion(t *testing.T) {
 				require.NoError(t, target.List(t.Context(), deployments))
 				require.Empty(t, deployments.Items)
 			}
+		})
+	}
+}
+
+func TestExplicitVisibleBindingDoesNotSelectHiddenBinding(t *testing.T) {
+	for _, selected := range []string{"z-visible", "a-hidden"} {
+		t.Run(selected, func(t *testing.T) {
+			c, prior, template, _ := newDeploymentFenceFixture(t)
+			require.NoError(t, c.client.Delete(t.Context(), prior))
+			template.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{Users: []string{"alice@example.com"}}
+			require.NoError(t, c.client.Update(t.Context(), template))
+			cc := &breakglassv1alpha1.ClusterConfig{}
+			require.NoError(t, c.client.Get(t.Context(), client.ObjectKey{Name: "spoke", Namespace: "default"}, cc))
+			cc.Status.Conditions = []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Verified"}}
+			require.NoError(t, c.client.Update(t.Context(), cc))
+			for _, name := range []string{"a-hidden", "z-visible"} {
+				binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name}, Clusters: []string{"spoke"}, Hidden: name == "a-hidden"}}
+				require.NoError(t, c.client.Create(t.Context(), binding))
+			}
+			api := NewDebugSessionAPIController(zap.NewNop().Sugar(), c.client, nil, nil)
+			router := gin.New()
+			router.Use(func(ctx *gin.Context) {
+				ctx.Set("legacy_identity_allowed", true)
+				ctx.Set("username", "alice@example.com")
+				ctx.Next()
+			})
+			require.NoError(t, api.Register(router.Group("/api/v1/"+api.BasePath())))
+			discovery := httptest.NewRecorder()
+			router.ServeHTTP(discovery, httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates/template/clusters", nil))
+			require.Equal(t, http.StatusOK, discovery.Code, discovery.Body.String())
+			require.Contains(t, discovery.Body.String(), "z-visible")
+			require.NotContains(t, discovery.Body.String(), "a-hidden")
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(fmt.Sprintf(`{"templateRef":"template","cluster":"spoke","bindingRef":"default/%s"}`, selected)))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+			sessions := &breakglassv1alpha1.DebugSessionList{}
+			require.NoError(t, c.client.List(t.Context(), sessions))
+			require.Len(t, sessions.Items, 1)
+			require.NotNil(t, sessions.Items[0].Spec.BindingRef)
+			require.Equal(t, selected, sessions.Items[0].Spec.BindingRef.Name)
 		})
 	}
 }

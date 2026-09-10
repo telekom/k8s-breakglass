@@ -1201,6 +1201,27 @@ describe("DebugSessionCreate", () => {
       expect(vm.hasExtraDeployVariables).toBeFalsy();
     });
 
+    it.each([true, false])("submits the sole visible binding (options=%s)", async (withOptions) => {
+      const bindingRef = { name: "visible", namespace: "default" };
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        clusters: [{ name: "prod-east", bindingRef, ...(withOptions ? { bindingOptions: [{ bindingRef }] } : {}) }],
+      });
+      const wrapper = await createWrapper();
+      const vm = wrapper.vm as unknown as {
+        goToStep2: () => void;
+        handleSubmit: () => Promise<void>;
+        form: { cluster: string; reason: string };
+      };
+      vm.goToStep2();
+      await flushPromises();
+      vm.form.cluster = "prod-east";
+      vm.form.reason = "Investigating production issue";
+      await flushPromises();
+      await vm.handleSubmit();
+      expect(mockCreateSession).toHaveBeenCalledWith(expect.objectContaining({ bindingRef: "default/visible" }));
+    });
+
     it("does not submit when extra deploy variables are invalid", async () => {
       const templates = defaultTemplates();
       (templates[0] as unknown as Record<string, unknown>).extraDeployVariables = [
