@@ -5,20 +5,68 @@ SPDX-License-Identifier: Apache-2.0
 
 # DebugSession terminal recording
 
-`DebugSessionTemplate.spec.audit.enableTerminalRecording` is reserved for a
-future terminal-byte transport. The controller currently rejects a template
-that enables it because the workload I/O hooks are not wired; it never creates
-a metadata-only sidecar that could be mistaken for a recording. This is
-distinct from the narrated/demo recordings under `e2e/` and `docs/demos/`.
+`DebugSessionTemplate.spec.audit.enableTerminalRecording` is served through the
+controller-owned terminal proxy. The proxy resolves the live target Pod UID,
+acquires a controller-owned connection lease, and streams Kubernetes exec or
+attach bytes through the bounded recorder. A configured artifact backend and
+lease provider are required; missing either dependency rejects activation and
+the API request. The lease adapter requires a published credential generation;
+an ownership epoch alone is never accepted as readiness. Claims are created
+only in the configured controller execution namespace. This is distinct from the narrated/demo recordings under
+`e2e/` and `docs/demos/`.
 
-`BREAKGLASS_TERMINAL_RECORDING_IMAGE` is reserved for the future transport and
-is currently ignored; setting it does not select an image or change the
-fail-closed behavior.
+Recording uses the shared [diagnostic artifact backend](diagnostic-artifacts.md),
+including its administrator-configured local or S3 store, keyring, staging
+limits, and independent artifact controller. No separate recording environment
+variables or store are used. The connection provider must also have a published
+credential generation; configuring storage alone does not establish readiness.
 
-When the transport is implemented, its planned bounded artifact volume will
-use `BREAKGLASS_RECORDING_MAX_BYTES=536870912` (512 MiB). Until then, no
-recording image, artifact route, replay route, or external cleanup contract is
-provided by this repository.
+The recorder uses a bounded framed stream with separate input and output
+directions. Each frame carries the previous frame's SHA-256 digest, so a
+finalized artifact can be verified without placing terminal bytes or
+credentials in DebugSession status or audit details. `POST
+/debugSessions/:name/terminal` is the only recording transport and
+`GET /debugSessions/:name/terminal` lists retained recordings, and
+`GET /debugSessions/:name/terminal/:id` replays an unexpired exact artifact
+version for an authorized session reader. The replay path pins backend
+identity, runtime binding digest, and version ID. The private transport binding
+keeps ClusterConfig UID, target Pod UID, and Lease UID distinct; none is inferred
+from a numeric generation. Finalized framing records its actual frame count.
+
+The bounded artifact volume is 512 MiB (`defaultTerminalRecordingMaxBytes`),
+with at most two concurrent streams per serving process. The HTTP transport
+requires full duplex: output is flushed before further input is supplied.
+Expiry or revocation also closes blocked HTTP input/output so a slow client
+cannot keep a revoked transport alive.
+Every input/output boundary rechecks the live session identity, participant
+issuer, allowed target Pod UID, profile, expiry, and connection lease. Target
+lookup is bracketed by live session checks. Rejected input is never forwarded
+to the target. Replay similarly rechecks live reader authorization and artifact
+retention before and after backend reads.
+The controller finalizes publication with a bounded detached context after a
+client disconnect or a remote stream failure, preserving any bytes already
+captured, and closes the lease in a separate bounded context. A lease expiry or
+revocation cancels the stream before publication. Direct
+target `pods/exec` and `pods/attach` authorization is denied while recording is
+required for an authorized current participant; unrelated or former participants
+do not cause another user’s access to be denied. Clients subject to recording
+must use the controller endpoint. Retention metadata is
+stored in an independent `DebugSessionArtifact` before target execution. Captured
+bytes and final metadata are published through that reservation even after
+stream expiry or revocation; incomplete streams are marked `complete: false`. A final live-authority check
+classifies completion without discarding evidence after revocation.
+The shared artifact controller recovers ambiguous publication and performs
+exact-version cleanup without depending on the session status or its lifetime.
+Replay permits retained terminal sessions, but requires the original live session
+UID and current reader authorization. Deleting or replacing the session denies
+replay even while its independent evidence remains retained.
+
+The immutable retention deadline is the admitted stream expiry plus
+`audit.recordingRetention` (default 90 days). Ending a stream early does not
+shorten this deadline. Reservation uses a bounded shared set of 128 artifact slots
+per session; a slot is reusable only after its artifact has been fully cleaned up.
+An interrupted process can leave a pending reservation without captured content;
+such a record is not advertised as a completed recording.
 
 When terminal recording is enabled, a supplied retention value is validated as
 a positive duration at admission. The controller does not copy template

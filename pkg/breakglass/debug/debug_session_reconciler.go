@@ -31,6 +31,7 @@ import (
 	"unicode"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
@@ -102,6 +103,26 @@ type DebugSessionController struct {
 	// preparation and before the next authorization fence.
 	targetClientFactory    func(*rest.Config) (ctrlclient.Client, error)
 	beforeDebugTargetWrite func(string)
+	recordingArtifacts     *backend.Service
+	recordingConnections   TerminalRecordingConnectionProvider
+}
+
+// WithTerminalRecordingArtifacts configures the shared artifact backend used by
+// controller-owned terminal recording. A nil store keeps recording disabled.
+func (c *DebugSessionController) WithTerminalRecordingArtifacts(service *backend.Service) *DebugSessionController {
+	c.recordingArtifacts = service
+	return c
+}
+
+// WithTerminalRecordingConnections configures the controller-owned lease
+// service that fences target identity and connection lifetime.
+func (c *DebugSessionController) WithTerminalRecordingConnections(provider TerminalRecordingConnectionProvider) *DebugSessionController {
+	c.recordingConnections = provider
+	return c
+}
+
+func (c *DebugSessionController) terminalRecordingConfigured() bool {
+	return c.recordingArtifacts != nil && c.recordingConnections != nil
 }
 
 func (c *DebugSessionController) WithAPIReader(reader ctrlclient.Reader) *DebugSessionController {
@@ -114,13 +135,15 @@ func (c *DebugSessionController) WithAPIReader(reader ctrlclient.Reader) *DebugS
 
 // NewDebugSessionController creates a new DebugSessionController
 func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client, ccProvider *cluster.ClientProvider) *DebugSessionController {
+	connectionLeases := NewConnectionLeaseService(client)
 	return &DebugSessionController{
-		log:              log,
-		client:           client,
-		reader:           client,
-		ccProvider:       ccProvider,
-		connectionLeases: NewConnectionLeaseService(client),
-		auxiliaryMgr:     NewAuxiliaryResourceManager(log.Named("auxiliary"), client),
+		log:                  log,
+		client:               client,
+		reader:               client,
+		ccProvider:           ccProvider,
+		connectionLeases:     connectionLeases,
+		recordingConnections: NewTerminalRecordingConnectionProvider(connectionLeases),
+		auxiliaryMgr:         NewAuxiliaryResourceManager(log.Named("auxiliary"), client),
 	}
 }
 
@@ -232,7 +255,6 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		// Return nil error to skip requeue - malformed resource won't fix itself
 		return ctrl.Result{}, nil
 	}
-
 	log = log.With("state", ds.Status.State, "cluster", ds.Spec.Cluster)
 	if ds.Status.State == breakglassv1alpha1.DebugSessionStateActive {
 		if ds.Status.ExpiresAt == nil || ds.Status.ExpiresAt.IsZero() {
@@ -294,7 +316,7 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		log.Errorw("Failed to get DebugSessionTemplate", "template", ds.Spec.TemplateRef, "error", err)
 		return c.failSession(ctx, ds, fmt.Sprintf("template not found: %s", ds.Spec.TemplateRef))
 	}
-	if err := rejectUnsupportedTerminalRecording(template); err != nil {
+	if err := c.ensureTerminalRecordingConfigured(template); err != nil {
 		return c.failSession(ctx, ds, err.Error())
 	}
 
@@ -620,16 +642,17 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 		releaseSessionMetricSeries(ds.Name)
 		return ctrl.Result{}, nil // Nothing left on the spoke: genuinely terminal.
 	}
-
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
 
-	if err := c.cleanupResources(ctx, ds); err != nil {
-		log.Warnw("Retrying cleanup of spoke resources for a failed debug session",
-			"error", err)
-		// Requeue rather than returning the error: the reason for the failure is
-		// already recorded in status and a hard error would only add log noise on a
-		// path that is expected to retry.
-		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	if hasTrackedSpokeResources(ds) {
+		if err := c.cleanupResources(ctx, ds); err != nil {
+			log.Warnw("Retrying cleanup of spoke resources for a failed debug session",
+				"error", err)
+			// Requeue rather than returning the error: the reason for the failure is
+			// already recorded in status and a hard error would only add log noise on a
+			// path that is expected to retry.
+			return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+		}
 	}
 
 	// cleanupResources clears the status lists as it succeeds. If anything is still
@@ -702,6 +725,10 @@ func hasOutstandingAuxiliaryResources(ds *breakglassv1alpha1.DebugSession) bool 
 // handleCleanup removes deployed resources for expired/terminated sessions
 func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
+	if err := c.revokeTerminalRecordingLease(ctx, ds); err != nil {
+		log.Warnw("Failed to revoke terminal recording lease", "error", err)
+		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	}
 
 	if err := c.cleanupResources(ctx, ds); err != nil {
 		log.Errorw("Failed to cleanup debug session resources", "error", err)
@@ -752,6 +779,17 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 
 	log.Info("Debug session cleanup complete")
 	return ctrl.Result{}, nil
+}
+
+func (c *DebugSessionController) revokeTerminalRecordingLease(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	if c.connectionLeases == nil || ds == nil || ds.Status.ConnectionLease == nil {
+		return nil
+	}
+	if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
+		return fmt.Errorf("revoke terminal recording lease: %w", err)
+	}
+	ds.Status.ConnectionLease = nil
+	return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
 }
 
 // releaseSessionMetricSeries drops every metric series labelled with a specific
@@ -842,8 +880,23 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 			return ctrl.Result{}, err
 		}
 	}
-	if err := rejectUnsupportedTerminalRecording(template); err != nil {
+	if err := c.ensureTerminalRecordingConfigured(template); err != nil {
 		return c.failSession(ctx, ds, err.Error())
+	}
+	if template.Spec.Audit != nil && template.Spec.Audit.EnableTerminalRecording && c.connectionLeases != nil && c.ccProvider != nil {
+		_, configured, err := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("read target before acquiring terminal recording lease: %w", err)
+		}
+		lease, leaseErr := c.connectionLeases.AcquireForSession(ctx, ds, configured.UID)
+		c.ccProvider.ReleasePrivilegedOperationClusterConfig(configured)
+		if leaseErr != nil {
+			return ctrl.Result{}, fmt.Errorf("acquire terminal recording lease: %w", leaseErr)
+		}
+		ds.Status.ConnectionLease = &lease
+		if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	// Only deploy workloads for workload or hybrid mode
 	mode := template.Spec.Mode

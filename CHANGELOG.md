@@ -32,6 +32,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Preserve artifact publication evidence during cleanup races, bound collector reservation concurrency, and recheck requester identity and idle expiry around streamed reads.
 
+- Reserve terminal evidence in the shared artifact backend before execution, preserve incomplete streams after revocation, and replay retained evidence without exposing provider storage details.
+
+- Recheck terminal stream and replay authorization at byte boundaries, stop
+  unrecorded input at the recording limit, and require a real full-duplex
+  transport with bounded concurrent streams.
+
+- Add the bounded, hash-chained terminal-byte recorder primitive while keeping
+  terminal recording fail closed until the controller proxy and durable store
+  are configured.
+
+- Route enabled terminal sessions through the controller-owned bounded
+  exec/attach recorder, pin finalized artifacts to their live Pod UID and
+  lease binding, and deny direct target exec/attach authorization.
+
+- Preserve partial terminal evidence across stream failures, keep artifact
+  publication when status updates conflict, and retry retention cleanup after
+  backend or already-deleted-object races.
 - Derive provider-compatible diagnostic artifact keys from immutable resource UIDs, preserving isolation and recovery of existing uploads.
 
 - Recheck artifact upload token, session binding, plan/runtime/recipe claims, and

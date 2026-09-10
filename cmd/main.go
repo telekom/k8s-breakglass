@@ -538,6 +538,7 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 		if buildErr != nil {
 			return nil, fmt.Errorf("build diagnostic artifact host: %w", buildErr)
 		}
+		debugSessionAPICtrl.WithTerminalRecordingArtifacts(components.Service).WithTerminalRecordingConnections(debug.NewTerminalRecordingConnectionProvider(debug.NewConnectionLeaseService(uncachedClient).WithLiveReader(reconcilerMgr.GetAPIReader()).WithNamespace(cliConfig.BreakglassNamespace)))
 		artifactReconciler = components.Controller
 		artifactClose = components.Close
 		artifactControllers = components.APIControllers

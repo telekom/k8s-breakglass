@@ -322,6 +322,9 @@ func Setup(
 			WithQuotaNamespace(quotaNamespace).
 			WithAuditService(auditService).
 			WithMailService(mailService, frontendConfig.BrandingName, frontendConfig.BaseURL, disableEmail)
+		if len(artifactReconcilers) > 0 && artifactReconcilers[0] != nil {
+			debugSessionReconciler.WithTerminalRecordingArtifacts(artifactReconcilers[0].Service).WithTerminalRecordingConnections(debug.NewTerminalRecordingConnectionProvider(debug.NewConnectionLeaseService(mgr.GetClient()).WithLiveReader(mgr.GetAPIReader()).WithNamespace(quotaNamespace)))
+		}
 		if err := debugSessionReconciler.SetupWithManager(mgr); err != nil {
 			return fmt.Errorf("failed to setup DebugSession reconciler with manager: %w", err)
 		}
