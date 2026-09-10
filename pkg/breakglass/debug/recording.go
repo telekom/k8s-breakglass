@@ -49,6 +49,7 @@ const (
 type TerminalRecording struct {
 	Bytes  []byte
 	SHA256 string
+	Frames int64
 }
 
 // TerminalRecorder frames and hash-chains terminal bytes while enforcing a
@@ -60,6 +61,7 @@ type TerminalRecorder struct {
 	bytes    bytes.Buffer
 	previous [sha256.Size]byte
 	closed   bool
+	frames   int64
 }
 
 // NewTerminalRecorder creates a bounded recorder. A zero limit uses the
@@ -103,6 +105,7 @@ func (r *TerminalRecorder) Write(direction TerminalRecordingDirection, payload [
 		return fmt.Errorf("append terminal recording frame: %w", err)
 	}
 	r.previous = sha256.Sum256(frame)
+	r.frames++
 	return nil
 }
 
@@ -121,12 +124,13 @@ func (r *TerminalRecorder) Finalize() (TerminalRecording, error) {
 			frame := make([]byte, terminalRecordingFrameHeaderSize)
 			frame[0], frame[1] = terminalRecordingFrameVersion, terminalRecordingDirectionOutput
 			_, _ = r.bytes.Write(frame)
+			r.frames = 1
 		}
 		r.closed = true
 	}
 	payload := append([]byte(nil), r.bytes.Bytes()...)
 	digest := sha256.Sum256(payload)
-	return TerminalRecording{Bytes: payload, SHA256: hex.EncodeToString(digest[:])}, nil
+	return TerminalRecording{Bytes: payload, SHA256: hex.EncodeToString(digest[:]), Frames: r.frames}, nil
 }
 
 // StreamTerminal executes a controller-owned Kubernetes exec/attach stream

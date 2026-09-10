@@ -52,7 +52,7 @@ func (p terminalRecordingLeaseProvider) AcquireTerminalRecordingConnection(ctx c
 		return nil, err
 	}
 	return &terminalRecordingLeaseConnection{service: p.service, ref: ref, generation: generation, binding: TerminalRecordingConnectionBinding{
-		Namespace: binding.Namespace, SessionUID: binding.SessionUID, TargetPodUID: binding.TargetPodUID,
+		Namespace: binding.Namespace, SessionUID: binding.SessionUID, TargetPodUID: binding.TargetPodUID, TargetClusterUID: binding.TargetClusterUID, LeaseUID: string(ref.UID),
 		Epoch: strconv.FormatInt(ref.Epoch, 10), Generation: strconv.FormatInt(generation, 10),
 		ExpiresAt: ref.ExpiresAt, RuntimeBindingDigest: ref.ProfileDigest,
 	}}, nil

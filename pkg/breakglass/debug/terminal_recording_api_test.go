@@ -48,7 +48,7 @@ func (terminalRecordingRouteConnection) Close(context.Context) error    { return
 type terminalRecordingRouteProvider struct{}
 
 func (terminalRecordingRouteProvider) AcquireTerminalRecordingConnection(_ context.Context, binding TerminalRecordingConnectionBinding) (TerminalRecordingConnection, error) {
-	binding.Epoch, binding.Generation = "epoch", "generation"
+	binding.Epoch, binding.Generation, binding.LeaseUID = "1", "1", "lease-uid"
 	return terminalRecordingRouteConnection{binding: binding}, nil
 }
 
@@ -148,8 +148,8 @@ func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
 		WithAPIReader(cli).
 		WithTerminalRecordingStore(store).
 		WithTerminalRecordingConnections(terminalRecordingRouteProvider{})
-	controller.terminalTargetResolver = func(context.Context, *breakglassv1alpha1.DebugSession, string, string, string) (*rest.Config, *corev1.Pod, error) {
-		return &rest.Config{}, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "target", Name: "pod", UID: types.UID("pod-uid")}}, nil
+	controller.terminalTargetResolver = func(context.Context, *breakglassv1alpha1.DebugSession, string, string, string) (*rest.Config, *corev1.Pod, string, error) {
+		return &rest.Config{}, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "target", Name: "pod", UID: types.UID("pod-uid")}}, "cluster-uid", nil
 	}
 	controller.terminalExecutorFactory = func(*rest.Config, string, string, string, string, []string) (remotecommand.Executor, error) {
 		return interactiveTerminalExecutor{}, nil

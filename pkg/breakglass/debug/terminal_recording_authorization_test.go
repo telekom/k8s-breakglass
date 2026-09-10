@@ -90,6 +90,7 @@ func TestEmptyTerminalProducesBoundedEvidence(t *testing.T) {
 	recording, err := NewTerminalRecorder(terminalRecordingFrameHeaderSize).Finalize()
 	require.NoError(t, err)
 	require.Len(t, recording.Bytes, terminalRecordingFrameHeaderSize)
+	require.EqualValues(t, 1, recording.Frames)
 	require.Equal(t, byte(1), recording.Bytes[0])
 	require.NotEmpty(t, recording.SHA256)
 	_, err = NewTerminalRecorder(terminalRecordingFrameHeaderSize - 1).Finalize()

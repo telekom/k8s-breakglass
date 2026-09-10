@@ -44,6 +44,8 @@ type TerminalRecordingConnectionBinding struct {
 	Namespace            string
 	SessionUID           string
 	TargetPodUID         string
+	TargetClusterUID     string
+	LeaseUID             string
 	Epoch                string
 	Generation           string
 	ExpiresAt            time.Time
@@ -64,7 +66,7 @@ type TerminalRecordingConnectionProvider interface {
 	AcquireTerminalRecordingConnection(context.Context, TerminalRecordingConnectionBinding) (TerminalRecordingConnection, error)
 }
 
-type terminalTargetResolver func(context.Context, *breakglassv1alpha1.DebugSession, string, string, string) (*rest.Config, *corev1.Pod, error)
+type terminalTargetResolver func(context.Context, *breakglassv1alpha1.DebugSession, string, string, string) (*rest.Config, *corev1.Pod, string, error)
 
 type terminalExecutorFactory func(*rest.Config, string, string, string, string, []string) (remotecommand.Executor, error)
 
@@ -134,15 +136,16 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 
 	var restConfig *rest.Config
 	var pod *corev1.Pod
+	var targetClusterUID string
 	var validateTarget func(context.Context) error
 	if c.terminalTargetResolver != nil {
-		restConfig, pod, err = c.terminalTargetResolver(apiCtx, session, namespace, podName, targetUID)
+		restConfig, pod, targetClusterUID, err = c.terminalTargetResolver(apiCtx, session, namespace, podName, targetUID)
 		validateTarget = func(checkCtx context.Context) error {
-			_, current, checkErr := c.terminalTargetResolver(checkCtx, session, namespace, podName, targetUID)
+			_, current, currentClusterUID, checkErr := c.terminalTargetResolver(checkCtx, session, namespace, podName, targetUID)
 			if checkErr != nil {
 				return checkErr
 			}
-			if current == nil || string(current.UID) != targetUID || !current.DeletionTimestamp.IsZero() {
+			if currentClusterUID != targetClusterUID || current == nil || string(current.UID) != targetUID || !current.DeletionTimestamp.IsZero() {
 				return fmt.Errorf("terminal target identity changed")
 			}
 			return nil
@@ -151,6 +154,7 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		var configured *breakglassv1alpha1.ClusterConfig
 		restConfig, configured, err = c.ccProvider.GetRESTConfigForPrivilegedOperation(apiCtx, session.Spec.Cluster)
 		if err == nil {
+			targetClusterUID = string(configured.UID)
 			defer c.ccProvider.ReleasePrivilegedOperationClusterConfig(configured)
 			kubeClient, clientErr := kubernetes.NewForConfig(restConfig)
 			if clientErr != nil {
@@ -177,7 +181,7 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to resolve target cluster")
 		return
 	}
-	if pod == nil || string(pod.UID) != targetUID {
+	if targetClusterUID == "" || pod == nil || string(pod.UID) != targetUID {
 		apiresponses.RespondForbidden(ctx, "target Pod identity changed")
 		return
 	}
@@ -187,7 +191,7 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to resolve terminal recording profile")
 		return
 	}
-	binding := TerminalRecordingConnectionBinding{Namespace: session.Namespace, SessionUID: string(session.UID), TargetPodUID: targetUID, RuntimeBindingDigest: strings.TrimPrefix(profileDigest, "sha256:"), ExpiresAt: session.Status.ExpiresAt.Time}
+	binding := TerminalRecordingConnectionBinding{Namespace: session.Namespace, SessionUID: string(session.UID), TargetPodUID: targetUID, TargetClusterUID: targetClusterUID, RuntimeBindingDigest: strings.TrimPrefix(profileDigest, "sha256:"), ExpiresAt: session.Status.ExpiresAt.Time}
 	connection, err := c.recordingConnections.AcquireTerminalRecordingConnection(apiCtx, binding)
 	if err != nil {
 		apiresponses.RespondForbidden(ctx, "terminal recording connection is not available")
@@ -200,7 +204,7 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	}()
 	connection = authorizedTerminalConnection{TerminalRecordingConnection: connection, authorize: c.terminalRecordingAuthority(session, identity, namespace, podName, targetUID, operation, validateTarget)}
 	binding = connection.Binding()
-	if !terminalRecordingBindingMatches(binding, session, targetUID) || binding.RuntimeBindingDigest != strings.TrimPrefix(profileDigest, "sha256:") {
+	if !terminalRecordingBindingMatches(binding, session, targetUID) || binding.TargetClusterUID != targetClusterUID || binding.RuntimeBindingDigest != strings.TrimPrefix(profileDigest, "sha256:") {
 		apiresponses.RespondForbidden(ctx, "terminal recording connection binding is invalid")
 		return
 	}
@@ -358,11 +362,11 @@ func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingCo
 }
 
 func terminalRecordingBindingMatches(binding TerminalRecordingConnectionBinding, session *breakglassv1alpha1.DebugSession, targetUID string) bool {
-	return binding.Namespace == session.Namespace && binding.SessionUID == string(session.UID) && binding.TargetPodUID == targetUID && binding.Epoch != "" && binding.Generation != "" && binding.RuntimeBindingDigest != "" && !binding.ExpiresAt.IsZero() && !binding.ExpiresAt.After(session.Status.ExpiresAt.Time) && time.Now().Before(binding.ExpiresAt)
+	return binding.Namespace == session.Namespace && binding.SessionUID == string(session.UID) && binding.TargetPodUID == targetUID && binding.LeaseUID != "" && binding.Epoch != "" && binding.Generation != "" && binding.RuntimeBindingDigest != "" && !binding.ExpiresAt.IsZero() && !binding.ExpiresAt.After(session.Status.ExpiresAt.Time) && time.Now().Before(binding.ExpiresAt)
 }
 
 func terminalRecordingBindingsEqual(left, right TerminalRecordingConnectionBinding) bool {
-	return left.Namespace == right.Namespace && left.SessionUID == right.SessionUID && left.TargetPodUID == right.TargetPodUID && left.Epoch == right.Epoch && left.Generation == right.Generation && left.RuntimeBindingDigest == right.RuntimeBindingDigest && left.ExpiresAt.Equal(right.ExpiresAt)
+	return left.Namespace == right.Namespace && left.SessionUID == right.SessionUID && left.TargetPodUID == right.TargetPodUID && left.TargetClusterUID == right.TargetClusterUID && left.LeaseUID == right.LeaseUID && left.Epoch == right.Epoch && left.Generation == right.Generation && left.RuntimeBindingDigest == right.RuntimeBindingDigest && left.ExpiresAt.Equal(right.ExpiresAt)
 }
 
 func (c *DebugSessionAPIController) handleReplayTerminalRecording(ctx *gin.Context) {

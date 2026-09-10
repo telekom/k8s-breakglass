@@ -29,7 +29,9 @@ credentials in DebugSession status or audit details. `POST
 /debugSessions/:name/terminal` is the only recording transport and
 `GET /debugSessions/:name/terminal/:id` replays an unexpired exact artifact
 version for an authorized session reader. The replay path pins backend
-identity, runtime binding digest, and version ID.
+identity, runtime binding digest, and version ID. The private transport binding
+keeps ClusterConfig UID, target Pod UID, and Lease UID distinct; none is inferred
+from a numeric generation. Finalized framing records its actual frame count.
 
 The bounded artifact volume is 512 MiB (`defaultTerminalRecordingMaxBytes`),
 with at most two concurrent streams per serving process. The HTTP transport
