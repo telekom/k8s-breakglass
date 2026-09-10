@@ -209,33 +209,10 @@ spec:
       type: webhook
       eventTypes:
         - session.termination_intent
-        - session.requested
-        - session.approved
-        - session.denied
-        - session.rejected
         - session.revoked
-        - session.withdrawn
-        - session.dropped
         - access.denied
         - policy.violation
-        - policy.bypassed
-        - resource.impersonate
-        - debug_session.created
-        - debug_session.started
         - debug_session.rejected
-        - debug_session.terminated
-        - debug_session.failed
-        - debug_session.expired
-        - debug_session.approval_timeout
-        - debug_session.binding_unresolved
-        - clusterrolebinding.created
-        - clusterrolebinding.deleted
-        - pod_security.denied
-        - pod_security.warning
-        - pod_security.override
-        - secret.accessed
-        - secret.created
-        - secret.updated
         - secret.deleted
         - auth.failure
       minSeverity: info
@@ -254,7 +231,6 @@ spec:
         - session.requested
         - session.approved
         - session.denied
-        - session.rejected
         - session.activated
         - session.expired
         - session.revoked

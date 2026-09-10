@@ -1829,6 +1829,13 @@ export function createSessionFromRequest(body = {}) {
   return cloneSession(session);
 }
 
+export function rejectDebugSession(name, reason) {
+  return updateDebugSessionState(name, "Rejected", {
+    rejectedBy: CURRENT_USER_EMAIL,
+    reason: reason || "Rejected",
+  });
+}
+
 export function findSession(name) {
   return sessions.get(name);
 }

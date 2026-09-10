@@ -14,6 +14,7 @@ import {
   listDebugSessions,
   findDebugSession,
   createDebugSession,
+  rejectDebugSession,
   updateDebugSessionState,
   joinDebugSession,
   leaveDebugSession,
@@ -271,12 +272,8 @@ app.post("/api/debugSessions/:name/approve", (req, res) => {
   res.json(session);
 });
 
-// Reject debug session
 app.post("/api/debugSessions/:name/reject", (req, res) => {
-  const session = updateDebugSessionState(req.params.name, "Rejected", {
-    rejectedBy: CURRENT_USER_EMAIL,
-    reason: req.body?.reason || "Rejected",
-  });
+  const session = rejectDebugSession(req.params.name, req.body?.reason);
   if (!session) {
     return res.status(404).json({ message: "debug session not found" });
   }
