@@ -855,18 +855,20 @@ func TestSendAuthorizationResponse_DebugSessionMetricFollowsFinalFence(t *testin
 		Status: breakglassv1alpha1.DebugSessionStatus{
 			State:       breakglassv1alpha1.DebugSessionStateActive,
 			ExpiresAt:   &future,
-			AllowedPods: []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod"}},
+			AllowedPods: []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{{
-				User: "user", Role: breakglassv1alpha1.ParticipantRoleParticipant,
+				User: "user", IdentityProviderIssuer: "https://issuer.example", Role: breakglassv1alpha1.ParticipantRoleParticipant,
 			}},
 		},
 	}
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds).Build()
-	wc := &WebhookController{log: zap.NewNop().Sugar(), sesManager: breakglass.NewSessionManagerWithClient(cli)}
+	wc := &WebhookController{log: zap.NewNop().Sugar(), sesManager: breakglass.NewSessionManagerWithClient(cli), podFetchFn: func(context.Context, string, string, string) (*corev1.Pod, error) {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "pod-uid"}}, nil
+	}}
 	ra := &authorization.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}
 
 	state := &authorizeState{
-		ctx: context.Background(), clusterName: "cluster", clusterLabel: "cluster", allowed: true, allowSource: "debug-session",
+		ctx: context.Background(), issuer: "https://issuer.example", clusterName: "cluster", clusterLabel: "cluster", allowed: true, allowSource: "debug-session",
 		debugSessionNamespace: "default", debugSessionName: ds.Name, debugSessionUID: string(ds.UID), reqLog: zap.NewNop().Sugar(),
 		sar: authorization.SubjectAccessReview{Spec: authorization.SubjectAccessReviewSpec{User: "user", ResourceAttributes: ra}},
 	}
