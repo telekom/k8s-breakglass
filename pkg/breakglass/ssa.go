@@ -125,6 +125,9 @@ func PatchDebugSessionStatusWithReader(
 }
 
 func validateDebugSessionStatusMutation(oldStatus, newStatus breakglassv1alpha1.DebugSessionStatus, now time.Time) error {
+	if newStatus.RetainedUntil != nil && !newStatus.RetainedUntil.IsZero() && !isTerminalDebugSessionState(newStatus.State) {
+		return fmt.Errorf("retainedUntil is only valid for terminal sessions")
+	}
 	if newStatus.ActivityCount < oldStatus.ActivityCount {
 		return fmt.Errorf("activityCount must not decrease")
 	}

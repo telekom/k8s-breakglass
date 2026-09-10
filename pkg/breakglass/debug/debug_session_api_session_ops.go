@@ -254,7 +254,7 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	}
 	if live.UID != session.UID || live.ResourceVersion != session.ResourceVersion ||
 		!canRenewDebugSession(live, identity) || live.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
-		live.Status.ExpiresAt == nil || !time.Now().Before(live.Status.ExpiresAt.Time) {
+		isDebugSessionExpired(live, time.Now().UTC()) {
 		apiresponses.RespondConflict(ctx, "debug session changed or expired before renewal; refresh the session before retrying")
 		return
 	}

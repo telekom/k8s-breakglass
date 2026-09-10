@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ssa "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
@@ -309,6 +310,10 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 			if err := r.Get(ctx, client.ObjectKeyFromObject(session), live); err != nil {
 				return err
 			}
+			if live.UID != session.UID || live.Spec.Cluster != clusterName {
+				return fmt.Errorf("DebugSession %s/%s identity changed during cluster cleanup", session.Namespace, session.Name)
+			}
+
 			if isDebugSessionTerminal(live.Status.State) {
 				if debugSessionHasTrackedSpokeResources(live) {
 					return debugSessionCleanupPendingError(live)
@@ -317,6 +322,7 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 			}
 			base := live.DeepCopy()
 			live.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+			breakglassv1alpha1.StampDebugSessionRetention(&live.Status, time.Now().UTC())
 			live.Status.Message = fmt.Sprintf("Session terminated: ClusterConfig %q was deleted", clusterName)
 			if live.Generation > 0 {
 				live.Status.ObservedGeneration = live.Generation

@@ -3,7 +3,11 @@
 
 package v1alpha1
 
-import "time"
+import (
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
 
 // DebugSessionIdleDeadline returns the server-observed inactivity deadline.
 // A configured but invalid limit or missing activity baseline is already expired.
@@ -26,4 +30,17 @@ func DebugSessionIdleDeadline(ds *DebugSession) (time.Time, bool) {
 		return time.Time{}, true
 	}
 	return baseline.Add(duration), true
+}
+
+// StampDebugSessionRetention records explicit retention when a session becomes terminal.
+func StampDebugSessionRetention(status *DebugSessionStatus, now time.Time) {
+	if status == nil || !isTerminalDebugSessionState(status.State) || status.RetainedUntil != nil || status.ResolvedTemplate == nil || status.ResolvedTemplate.Constraints == nil || status.ResolvedTemplate.Constraints.RetainFor == "" {
+		return
+	}
+	duration, err := ParseDuration(status.ResolvedTemplate.Constraints.RetainFor)
+	if err != nil || duration <= 0 {
+		return
+	}
+	retained := metav1.NewTime(now.Add(duration))
+	status.RetainedUntil = &retained
 }
