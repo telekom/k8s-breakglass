@@ -15,6 +15,12 @@ Tracked cleanup inventory identity also includes the persisted
 different operation therefore remains tracked when cleanup removes its older
 predecessor.
 
+An interrupted create with an operation identity but no recorded UID remains a
+durable cleanup intent and is retried until its outcome can be resolved. Cleanup
+never adopts a same-name replacement from labels, copied markers, or names
+alone. Resources explicitly configured with `deleteAfter: false` remain
+retained by policy and are excluded from cleanup-failure residuals.
+
 Pod labels are discovery hints. Direct debug Pods require their recorded UID.
 DaemonSet and Deployment children require a live, UID-matched controller chain
 (including the Deployment's ReplicaSet) and matching immutable workload

@@ -1417,6 +1417,11 @@ resource from the same session.
 Ephemeral-container operation evidence records the canonical username, optional
 email, identity-provider name, and issuer so recovery and audit retain the
 provider binding used for authorization.
+If a create response is interrupted before its UID is recorded, cleanup retains
+the intent and retries without adopting a same-name replacement. Resources with
+`deleteAfter: false` remain intentionally retained and do not create a cleanup
+failure condition. Structural validation failures emit one audit event for the
+persisted failure; later reconciles preserve the status without repeating it.
 Auxiliary documents continue to be retried after their primary resource is
 deleted; once the primary and every child are deleted, their history no longer
 counts as outstanding cleanup inventory.
