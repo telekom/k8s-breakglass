@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Remove completed diagnostic collector artifacts when their session ends, while preserving independent terminal-recording retention.
+
 - Clean up rejected artifact reservations and revoked collectors, preserve replacement artifact identities during upload cleanup, and document in-flight terminal output revocation limits.
 
 - Authenticate artifact collection and reads with the DebugSession middleware, reject controller-less artifact startup and invalid bucket names, and exclude bindings at their exact expiry.

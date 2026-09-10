@@ -121,13 +121,18 @@ func (reconciler *Reconciler) Reconcile(ctx context.Context, request ctrl.Reques
 		}
 		return ctrl.Result{RequeueAfter: min(30*time.Second, time.Until(record.ExpiresAt))}, nil
 	}
-	if object.DeletionTimestamp.IsZero() && (record.State == backend.StatePending || record.State == backend.StateUploading) {
+	if object.DeletionTimestamp.IsZero() && record.Recipe != backend.TerminalRecordingRecipe && (record.State == backend.StatePending || record.State == backend.StateUploading || record.State == backend.StateAvailable) {
 		revoked, err := reconciler.collectionRevoked(ctx, &object, now)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
 		if revoked {
 			return ctrl.Result{Requeue: true}, reconciler.cleanupRevokedCollection(ctx, &object)
+		}
+		if record.State == backend.StateAvailable {
+			// Completed diagnostics belong to the live session, unlike retained
+			// terminal recordings. Poll revocation without recreating workloads.
+			return ctrl.Result{RequeueAfter: min(30*time.Second, max(time.Second, time.Until(record.ExpiresAt)))}, nil
 		}
 		if writeErr := reconciler.ensureUploadResources(ctx, object, record); writeErr != nil {
 			revoked, readErr := reconciler.collectionRevoked(ctx, &object, now)

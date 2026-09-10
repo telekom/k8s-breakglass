@@ -61,8 +61,16 @@ func (allowLifecycle) AuthorizeArtifact(context.Context, backend.SessionBinding)
 
 type ambiguousStore struct {
 	storage.Store
-	lost      bool
-	beforePut func()
+	lost         bool
+	beforePut    func()
+	inventoryErr error
+}
+
+func (s *ambiguousStore) Inventory(ctx context.Context, object storage.Object) ([]storage.Version, error) {
+	if s.inventoryErr != nil {
+		return nil, s.inventoryErr
+	}
+	return s.Store.Inventory(ctx, object)
 }
 
 func (s *ambiguousStore) InventoryKey(ctx context.Context, key string) ([]storage.Version, error) {
@@ -754,4 +762,125 @@ func TestRejectedReservationRetriesActualDurableConflict(t *testing.T) {
 	require.Len(t, records, 1)
 	require.Equal(t, backend.StateRevoked, records[0].State)
 	require.GreaterOrEqual(t, records[0].Generation, int64(3))
+}
+
+func TestAvailableCollectorEvidenceFollowsSessionLifecycle(t *testing.T) {
+	for _, scenario := range []string{"terminate", "delete", "expire", "unreadable session", "provider outage"} {
+		t.Run(scenario, func(t *testing.T) {
+			svc, repo, store, keys, now, hub := lifecycleFixture(t)
+			ctx := context.Background()
+			require.NoError(t, coordinationv1.AddToScheme(hub.Scheme()))
+			expires := metav1.NewTime(now.Add(time.Hour))
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: "session-uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expires, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{}}}
+			require.NoError(t, hub.Create(ctx, session))
+			leaseRef, err := debug.NewConnectionLeaseService(hub).WithLiveReader(hub).AcquireForSession(ctx, session, "cluster-uid")
+			require.NoError(t, err)
+			session.Status.ConnectionLease = &leaseRef
+			require.NoError(t, hub.Update(ctx, session))
+			record := lifecycleRecord(*now)
+			record.ConnectionLeaseUID = string(leaseRef.UID)
+			reserved, err := svc.Reserve(ctx, record)
+			require.NoError(t, err)
+			route := "/api/debugSessionArtifactUploads/" + record.Namespace + "/" + record.SessionName + "/" + reserved.ArtifactID
+			signed, err := backend.ReservationToken(keys, reserved, route, *now, 15*time.Minute)
+			require.NoError(t, err)
+			body := validLocalArchive(t, reserved.Expected)
+			_, err = svc.Upload(ctx, signed, route, bytes.NewReader(body))
+			require.NoError(t, err)
+			available, err := repo.Get(ctx, record.Namespace, record.SessionName, reserved.ArtifactID)
+			require.NoError(t, err)
+			require.Equal(t, backend.StateAvailable, available.State)
+			reconciler := &artifactcontroller.Reconciler{Client: hub, LiveReader: hub, Service: svc}
+			request := ctrl.Request{NamespacedName: client.ObjectKey{Namespace: "controller", Name: reserved.ArtifactID}}
+			_, err = reconciler.Reconcile(ctx, request)
+			require.NoError(t, err)
+			result, err := reconciler.Reconcile(ctx, request)
+			require.NoError(t, err, "Available must not require a workload provider/image/token issuer")
+			require.Positive(t, result.RequeueAfter)
+			require.LessOrEqual(t, result.RequeueAfter, 30*time.Second)
+			hash := sha256.Sum256([]byte("breakglass-artifact-v1:" + reserved.ArtifactUID))
+			key := hex.EncodeToString(hash[:])
+			versions, err := store.InventoryKey(ctx, key)
+			require.NoError(t, err)
+			require.Len(t, versions, 1)
+			switch scenario {
+			case "delete":
+				require.NoError(t, hub.Delete(ctx, session))
+			case "expire":
+				past := metav1.NewTime(now.Add(-time.Second))
+				session.Status.ExpiresAt = &past
+				require.NoError(t, hub.Update(ctx, session))
+			case "unreadable session":
+				reconciler.LiveReader = interceptor.NewClient(hub.(client.WithWatch), interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, o client.Object, opts ...client.GetOption) error {
+					if _, ok := o.(*breakglassv1alpha1.DebugSession); ok {
+						return errors.New("session API unavailable")
+					}
+					return c.Get(ctx, key, o, opts...)
+				}})
+			default:
+				session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+				require.NoError(t, hub.Update(ctx, session))
+			}
+			if scenario == "provider outage" {
+				store.inventoryErr = errors.New("provider unavailable")
+			}
+			_, err = reconciler.Reconcile(ctx, request)
+			if scenario == "unreadable session" || scenario == "provider outage" {
+				require.Error(t, err)
+				var retained breakglassv1alpha1.DebugSessionArtifact
+				require.NoError(t, hub.Get(ctx, request.NamespacedName, &retained))
+				require.NotEmpty(t, retained.Finalizers)
+				versions, readErr := store.InventoryKey(ctx, key)
+				require.NoError(t, readErr)
+				require.Len(t, versions, 1)
+				if scenario == "unreadable session" {
+					require.Equal(t, breakglassv1alpha1.ArtifactStateAvailable, retained.Status.State)
+					return
+				}
+				store.inventoryErr = nil
+			} else {
+				require.NoError(t, err)
+			}
+			for attempt := 0; attempt < 3; attempt++ {
+				_, err = reconciler.Reconcile(ctx, request)
+				require.NoError(t, err)
+			}
+			versions, err = store.InventoryKey(ctx, key)
+			require.NoError(t, err)
+			require.Empty(t, versions)
+			var deleted breakglassv1alpha1.DebugSessionArtifact
+			require.True(t, apierrors.IsNotFound(hub.Get(ctx, request.NamespacedName, &deleted)))
+		})
+	}
+}
+
+func TestAvailableRecordingRetainsEvidenceAfterSessionDeletion(t *testing.T) {
+	svc, repo, store, _, now, hub := lifecycleFixture(t)
+	record := lifecycleRecord(*now)
+	record.Recording = &backend.RecordingMetadata{FormatVersion: 1, StartedAt: *now, StreamExpiresAt: now.Add(time.Minute), PodNamespace: "target", PodName: "debug", PodUID: "pod-uid", Operation: "exec", LeaseUID: "lease-uid", LeaseEpoch: "1", Generation: "1"}
+	reserved, err := svc.ReserveRecording(context.Background(), record, func(context.Context) error { return nil })
+	require.NoError(t, err)
+	frame := make([]byte, 42)
+	frame[0], frame[1] = 1, 'o'
+	metadata := *reserved.Recording
+	metadata.FinishedAt = now.Add(time.Second)
+	metadata.Complete = true
+	_, err = svc.FinalizeRecording(context.Background(), reserved, bytes.NewReader(frame), metadata)
+	require.NoError(t, err)
+	// No live session exists. Recording evidence has independent retention and
+	// must not enter collector revocation cleanup merely because it was deleted.
+	reconciler := &artifactcontroller.Reconciler{Client: hub, LiveReader: hub, Service: svc}
+	request := ctrl.Request{NamespacedName: client.ObjectKey{Namespace: "controller", Name: reserved.ArtifactID}}
+	for attempt := 0; attempt < 2; attempt++ {
+		_, err = reconciler.Reconcile(context.Background(), request)
+		require.NoError(t, err)
+	}
+	retained, err := repo.Get(context.Background(), record.Namespace, record.SessionName, reserved.ArtifactID)
+	require.NoError(t, err)
+	require.Equal(t, backend.StateAvailable, retained.State)
+	require.Equal(t, reserved.ArtifactUID, retained.ArtifactUID)
+	hash := sha256.Sum256([]byte("breakglass-artifact-v1:" + reserved.ArtifactUID))
+	versions, err := store.InventoryKey(context.Background(), hex.EncodeToString(hash[:]))
+	require.NoError(t, err)
+	require.Len(t, versions, 1)
 }

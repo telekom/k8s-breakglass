@@ -41,9 +41,13 @@ authenticated API exposes metadata at
 application supplies the live-session binding resolver and authentication
 middleware; an artifact token is accepted only by the collector upload route.
 
-Every upload, download, expiry, revoke, and cleanup operation checks the live
-session UID, target identity, operation epoch, and retention deadline. Cleanup
-deletes only versions matching the immutable artifact binding. Provider
+Upload and download check the live session UID, target identity, operation
+epoch, and access deadline. Completed collector artifacts are removed when
+the session terminates, expires, or is deleted. Available collector artifacts
+requeue for a revocation check within 30 seconds; controller downtime can delay
+cleanup. Cleanup works
+without a live session and deletes only versions matching the immutable artifact
+binding. Terminal recordings retain their separate evidence deadline. Provider
 ambiguity is retained as `Unknown` until two independent empty inventory
 observations or an exact matching deletion provide evidence. Provider errors
 and credentials are not returned in API responses.
