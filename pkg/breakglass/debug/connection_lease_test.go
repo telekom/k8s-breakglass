@@ -6,8 +6,11 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -252,4 +255,85 @@ func TestConnectionLeaseGenerationRequiresReadinessAndKeepsSecretsOpaque(t *test
 	current := &coordinationv1.Lease{}
 	require.NoError(t, client.Get(ctx, types.NamespacedName{Namespace: published.Lease.Namespace, Name: published.Lease.Name}, current))
 	require.Equal(t, "1", current.Annotations[connectionLeaseGenerationAnnotation])
+}
+
+type sessionRenewalFenceReader struct {
+	ctrlclient.Reader
+	leaseRead bool
+	mutate    func(*breakglassv1alpha1.DebugSession)
+}
+
+func (reader *sessionRenewalFenceReader) Get(ctx context.Context, key ctrlclient.ObjectKey, object ctrlclient.Object, options ...ctrlclient.GetOption) error {
+	if err := reader.Reader.Get(ctx, key, object, options...); err != nil {
+		return err
+	}
+	if _, ok := object.(*coordinationv1.Lease); ok {
+		reader.leaseRead = true
+	}
+	if session, ok := object.(*breakglassv1alpha1.DebugSession); ok && reader.leaseRead {
+		reader.mutate(session)
+	}
+	return nil
+}
+func TestRenewSessionRechecksLiveSessionAfterLeaseRead(t *testing.T) {
+	for _, scenario := range []string{"idle", "terminal", "replacement", "missing-expiry", "profile", "lease-replacement", "deleting", "provisional", "issuer", "clamp"} {
+		t.Run(scenario, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			require.NoError(t, coordinationv1.AddToScheme(scheme))
+			require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+			now := time.Now().UTC().Truncate(time.Second)
+			starts, expiry := metav1.NewTime(now), metav1.NewTime(now.Add(5*time.Minute))
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: "session-uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, StartsAt: &starts, ExpiresAt: &expiry, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m"}}}}
+			client := newLeaseClient(fake.NewClientBuilder().WithScheme(scheme).WithObjects(session))
+			service := NewConnectionLeaseService(client).WithLiveReader(client)
+			lease, err := service.AcquireForSession(context.Background(), session, "cluster-uid")
+			require.NoError(t, err)
+			session.Status.ConnectionLease = &lease
+			require.NoError(t, client.Update(context.Background(), session))
+			key := ctrlclient.ObjectKey{Namespace: lease.Namespace, Name: lease.Name}
+			before := &coordinationv1.Lease{}
+			require.NoError(t, client.Get(context.Background(), key, before))
+			reader := &sessionRenewalFenceReader{Reader: client, mutate: func(live *breakglassv1alpha1.DebugSession) {
+				switch scenario {
+				case "idle":
+					old := metav1.NewTime(now.Add(-2 * time.Minute))
+					live.Status.LastActivity = &old
+				case "terminal":
+					live.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+				case "replacement":
+					live.UID = "replacement"
+				case "missing-expiry":
+					live.Status.ExpiresAt = nil
+				case "profile":
+					live.Status.ResolvedTemplate.Mode = breakglassv1alpha1.DebugSessionModeHybrid
+				case "lease-replacement":
+					live.Status.ConnectionLease.UID = "replacement-lease"
+				case "deleting":
+					deleted := metav1.NewTime(now)
+					live.DeletionTimestamp = &deleted
+				case "provisional":
+					live.Annotations = map[string]string{quotas.AdmissionAnnotation: quotas.Pending}
+				case "issuer":
+					live.Spec.IdentityProviderIssuer = "https://replacement.example"
+				case "clamp":
+					limited := metav1.NewTime(now.Add(time.Minute))
+					live.Status.ExpiresAt = &limited
+				}
+			}}
+			service.WithLiveReader(reader)
+			err = service.RenewSession(context.Background(), session, now.Add(10*time.Minute))
+			require.True(t, reader.leaseRead)
+			after := &coordinationv1.Lease{}
+			require.NoError(t, client.Get(context.Background(), key, after))
+			if scenario == "clamp" {
+				require.NoError(t, err)
+				require.Equal(t, now.Add(time.Minute), session.Status.ConnectionLease.ExpiresAt.Time)
+				require.LessOrEqual(t, *after.Spec.LeaseDurationSeconds, int32(60))
+			} else {
+				require.Error(t, err)
+				require.Equal(t, before.Spec, after.Spec)
+				require.Equal(t, before.ResourceVersion, after.ResourceVersion)
+			}
+		})
+	}
 }

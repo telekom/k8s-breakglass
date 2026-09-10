@@ -137,3 +137,8 @@ Collector reservations bind the exact admitted connection Lease UID as well as
 its epoch. Recreating a same-name Lease with a reset epoch cannot revive an old
 upload token or download. Legacy records without this lease incarnation cannot
 grant collection access; their cleanup evidence remains usable.
+
+Session lease renewal re-reads the owning session after reading the Lease,
+rejects changed identity or elapsed hard/idle expiry, and clamps the Lease to
+the already committed session deadline. A delayed Lease read cannot extend
+access after session authorization has ended.

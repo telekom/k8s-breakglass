@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Recheck live session authorization after connection Lease reads and clamp renewals to the committed deadline.
+
 - Reject overflowing terminal frame allocations and enforce non-sniffable binary terminal responses while preserving exact output bytes.
 
 - Preserve artifact publication evidence during cleanup races, bound collector reservation concurrency, and recheck requester identity and idle expiry around streamed reads.

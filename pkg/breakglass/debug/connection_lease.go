@@ -10,6 +10,7 @@ import (
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -372,6 +373,10 @@ func (s *ConnectionLeaseService) Revoke(ctx context.Context, ref ConnectionLease
 
 // Renew extends only the current holder's lease and never changes its epoch.
 func (s *ConnectionLeaseService) Renew(ctx context.Context, ref ConnectionLeaseRef, expiresAt time.Time) error {
+	return s.renew(ctx, ref, expiresAt, nil)
+}
+
+func (s *ConnectionLeaseService) renew(ctx context.Context, ref ConnectionLeaseRef, expiresAt time.Time, fence func(context.Context, time.Time) (time.Time, error)) error {
 	if err := validateLeaseRef(ref); err != nil {
 		return err
 	}
@@ -386,6 +391,12 @@ func (s *ConnectionLeaseService) Renew(ctx context.Context, ref ConnectionLeaseR
 		epoch, err := leaseEpoch(lease)
 		if err != nil {
 			return err
+		}
+		if fence != nil {
+			expiresAt, err = fence(ctx, expiresAt)
+			if err != nil {
+				return err
+			}
 		}
 		now := time.Now().UTC()
 		if lease.DeletionTimestamp != nil || !now.Before(expiresAt) || !now.Before(ref.ExpiresAt) || lease.UID != ref.UID || epoch != ref.Epoch || lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != string(ref.HolderUID) || lease.Annotations[connectionLeaseTargetUIDAnnotation] != string(ref.TargetUID) || lease.Annotations[connectionLeaseProfileAnnotation] != ref.ProfileDigest || !leaseActive(lease, now) {
@@ -415,10 +426,33 @@ func (s *ConnectionLeaseService) RenewSession(ctx context.Context, ds *breakglas
 	}
 	l := ds.Status.ConnectionLease
 	ref := ConnectionLeaseRef{Namespace: l.Namespace, Name: l.Name, UID: l.UID, HolderUID: l.HolderUID, TargetUID: l.TargetUID, ProfileDigest: l.ProfileDigest, Epoch: l.Epoch, ExpiresAt: l.ExpiresAt.Time}
-	if err := s.Renew(ctx, ref, expiresAt); err != nil {
+	acceptedExpiry := expiresAt
+	if err := s.renew(ctx, ref, expiresAt, func(fenceCtx context.Context, requested time.Time) (time.Time, error) {
+		var live breakglassv1alpha1.DebugSession
+		if err := s.liveReader().Get(fenceCtx, ctrlclient.ObjectKeyFromObject(ds), &live); err != nil {
+			return time.Time{}, fmt.Errorf("read live session before lease renewal: %w", err)
+		}
+		profile, err := ProfileDigestForSession(&live)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if profile != ref.ProfileDigest {
+			return time.Time{}, fmt.Errorf("session profile changed before lease renewal")
+		}
+		current := live.Status.ConnectionLease
+		now := time.Now().UTC()
+		if ds.UID == "" || live.UID != ds.UID || !live.DeletionTimestamp.IsZero() || live.Status.State != breakglassv1alpha1.DebugSessionStateActive || live.Status.ExpiresAt == nil || isDebugSessionExpired(&live, now) || live.Annotations[quotas.AdmissionAnnotation] == quotas.Pending || current == nil || current.Namespace != ref.Namespace || current.Name != ref.Name || current.UID != ref.UID || current.Epoch != ref.Epoch || current.HolderUID != ref.HolderUID || current.TargetUID != ref.TargetUID || current.ProfileDigest != ref.ProfileDigest || live.Spec.Cluster != ds.Spec.Cluster || live.Spec.RequestedBy != ds.Spec.RequestedBy || live.Spec.IdentityProviderName != ds.Spec.IdentityProviderName || live.Spec.IdentityProviderIssuer != ds.Spec.IdentityProviderIssuer {
+			return time.Time{}, fmt.Errorf("session authorization changed before lease renewal")
+		}
+		acceptedExpiry = requested
+		if live.Status.ExpiresAt.Before(&metav1.Time{Time: requested}) {
+			acceptedExpiry = live.Status.ExpiresAt.Time
+		}
+		return acceptedExpiry, nil
+	}); err != nil {
 		return err
 	}
-	l.ExpiresAt = metav1.NewTime(expiresAt)
+	l.ExpiresAt = metav1.NewTime(acceptedExpiry)
 	return nil
 }
 
