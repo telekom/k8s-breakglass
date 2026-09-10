@@ -1578,11 +1578,15 @@ func TestDebugSessionRetentionUsesExplicitDeadlineOrLegacyConfiguredFallback(t *
 	original := DebugSessionRetentionPeriod
 	t.Cleanup(func() { DebugSessionRetentionPeriod = original })
 	for _, tt := range []struct {
-		name, env           string
-		retained            *metav1.Time
-		active, wantDeleted bool
+		name, env             string
+		retained              *metav1.Time
+		active, wantDeleted   bool
+		rejected, outstanding bool
 	}{
 		{name: "unset default remains seven days"},
+		{name: "rejected retained until explicit deadline", rejected: true, retained: func() *metav1.Time { v := metav1.NewTime(time.Now().Add(time.Hour)); return &v }()},
+		{name: "rejected removed after explicit deadline", rejected: true, retained: func() *metav1.Time { v := metav1.NewTime(time.Now().Add(-time.Hour)); return &v }(), wantDeleted: true},
+		{name: "rejected unresolved evidence survives deadline", rejected: true, outstanding: true, retained: func() *metav1.Time { v := metav1.NewTime(time.Now().Add(-time.Hour)); return &v }()},
 		{name: "unset honors legacy environment", env: "72h", wantDeleted: true},
 		{name: "explicit future retains evidence", env: "1h", retained: func() *metav1.Time { v := metav1.NewTime(time.Now().Add(time.Hour)); return &v }()},
 		{name: "explicit elapsed deadline", retained: func() *metav1.Time { v := metav1.NewTime(time.Now().Add(-time.Hour)); return &v }(), wantDeleted: true},
@@ -1593,11 +1597,17 @@ func TestDebugSessionRetentionUsesExplicitDeadlineOrLegacyConfiguredFallback(t *
 			DebugSessionRetentionPeriod = getDebugSessionRetentionPeriod()
 			expiry := metav1.NewTime(time.Now().Add(-96 * time.Hour))
 			state := breakglassv1alpha1.DebugSessionStateTerminated
+			if tt.rejected {
+				state = breakglassv1alpha1.DebugSessionStateRejected
+			}
 			if tt.active {
 				state = breakglassv1alpha1.DebugSessionStateActive
 				expiry = metav1.NewTime(time.Now().Add(time.Hour))
 			}
 			ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "retained", Namespace: "default", UID: "retained-uid", CreationTimestamp: metav1.NewTime(time.Now().Add(-96 * time.Hour))}, Status: breakglassv1alpha1.DebugSessionStatus{State: state, ExpiresAt: &expiry, RetainedUntil: tt.retained}}
+			if tt.outstanding {
+				ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{{ResourceName: "unknown-create"}}
+			}
 			scheme := runtime.NewScheme()
 			require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
 			hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
