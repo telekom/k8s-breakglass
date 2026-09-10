@@ -395,3 +395,49 @@ func TestNewNoVariableSessionAPIActivation(t *testing.T) {
 		})
 	}
 }
+
+func TestApprovedSnapshotActivationAfterTemplateDeletion(t *testing.T) {
+	for _, scenario := range []string{"approved", "unapproved", "missing snapshot", "empty binding name", "invalid binding namespace"} {
+		t.Run(scenario, func(t *testing.T) {
+			c, ds, template, target := newDeploymentFenceFixture(t)
+			ds.CreationTimestamp = metav1.Now()
+			require.NoError(t, c.client.Update(t.Context(), ds))
+			ds.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
+			ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+			ds.Status.ResolvedBindingSnapshotCaptured = true
+			ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{Required: true}
+			if scenario != "unapproved" {
+				now := metav1.Now()
+				ds.Status.Approval.ApprovedAt = &now
+			}
+			if scenario == "missing snapshot" {
+				ds.Status.ResolvedTemplate = nil
+			}
+			if scenario == "empty binding name" || scenario == "invalid binding namespace" {
+				ds.Status.ResolvedBinding = &breakglassv1alpha1.ResolvedBindingRef{Name: "binding", Namespace: "default"}
+				if scenario == "empty binding name" {
+					ds.Status.ResolvedBinding.Name = ""
+				} else {
+					ds.Status.ResolvedBinding.Namespace = "invalid/namespace"
+				}
+				ds.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: []byte(`{"templateRef":{"name":"template"},"clusters":["spoke"]}`)}
+			}
+			require.NoError(t, c.client.Status().Update(t.Context(), ds))
+			require.NoError(t, c.client.Delete(t.Context(), template))
+			_, err := c.handlePendingApproval(t.Context(), ds)
+			require.NoError(t, err)
+			require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), ds))
+			if scenario == "approved" {
+				require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, ds.Status.State, ds.Status.Message)
+				deployment := &appsv1.Deployment{}
+				require.NoError(t, target.Get(t.Context(), client.ObjectKey{Namespace: "breakglass-debug", Name: ds.Name}, deployment))
+				require.Equal(t, "busybox", deployment.Spec.Template.Spec.Containers[0].Image)
+			} else {
+				require.NotEqual(t, breakglassv1alpha1.DebugSessionStateActive, ds.Status.State)
+				deployments := &appsv1.DeploymentList{}
+				require.NoError(t, target.List(t.Context(), deployments))
+				require.Empty(t, deployments.Items)
+			}
+		})
+	}
+}
