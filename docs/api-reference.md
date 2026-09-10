@@ -1427,12 +1427,19 @@ POST /api/debugSessions/:name/injectEphemeralContainer
 Injects an ephemeral container into a running pod for live debugging without
 restarting the pod. This is the only Breakglass-mediated ephemeral-container
 path: the manager validates the authenticated session and policy and fences the
-live session and target Pod UID immediately before the target update. PR
-[#1277](https://github.com/telekom/k8s-breakglass/pull/1277) records ephemeral
-operation evidence after that effect. It has no durable pre-effect record, so
-an interrupted status write can leave the effect without matching evidence.
-PR [#1278](https://github.com/telekom/k8s-breakglass/pull/1278) adds the durable
-pre-effect operation outbox.
+live session and target Pod UID immediately before the target update. It
+persists a `Prepared` operation intent, including the target Pod UID and a
+canonical digest of the complete submitted container request, before the
+target update. The manager then records a terminal `Completed`, `Failed`, or
+`Unknown` outcome. On restart, stale prepared intents are recovered by
+comparing the exact Pod UID and request; ambiguous outcomes remain `Unknown`
+for operator handling. Recovery leaves a prepared intent untouched for the
+duration of the API mutation timeout so a slow in-flight request keeps ownership
+of its outcome. Deterministic target `Forbidden`, `Invalid`, and `Conflict`
+responses are recorded as `Failed`. Cleanup removes copied Pods while retaining
+operation evidence; if the target `ClusterConfig` was deleted, cleanup retains
+all inventories and operation states unchanged and returns a retryable error
+for operator handling.
 Direct writes to
 `pods/ephemeralcontainers` through
 the target cluster API are governed by target-cluster RBAC and are outside

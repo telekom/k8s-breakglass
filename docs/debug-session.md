@@ -4,17 +4,31 @@ Debug Sessions provide temporary, controlled access to debug pods deployed on ta
 
 Ephemeral-container injection is available only through the authenticated
 DebugSession API operation. The manager validates the approved image and
-security policy and rechecks the live session lease and target Pod UID before
-the target update. PR
-[#1277](https://github.com/telekom/k8s-breakglass/pull/1277) records ephemeral
-operation evidence after that effect. It cannot guarantee durable pre-effect
-evidence or recover the outcome if the status write is interrupted. Those
-guarantees depend on the durable operation outbox in PR
-[#1278](https://github.com/telekom/k8s-breakglass/pull/1278). Independent writes to
+security policy, rechecks the live session lease and target Pod UID, rejects a
+session whose live object has a deletion timestamp, and persists a `Prepared`
+operation containing the exact target Pod UID plus a
+canonical digest of the full submitted container request before changing the
+target. It records a terminal
+`Completed`, `Failed`, or `Unknown` outcome idempotently. A controller restart
+recovers prepared operations by comparing the exact Pod UID and container
+request; identity mismatches are never guessed or mutated. Session cleanup
+removes copied Pods while retaining terminal kubectl-debug operation evidence
+for operator handling. Independent writes to
 `pods/ephemeralcontainers` through a target cluster API server are governed by
 that cluster's RBAC and are outside Breakglass. Kubernetes cannot remove an
 ephemeral container from a live Pod, so retained containers remain only as
 inaccessible target-Pod state after the session ends.
+
+Post-mutation status reconciliation uses a bounded detached timeout when the
+request is canceled, so the target mutation can still be recorded or recovered
+without an unbounded API call. When a replacement Pod is proven by its current
+UID, the session's allowed-Pod entry is updated to that UID; an unverified
+empty UID never replaces an existing identity.
+
+Namespace selector authorization is checked against live target namespace
+labels both before the operation is prepared and again immediately before the
+target write or pod-copy creation. A label change that revokes access causes
+the operation to fail closed rather than using the earlier label snapshot.
 
 **Type Definitions:**
 - [`DebugSession`](../api/v1alpha1/debug_session_types.go)
@@ -128,10 +142,6 @@ Debug sessions follow a strict state machine:
 | `Terminated` | Manually ended by owner or admin | ❌ |
 | `Failed` | Setup failed or rejected | ❌ |
 
-A non-zero `metadata.deletionTimestamp` revokes an otherwise active
-DebugSession immediately. Live authorization and privileged operation fences do
-not wait for finalizer completion.
-
 ## Resource Definitions
 
 ### DebugPodTemplate
@@ -236,6 +246,9 @@ resources separated by `---`.
   cleanup state; resources marked `deleteAfter: false` are retained
 - Empty documents (blank or whitespace-only) are silently skipped
 
+Template variable values are preserved exactly during validation, including
+multiline and Unicode values; YAML quoting protects their serialized form.
+
 Use this feature only for provider-reviewed, session-scoped resources such as
 a PVC or NetworkPolicy. Do not interpolate an image, command, node name,
 mount, capability, Secret value, or RBAC rule from user input. For a complete
@@ -326,7 +339,7 @@ spec:
     notifyOnApproval: true
     notifyOnExpiry: true
     notifyOnTermination: true
-  expirationBehavior: terminate   # notify-only is deprecated
+  expirationBehavior: terminate   # notify-only is deprecated and also enforces hard expiry
   gracePeriodBeforeExpiry: 15m
 
   # Optional: Resource controls
@@ -837,7 +850,7 @@ When a user creates a debug session:
    - `createIfNotExists: false`: Session fails or uses fail-open mode
 
 The web UI validates Kubernetes namespace syntax and glob-style allowed/denied patterns before submitting a debug session request. The API and controller remain the authoritative enforcement points for namespace constraints and cluster state.
-Kubectl-debug namespace selectors for ephemeral-container injection and pod-copy creation are evaluated against live namespace labels from the target cluster; selector-based policies fail closed if those labels cannot be read. The namespace policy is evaluated again at the final privileged mutation boundary, after target Pod identity checks, so a concurrent label change cannot authorize a stale mutation.
+Kubectl-debug namespace selectors for ephemeral-container injection and pod-copy creation are evaluated against live namespace labels from the target cluster; selector-based policies fail closed if those labels cannot be read.
 
 ### Example: Team-Isolated Debug Namespaces
 
@@ -999,6 +1012,35 @@ Auxiliary resource lifecycle is reflected in
 multi-document pod templates are reflected in
 `status.podTemplateResourceStatuses`, allowing cleanup and audit workflows to
 continue from persisted status after controller requeues or restarts.
+Terminal kubectl-debug operation outcomes are retained in a bounded history,
+while unresolved `Prepared` intents are always retained for recovery. Terminal
+history alone does not keep a ClusterConfig deletion finalizer in place.
+Terminal cleanup retries while a freshly prepared operation remains within its
+recovery grace period; once recovery can determine the outcome, cleanup can
+finish and retain the resulting terminal evidence.
+Legacy or unsupported prepared operation kinds are terminalized as `Unknown`
+during cleanup without reading or mutating a target cluster, so old status
+records cannot hold a session finalizer forever. If the request context is
+canceled after a supported intent is persisted but before the target write,
+the controller uses a bounded detached outcome context to record `Failed`;
+ambiguous target responses remain `Prepared` for recovery.
+Each operation ID is unique; new records are admitted only as `Prepared`,
+prepared intent and actor fields remain immutable, and a prepared record may
+become terminal only with a completion timestamp. Retained terminal records
+are immutable, while cleanup may compact only the oldest excess terminal
+history.
+While retained in the bounded terminal history, an `Unknown` ephemeral-container
+outcome blocks replay for the same namespace/Pod-UID/container tuple because the
+target mutation cannot be re-established safely. A different Pod UID remains a
+distinct operation. Compaction removes this duplicate suppression; a subsequent
+request must pass all current session, authorization, and target checks, and an
+existing same-name ephemeral container is rejected before mutation. Recovery
+never retries the target mutation automatically.
+New ephemeral-container authorization admits at most 256 distinct
+namespace/Pod-UID/container tuples per session; durable `Prepared` reservations
+count toward that bound. Retries and recovery of an already recorded tuple
+remain idempotent, and existing larger histories are retained. This bounds new
+growth without promising an absolute DebugSession object-byte limit.
 
 > **Note:** `template` (structured) and `templateString` (Go template) are mutually exclusive. Use `templateString` when you need multi-document YAML or dynamic templating.
 
@@ -1211,7 +1253,10 @@ Response includes per-cluster details:
 
 ### Ephemeral Containers
 
-Allow injecting ephemeral containers into running pods:
+Allow injecting ephemeral containers into running pods. If the session expires
+after the durable operation intent is recorded but before the target update,
+the controller records a Failed operation without mutating the target Pod; the
+normal expiry reconciler performs the session's terminal lifecycle effects:
 
 ```yaml
 kubectlDebug:
@@ -1368,6 +1413,9 @@ including a session just transitioned to a terminal state.
 Every resource-create intent records a non-empty operation identity, and recovery
 requires the target object's exact matching marker before reusing a same-name
 resource from the same session.
+Ephemeral-container operation evidence records the canonical username, optional
+email, identity-provider name, and issuer so recovery and audit retain the
+provider binding used for authorization.
 Auxiliary documents continue to be retried after their primary resource is
 deleted; once the primary and every child are deleted, their history no longer
 counts as outstanding cleanup inventory.
@@ -1583,11 +1631,6 @@ Kubectl-debug operations merge their operation-specific status fields into the
 current `DebugSession` status before returning. Concurrent renewals, participant
 changes, and lifecycle updates are preserved while the operation records copied
 pods, injected containers, allowed pods, or cleanup state.
-
-Immediately before creating pod copies or privileged node-debug Pods, the
-controller re-reads the destination Namespace and requires the same non-empty
-UID. Node-debug creation also re-evaluates namespace label policy, so Namespace
-deletion/recreation or relabeling fails closed before Pod creation.
 
 #### Inject Ephemeral Container
 

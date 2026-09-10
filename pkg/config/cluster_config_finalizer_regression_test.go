@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -149,4 +150,37 @@ func TestReviewDeleteBlocksWhenActiveDebugSessionTracksResources(t *testing.T) {
 	var updatedCluster breakglassv1alpha1.ClusterConfig
 	require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &updatedCluster))
 	assert.Contains(t, updatedCluster.Finalizers, ClusterConfigFinalizer)
+}
+
+func TestReviewDeleteIgnoresTerminalKubectlOperationHistory(t *testing.T) {
+	scheme := newTestClusterConfigReconcilerScheme()
+	ctx := context.Background()
+	now := metav1.Now()
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-cluster", Namespace: "default", Finalizers: []string{ClusterConfigFinalizer}, DeletionTimestamp: &now,
+		},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{ClusterID: "test-cluster-id"},
+	}
+	terminalDebugSession := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "terminal-debug", Namespace: "default"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateExpired,
+			KubectlDebugStatus: &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+				ID: "completed", State: breakglassv1alpha1.KubectlDebugOperationCompleted,
+			}}},
+		},
+	}
+	fakeClient := newTestClusterConfigFakeClient(scheme, clusterConfig, terminalDebugSession)
+	r := &ClusterConfigReconciler{Client: fakeClient, Scheme: scheme, Log: zap.NewNop().Sugar()}
+	_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "test-cluster", Namespace: "default"}})
+	require.NoError(t, err)
+	var updatedCluster breakglassv1alpha1.ClusterConfig
+	if err := fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &updatedCluster); apierrors.IsNotFound(err) {
+		return
+	} else {
+		require.NoError(t, err)
+	}
+	assert.NotContains(t, updatedCluster.Finalizers, ClusterConfigFinalizer)
 }

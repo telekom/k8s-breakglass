@@ -1233,6 +1233,56 @@ func TestDebugSessionReconciler_HandleActiveDoesNotMarkRenewedSessionExpiringSoo
 	assert.Empty(t, updated.Status.Message)
 }
 
+func TestDebugSessionReconciler_HandleActiveExpiresWhenRecoveryFails(t *testing.T) {
+	scheme := testScheme()
+	expiredAt := metav1.NewTime(time.Now().Add(-time.Minute))
+	session := newTestDebugSession("expired-recovery-session", "test-template", "test-cluster", "user@example.com")
+	session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	session.Status.ExpiresAt = &expiredAt
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{
+		Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+			ID:    "prepared-op",
+			Kind:  "ephemeral-container",
+			State: breakglassv1alpha1.KubectlDebugOperationPrepared,
+			TargetPod: breakglassv1alpha1.KubectlDebugOperationTargetPod{
+				Namespace: "default",
+				Name:      "target-pod",
+				UID:       "target-uid",
+			},
+			EphemeralContainer: breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{
+				Name:                  "debugger",
+				Image:                 "busybox:latest",
+				Command:               []string{"sh"},
+				SecurityContextDigest: "digest",
+				TTY:                   true,
+				Stdin:                 true,
+			},
+			RequestedBy: "user@example.com",
+			PreparedAt:  stalePreparedAt(),
+		}},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	controller := &DebugSessionController{
+		log:    zap.NewNop().Sugar(),
+		client: fakeClient,
+	}
+
+	result, err := controller.handleActive(context.Background(), session.DeepCopy())
+	require.NoError(t, err)
+	assert.Equal(t, ExpiredSessionRequeue, result.RequeueAfter)
+
+	var updated breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, updated.Status.State)
+	assert.Equal(t, "Session expired", updated.Status.Message)
+}
+
 func TestDebugSessionReconciler_HandleActiveUsesExtendedGracePeriod(t *testing.T) {
 	scheme := testScheme()
 	expiresAt := metav1.NewTime(time.Now().Add(12 * time.Hour))
@@ -5121,6 +5171,9 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		session := newTestDebugSession("cleanup-missing-cluster-kubectl", "test-template", "missing-cluster", "user@example.com")
 		session.Generation = 3
 		session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{
+			Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+				ID: "orphaned-operation", Kind: "ephemeral-container", State: breakglassv1alpha1.KubectlDebugOperationPrepared,
+			}},
 			CopiedPods: []breakglassv1alpha1.CopiedPodRef{
 				{
 					OriginalPod:       "app",
@@ -5205,6 +5258,52 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		assert.Len(t, updated.Status.PodTemplateResourceStatuses, 1)
 		assert.Zero(t, updated.Status.ObservedGeneration)
 	})
+}
+
+func TestDebugSessionController_HandleCleanupRequeuesFreshPreparedOperation(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	preparedAt := metav1.NewTime(time.Now().UTC())
+	session := newTestDebugSession("fresh-prepared-cleanup", "test-template", "test-cluster", "user@example.com")
+	session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+		ID: "fresh-operation", Kind: kubectlDebugOperationKindEphemeralContainer,
+		State: breakglassv1alpha1.KubectlDebugOperationPrepared, PreparedAt: preparedAt,
+		TargetPod:          breakglassv1alpha1.KubectlDebugOperationTargetPod{Namespace: "default", Name: "missing", UID: "pod-uid"},
+		EphemeralContainer: breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{Name: "debugger", Image: "busybox", ContainerDigest: "digest", SecurityContextDigest: "security"},
+		RequestedBy:        "user@example.com",
+	}}}
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).Build()
+	target := fake.NewClientBuilder().WithScheme(scheme).Build()
+	controller := &DebugSessionController{log: zap.NewNop().Sugar(), client: hub, ccProvider: cluster.NewClientProvider(hub, zap.NewNop().Sugar()), targetClients: &mockClientProvider{clients: map[string]client.Client{"test-cluster": target}}}
+	result, err := controller.handleCleanup(context.Background(), session.DeepCopy())
+	require.NoError(t, err)
+	assert.Equal(t, ExpiredSessionRequeue, result.RequeueAfter)
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+	assert.True(t, hasPreparedKubectlDebugOperation(&stored))
+}
+
+func TestDebugSessionController_HandleCleanupFinishesAgedPreparedOperation(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newTestDebugSession("aged-prepared-cleanup", "test-template", "test-cluster", "user@example.com")
+	session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+		ID: "aged-operation", Kind: kubectlDebugOperationKindEphemeralContainer,
+		State: breakglassv1alpha1.KubectlDebugOperationPrepared, PreparedAt: stalePreparedAt(),
+		TargetPod:          breakglassv1alpha1.KubectlDebugOperationTargetPod{Namespace: "default", Name: "missing", UID: "pod-uid"},
+		EphemeralContainer: breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{Name: "debugger", Image: "busybox", ContainerDigest: "digest", SecurityContextDigest: "security"},
+		RequestedBy:        "user@example.com",
+	}}}
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).Build()
+	target := fake.NewClientBuilder().WithScheme(scheme).Build()
+	controller := &DebugSessionController{log: zap.NewNop().Sugar(), client: hub, ccProvider: cluster.NewClientProvider(hub, zap.NewNop().Sugar()), targetClients: &mockClientProvider{clients: map[string]client.Client{"test-cluster": target}}}
+	result, err := controller.handleCleanup(context.Background(), session.DeepCopy())
+	require.NoError(t, err)
+	assert.Zero(t, result.RequeueAfter)
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+	assert.False(t, hasPreparedKubectlDebugOperation(&stored))
+	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationUnknown, stored.Status.KubectlDebugStatus.Operations[0].State)
 }
 
 func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {

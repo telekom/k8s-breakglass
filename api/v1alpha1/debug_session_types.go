@@ -22,10 +22,13 @@ import (
 	"time"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -542,6 +545,143 @@ type KubectlDebugStatus struct {
 	// copiedPods lists debug copies of pods.
 	// +optional
 	CopiedPods []CopiedPodRef `json:"copiedPods,omitempty"`
+
+	// operations is the durable operation outbox for target-cluster mutations.
+	// An operation is persisted in Prepared state before the target API is
+	// changed and is reconciled to a terminal outcome after a restart or an
+	// ambiguous response. Completed operations are idempotent evidence and are
+	// not re-applied.
+	// +optional
+	Operations []KubectlDebugOperation `json:"operations,omitempty"`
+}
+
+// KubectlDebugOperationState describes the state of a target-cluster debug
+// operation recorded in the session status outbox.
+// +kubebuilder:validation:Enum=Prepared;Completed;Failed;Unknown
+type KubectlDebugOperationState string
+
+const (
+	// KubectlDebugOperationPrepared means intent was durably recorded before a
+	// target-cluster mutation was attempted.
+	KubectlDebugOperationPrepared KubectlDebugOperationState = "Prepared"
+	// KubectlDebugOperationCompleted means the target mutation and its outcome
+	// are durably recorded.
+	KubectlDebugOperationCompleted KubectlDebugOperationState = "Completed"
+	// KubectlDebugOperationFailed means the target mutation was confirmed not
+	// to have been applied.
+	KubectlDebugOperationFailed KubectlDebugOperationState = "Failed"
+	// KubectlDebugOperationUnknown means the target outcome cannot be resolved
+	// safely and requires operator investigation; no compensating mutation is
+	// attempted.
+	KubectlDebugOperationUnknown KubectlDebugOperationState = "Unknown"
+)
+
+// KubectlDebugOperation is durable intent and outcome evidence for a
+// target-cluster kubectl-debug operation. The target Pod UID and complete
+// ephemeral-container request are part of the identity used during recovery;
+// a same-named but different Pod/container is never treated as a match.
+type KubectlDebugOperation struct {
+	// id is a unique operation identifier.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	ID string `json:"id"`
+
+	// kind identifies the operation implementation.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	Kind string `json:"kind"`
+
+	// state is the durable outbox state.
+	// +required
+	State KubectlDebugOperationState `json:"state"`
+
+	// targetPod identifies the target Pod and immutable UID.
+	// +required
+	TargetPod KubectlDebugOperationTargetPod `json:"targetPod"`
+
+	// ephemeralContainer contains the exact request fields used to identify
+	// the target mutation.
+	// +required
+	EphemeralContainer KubectlDebugEphemeralContainerIntent `json:"ephemeralContainer"`
+
+	// requestedBy identifies the authenticated operation actor.
+	// +required
+	RequestedBy string `json:"requestedBy"`
+
+	// requestedByEmail is the canonical email identity when one was provided.
+	// +optional
+	RequestedByEmail string `json:"requestedByEmail,omitempty"`
+
+	// identityProviderName identifies the provider that authenticated the actor.
+	// +optional
+	IdentityProviderName string `json:"identityProviderName,omitempty"`
+
+	// identityProviderIssuer identifies the issuer that authenticated the actor.
+	// +optional
+	IdentityProviderIssuer string `json:"identityProviderIssuer,omitempty"`
+
+	// preparedAt records when intent was persisted.
+	// +required
+	PreparedAt metav1.Time `json:"preparedAt"`
+
+	// completedAt records when the target outcome was persisted.
+	// +optional
+	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
+
+	// message describes a failed or unknown outcome.
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
+// KubectlDebugEphemeralContainerIntent is the compact, stable representation
+// of an ephemeral-container request kept in the operation outbox. The security
+// context is represented by a canonical digest to avoid embedding the complete
+// Kubernetes API type in the CRD schema while still requiring an exact match
+// during recovery.
+type KubectlDebugEphemeralContainerIntent struct {
+	// name is the ephemeral container name.
+	// +required
+	Name string `json:"name"`
+
+	// image is the requested image.
+	// +required
+	Image string `json:"image"`
+
+	// command is the requested command.
+	// +optional
+	Command []string `json:"command,omitempty"`
+
+	// containerDigest identifies the exact canonical ephemeral-container request.
+	// +required
+	ContainerDigest string `json:"containerDigest"`
+
+	// securityContextDigest identifies the complete requested security context.
+	// +required
+	SecurityContextDigest string `json:"securityContextDigest"`
+
+	// tty and stdin are the manager-owned terminal settings.
+	// +required
+	TTY bool `json:"tty"`
+
+	// stdin is the manager-owned standard-input setting.
+	// +required
+	Stdin bool `json:"stdin"`
+}
+
+// KubectlDebugOperationTargetPod identifies a target Pod for durable
+// operation recovery.
+type KubectlDebugOperationTargetPod struct {
+	// namespace is the Pod namespace.
+	// +required
+	Namespace string `json:"namespace"`
+
+	// name is the Pod name.
+	// +required
+	Name string `json:"name"`
+
+	// uid is the immutable Pod UID observed before the mutation.
+	// +required
+	UID types.UID `json:"uid"`
 }
 
 // EphemeralContainerRef tracks an injected ephemeral container.
@@ -715,8 +855,10 @@ func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) fie
 	}
 	if newObj.Status.State == DebugSessionStateActive &&
 		(newExpiry == nil || newExpiry.IsZero() || !time.Now().Before(newExpiry.Time)) {
-		errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), newExpiry,
-			"an active debug session must have a future expiry"))
+		if !AllowsExpiredActiveEphemeralOperationFailure(oldObj.Status, newObj.Status, time.Now()) {
+			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), newExpiry,
+				"an active debug session must have a future expiry"))
+		}
 	}
 
 	if oldObj.Status.Approval != nil {
@@ -731,6 +873,243 @@ func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) fie
 		}
 	}
 
+	return errs
+}
+
+// AllowsExpiredActiveEphemeralOperationFailure permits the controller to
+// record a failed prepared operation after an Active session's expiry has
+// elapsed. It is deliberately limited to operation evidence: the session
+// remains Active for the normal expiry reconciler to perform its lifecycle
+// effects, and every other status field must remain unchanged.
+func AllowsExpiredActiveEphemeralOperationFailure(oldStatus, newStatus DebugSessionStatus, now time.Time) bool {
+	if oldStatus.State != DebugSessionStateActive || newStatus.State != DebugSessionStateActive ||
+		oldStatus.ExpiresAt == nil || oldStatus.ExpiresAt.IsZero() ||
+		newStatus.ExpiresAt == nil || newStatus.ExpiresAt.IsZero() ||
+		!oldStatus.ExpiresAt.Time.Equal(newStatus.ExpiresAt.Time) || now.Before(oldStatus.ExpiresAt.Time) ||
+		oldStatus.KubectlDebugStatus == nil || newStatus.KubectlDebugStatus == nil {
+		return false
+	}
+	oldOther := oldStatus
+	newOther := newStatus
+	oldKubectl := *oldStatus.KubectlDebugStatus
+	newKubectl := *newStatus.KubectlDebugStatus
+	oldKubectl.Operations = nil
+	newKubectl.Operations = nil
+	oldOther.KubectlDebugStatus = &oldKubectl
+	newOther.KubectlDebugStatus = &newKubectl
+	if !apiequality.Semantic.DeepEqual(oldOther, newOther) {
+		return false
+	}
+	if len(validateKubectlDebugOperations(oldStatus.KubectlDebugStatus.Operations, newStatus.KubectlDebugStatus.Operations)) != 0 {
+		return false
+	}
+
+	oldByID := make(map[string]KubectlDebugOperation, len(oldStatus.KubectlDebugStatus.Operations))
+	for _, operation := range oldStatus.KubectlDebugStatus.Operations {
+		oldByID[operation.ID] = operation
+	}
+	changed := false
+	for _, operation := range newStatus.KubectlDebugStatus.Operations {
+		oldOperation, exists := oldByID[operation.ID]
+		if !exists {
+			return false
+		}
+		delete(oldByID, operation.ID)
+		if oldOperation.State == KubectlDebugOperationPrepared {
+			if !kubectlDebugOperationIntentEqual(oldOperation, operation) {
+				return false
+			}
+			if operation.State == KubectlDebugOperationFailed {
+				if operation.CompletedAt == nil || operation.CompletedAt.IsZero() {
+					return false
+				}
+				changed = true
+			} else if operation.State == KubectlDebugOperationPrepared {
+				if !apiequality.Semantic.DeepEqual(oldOperation, operation) {
+					return false
+				}
+			} else {
+				return false
+			}
+			continue
+		}
+		if !apiequality.Semantic.DeepEqual(oldOperation, operation) {
+			return false
+		}
+	}
+	for _, operation := range oldByID {
+		if operation.State == KubectlDebugOperationPrepared {
+			return false
+		}
+	}
+	return changed
+}
+
+// MaxKubectlDebugOperationHistory is the maximum retained terminal operation history.
+const MaxKubectlDebugOperationHistory = 32
+
+func isTerminalKubectlDebugOperationState(state KubectlDebugOperationState) bool {
+	return state == KubectlDebugOperationCompleted || state == KubectlDebugOperationFailed || state == KubectlDebugOperationUnknown
+}
+
+func kubectlDebugOperationIntentEqual(oldOperation, newOperation KubectlDebugOperation) bool {
+	oldOperation.State = ""
+	oldOperation.CompletedAt = nil
+	oldOperation.Message = ""
+	newOperation.State = ""
+	newOperation.CompletedAt = nil
+	newOperation.Message = ""
+	return apiequality.Semantic.DeepEqual(oldOperation, newOperation)
+}
+
+func validatePreparedKubectlDebugOperation(operation KubectlDebugOperation, path *field.Path) field.ErrorList {
+	errs := field.ErrorList{}
+	if operation.Kind != "ephemeral-container" {
+		errs = append(errs, field.Invalid(path.Child("kind"), operation.Kind, "unsupported prepared operation kind"))
+	}
+	if operation.TargetPod.Namespace == "" {
+		errs = append(errs, field.Required(path.Child("targetPod").Child("namespace"), "target Pod namespace is required"))
+	} else if validationErrors := validation.IsDNS1123Label(operation.TargetPod.Namespace); len(validationErrors) > 0 {
+		errs = append(errs, field.Invalid(path.Child("targetPod").Child("namespace"), operation.TargetPod.Namespace, "invalid target Pod namespace"))
+	}
+	if operation.TargetPod.Name == "" {
+		errs = append(errs, field.Required(path.Child("targetPod").Child("name"), "target Pod name is required"))
+	} else if validationErrors := validation.IsDNS1123Subdomain(operation.TargetPod.Name); len(validationErrors) > 0 {
+		errs = append(errs, field.Invalid(path.Child("targetPod").Child("name"), operation.TargetPod.Name, "invalid target Pod name"))
+	}
+	if operation.TargetPod.UID == "" {
+		errs = append(errs, field.Required(path.Child("targetPod").Child("uid"), "target Pod UID is required"))
+	}
+	intentPath := path.Child("ephemeralContainer")
+	if operation.EphemeralContainer.Name == "" {
+		errs = append(errs, field.Required(intentPath.Child("name"), "ephemeral container name is required"))
+	} else if validationErrors := validation.IsDNS1123Label(operation.EphemeralContainer.Name); len(validationErrors) > 0 {
+		errs = append(errs, field.Invalid(intentPath.Child("name"), operation.EphemeralContainer.Name, "invalid ephemeral container name"))
+	}
+	if operation.EphemeralContainer.Image == "" {
+		errs = append(errs, field.Required(intentPath.Child("image"), "ephemeral container image is required"))
+	}
+	if operation.EphemeralContainer.ContainerDigest == "" {
+		errs = append(errs, field.Required(intentPath.Child("containerDigest"), "container digest is required"))
+	}
+	if operation.EphemeralContainer.SecurityContextDigest == "" {
+		errs = append(errs, field.Required(intentPath.Child("securityContextDigest"), "security context digest is required"))
+	}
+	if operation.RequestedBy == "" {
+		errs = append(errs, field.Required(path.Child("requestedBy"), "requesting actor is required"))
+	}
+	if operation.PreparedAt.IsZero() {
+		errs = append(errs, field.Required(path.Child("preparedAt"), "prepared timestamp is required"))
+	}
+	if operation.CompletedAt != nil {
+		errs = append(errs, field.Invalid(path.Child("completedAt"), operation.CompletedAt, "Prepared operations must not have terminal metadata"))
+	}
+	if operation.Message != "" {
+		errs = append(errs, field.Invalid(path.Child("message"), operation.Message, "Prepared operations must not have terminal metadata"))
+	}
+	return errs
+}
+
+func validateKubectlDebugOperations(oldOperations, newOperations []KubectlDebugOperation) field.ErrorList {
+	operationsPath := field.NewPath("status").Child("kubectlDebugStatus").Child("operations")
+	errs := field.ErrorList{}
+	oldByID := make(map[string]KubectlDebugOperation, len(oldOperations))
+	oldTerminalIDs := make([]string, 0, len(oldOperations))
+	for _, operation := range oldOperations {
+		oldByID[operation.ID] = operation
+		if isTerminalKubectlDebugOperationState(operation.State) {
+			oldTerminalIDs = append(oldTerminalIDs, operation.ID)
+		}
+	}
+	newByID := make(map[string]KubectlDebugOperation, len(newOperations))
+	newFinalized := 0
+	for index, operation := range newOperations {
+		path := operationsPath.Index(index)
+		if operation.ID == "" {
+			errs = append(errs, field.Invalid(path.Child("id"), operation.ID, "operation ID must not be empty"))
+			continue
+		}
+		if _, exists := newByID[operation.ID]; exists {
+			errs = append(errs, field.Invalid(path.Child("id"), operation.ID, "operation IDs must be unique"))
+			continue
+		}
+		newByID[operation.ID] = operation
+		oldOperation, exists := oldByID[operation.ID]
+		if !exists {
+			if operation.State != KubectlDebugOperationPrepared {
+				errs = append(errs, field.Invalid(path.Child("state"), operation.State, "new operations must start in Prepared state"))
+			} else {
+				errs = append(errs, validatePreparedKubectlDebugOperation(operation, path)...)
+			}
+			continue
+		}
+		if oldOperation.State == KubectlDebugOperationPrepared {
+			if !kubectlDebugOperationIntentEqual(oldOperation, operation) {
+				errs = append(errs, field.Invalid(path, operation, "prepared operation intent is immutable"))
+			}
+			switch {
+			case operation.State == KubectlDebugOperationPrepared:
+			case isTerminalKubectlDebugOperationState(operation.State) && operation.CompletedAt != nil && !operation.CompletedAt.IsZero():
+				newFinalized++
+			default:
+				errs = append(errs, field.Invalid(path.Child("state"), operation.State, "prepared operations may only remain Prepared or transition to a terminal state with completedAt"))
+			}
+			continue
+		}
+		if !isTerminalKubectlDebugOperationState(oldOperation.State) || !reflect.DeepEqual(oldOperation, operation) {
+			errs = append(errs, field.Invalid(path, operation, "retained terminal operation evidence is immutable"))
+		}
+	}
+	for _, operation := range oldOperations {
+		if operation.State == KubectlDebugOperationPrepared {
+			if _, exists := newByID[operation.ID]; !exists {
+				errs = append(errs, field.Invalid(operationsPath, newOperations, "prepared operation must not be removed"))
+			}
+		}
+	}
+	removedTerminalIDs := make([]string, 0)
+	for _, id := range oldTerminalIDs {
+		if _, exists := newByID[id]; !exists {
+			removedTerminalIDs = append(removedTerminalIDs, id)
+		}
+	}
+	if reflect.DeepEqual(oldOperations, newOperations) {
+		return errs
+	}
+	excess := len(oldTerminalIDs) + newFinalized - MaxKubectlDebugOperationHistory
+	if excess < 0 {
+		excess = 0
+	}
+	if len(removedTerminalIDs) != excess {
+		errs = append(errs, field.Invalid(operationsPath, newOperations, "terminal operation history may only compact the oldest excess records"))
+	} else {
+		for index, id := range removedTerminalIDs {
+			if index >= len(oldTerminalIDs) || oldTerminalIDs[index] != id {
+				errs = append(errs, field.Invalid(operationsPath, newOperations, "terminal operation history must retain newer records when compacting"))
+				break
+			}
+		}
+		retainedTerminalIndex := 0
+		seenFinalized := false
+		for _, operation := range newOperations {
+			if !isTerminalKubectlDebugOperationState(operation.State) {
+				continue
+			}
+			oldOperation, wasOld := oldByID[operation.ID]
+			if wasOld && isTerminalKubectlDebugOperationState(oldOperation.State) {
+				if seenFinalized || retainedTerminalIndex >= len(oldTerminalIDs)-len(removedTerminalIDs) ||
+					oldTerminalIDs[len(removedTerminalIDs)+retainedTerminalIndex] != operation.ID {
+					errs = append(errs, field.Invalid(operationsPath, newOperations, "retained terminal operation order must not change"))
+					break
+				}
+				retainedTerminalIndex++
+				continue
+			}
+			if wasOld && oldOperation.State == KubectlDebugOperationPrepared {
+				seenFinalized = true
+			}
+		}
+	}
 	return errs
 }
 
@@ -751,6 +1130,16 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 	}
 
 	allErrs = append(allErrs, validateDebugSessionMonotonicStatusFields(oldObj, newObj)...)
+	if oldObj.Status.KubectlDebugStatus != nil || newObj.Status.KubectlDebugStatus != nil {
+		var oldOperations, newOperations []KubectlDebugOperation
+		if oldObj.Status.KubectlDebugStatus != nil {
+			oldOperations = oldObj.Status.KubectlDebugStatus.Operations
+		}
+		if newObj.Status.KubectlDebugStatus != nil {
+			newOperations = newObj.Status.KubectlDebugStatus.Operations
+		}
+		allErrs = append(allErrs, validateKubectlDebugOperations(oldOperations, newOperations)...)
+	}
 	if oldObj.Status.ResolvedTemplate != nil && !reflect.DeepEqual(oldObj.Status.ResolvedTemplate, newObj.Status.ResolvedTemplate) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplate"), newObj.Status.ResolvedTemplate,
 			"resolvedTemplate is immutable once persisted"))
