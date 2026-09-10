@@ -178,3 +178,51 @@ func TestCleanupAuxiliaryResourcesRetainsUnknownUIDInventory(t *testing.T) {
 		require.NoError(t, target.Get(context.Background(), client.ObjectKeyFromObject(object), &corev1.ConfigMap{}))
 	}
 }
+
+func TestCleanupAuxiliaryResourcesRetriesUnresolvedCreateIntent(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	replacement := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
+		Name: "primary", Namespace: "debug-ns", UID: types.UID("replacement-uid"),
+	}}
+	target := fake.NewClientBuilder().WithScheme(scheme).WithObjects(replacement).Build()
+	mgr := NewAuxiliaryResourceManager(zap.NewNop().Sugar(), target)
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "breakglass-system", UID: types.UID("session-uid")},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "prod"},
+		Status: breakglassv1alpha1.DebugSessionStatus{AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{
+			Name: "primary", Kind: "ConfigMap", APIVersion: "v1", ResourceName: "primary", Namespace: "debug-ns", CreateOperationID: "create-primary",
+		}}},
+	}
+
+	err := mgr.CleanupAuxiliaryResources(context.Background(), session, target)
+	require.Error(t, err)
+	assert.False(t, session.Status.AuxiliaryResourceStatuses[0].Deleted)
+	assert.Contains(t, session.Status.AuxiliaryResourceStatuses[0].Error, "outcome is unresolved")
+	assert.NoError(t, target.Get(context.Background(), client.ObjectKeyFromObject(replacement), &corev1.ConfigMap{}), "same-name replacement must not be adopted")
+	session.Status.AuxiliaryResourceStatuses[0].Deleted = true
+	assert.NoError(t, mgr.CleanupAuxiliaryResources(context.Background(), session, target), "a resolved deleted intent must not be retried")
+}
+
+func TestCleanupAuxiliaryResourcesDeletesKnownUIDBeforeCreatedStatus(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	resource := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
+		Name: "primary", Namespace: "debug-ns", UID: types.UID("recorded-uid"),
+	}}
+	target := fake.NewClientBuilder().WithScheme(scheme).WithObjects(resource).Build()
+	mgr := NewAuxiliaryResourceManager(zap.NewNop().Sugar(), target)
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "breakglass-system", UID: types.UID("session-uid")},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "prod"},
+		Status: breakglassv1alpha1.DebugSessionStatus{AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{
+			Name: "primary", Kind: "ConfigMap", APIVersion: "v1", ResourceName: "primary", Namespace: "debug-ns", UID: "recorded-uid",
+		}}},
+	}
+
+	require.NoError(t, mgr.CleanupAuxiliaryResources(context.Background(), session, target))
+	assert.True(t, session.Status.AuxiliaryResourceStatuses[0].Deleted)
+	assert.Error(t, target.Get(context.Background(), client.ObjectKeyFromObject(resource), &corev1.ConfigMap{}))
+}

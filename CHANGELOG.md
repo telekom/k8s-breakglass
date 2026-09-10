@@ -90,6 +90,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve live cleanup condition transition metadata when a stale recovery
   retry races with newly retained residual inventory.
 
+- Keep interrupted create intents in cleanup inventory until their UID is
+  known or the original resource is proven absent; validation-failure audit
+  events are emitted once per persisted failure.
+
 - Include the DebugSession namespace in activation audit targets and make audit
   manager helper tests drain asynchronously queued events through `Close`.
 

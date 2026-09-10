@@ -712,7 +712,7 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 		)
 		if condition := desiredCleanupCondition(desiredStatus.Conditions); condition != nil {
 			mergedCondition := condition.DeepCopy()
-			if mergedCondition.Status == metav1.ConditionFalse && cleanupStatusHasResiduals(current.Status) {
+			if mergedCondition.Status == metav1.ConditionFalse && cleanupStatusHasResiduals(current) {
 				// A stale recovery attempt must not rewrite the live failure
 				// condition after a concurrent resource was retained. Preserve the
 				// live condition when it already records that same failure; its
@@ -753,27 +753,38 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 	return nil
 }
 
-func cleanupStatusHasResiduals(status breakglassv1alpha1.DebugSessionStatus) bool {
+func cleanupStatusHasResiduals(session *breakglassv1alpha1.DebugSession) bool {
+	status := session.Status
 	if len(status.DeployedResources) > 0 {
 		return true
 	}
 	for _, resource := range status.AuxiliaryResourceStatuses {
-		if auxiliaryStatusHasOutstandingResource(resource) {
+		if auxiliaryStatusHasCleanupResidual(session, resource) {
 			return true
 		}
 		for _, child := range resource.AdditionalResources {
-			if !child.Deleted {
+			if !child.Deleted && ((child.UID == "" && child.CreateOperationID != "") || shouldDeleteAuxiliaryResource(session, resource.Name)) {
 				return true
 			}
 		}
 	}
 	for _, resource := range status.PodTemplateResourceStatuses {
-		if !resource.Deleted {
+		if !resource.Deleted && (resource.Created || resource.UID != "" || resource.CreateOperationID != "") {
 			return true
 		}
 	}
 	return status.KubectlDebugStatus != nil &&
 		(len(status.KubectlDebugStatus.CopiedPods) > 0 || len(status.KubectlDebugStatus.EphemeralContainersInjected) > 0)
+}
+
+func auxiliaryStatusHasCleanupResidual(session *breakglassv1alpha1.DebugSession, status breakglassv1alpha1.AuxiliaryResourceStatus) bool {
+	if status.Deleted {
+		return false
+	}
+	if !status.Created && status.UID == "" && status.CreateOperationID != "" {
+		return true
+	}
+	return shouldDeleteAuxiliaryResource(session, status.Name) && (status.Created || status.UID != "")
 }
 
 func desiredCleanupCondition(conditions []metav1.Condition) *metav1.Condition {
@@ -1203,8 +1214,15 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 			continue
 		}
 
-		// Skip if not created
-		if !status.Created {
+		// A missing create response leaves an intent with no UID. Keep it and
+		// retry rather than looking up a same-name replacement. A recorded UID
+		// is enough to continue cleanup safely even if Created was not persisted.
+		if !status.Created && status.UID == "" {
+			if status.CreateOperationID != "" {
+				status.Error = "creation outcome unresolved; cleanup retry required"
+				remainingStatuses = append(remainingStatuses, *status)
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("pod template resource %s/%s creation outcome is unresolved", status.Namespace, status.ResourceName))
+			}
 			continue
 		}
 

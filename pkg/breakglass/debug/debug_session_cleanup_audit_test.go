@@ -9,15 +9,18 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 type cleanupAuditCaptureSink struct {
@@ -69,4 +72,55 @@ func TestCleanupStatusPatchFailureDoesNotEmitCleanupFailureAudit(t *testing.T) {
 	require.ErrorContains(t, err, "status patch failed")
 	require.NoError(t, auditManager.Close())
 	require.Empty(t, sink.Events(), "status persistence failure must not be classified as cleanup failure")
+}
+
+func TestInvalidDebugSessionValidationAuditIsIdempotent(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalid", Namespace: "ns", UID: types.UID("session-uid")},
+	}
+	hub := fake.NewClientBuilder().WithScheme(Scheme).
+		WithObjects(session).WithStatusSubresource(session).Build()
+	sink := &cleanupAuditCaptureSink{}
+	auditManager := audit.NewManager(sink, audit.ManagerConfig{QueueSize: 8, WorkerCount: 1}, zap.NewNop())
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, cluster.NewClientProvider(hub, zap.NewNop().Sugar())).
+		WithAuditManager(auditManager)
+	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: session.Name, Namespace: session.Namespace}}
+	require.NoError(t, func() error { _, err := controller.Reconcile(context.Background(), req); return err }())
+	require.NoError(t, func() error { _, err := controller.Reconcile(context.Background(), req); return err }())
+	require.NoError(t, auditManager.Close())
+
+	var validationEvents int
+	for _, event := range sink.Events() {
+		if event.Type == audit.EventDebugSessionValidationFailed {
+			validationEvents++
+		}
+	}
+	assert.Equal(t, 1, validationEvents)
+}
+
+func TestInvalidDebugSessionValidationAuditWaitsForStatusPersistence(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "invalid-write", Namespace: "ns", UID: types.UID("session-uid")},
+	}
+	hub := fake.NewClientBuilder().WithScheme(Scheme).
+		WithObjects(session).WithStatusSubresource(session).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(_ context.Context, _ client.Client, subResource string, _ client.Object, _ client.Patch, _ ...client.SubResourcePatchOption) error {
+				if subResource == "status" {
+					return errors.New("status persistence unavailable")
+				}
+				return nil
+			},
+		}).Build()
+	sink := &cleanupAuditCaptureSink{}
+	auditManager := audit.NewManager(sink, audit.ManagerConfig{QueueSize: 8, WorkerCount: 1}, zap.NewNop())
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, cluster.NewClientProvider(hub, zap.NewNop().Sugar())).
+		WithAuditManager(auditManager)
+	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: session.Name, Namespace: session.Namespace}}
+	_, firstErr := controller.Reconcile(context.Background(), req)
+	_, secondErr := controller.Reconcile(context.Background(), req)
+	assert.Error(t, firstErr)
+	assert.Error(t, secondErr)
+	require.NoError(t, auditManager.Close())
+	assert.Empty(t, sink.Events(), "validation failure is audited only after status persistence")
 }

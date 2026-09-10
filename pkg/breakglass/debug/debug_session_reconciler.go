@@ -223,16 +223,19 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 	// This catches malformed resources that somehow bypassed the admission webhook.
 	validationResult := breakglassv1alpha1.ValidateDebugSession(ds)
 	if !validationResult.IsValid() {
+		validationMessage := fmt.Sprintf("Validation failed: %s", validationResult.ErrorMessage())
+		validationFailureAlreadyRecorded := ds.Status.State == breakglassv1alpha1.DebugSessionStateFailed && ds.Status.Message == validationMessage
 		log.Warnw("DebugSession failed structural validation, skipping reconciliation",
 			"errors", validationResult.ErrorMessage())
 
 		// Update status condition to reflect validation failure
 		ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
-		ds.Status.Message = fmt.Sprintf("Validation failed: %s", validationResult.ErrorMessage())
+		ds.Status.Message = validationMessage
 		if statusErr := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); statusErr != nil {
 			log.Errorw("Failed to update DebugSession status after validation failure", "error", statusErr)
+			return ctrl.Result{}, statusErr
 		}
-		if c.shouldEmitAudit(ds) {
+		if !validationFailureAlreadyRecorded && c.shouldEmitAudit(ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
 				auditManager.DebugSessionValidationFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, breakglass.SanitizeReasonText(validationResult.ErrorMessage()))
 			}
@@ -582,7 +585,7 @@ func (c *DebugSessionController) sendDebugSessionExpiredEmail(ds breakglassv1alp
 // remains terminal for state-machine purposes — the state is never changed here —
 // but reconciliation keeps retrying the delete until the status lists are empty.
 func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
-	if !hasTrackedSpokeResources(ds) {
+	if !hasTrackedSpokeResources(ds) && !cleanupConditionFailed(ds) {
 		if err := c.reconcileActiveAccounting(ctx, ds, false); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -653,11 +656,11 @@ func hasPreparedKubectlDebugOperation(ds *breakglassv1alpha1.DebugSession) bool 
 
 func hasOutstandingAuxiliaryResources(ds *breakglassv1alpha1.DebugSession) bool {
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
-		if auxiliaryStatusHasOutstandingResource(status) {
+		if auxiliaryStatusHasCleanupResidual(ds, status) {
 			return true
 		}
 		for _, child := range status.AdditionalResources {
-			if !child.Deleted {
+			if !child.Deleted && ((child.UID == "" && child.CreateOperationID != "") || shouldDeleteAuxiliaryResource(ds, status.Name)) {
 				return true
 			}
 		}

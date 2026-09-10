@@ -7,6 +7,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
@@ -45,6 +46,28 @@ func TestReviewFailedCleanupCompletesDeletedHistory(t *testing.T) {
 	result, err := controller.handleFailedCleanup(context.Background(), session)
 	require.NoError(t, err)
 	require.Zero(t, result.RequeueAfter)
+}
+
+func TestReviewFailedCleanupRecoversEmptyInventoryFailure(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "recovery", Namespace: "ns", UID: "recovery-uid"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:      breakglassv1alpha1.DebugSessionStateFailed,
+			Conditions: []metav1.Condition{{Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionTrue, Reason: "CleanupFailed", Message: "retry"}},
+		},
+	}
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+
+	result, err := controller.handleFailedCleanup(context.Background(), session)
+	require.NoError(t, err)
+	require.Zero(t, result.RequeueAfter)
+	condition := session.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, "CleanupRecovered", condition.Reason)
 }
 
 func TestCleanupStatusPatchRetainsFailureWhenConcurrentResourceArrives(t *testing.T) {
@@ -112,4 +135,22 @@ func TestCleanupStatusPatchRetainsFailureForUnresolvedPodTemplateIntent(t *testi
 	storedCondition := stored.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
 	require.NotNil(t, storedCondition)
 	require.Equal(t, metav1.ConditionTrue, storedCondition.Status)
+}
+
+func TestCleanupStatusResidualsRespectRetentionAndUnresolvedIntents(t *testing.T) {
+	kept := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{
+		ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "kept", DeleteAfter: false}}},
+		AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{
+			Name: "kept", Created: true,
+		}},
+	}}
+	assert.False(t, cleanupStatusHasResiduals(kept), "deleteAfter=false resources are intentionally retained")
+
+	unknown := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{
+		AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{
+			Name: "unknown", CreateOperationID: "create-op",
+			AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{{ResourceName: "child", CreateOperationID: "child-op"}},
+		}},
+	}}
+	assert.True(t, cleanupStatusHasResiduals(unknown), "unresolved create intents remain cleanup residuals")
 }
