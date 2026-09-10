@@ -104,7 +104,7 @@ func TestHandlePendingPersistsEffectiveBindingVariables(t *testing.T) {
 	}}
 	session := newTestDebugSession("session", "template", "cluster", "user")
 	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template, binding, session).
-		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).Build()
 	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
 
 	_, err := controller.handlePending(context.Background(), session)
@@ -129,7 +129,7 @@ func TestHandlePendingPersistsBindingRegexIntersectionAcrossJSONRoundTrip(t *tes
 	}}
 	session := newTestDebugSession("session", "template", "cluster", "user")
 	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template, binding, session).
-		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).Build()
 	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
 
 	_, err := controller.handlePending(context.Background(), session)
