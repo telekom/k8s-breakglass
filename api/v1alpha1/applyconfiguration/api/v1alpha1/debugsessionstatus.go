@@ -53,6 +53,10 @@ type DebugSessionStatusApplyConfiguration struct {
 	// resolvedTemplate caches the resolved DebugSessionTemplate spec.
 	// Used to ensure consistent behavior even if template changes.
 	ResolvedTemplate *DebugSessionTemplateSpecApplyConfiguration `json:"resolvedTemplate,omitempty"`
+	// resolvedTemplateVariablePolicy stores the original template variable
+	// definitions used to reconstruct binding regex intersections after the
+	// effective policy is serialized.
+	ResolvedTemplateVariablePolicy []ExtraDeployVariableApplyConfiguration `json:"resolvedTemplateVariablePolicy,omitempty"`
 	// resolvedBinding caches information about the binding used (if any).
 	ResolvedBinding *ResolvedBindingRefApplyConfiguration `json:"resolvedBinding,omitempty"`
 	// resolvedBindingSpec is the immutable binding snapshot approved for activation.
@@ -213,6 +217,19 @@ func (b *DebugSessionStatusApplyConfiguration) WithMessage(value string) *DebugS
 // If called multiple times, the ResolvedTemplate field is set to the value of the last call.
 func (b *DebugSessionStatusApplyConfiguration) WithResolvedTemplate(value *DebugSessionTemplateSpecApplyConfiguration) *DebugSessionStatusApplyConfiguration {
 	b.ResolvedTemplate = value
+	return b
+}
+
+// WithResolvedTemplateVariablePolicy adds the given value to the ResolvedTemplateVariablePolicy field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the ResolvedTemplateVariablePolicy field.
+func (b *DebugSessionStatusApplyConfiguration) WithResolvedTemplateVariablePolicy(values ...*ExtraDeployVariableApplyConfiguration) *DebugSessionStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithResolvedTemplateVariablePolicy")
+		}
+		b.ResolvedTemplateVariablePolicy = append(b.ResolvedTemplateVariablePolicy, *values[i])
+	}
 	return b
 }
 

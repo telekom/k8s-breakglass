@@ -2266,6 +2266,13 @@ func (in *DebugSessionStatus) DeepCopyInto(out *DebugSessionStatus) {
 		*out = new(DebugSessionTemplateSpec)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.ResolvedTemplateVariablePolicy != nil {
+		in, out := &in.ResolvedTemplateVariablePolicy, &out.ResolvedTemplateVariablePolicy
+		*out = make([]ExtraDeployVariable, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
 	if in.ResolvedBinding != nil {
 		in, out := &in.ResolvedBinding, &out.ResolvedBinding
 		*out = new(ResolvedBindingRef)
