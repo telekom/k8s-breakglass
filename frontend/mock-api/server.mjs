@@ -273,7 +273,7 @@ app.post("/api/debugSessions/:name/approve", (req, res) => {
 
 // Reject debug session
 app.post("/api/debugSessions/:name/reject", (req, res) => {
-  const session = updateDebugSessionState(req.params.name, "Failed", {
+  const session = updateDebugSessionState(req.params.name, "Rejected", {
     rejectedBy: CURRENT_USER_EMAIL,
     reason: req.body?.reason || "Rejected",
   });

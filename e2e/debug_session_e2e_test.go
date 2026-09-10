@@ -778,10 +778,9 @@ func TestDebugSession_E2E_RejectionWorkflow(t *testing.T) {
 	err = approverAPI.RejectDebugSession(ctx, t, session.Name, "Insufficient justification provided")
 	require.NoError(t, err, "Failed to reject session via API")
 
-	// Verify rejection - the reject API sets state to Terminated (not Failed)
-	// When a session is rejected, it immediately goes to Terminated state with the rejection reason
-	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace, breakglassv1alpha1.DebugSessionStateTerminated, defaultTimeout)
-	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, session.Status.State)
+	// Verify rejection - rejected sessions remain distinct from failed or terminated sessions.
+	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace, breakglassv1alpha1.DebugSessionStateRejected, defaultTimeout)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, session.Status.State)
 	assert.NotNil(t, session.Status.Approval)
 }
 
