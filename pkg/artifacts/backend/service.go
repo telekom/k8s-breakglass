@@ -214,6 +214,9 @@ func (service *Service) List(ctx context.Context, namespace, sessionName string,
 		}
 		result = append(result, service.Public(record))
 	}
+	if err := service.authorizer.AuthorizeArtifact(ctx, binding); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 

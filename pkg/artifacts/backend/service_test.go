@@ -254,3 +254,24 @@ func TestCleanupRetainsUnobservedPublicationIntent(t *testing.T) {
 	require.True(t, repository.record.CleanupAmbiguous)
 	require.Equal(t, int64(4), repository.record.Size)
 }
+
+type callbackAuthorizer func(context.Context, SessionBinding) error
+
+func (authorize callbackAuthorizer) AuthorizeArtifact(ctx context.Context, binding SessionBinding) error {
+	return authorize(ctx, binding)
+}
+func TestDirectMetadataListRechecksAuthorizationAfterRepositoryIO(t *testing.T) {
+	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", SessionUID: "uid", TargetClusterUID: "cluster", TargetIdentityDigest: "target", OperationEpoch: 1}}
+	calls := 0
+	service := newServiceForTest(t, repository, &fakeStore{}, callbackAuthorizer(func(context.Context, SessionBinding) error {
+		calls++
+		if calls == 2 {
+			return ErrForbidden
+		}
+		return nil
+	}))
+	records, err := service.List(context.Background(), "ns", "session", SessionBinding{Namespace: "ns", Name: "session", UID: "uid", TargetClusterUID: "cluster", TargetIdentityDigest: "target", OperationEpoch: 1})
+	require.ErrorIs(t, err, ErrForbidden)
+	require.Nil(t, records)
+	require.Equal(t, 2, calls)
+}
