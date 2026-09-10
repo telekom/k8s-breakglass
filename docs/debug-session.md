@@ -1828,7 +1828,7 @@ spec:
 1. **Monitor expired sessions**: Sessions clean up automatically
 2. **Review long-running sessions**: Set alerts for sessions approaching max duration
 3. **Use termination**: Actively terminate sessions when done
-4. **Investigate cleanup retries**: Failed debug-resource deletes keep their status tracking entries so the controller can retry cleanup on the next reconciliation
+4. **Investigate cleanup retries**: Failed debug-resource deletes and resources held by finalizers keep their status tracking entries so the controller can retry cleanup on the next reconciliation
 5. **Bound Job lifetimes**: Job workloads reconcile their active deadline against the committed session expiry after a delayed start
 
 Template and cluster-binding `constraints.maxDuration` and `defaultDuration`

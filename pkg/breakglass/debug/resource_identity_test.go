@@ -155,19 +155,25 @@ func TestLifecycleCleanupPathsPreserveReplacement(t *testing.T) {
 	}
 }
 
-func TestAuxiliaryCleanupRequiresOperationIdentityWithoutUID(t *testing.T) {
+func TestAuxiliaryCleanupRequiresRecordedOrOperatorUID(t *testing.T) {
 	for _, tc := range []struct {
-		name, recordedOperation, liveOperation string
-		wantDeleted, wantError                 bool
+		name, recordedOperation, liveOperation, liveUID, legacyUID string
+		wantDeleted, wantError                                     bool
 	}{
-		{name: "matching operation", recordedOperation: "op-1", liveOperation: "op-1", wantDeleted: true},
+		{name: "copied markers do not prove original identity", recordedOperation: "op-1", liveOperation: "op-1", liveUID: "replacement-uid", wantError: true},
 		{name: "missing recorded operation", liveOperation: "op-1", wantError: true},
 		{name: "different operation", recordedOperation: "op-1", liveOperation: "op-2", wantError: true},
+		{name: "operator recovery", liveUID: "original-uid", legacyUID: "original-uid", wantDeleted: true},
+		{name: "operator recovery preserves replacement", liveUID: "replacement-uid", legacyUID: "original-uid"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
+			liveUID := tc.liveUID
+			if liveUID == "" {
+				liveUID = "live-uid"
+			}
 			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
-				Name: "pod", Namespace: "ns", UID: "live-uid",
+				Name: "pod", Namespace: "ns", UID: types.UID(liveUID),
 				Annotations: map[string]string{
 					sourceSessionUIDAnnotation:  "session-uid",
 					createOperationIDAnnotation: tc.liveOperation,
@@ -175,6 +181,9 @@ func TestAuxiliaryCleanupRequiresOperationIdentityWithoutUID(t *testing.T) {
 			}}
 			target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(pod).Build()
 			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+			if tc.legacyUID != "" {
+				session.Annotations = map[string]string{LegacyCleanupUIDsAnnotation: fmt.Sprintf(`{"v1/Pod/ns/pod":%q}`, tc.legacyUID)}
+			}
 			status := breakglassv1alpha1.AuxiliaryResourceStatus{
 				APIVersion: "v1", Kind: "Pod", Namespace: "ns", ResourceName: "pod",
 				CreateOperationID: tc.recordedOperation,

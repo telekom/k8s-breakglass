@@ -51,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while keeping field indexes registered when controllers are disabled.
 - Keep tracked debug Job deadlines aligned with the latest committed session expiry,
   including delayed starts and shorter live leases.
+- Retain auxiliary-resource cleanup inventory while a UID-matched delete is held
+  by a finalizer, and retire it only after the object is gone.
+- Require an explicit recorded or operator-approved original UID for auxiliary
+  cleanup when a create outcome did not persist; copied ownership markers cannot
+  authorize a same-name replacement.
 
 - Include diagnostic-artifact-collector in aggregate multi-platform utility builds.
 

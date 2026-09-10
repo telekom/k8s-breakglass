@@ -27,9 +27,11 @@ closed; terminate and recreate these sessions after upgrading.
 
 ## Recovering legacy cleanup inventory
 
-Old sessions may lack resource UIDs. Missing resources are automatically removed
-from cleanup inventory. Existing resources are never adopted solely from their
-names or mutable labels. An operator must verify ownership and either delete the
+Sessions may lack resource UIDs when an older status schema was used or when a
+target create succeeded but the outcome status write was interrupted. Missing
+resources are automatically removed from cleanup inventory. Existing resources
+are never adopted solely from their names, mutable labels, or copied create
+operation markers. An operator must verify ownership and either delete the
 original resource manually or record the approved original UID in the session's
 `breakglass.t-caas.telekom.com/legacy-cleanup-uids` annotation. The annotation is a
 JSON object keyed by `apiVersion/kind/namespace/name`; for example:
