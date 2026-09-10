@@ -8,15 +8,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-
-	"github.com/gin-gonic/gin"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"go.uber.org/zap"
+	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -178,4 +179,94 @@ func TestRenewRejectsIdleExpiryDuringFinalRead(t *testing.T) {
 	require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
 	require.Zero(t, stored.Status.RenewalCount)
 	require.True(t, stored.Status.ExpiresAt.Equal(&expiry))
+}
+
+func TestRenewRejectsMissingExpiryDuringFinalRead(t *testing.T) {
+	deadline := time.Now().Add(5 * time.Second).Truncate(time.Second)
+	activity := metav1.NewTime(deadline.Add(-time.Minute))
+	expiry := metav1.NewTime(time.Now().Add(time.Hour).Truncate(time.Second))
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "renew-idle", Namespace: "default", UID: "renew-uid"}, Spec: breakglassv1alpha1.DebugSessionSpec{RequestedBy: "alice@example.com"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expiry, LastActivity: &activity, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m"}}}}
+	hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).WithStatusSubresource(session).Build()
+	reads := 0
+	reader := interceptor.NewClient(hub, interceptor.Funcs{Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+		reads++
+		if reads == 2 {
+			err := cl.Get(ctx, key, obj, opts...)
+			obj.(*breakglassv1alpha1.DebugSession).Status.ExpiresAt = nil
+			return err
+		}
+		return cl.Get(ctx, key, obj, opts...)
+	}})
+	controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), hub, nil, nil).WithAPIReader(reader)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true)
+		c.Set("username", "alice@example.com")
+		c.Next()
+	})
+	require.NoError(t, controller.Register(router.Group("/api/v1/"+controller.BasePath())))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/renew-idle/renew?namespace=default", strings.NewReader(`{"extendBy":"1h"}`))
+	req.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+	require.Equal(t, 2, reads)
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &stored))
+	require.Zero(t, stored.Status.RenewalCount)
+	require.True(t, stored.Status.ExpiresAt.Equal(&expiry))
+}
+
+func TestBindingLimitsCountPendingWithoutIdleBaseline(t *testing.T) {
+	for _, state := range []breakglassv1alpha1.DebugSessionState{breakglassv1alpha1.DebugSessionStatePending, breakglassv1alpha1.DebugSessionStatePendingApproval, breakglassv1alpha1.DebugSessionStateActive} {
+		t.Run(string(state), func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "pending", Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionSpec{RequestedBy: "alice", BindingRef: &breakglassv1alpha1.BindingReference{Name: "binding", Namespace: "default"}}, Status: breakglassv1alpha1.DebugSessionStatus{State: state, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m"}}}}
+			hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).Build()
+			controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), hub, nil, nil)
+			for _, perUser := range []bool{false, true} {
+				binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "default"}}
+				limit := int32(1)
+				if perUser {
+					binding.Spec.MaxActiveSessionsPerUser = &limit
+				} else {
+					binding.Spec.MaxActiveSessionsTotal = &limit
+				}
+				err := controller.checkBindingSessionLimits(context.Background(), binding, debugSessionReadIdentity{username: "alice", legacyAllowed: true})
+				if state == breakglassv1alpha1.DebugSessionStateActive {
+					require.NoError(t, err)
+				} else {
+					require.Error(t, err)
+				}
+			}
+		})
+	}
+}
+
+func TestIdleExpiryDuringTargetReadPreventsJobDeadlineMutation(t *testing.T) {
+	deadline := time.Now().Add(2 * time.Second).Truncate(time.Second)
+	activity := metav1.NewTime(deadline.Add(-time.Minute))
+	expiry := metav1.NewTime(time.Now().Add(time.Hour))
+	started := metav1.NewTime(time.Now().Add(-time.Minute))
+	seconds := int64(120)
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", Namespace: "default", UID: "job-uid"}, Spec: batchv1.JobSpec{ActiveDeadlineSeconds: &seconds}, Status: batchv1.JobStatus{StartTime: &started}}
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default", UID: "session-uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expiry, LastActivity: &activity, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m"}}, DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "batch/v1", Kind: "Job", Namespace: "default", Name: "job", UID: "job-uid", Source: "debug-pod"}}}}
+	hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).WithStatusSubresource(session).Build()
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(job).Build()
+	delayed := interceptor.NewClient(target, interceptor.Funcs{Get: func(ctx context.Context, cl ctrlclient.WithWatch, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+		time.Sleep(time.Until(deadline) + time.Millisecond)
+		return cl.Get(ctx, key, obj, opts...)
+	}})
+	require.False(t, isDebugSessionExpired(session, time.Now()))
+	err := syncTrackedDebugJobDeadlines(context.Background(), delayed, session, expiry, func(ctx context.Context, requested metav1.Time) (metav1.Time, error) {
+		return liveDebugSessionDeadline(ctx, hub, session, requested)
+	})
+	require.ErrorContains(t, err, "no longer active")
+	stored := &batchv1.Job{}
+	require.NoError(t, target.Get(context.Background(), ctrlclient.ObjectKeyFromObject(job), stored))
+	require.Equal(t, seconds, *stored.Spec.ActiveDeadlineSeconds)
+	controller := &DebugSessionController{client: hub, reader: hub}
+	require.ErrorContains(t, controller.patchDebugSessionAllowedPods(context.Background(), session, []breakglassv1alpha1.AllowedPodRef{{Name: "new-pod"}}), "idle-expired")
+	live := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), live))
+	require.Empty(t, live.Status.AllowedPods)
 }

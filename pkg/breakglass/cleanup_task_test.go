@@ -1669,3 +1669,24 @@ func TestDebugSessionCleanupPreservesPendingResourcesAndExpiresIdle(t *testing.T
 		})
 	}
 }
+
+func TestDebugSessionRetentionExemptsOnlyKnownRetainedDeployedAuxiliary(t *testing.T) {
+	ref := breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "ConfigMap", Name: "evidence", Namespace: "default", UID: "evidence-uid", Source: "auxiliary:evidence"}
+	session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "evidence", DeleteAfter: false}}}, DeployedResources: []breakglassv1alpha1.DeployedResourceRef{ref}, AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "evidence", Created: true, APIVersion: ref.APIVersion, Kind: ref.Kind, ResourceName: ref.Name, Namespace: ref.Namespace, UID: ref.UID}}}}
+	require.False(t, debugSessionCleanupOutstanding(session))
+	for _, mutate := range []func(*breakglassv1alpha1.DebugSession){
+		func(ds *breakglassv1alpha1.DebugSession) { ds.Status.DeployedResources[0].UID = "" },
+		func(ds *breakglassv1alpha1.DebugSession) { ds.Status.DeployedResources[0].UID = "replacement" },
+		func(ds *breakglassv1alpha1.DebugSession) { ds.Status.DeployedResources[0].Source = "debug-pod" },
+		func(ds *breakglassv1alpha1.DebugSession) {
+			ds.Status.ResolvedTemplate.AuxiliaryResources[0].DeleteAfter = true
+		},
+		func(ds *breakglassv1alpha1.DebugSession) {
+			ds.Status.AuxiliaryResourceStatuses[0].AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{{CreateOperationID: "unknown"}}
+		},
+	} {
+		candidate := session.DeepCopy()
+		mutate(candidate)
+		require.True(t, debugSessionCleanupOutstanding(candidate))
+	}
+}

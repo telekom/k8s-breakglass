@@ -143,8 +143,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		if err := reader.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), liveSession); err != nil {
 			return fmt.Errorf("read live debug session before deployment mutation: %w", err)
 		}
+		now := time.Now().UTC()
 		if liveSession.UID != ds.UID || !liveSession.DeletionTimestamp.IsZero() ||
-			liveSession.Status.ExpiresAt == nil || !time.Now().UTC().Before(liveSession.Status.ExpiresAt.Time) {
+			liveSession.Status.ExpiresAt == nil || !now.Before(liveSession.Status.ExpiresAt.Time) ||
+			(liveSession.Status.State == breakglassv1alpha1.DebugSessionStateActive && isDebugSessionExpired(liveSession, now)) {
 			return fmt.Errorf("debug session is no longer active before deployment mutation")
 		}
 		activationInProgress := liveSession.Status.State == "" ||
