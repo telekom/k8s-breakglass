@@ -464,19 +464,31 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 	}
 
 	// Check expiration
-	if isDebugSessionExpired(ds, time.Now()) {
+	if isDebugSessionExpired(ds, time.Now().UTC()) {
+		expired := false
 		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+			// Decide from the freshly read status and one post-read timestamp.
+			now := time.Now().UTC()
+			current := &breakglassv1alpha1.DebugSession{Status: *status}
+			if !isDebugSessionExpired(current, now) {
+				return
+			}
+			idleOnly := breakglass.DebugSessionIdleExpired(current, now) && status.ExpiresAt != nil && now.Before(status.ExpiresAt.Time)
 			status.State = breakglassv1alpha1.DebugSessionStateExpired
 			status.Message = "Session expired"
-			if breakglass.DebugSessionIdleExpired(ds, time.Now()) && time.Now().Before(ds.Status.ExpiresAt.Time) {
+			if idleOnly {
 				status.Message = "Session expired due to inactivity"
 			}
+			expired = true
 		}); err != nil {
 			if apierrors.IsConflict(err) {
 				log.Debugw("skipping expiration status update after concurrent debug session change", "error", err)
 				return ctrl.Result{}, nil
 			}
 			return ctrl.Result{}, err
+		}
+		if !expired {
+			return ctrl.Result{RequeueAfter: time.Millisecond}, nil
 		}
 		notificationSession := ds.DeepCopy()
 		if notificationSession.Status.ResolvedTemplate != nil && notificationSession.Status.ResolvedTemplate.ExpirationBehavior == "notify-only" {
