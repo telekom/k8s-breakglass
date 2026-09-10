@@ -265,6 +265,12 @@ type DebugSessionStatus struct {
 	// +optional
 	ResolvedTemplate *DebugSessionTemplateSpec `json:"resolvedTemplate,omitempty"`
 
+	// resolvedTemplateVariablePolicy stores the original template variable
+	// definitions used to reconstruct binding regex intersections after the
+	// effective policy is serialized.
+	// +optional
+	ResolvedTemplateVariablePolicy []ExtraDeployVariable `json:"resolvedTemplateVariablePolicy,omitempty"`
+
 	// resolvedBinding caches information about the binding used (if any).
 	// +optional
 	ResolvedBinding *ResolvedBindingRef `json:"resolvedBinding,omitempty"`
@@ -1145,6 +1151,10 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 	if oldObj.Status.ResolvedTemplate != nil && !reflect.DeepEqual(oldObj.Status.ResolvedTemplate, newObj.Status.ResolvedTemplate) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplate"), newObj.Status.ResolvedTemplate,
 			"resolvedTemplate is immutable once persisted"))
+	}
+	if oldObj.Status.ResolvedTemplate != nil && !reflect.DeepEqual(oldObj.Status.ResolvedTemplateVariablePolicy, newObj.Status.ResolvedTemplateVariablePolicy) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplateVariablePolicy"), newObj.Status.ResolvedTemplateVariablePolicy,
+			"resolvedTemplateVariablePolicy is immutable once the resolved template is persisted"))
 	}
 	if (oldObj.Status.ResolvedBindingSpec != nil || oldObj.Status.ResolvedBindingSnapshotCaptured) && !reflect.DeepEqual(oldObj.Status.ResolvedBindingSpec, newObj.Status.ResolvedBindingSpec) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedBindingSpec"), newObj.Status.ResolvedBindingSpec,

@@ -77,7 +77,7 @@ func TestEffectiveTemplateForBindingUsesNarrowedRenderingSurface(t *testing.T) {
 		},
 	}
 
-	effective, err := effectiveTemplateForBinding(template, binding, nil)
+	effective, err := effectiveTemplateForBinding(template, binding, nil, nil)
 	require.NoError(t, err)
 	assert.NotSame(t, template, effective)
 	assert.True(t, effective.Spec.ExtraDeployVariables[0].Disabled)
@@ -85,8 +85,34 @@ func TestEffectiveTemplateForBindingUsesNarrowedRenderingSurface(t *testing.T) {
 	assert.Equal(t, template.Spec.ExtraDeployVariables[0].Default.Raw, template.Spec.ExtraDeployVariables[0].Default.Raw)
 
 	values := map[string]apiextensionsv1.JSON{"other": {Raw: []byte(`"x"`)}}
-	_, err = effectiveTemplateForBinding(template, binding, values)
+	_, err = effectiveTemplateForBinding(template, binding, values, nil)
 	require.Error(t, err)
+}
+
+func TestHandlePendingPersistsEffectiveBindingVariables(t *testing.T) {
+	scheme := testScheme()
+	variable := breakglassv1alpha1.ExtraDeployVariable{Name: "mode", InputType: breakglassv1alpha1.InputTypeSelect, Options: []breakglassv1alpha1.SelectOption{{Value: "safe"}, {Value: "power"}}}
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+		Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug, ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{variable},
+	}}
+	disabled := true
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "breakglass"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+		TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template"}, Clusters: []string{"cluster"},
+		ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariableConstraint{{Name: "mode", Options: []breakglassv1alpha1.SelectOption{{Value: "safe"}}, Disabled: &disabled}},
+	}}
+	session := newTestDebugSession("session", "template", "cluster", "user")
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template, binding, session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+
+	_, err := controller.handlePending(context.Background(), session)
+	require.NoError(t, err)
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+	require.NotNil(t, stored.Status.ResolvedTemplate)
+	require.Len(t, stored.Status.ResolvedTemplate.ExtraDeployVariables, 1)
+	assert.True(t, stored.Status.ResolvedTemplate.ExtraDeployVariables[0].Disabled)
+	assert.Len(t, stored.Status.ResolvedTemplateVariablePolicy, 1)
 }
 
 // Helper to create a basic DebugPodTemplate
