@@ -32,6 +32,18 @@ ruby -ryaml -e '
   values = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
   images = values.fetch("images")
   abort("unexpected image count") unless images.size == 8
+  expected = {
+    "workload" => "ghcr.io/telekom/k8s-breakglass/utils/workload-debug",
+    "network" => "ghcr.io/telekom/k8s-breakglass/utils/network-debug",
+    "storage" => "ghcr.io/telekom/k8s-breakglass/utils/storage-debug",
+    "dumpAccess" => "ghcr.io/telekom/k8s-breakglass/utils/dump-reader",
+    "networkRepair" => "ghcr.io/telekom/k8s-breakglass/utils/node-maintenance",
+    "nodeRecovery" => "ghcr.io/telekom/k8s-breakglass/utils/node-maintenance",
+    "clusterValidation" => "ghcr.io/telekom/k8s-breakglass/utils/cluster-validator",
+    "diagnosticArtifactCollector" => "ghcr.io/telekom/k8s-breakglass/utils/diagnostic-artifact-collector"
+  }
+  actual = images.transform_values { |image| image.fetch("repository") }
+  abort("unexpected image mapping: #{actual.inspect}") unless actual == expected
   images.each_value do |image|
     abort("unresolved image digest") unless image.fetch("digest").match?(/\Asha256:[0-9a-f]{64}\z/i)
   end

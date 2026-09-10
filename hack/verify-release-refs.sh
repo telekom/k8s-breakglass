@@ -43,6 +43,23 @@ chmod 700 "${test_dir}/bin/docker"
 PATH="${test_dir}/bin:${PATH}" "${script_dir}/resolve-release-refs.sh" \
   "${test_dir}/values.yaml" "${test_dir}/refs" v0.1.0
 [ "$(find "${test_dir}/refs" -name '*.ref' | wc -l | tr -d ' ')" -eq 7 ]
+ruby -e '
+  expected = {
+    "workload" => "ghcr.io/telekom/k8s-breakglass/utils/workload-debug",
+    "network" => "ghcr.io/telekom/k8s-breakglass/utils/network-debug",
+    "storage" => "ghcr.io/telekom/k8s-breakglass/utils/storage-debug",
+    "node" => "ghcr.io/telekom/k8s-breakglass/utils/node-maintenance",
+    "diagnostic-artifact-collector" => "ghcr.io/telekom/k8s-breakglass/utils/diagnostic-artifact-collector",
+    "dump-reader" => "ghcr.io/telekom/k8s-breakglass/utils/dump-reader",
+    "cluster-validator" => "ghcr.io/telekom/k8s-breakglass/utils/cluster-validator"
+  }
+  actual = {}
+  Dir[File.join(ARGV.fetch(0), "*.ref")].each do |path|
+    fields = File.read(path).strip.split("|", -1)
+    actual[fields.fetch(0)] = fields.fetch(1)
+  end
+  abort("unexpected release reference mapping: #{actual.inspect}") unless actual == expected
+' "${test_dir}/refs"
 while IFS= read -r ref; do
   IFS='|' read -r name repository digest signature sbom provenance <"${ref}"
   [[ "${name}" =~ ^[a-z][a-z-]*$ ]]
