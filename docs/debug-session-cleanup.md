@@ -62,3 +62,8 @@ history is retained for audit but does not by itself indicate failed cleanup;
 copied Pods and unresolved operations still require cleanup or recovery. Recovery
 events use the condition observed by the successful status write. API lifecycle
 events also honor the template's `audit.enabled` setting.
+
+Cleanup retention checks share the same policy across session reconciliation and
+ClusterConfig deletion. Partial auxiliary identities and UID-less children remain
+outstanding; only confirmed retained identities and confirmed deleted pod-template
+entries are exempt. Rejected sessions retain terminal accounting behavior.

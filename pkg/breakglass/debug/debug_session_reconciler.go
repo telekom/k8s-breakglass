@@ -630,7 +630,7 @@ func hasTrackedSpokeResources(ds *breakglassv1alpha1.DebugSession) bool {
 		return true
 	}
 	for _, resource := range ds.Status.PodTemplateResourceStatuses {
-		if !resource.Deleted && (resource.Created || resource.UID != "" || resource.CreateOperationID != "") {
+		if utils.DebugSessionPodTemplateStatusHasCleanupResidual(resource) {
 			return true
 		}
 	}

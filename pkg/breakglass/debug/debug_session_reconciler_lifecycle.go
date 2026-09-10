@@ -793,7 +793,7 @@ func cleanupStatusHasResiduals(session *breakglassv1alpha1.DebugSession) bool {
 		}
 	}
 	for _, resource := range status.PodTemplateResourceStatuses {
-		if !resource.Deleted && (resource.Created || resource.UID != "" || resource.CreateOperationID != "") {
+		if utils.DebugSessionPodTemplateStatusHasCleanupResidual(resource) {
 			return true
 		}
 	}
@@ -1379,11 +1379,9 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 		// retry rather than looking up a same-name replacement. A recorded UID
 		// is enough to continue cleanup safely even if Created was not persisted.
 		if status.UID == "" && (!status.Created || status.CreateOperationID != "") {
-			if status.CreateOperationID != "" {
-				status.Error = "creation outcome unresolved; cleanup retry required"
-				remainingStatuses = append(remainingStatuses, *status)
-				cleanupErrors = append(cleanupErrors, fmt.Errorf("pod template resource %s/%s creation outcome is unresolved", status.Namespace, status.ResourceName))
-			}
+			status.Error = "creation outcome unresolved; cleanup retry required"
+			remainingStatuses = append(remainingStatuses, *status)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("pod template resource %s/%s creation outcome is unresolved", status.Namespace, status.ResourceName))
 			continue
 		}
 
