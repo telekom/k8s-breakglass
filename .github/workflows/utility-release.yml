@@ -38,6 +38,7 @@ on:
       - ".github/workflows/node-maintenance.yml"
       - ".github/workflows/network-debug-pod-capture-integration.yml"
       - ".github/workflows/diagnostic-artifact-collector-image.yml"
+      - ".github/workflows/release.yml"
   push:
     branches:
       - main

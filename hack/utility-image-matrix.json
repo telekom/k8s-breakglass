@@ -56,7 +56,7 @@
       "file": "utils/images/dump-reader/Dockerfile",
       "smokeCommand": ["help"],
       "smokeOutput": "dump-reader: inspect existing dump artifacts",
-      "requiredChecks": ["Storage and dump access behavior"],
+      "requiredChecks": ["Intent / storage-diagnostics and dump-access behavior"],
       "behaviorWorkflows": [".github/workflows/catalogue-utility-integration.yml"]
     },
     {
@@ -66,7 +66,7 @@
       "file": "utils/cluster-validator/Dockerfile",
       "smokeCommand": ["--help"],
       "smokeOutput": "Usage of cluster-validator",
-      "requiredChecks": ["Cluster validation behavior"],
+      "requiredChecks": ["Intent / cluster-validation behavior"],
       "behaviorWorkflows": [".github/workflows/catalogue-utility-integration.yml"]
     }
   ]
