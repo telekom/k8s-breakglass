@@ -145,3 +145,18 @@ func TestCleanupStatusOnlyErrorHasNoResidualFailureAudit(t *testing.T) {
 	require.NoError(t, manager.Close())
 	require.Empty(t, sink.Events())
 }
+
+func TestCleanupRecoveredAuditUsesLiveCondition(t *testing.T) {
+	live := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "live-recovery", Namespace: "ns", UID: "uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateTerminated, Conditions: []metav1.Condition{{Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionTrue, Reason: "CleanupFailed", Message: "earlier retry"}}}}
+	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(live).WithStatusSubresource(live).Build()
+	stale := live.DeepCopy()
+	stale.Status.Conditions = nil
+	sink := &cleanupAuditCaptureSink{}
+	manager := audit.NewManager(sink, audit.ManagerConfig{QueueSize: 8, WorkerCount: 1}, zap.NewNop())
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, cluster.NewClientProvider(hub, zap.NewNop().Sugar())).WithAuditManager(manager)
+	require.NoError(t, controller.cleanupResources(context.Background(), stale))
+	require.NoError(t, controller.cleanupResources(context.Background(), stale))
+	require.NoError(t, manager.Close())
+	require.Len(t, sink.Events(), 1)
+	require.Equal(t, audit.EventDebugSessionCleanupRecovered, sink.Events()[0].Type)
+}

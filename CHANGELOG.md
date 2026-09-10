@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reconciliation, cleanup, CLI filters, and the frontend.
 - Make terminal cleanup accounting idempotent and avoid decrementing active
   counts for sessions rejected before activation.
+- Preserve unresolved cleanup create intents, merge matching durable UID outcomes, and honor debug-session audit opt-out without treating ephemeral history as leaked resources.
+
 - Requeue cleanup from merged residual inventory, exclude confirmed retained resources, and emit cleanup audit events only after durable status writes.
 
 - Retry final quota-admission completion after same-UID resource-version

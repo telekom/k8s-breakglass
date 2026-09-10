@@ -140,3 +140,19 @@ func TestEmitDebugSessionAuditEvent_AllEventTypes(t *testing.T) {
 		})
 	}
 }
+
+func TestLifecycleAuditEmitterRespectsTemplateOptOut(t *testing.T) {
+	for _, eventType := range []audit.EventType{audit.EventDebugSessionRenewed, audit.EventDebugSessionApproved, audit.EventDebugSessionRejected} {
+		t.Run(string(eventType), func(t *testing.T) {
+			emitter := NewMockAuditEmitter(true)
+			controller := NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), fake.NewClientBuilder().WithScheme(Scheme).Build(), nil, nil).WithAuditService(emitter)
+			session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Audit: &breakglassv1alpha1.DebugSessionAuditConfig{Enabled: false}}}}
+			controller.emitDebugSessionAuditEvent(context.Background(), eventType, session, "user", "transition")
+			require.Empty(t, emitter.GetEvents())
+			session.Status.ResolvedTemplate.Audit.Enabled = true
+			controller.emitDebugSessionAuditEvent(context.Background(), eventType, session, "user", "transition")
+			require.Len(t, emitter.GetEvents(), 1)
+			require.Equal(t, eventType, emitter.GetEvents()[0].Type)
+		})
+	}
+}
