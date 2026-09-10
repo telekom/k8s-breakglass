@@ -471,7 +471,7 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 	metrics.DebugSessionsTerminated.WithLabelValues(session.Spec.Cluster, "user_terminated").Inc()
 
 	// Return updated session - client expects the session object, not just a message
-	ctx.JSON(http.StatusOK, session)
+	ctx.JSON(http.StatusOK, publicDebugSession(session))
 }
 
 // handleApproveDebugSession approves a pending debug session
@@ -586,7 +586,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	metrics.DebugSessionApproved.WithLabelValues(session.Spec.Cluster, "user").Inc()
 
 	// Return updated session - client expects the session object, not just a message
-	ctx.JSON(http.StatusOK, session)
+	ctx.JSON(http.StatusOK, publicDebugSession(session))
 }
 
 // handleRejectDebugSession rejects a pending debug session
@@ -705,7 +705,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	metrics.DebugSessionRejected.WithLabelValues(session.Spec.Cluster, "user_rejected").Inc()
 
 	// Return updated session - client expects the session object, not just a message
-	ctx.JSON(http.StatusOK, session)
+	ctx.JSON(http.StatusOK, publicDebugSession(session))
 }
 
 func debugSessionApprovalTimedOut(session *breakglassv1alpha1.DebugSession, now time.Time) (bool, string) {

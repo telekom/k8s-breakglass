@@ -774,7 +774,7 @@ func (c *DebugSessionAPIController) handleGetDebugSession(ctx *gin.Context) {
 
 	canApprove := c.canActOnDebugSessionApproval(apiCtx, session, identity, nil)
 	ctx.JSON(http.StatusOK, DebugSessionDetailResponse{
-		DebugSession: *session,
+		DebugSession: publicDebugSession(session),
 		CanApprove:   canApprove,
 		CanReject:    canApprove,
 	})
@@ -1495,7 +1495,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 
 	metrics.DebugSessionsCreated.WithLabelValues(req.Cluster, req.TemplateRef).Inc()
 
-	response := DebugSessionDetailResponse{DebugSession: *session}
+	response := DebugSessionDetailResponse{DebugSession: publicDebugSession(session)}
 	if len(warnings) > 0 {
 		response.Warnings = warnings
 		reqLog.Infow("Session created with warnings", "warnings", warnings)
@@ -2143,6 +2143,7 @@ func stringInSlice(value string, values []string) bool {
 	return false
 }
 
+<<<<<<< HEAD
 // AuthorizeArtifactCollection returns the exact active session only to a
 // participant who may operate its debug resources. Read-only approvers do not
 // gain permission to start collectors.
@@ -2159,4 +2160,11 @@ func (c *DebugSessionAPIController) AuthorizeArtifactCollection(ctx *gin.Context
 		return nil, errors.New("artifact collection is forbidden")
 	}
 	return session, nil
+}
+
+// publicDebugSession omits controller-only recovery policy from API responses.
+func publicDebugSession(session *breakglassv1alpha1.DebugSession) breakglassv1alpha1.DebugSession {
+	public := session.DeepCopy()
+	public.Status.ResolvedTemplateVariablePolicy = nil
+	return *public
 }
