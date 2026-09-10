@@ -77,7 +77,7 @@ func WaitForDebugSessionState(t *testing.T, ctx context.Context, cli client.Clie
 		return session.Status.State == expectedState, nil
 	}, timeout, DefaultInterval)
 
-	require.NoError(t, err, "Timeout waiting for debug session %s to reach state %s (current: %s)", name, expectedState, session.Status.State)
+	require.NoError(t, err, "Timeout waiting for debug session %s to reach state %s (current: %s, message: %s)", name, expectedState, session.Status.State, session.Status.Message)
 	return &session
 }
 

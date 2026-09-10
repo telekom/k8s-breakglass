@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -31,28 +32,47 @@ func TestApprovedBindingSnapshotServerSideApplyThenActivation(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, testEnv.Stop()) })
 	apiClient, err := client.New(cfg, client.Options{Scheme: testScheme()})
 	require.NoError(t, err)
-	c, ds, template, target := newDeploymentFenceFixture(t)
-	persisted := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: ds.Name, Namespace: ds.Namespace}, Spec: ds.Spec}
-	require.NoError(t, apiClient.Create(t.Context(), persisted))
-	template.Spec.PodOverridesTemplate = "nodeSelector:\n  approved: \"yes\"\n"
-	template.Spec.ExtraDeployVariables = []breakglassv1alpha1.ExtraDeployVariable{{Name: "hidden", InputType: breakglassv1alpha1.InputTypeText, Disabled: true}}
-	persisted.Status = breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending, ResolvedTemplate: template.Spec.DeepCopy(), ResolvedBindingSnapshotCaptured: true}
-	require.NoError(t, ssa.ApplyDebugSessionStatus(t.Context(), apiClient, persisted))
-	require.NoError(t, apiClient.Get(t.Context(), client.ObjectKeyFromObject(persisted), persisted))
-	require.Equal(t, template.Spec.PodOverridesTemplate, persisted.Status.ResolvedTemplate.PodOverridesTemplate)
-	require.True(t, persisted.Status.ResolvedTemplate.ExtraDeployVariables[0].Disabled)
-	// Resume the controller with exactly the status returned by the API server.
-	ds.Status = persisted.Status
-	require.NoError(t, c.client.Status().Update(t.Context(), ds))
-	template.Spec.PodTemplateString = strings.ReplaceAll(template.Spec.PodTemplateString, "busybox", "unsafe")
-	template.Spec.PodOverridesTemplate = "nodeSelector:\n  approved: \"no\"\n"
-	require.NoError(t, c.client.Update(t.Context(), template))
-	_, err = c.handlePending(t.Context(), ds)
-	require.NoError(t, err)
-	deployment := &appsv1.Deployment{}
-	require.NoError(t, target.Get(t.Context(), client.ObjectKey{Namespace: "breakglass-debug", Name: ds.Name}, deployment))
-	require.Equal(t, "busybox", deployment.Spec.Template.Spec.Containers[0].Image)
-	require.Equal(t, "yes", deployment.Spec.Template.Spec.NodeSelector["approved"])
-	require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), ds))
-	require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, ds.Status.State)
+	for name, hasVariables := range map[string]bool{"variables": true, "empty-policy": false} {
+		t.Run(name, func(t *testing.T) {
+			c, ds, template, target := newDeploymentFenceFixture(t)
+			persisted := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: ds.Name + "-" + name, Namespace: ds.Namespace}, Spec: ds.Spec}
+			require.NoError(t, apiClient.Create(t.Context(), persisted))
+			template.Spec.PodOverridesTemplate = "nodeSelector:\n  approved: \"yes\"\n"
+			if hasVariables {
+				template.Spec.ExtraDeployVariables = []breakglassv1alpha1.ExtraDeployVariable{{Name: "hidden", InputType: breakglassv1alpha1.InputTypeText, Disabled: true}}
+			}
+			persisted.Status = breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending, ResolvedTemplate: template.Spec.DeepCopy(), ResolvedBindingSnapshotCaptured: true}
+			require.NoError(t, ssa.ApplyDebugSessionStatus(t.Context(), apiClient, persisted))
+			require.NoError(t, apiClient.Get(t.Context(), client.ObjectKeyFromObject(persisted), persisted))
+			require.Equal(t, template.Spec.PodOverridesTemplate, persisted.Status.ResolvedTemplate.PodOverridesTemplate)
+			if hasVariables {
+				require.True(t, persisted.Status.ResolvedTemplate.ExtraDeployVariables[0].Disabled)
+			} else {
+				require.Nil(t, persisted.Status.ResolvedTemplateVariablePolicy)
+				require.True(t, persisted.Status.ResolvedBindingSnapshotCaptured)
+			}
+			// The normal controller helper must refresh its caller's resource version
+			// so consecutive snapshot and activation writes need no intervening Get.
+			previousVersion := persisted.ResourceVersion
+			persisted.Status.Message = "approved snapshot persisted"
+			require.NoError(t, breakglass.ApplyDebugSessionStatus(t.Context(), apiClient, persisted))
+			require.NotEqual(t, previousVersion, persisted.ResourceVersion)
+			persisted.Status.Message = "activation next"
+			require.NoError(t, breakglass.ApplyDebugSessionStatus(t.Context(), apiClient, persisted))
+			// Resume the controller with exactly the status returned by the API server.
+			ds.Status = persisted.Status
+			require.NoError(t, c.client.Status().Update(t.Context(), ds))
+			template.Spec.PodTemplateString = strings.ReplaceAll(template.Spec.PodTemplateString, "busybox", "unsafe")
+			template.Spec.PodOverridesTemplate = "nodeSelector:\n  approved: \"no\"\n"
+			require.NoError(t, c.client.Update(t.Context(), template))
+			_, err = c.handlePending(t.Context(), ds)
+			require.NoError(t, err)
+			deployment := &appsv1.Deployment{}
+			require.NoError(t, target.Get(t.Context(), client.ObjectKey{Namespace: "breakglass-debug", Name: ds.Name}, deployment))
+			require.Equal(t, "busybox", deployment.Spec.Template.Spec.Containers[0].Image)
+			require.Equal(t, "yes", deployment.Spec.Template.Spec.NodeSelector["approved"])
+			require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), ds))
+			require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, ds.Status.State)
+		})
+	}
 }

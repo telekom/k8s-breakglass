@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Make terminal cleanup accounting idempotent and avoid decrementing active
   counts for sessions rejected before activation.
 
+- Activate fresh zero-variable debug sessions from a persisted Pending decision, preserve approved pod-template references after live edits, reject empty-policy constraint bypasses, and filter disabled supplied values from both renderers. Invalid bindings no longer shadow direct template cluster grants.
+
 - Persist complete debug-session approval snapshots before activation, preserve all template runtime policy through typed SSA, reject semantically empty binding provenance, and omit internal recovery variable policy from session REST responses.
 
 - Reject incomplete binding snapshots and impossible or widening variable constraints; preserve restricted binding defaults consistently through API admission and activation, and discard stale UI option selections after binding changes.

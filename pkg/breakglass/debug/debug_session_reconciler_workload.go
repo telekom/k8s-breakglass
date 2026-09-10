@@ -1467,10 +1467,12 @@ func (c *DebugSessionController) buildVarsFromSession(
 	templateSpec *breakglassv1alpha1.DebugSessionTemplateSpec,
 ) map[string]string {
 	vars := make(map[string]string)
+	disabled := make(map[string]bool)
 
 	// Apply defaults from template variable definitions
 	if templateSpec != nil {
 		for _, varDef := range templateSpec.ExtraDeployVariables {
+			disabled[varDef.Name] = varDef.Disabled
 			if !varDef.Disabled && varDef.Default != nil && len(varDef.Default.Raw) > 0 {
 				vars[varDef.Name] = extractJSONValueForPod(varDef.Default.Raw)
 			}
@@ -1479,6 +1481,9 @@ func (c *DebugSessionController) buildVarsFromSession(
 
 	// Override with user-provided values
 	for name, jsonVal := range ds.Spec.ExtraDeployValues {
+		if disabled[name] {
+			continue
+		}
 		vars[name] = extractJSONValueForPod(jsonVal.Raw)
 	}
 
