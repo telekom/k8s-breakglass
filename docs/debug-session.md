@@ -1420,7 +1420,8 @@ provider binding used for authorization.
 If a create response is interrupted before its UID is recorded, cleanup retains
 the intent and retries without adopting a same-name replacement. Resources with
 `deleteAfter: false` remain intentionally retained and do not create a cleanup
-failure condition. Structural validation failures emit one audit event for the
+failure condition when their recorded UID and resource identity match the
+retained inventory. Unknown creation outcomes remain protected. Structural validation failures emit one audit event for the
 persisted failure; later reconciles preserve the status without repeating it.
 Auxiliary documents continue to be retried after their primary resource is
 deleted; once the primary and every child are deleted, their history no longer
