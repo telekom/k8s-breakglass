@@ -83,7 +83,7 @@ delete_created_debug_namespace() {
   [[ "${DEBUG_NAMESPACE_CREATED}" == true ]] || return 0
   local namespace_lookup namespace_status namespace_uid
   if namespace_lookup="$(KUBECONFIG="${KUBECONFIG_FILE}" kubectl get namespace "${DEBUG_NAMESPACE}" \
-    --ignore-not-found -o json)"; then
+    --ignore-not-found --request-timeout "${REFERENCE_CLEANUP_TIMEOUT}" -o json)"; then
     namespace_status=0
   else
     namespace_status=$?
@@ -114,7 +114,7 @@ delete_created_debug_namespace() {
     fi
   fi
   if ! namespace_lookup="$(KUBECONFIG="${KUBECONFIG_FILE}" kubectl get namespace "${DEBUG_NAMESPACE}" \
-    --ignore-not-found -o json)"; then
+    --ignore-not-found --request-timeout "${REFERENCE_CLEANUP_TIMEOUT}" -o json)"; then
     printf 'reference-usage: unable to verify debug namespace deletion: %s\n' "${DEBUG_NAMESPACE}" >&2
     return 1
   fi
@@ -297,7 +297,8 @@ install_stack() {
     log "Reusing existing debug namespace ${DEBUG_NAMESPACE}; it will not be deleted"
   else
     local namespace_create_json
-    namespace_create_json="$(kubectl create namespace "${DEBUG_NAMESPACE}" -o json)"
+    namespace_create_json="$(kubectl create namespace "${DEBUG_NAMESPACE}" \
+      --request-timeout "${REFERENCE_CLEANUP_TIMEOUT}" -o json)"
     DEBUG_NAMESPACE_CREATED=true
     DEBUG_NAMESPACE_UID="$(jq -er '.metadata.uid' <<<"${namespace_create_json}")"
     [[ -n "${DEBUG_NAMESPACE_UID}" ]] || die "created debug namespace has no UID"
