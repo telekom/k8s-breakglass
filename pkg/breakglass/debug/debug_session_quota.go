@@ -38,7 +38,7 @@ func (c *DebugSessionAPIController) WithQuotaNamespace(namespace string) *DebugS
 }
 
 func debugSessionTerminal(s *breakglassv1alpha1.DebugSession) bool {
-	return s.Status.State == breakglassv1alpha1.DebugSessionStateTerminated || s.Status.State == breakglassv1alpha1.DebugSessionStateExpired || s.Status.State == breakglassv1alpha1.DebugSessionStateFailed
+	return s.Status.State == breakglassv1alpha1.DebugSessionStateRejected || s.Status.State == breakglassv1alpha1.DebugSessionStateTerminated || s.Status.State == breakglassv1alpha1.DebugSessionStateExpired || s.Status.State == breakglassv1alpha1.DebugSessionStateFailed
 }
 
 // debugQuotaPolicy resolves live policy and legacy auto-discovered binding scope.

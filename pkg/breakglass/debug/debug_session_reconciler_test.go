@@ -409,7 +409,7 @@ func TestDebugSessionReconciler_ApprovalWorkflow(t *testing.T) {
 		fetchedSession.Status.Approval.RejectedBy = "security@example.com"
 		fetchedSession.Status.Approval.RejectedAt = &now
 		fetchedSession.Status.Approval.Reason = "Insufficient justification"
-		fetchedSession.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+		fetchedSession.Status.State = breakglassv1alpha1.DebugSessionStateRejected
 		fetchedSession.Status.Message = "Session rejected: Insufficient justification"
 
 		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
@@ -424,7 +424,7 @@ func TestDebugSessionReconciler_ApprovalWorkflow(t *testing.T) {
 
 		assert.Equal(t, "security@example.com", fetchedSession.Status.Approval.RejectedBy)
 		assert.NotNil(t, fetchedSession.Status.Approval.RejectedAt)
-		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, fetchedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, fetchedSession.Status.State)
 	})
 
 	t.Run("session approval times out in reconciler", func(t *testing.T) {
@@ -1792,6 +1792,12 @@ func TestDebugSessionReconciler_InvalidStateTransitions(t *testing.T) {
 			shouldError: true,
 		},
 		{
+			name:        "rejected cannot go to active",
+			fromState:   breakglassv1alpha1.DebugSessionStateRejected,
+			toState:     breakglassv1alpha1.DebugSessionStateActive,
+			shouldError: true,
+		},
+		{
 			name:        "active can go to terminated",
 			fromState:   breakglassv1alpha1.DebugSessionStateActive,
 			toState:     breakglassv1alpha1.DebugSessionStateTerminated,
@@ -1812,6 +1818,7 @@ func TestDebugSessionReconciler_InvalidStateTransitions(t *testing.T) {
 
 			// Terminal states should not transition back to active
 			isTerminalState := tt.fromState == breakglassv1alpha1.DebugSessionStateExpired ||
+				tt.fromState == breakglassv1alpha1.DebugSessionStateRejected ||
 				tt.fromState == breakglassv1alpha1.DebugSessionStateTerminated ||
 				tt.fromState == breakglassv1alpha1.DebugSessionStateFailed
 
@@ -1924,7 +1931,7 @@ func TestDebugSessionReconciler_ApprovalErrors(t *testing.T) {
 	t.Run("cannot approve already rejected session", func(t *testing.T) {
 		now := metav1.Now()
 		session := newTestDebugSession("already-rejected-session", "test-template", "production", "user@example.com")
-		session.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+		session.Status.State = breakglassv1alpha1.DebugSessionStateRejected
 		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{
 			Required:   true,
 			RejectedBy: "security@example.com",
@@ -1947,7 +1954,7 @@ func TestDebugSessionReconciler_ApprovalErrors(t *testing.T) {
 
 		// Session is already rejected - approval should be prevented
 		assert.NotEmpty(t, fetchedSession.Status.Approval.RejectedBy)
-		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, fetchedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, fetchedSession.Status.State)
 	})
 
 	t.Run("cannot approve active session", func(t *testing.T) {

@@ -60,6 +60,7 @@ describe("Debug Session State Mapping", () => {
     Pending: "warning",
     PendingApproval: "warning",
     Active: "success",
+    Rejected: "error",
     Expired: "error",
     Terminated: "error",
     Failed: "error",
@@ -75,6 +76,7 @@ describe("Debug Session State Mapping", () => {
 
   it("maps terminal states to error color", () => {
     expect(stateColors["Expired"]).toBe("error");
+    expect(stateColors["Rejected"]).toBe("error");
     expect(stateColors["Terminated"]).toBe("error");
     expect(stateColors["Failed"]).toBe("error");
   });

@@ -259,7 +259,7 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		return c.handlePendingApproval(ctx, ds)
 	case breakglassv1alpha1.DebugSessionStateActive:
 		return c.handleActive(ctx, ds)
-	case breakglassv1alpha1.DebugSessionStateExpired, breakglassv1alpha1.DebugSessionStateTerminated:
+	case breakglassv1alpha1.DebugSessionStateRejected, breakglassv1alpha1.DebugSessionStateExpired, breakglassv1alpha1.DebugSessionStateTerminated:
 		return c.handleCleanup(ctx, ds)
 	case breakglassv1alpha1.DebugSessionStateFailed:
 		// Terminal state — but only once the spoke cluster is actually clean.
@@ -392,9 +392,9 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 		return c.activateSession(ctx, ds, template, binding)
 	}
 
-	// If rejected, mark as terminated
+	// Rejection is terminal and durable; cleanup handles any resources recorded before rejection.
 	if ds.Status.Approval != nil && ds.Status.Approval.RejectedAt != nil {
-		ds.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+		ds.Status.State = breakglassv1alpha1.DebugSessionStateRejected
 		ds.Status.Message = fmt.Sprintf("Rejected by %s: %s", ds.Status.Approval.RejectedBy, ds.Status.Approval.Reason)
 		return ctrl.Result{}, breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
 	}

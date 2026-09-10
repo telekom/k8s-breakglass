@@ -1094,7 +1094,7 @@ func TestDebugSessionAPIController_RejectSession(t *testing.T) {
 		fetchedSession.Status.Approval.RejectedBy = "security@example.com"
 		fetchedSession.Status.Approval.RejectedAt = &now
 		fetchedSession.Status.Approval.Reason = "Insufficient justification"
-		fetchedSession.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+		fetchedSession.Status.State = breakglassv1alpha1.DebugSessionStateRejected
 		fetchedSession.Status.Message = "Session rejected"
 
 		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
@@ -1107,7 +1107,7 @@ func TestDebugSessionAPIController_RejectSession(t *testing.T) {
 		}, &fetchedSession)
 		require.NoError(t, err)
 		assert.Equal(t, "security@example.com", fetchedSession.Status.Approval.RejectedBy)
-		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, fetchedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, fetchedSession.Status.State)
 	})
 }
 
@@ -9699,6 +9699,15 @@ func TestHandleListDebugSessions_StateValidation(t *testing.T) {
 		var response DebugSessionListResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 		assert.Equal(t, 1, response.Total)
+	})
+
+	t.Run("rejected state returns 200", func(t *testing.T) {
+		router := buildRouter("alice")
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=Rejected", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
 	t.Run("empty state param returns 200 with all sessions", func(t *testing.T) {

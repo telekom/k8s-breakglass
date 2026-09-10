@@ -15,8 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Retry final quota-admission completion after same-UID resource-version
-  conflicts, while refusing terminal or replacement sessions.
+- Persist DebugSession rejection as a terminal `Rejected` state across API,
+  reconciliation, cleanup, CLI filters, and the frontend.
 
 - If a debug session expires after an ephemeral-container intent is persisted
   but before the target write, record the operation as Failed without touching

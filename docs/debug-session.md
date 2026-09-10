@@ -123,9 +123,9 @@ Debug sessions follow a strict state machine:
      │                   │                    │
      │                   │                    │
      ▼                   ▼                    ▼
- ┌────────┐          ┌────────┐          ┌─────────┐
- │ Failed │          │ Failed │          │ Expired │
- └────────┘          └────────┘          └─────────┘
+ ┌────────┐          ┌──────────┐        ┌─────────┐
+ │ Failed │          │ Rejected │        │ Expired │
+ └────────┘          └──────────┘        └─────────┘
                                               │
                                               │
                                           ┌──────────────┐
@@ -138,9 +138,10 @@ Debug sessions follow a strict state machine:
 | `Pending` | Session is being set up | ❌ |
 | `PendingApproval` | Waiting for approver action | ❌ |
 | `Active` | Debug pods running, access granted | ✅ |
+| `Rejected` | Approver denied the request | ❌ |
 | `Expired` | Session duration exceeded | ❌ |
 | `Terminated` | Manually ended by owner or admin | ❌ |
-| `Failed` | Setup failed or rejected | ❌ |
+| `Failed` | Setup failed | ❌ |
 
 ## Resource Definitions
 

@@ -2872,8 +2872,11 @@ func TestHandleRejectDebugSession_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 	// Response now returns the session object, verify it contains expected fields
 	assert.Contains(t, rr.Body.String(), "pending-session")
-	assert.Contains(t, rr.Body.String(), "Terminated")
+	assert.Contains(t, rr.Body.String(), "Rejected")
 	assert.Contains(t, rr.Body.String(), "Rejected by approver@example.com")
+	var updated breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "pending-session"}, &updated))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, updated.Status.State)
 }
 
 func TestHandleRejectDebugSession_RejectsTrailingJSON(t *testing.T) {

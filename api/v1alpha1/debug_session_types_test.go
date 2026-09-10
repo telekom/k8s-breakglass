@@ -33,6 +33,7 @@ func TestDebugSessionState(t *testing.T) {
 		{"pending state", DebugSessionStatePending},
 		{"pending approval state", DebugSessionStatePendingApproval},
 		{"active state", DebugSessionStateActive},
+		{"rejected state", DebugSessionStateRejected},
 		{"expired state", DebugSessionStateExpired},
 		{"terminated state", DebugSessionStateTerminated},
 		{"failed state", DebugSessionStateFailed},
@@ -1017,6 +1018,7 @@ func TestDebugSession_InvalidState(t *testing.T) {
 		if session.Status.State == DebugSessionStatePending ||
 			session.Status.State == DebugSessionStatePendingApproval ||
 			session.Status.State == DebugSessionStateActive ||
+			session.Status.State == DebugSessionStateRejected ||
 			session.Status.State == DebugSessionStateExpired ||
 			session.Status.State == DebugSessionStateTerminated ||
 			session.Status.State == DebugSessionStateFailed {

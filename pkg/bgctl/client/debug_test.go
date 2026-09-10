@@ -803,3 +803,9 @@ func TestDebugSessionsList_InvalidStateFilter(t *testing.T) {
 	assert.Contains(t, err.Error(), "NotAState")
 	assert.Contains(t, err.Error(), "unknown debug session state")
 }
+
+func TestValidateDebugSessionStateAcceptsRejected(t *testing.T) {
+	state, err := validateDebugSessionState("rejected")
+	require.NoError(t, err)
+	assert.Equal(t, string(breakglassv1alpha1.DebugSessionStateRejected), state)
+}

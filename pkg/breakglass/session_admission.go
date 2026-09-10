@@ -82,7 +82,7 @@ func (c *SessionManager) reserveSession(ctx context.Context, s *breakglassv1alph
 			if err != nil {
 				return false, err
 			}
-			terminal := current.Status.State == breakglassv1alpha1.DebugSessionStateTerminated || current.Status.State == breakglassv1alpha1.DebugSessionStateExpired || current.Status.State == breakglassv1alpha1.DebugSessionStateFailed
+			terminal := current.Status.State == breakglassv1alpha1.DebugSessionStateRejected || current.Status.State == breakglassv1alpha1.DebugSessionStateTerminated || current.Status.State == breakglassv1alpha1.DebugSessionStateExpired || current.Status.State == breakglassv1alpha1.DebugSessionStateFailed
 			return string(current.UID) == entry.UID && !terminal, nil
 		}
 		if entry.Kind != "BreakglassSession" {

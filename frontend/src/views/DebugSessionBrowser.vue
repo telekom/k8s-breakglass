@@ -48,6 +48,7 @@ const stateOptions = [
   { value: "Pending", label: "Pending" },
   { value: "PendingApproval", label: "Pending Approval" },
   { value: "Expired", label: "Expired" },
+  { value: "Rejected", label: "Rejected" },
   { value: "Terminated", label: "Terminated" },
   { value: "Failed", label: "Failed" },
 ];
@@ -88,8 +89,9 @@ const statePriority: Record<string, number> = {
   Pending: 1,
   PendingApproval: 2,
   Expired: 3,
-  Terminated: 4,
-  Failed: 5,
+  Rejected: 4,
+  Terminated: 5,
+  Failed: 6,
 };
 
 const filteredSessions = computed(() => {
