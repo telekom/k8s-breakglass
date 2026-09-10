@@ -5,10 +5,11 @@ package v1alpha1
 
 import (
 	"context"
-	"github.com/stretchr/testify/require"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestDebugSessionIdleDeadlineAndMonotonicActivity(t *testing.T) {
