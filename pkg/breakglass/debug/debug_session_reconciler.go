@@ -80,21 +80,22 @@ func debugSessionIdentity(ds *breakglassv1alpha1.DebugSession) string {
 
 // DebugSessionController manages DebugSession lifecycle
 type DebugSessionController struct {
-	quotaNamespace string
-	quotaEnabled   bool
-	log            *zap.SugaredLogger
-	client         ctrlclient.Client
-	reader         ctrlclient.Reader
-	apiReader      ctrlclient.Reader
-	ccProvider     *cluster.ClientProvider
-	targetClients  ClientProviderInterface
-	auditService   *audit.Service
-	auditManager   *audit.Manager
-	mailService    breakglass.MailEnqueuer
-	auxiliaryMgr   *AuxiliaryResourceManager
-	brandingName   string
-	baseURL        string
-	disableEmail   bool
+	quotaNamespace   string
+	quotaEnabled     bool
+	log              *zap.SugaredLogger
+	client           ctrlclient.Client
+	reader           ctrlclient.Reader
+	apiReader        ctrlclient.Reader
+	ccProvider       *cluster.ClientProvider
+	connectionLeases *ConnectionLeaseService
+	targetClients    ClientProviderInterface
+	auditService     *audit.Service
+	auditManager     *audit.Manager
+	mailService      breakglass.MailEnqueuer
+	auxiliaryMgr     *AuxiliaryResourceManager
+	brandingName     string
+	baseURL          string
+	disableEmail     bool
 	// targetClientFactory and beforeDebugTargetWrite are nil in production. They
 	// are narrow seams for deployment fence tests: the former keeps tests from
 	// needing a live spoke API, while the latter injects a hub-side change after
@@ -111,11 +112,12 @@ func (c *DebugSessionController) WithAPIReader(reader ctrlclient.Reader) *DebugS
 // NewDebugSessionController creates a new DebugSessionController
 func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client, ccProvider *cluster.ClientProvider) *DebugSessionController {
 	return &DebugSessionController{
-		log:          log,
-		client:       client,
-		reader:       client,
-		ccProvider:   ccProvider,
-		auxiliaryMgr: NewAuxiliaryResourceManager(log.Named("auxiliary"), client),
+		log:              log,
+		client:           client,
+		reader:           client,
+		ccProvider:       ccProvider,
+		connectionLeases: NewConnectionLeaseService(client),
+		auxiliaryMgr:     NewAuxiliaryResourceManager(log.Named("auxiliary"), client),
 	}
 }
 
@@ -484,6 +486,12 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
+	if c.connectionLeases != nil && ds.Status.ConnectionLease != nil {
+		if err := c.connectionLeases.RenewSession(ctx, ds, ds.Status.ExpiresAt.Time); err != nil {
+			log.Warnw("Failed to converge debug session connection lease; will retry", "error", err)
+			return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+		}
+	}
 
 	// Renewal commits session status before touching the spoke Job. Reconcile
 	// from that durable expiry so a target failure or a lost API response
@@ -558,6 +566,11 @@ func (c *DebugSessionController) sendDebugSessionExpiredEmail(ds breakglassv1alp
 // but reconciliation keeps retrying the delete until the status lists are empty.
 func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	if !hasTrackedSpokeResources(ds) {
+		if c.connectionLeases != nil {
+			if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
+				return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+			}
+		}
 		releaseSessionMetricSeries(ds.Name)
 		return ctrl.Result{}, nil // Nothing left on the spoke: genuinely terminal.
 	}
@@ -579,6 +592,12 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 	if hasTrackedSpokeResources(ds) {
 		log.Warnw("Cleanup reported success but spoke resources are still tracked; will retry")
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	}
+	if c.connectionLeases != nil {
+		if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
+			log.Errorw("Failed to revoke debug session connection lease", "error", err)
+			return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+		}
 	}
 
 	log.Infow("Cleanup of spoke resources completed for failed debug session")
@@ -618,6 +637,12 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 		log.Errorw("Failed to cleanup debug session resources", "error", err)
 		// Requeue to retry cleanup
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	}
+	if c.connectionLeases != nil {
+		if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
+			log.Errorw("Failed to revoke debug session connection lease", "error", err)
+			return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+		}
 	}
 
 	// Decrement active gauge for terminated sessions. Expired sessions are
@@ -728,6 +753,21 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
 	}
+	if c.connectionLeases != nil && c.ccProvider != nil {
+		_, configured, err := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("read target before acquiring connection lease: %w", err)
+		}
+		lease, err := c.connectionLeases.AcquireForSession(ctx, ds, configured.UID)
+		c.ccProvider.ReleasePrivilegedOperationClusterConfig(configured)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("acquire connection lease: %w", err)
+		}
+		ds.Status.ConnectionLease = &lease
+		if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
 	if err := rejectUnsupportedTerminalRecording(template); err != nil {
 		return c.failSession(ctx, ds, err.Error())
 	}
@@ -798,6 +838,11 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 }
 
 func (c *DebugSessionController) validateActivationBeforePublish(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	if c.connectionLeases != nil && c.ccProvider != nil {
+		if err := c.connectionLeases.ValidateSession(ctx, ds); err != nil {
+			return fmt.Errorf("connection lease is no longer valid: %w", err)
+		}
+	}
 	if c.ccProvider != nil {
 		_, configuredCluster, err := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)
 		if err != nil {

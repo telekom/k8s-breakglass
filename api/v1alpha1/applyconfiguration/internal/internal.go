@@ -1519,6 +1519,33 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: totalSessionCount
       type:
         scalar: numeric
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionConnectionLease
+  map:
+    fields:
+    - name: epoch
+      type:
+        scalar: numeric
+    - name: expiresAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: holderUID
+      type:
+        namedType: io.k8s.apimachinery.pkg.types.UID
+    - name: name
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+    - name: profileDigest
+      type:
+        scalar: string
+    - name: targetUID
+      type:
+        namedType: io.k8s.apimachinery.pkg.types.UID
+    - name: uid
+      type:
+        namedType: io.k8s.apimachinery.pkg.types.UID
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionConstraints
   map:
     fields:
@@ -1709,6 +1736,9 @@ var schemaYAML = typed.YAMLObject(`types:
           elementRelationship: associative
           keys:
           - type
+    - name: connectionLease
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionConnectionLease
     - name: deployedResources
       type:
         list:

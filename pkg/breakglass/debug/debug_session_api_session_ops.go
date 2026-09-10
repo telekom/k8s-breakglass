@@ -260,13 +260,17 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	}
 	session = live
 	newExpiry = metav1.NewTime(session.Status.ExpiresAt.Add(extendBy))
-
 	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.ExpiresAt = &newExpiry
 		status.RenewalCount = newRenewalCount
 	}); err != nil {
 		respondDebugSessionStatusPatchError(ctx, reqLog, "renew session", "failed to renew session", name, err)
 		return
+	}
+	if c.connectionLeases != nil {
+		if err := c.connectionLeases.RenewSession(apiCtx, session, newExpiry.Time); err != nil {
+			reqLog.Warnw("Renewal committed; connection lease convergence will retry", "session", name, "error", err)
+		}
 	}
 
 	// Session status is the durable renewal commit. A target Job update is

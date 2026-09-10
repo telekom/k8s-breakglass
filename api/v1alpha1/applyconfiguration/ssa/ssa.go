@@ -204,6 +204,9 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	}
 
 	result := ac.DebugSessionStatus()
+	if status.ConnectionLease != nil {
+		result.WithConnectionLease(DebugSessionConnectionLeaseFrom(status.ConnectionLease))
+	}
 
 	// Set observedGeneration for kstatus compliance
 	if status.ObservedGeneration > 0 {
@@ -309,6 +312,21 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	}
 
 	return result
+}
+
+func DebugSessionConnectionLeaseFrom(lease *breakglassv1alpha1.DebugSessionConnectionLease) *ac.DebugSessionConnectionLeaseApplyConfiguration {
+	if lease == nil {
+		return nil
+	}
+	return ac.DebugSessionConnectionLease().
+		WithNamespace(lease.Namespace).
+		WithName(lease.Name).
+		WithUID(lease.UID).
+		WithHolderUID(lease.HolderUID).
+		WithTargetUID(lease.TargetUID).
+		WithProfileDigest(lease.ProfileDigest).
+		WithEpoch(lease.Epoch).
+		WithExpiresAt(lease.ExpiresAt)
 }
 
 // BreakglassEscalationStatusFrom converts a BreakglassEscalationStatus to its ApplyConfiguration.
