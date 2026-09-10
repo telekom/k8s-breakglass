@@ -50,3 +50,15 @@ event is reserved for an operation that could not be completed or verified.
 When no spoke resources remain, cleanup removes the session's completed pod
 authorization references. References added concurrently after cleanup started
 are retained by the baseline-aware status merge.
+
+Cleanup preserves UID-less create-operation intents even when `Created` was already
+recorded. Such intents never authorize a name-only lookup or deletion. A later
+persisted UID outcome replaces only the same operation and full resource identity;
+conflicting UIDs remain separate inventory. Legacy child resources without an
+operation ID still require the explicit original-UID recovery annotation.
+
+Residual identities include API version and kind. Injected ephemeral-container
+history is retained for audit but does not by itself indicate failed cleanup;
+copied Pods and unresolved operations still require cleanup or recovery. Recovery
+events use the condition observed by the successful status write. API lifecycle
+events also honor the template's `audit.enabled` setting.

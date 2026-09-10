@@ -479,12 +479,13 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	wasCleanupFailed := cleanupConditionFailed(ds)
 	finishCleanup := func(operationErr error) error {
 		setCleanupCondition(ds)
-		patchErr := c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline)
+		liveWasFailed := false
+		patchErr := c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, cleanupBaseline, &liveWasFailed)
 		if patchErr == nil && c.shouldEmitAudit(ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
 				if cleanupConditionFailed(ds) {
 					auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, cleanupResidualIdentities(ds))
-				} else if wasCleanupFailed {
+				} else if liveWasFailed {
 					auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
 				}
 			}
@@ -608,11 +609,14 @@ func setCleanupCondition(ds *breakglassv1alpha1.DebugSession) {
 func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 	identities := make([]string, 0, maxCleanupResidualIdentities)
 	seen := make(map[string]struct{}, maxCleanupResidualIdentities)
-	add := func(kind, namespace, name, uid string) {
+	add := func(apiVersion, kind, namespace, name, uid string) {
 		if name == "" {
 			return
 		}
 		identity := kind + "/" + name
+		if apiVersion != "" {
+			identity = apiVersion + "/" + identity
+		}
 		if namespace != "" {
 			identity = namespace + "/" + identity
 		}
@@ -633,35 +637,33 @@ func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 	}
 	for _, ref := range ds.Status.DeployedResources {
 		if !utils.DebugSessionResourceIntentionallyRetained(ds, ref) {
-			add(ref.Kind, ref.Namespace, ref.Name, ref.UID)
+			add(ref.APIVersion, ref.Kind, ref.Namespace, ref.Name, ref.UID)
 		}
 	}
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
 		if auxiliaryStatusHasCleanupResidual(ds, status) {
-			add(status.Kind, status.Namespace, status.ResourceName, status.UID)
+			add(status.APIVersion, status.Kind, status.Namespace, status.ResourceName, status.UID)
 		}
 		for _, ref := range status.AdditionalResources {
 			if utils.DebugSessionAuxiliaryChildHasCleanupResidual(ds, status.Name, ref) {
-				add(ref.Kind, ref.Namespace, ref.ResourceName, ref.UID)
+				add(ref.APIVersion, ref.Kind, ref.Namespace, ref.ResourceName, ref.UID)
 			}
 		}
 	}
 	for _, status := range ds.Status.PodTemplateResourceStatuses {
 		if !status.Deleted && (status.Created || status.UID != "" || status.CreateOperationID != "") {
-			add(status.Kind, status.Namespace, status.ResourceName, status.UID)
+			add(status.APIVersion, status.Kind, status.Namespace, status.ResourceName, status.UID)
 		}
 	}
 	if status := ds.Status.KubectlDebugStatus; status != nil {
 		for _, ref := range status.CopiedPods {
-			add("Pod", ref.CopyNamespace, ref.CopyName, canonicalCopiedPodUID(ref))
+			add("v1", "Pod", ref.CopyNamespace, ref.CopyName, canonicalCopiedPodUID(ref))
 		}
-		for _, ref := range status.EphemeralContainersInjected {
-			add("EphemeralContainer", ref.Namespace, ref.PodName+"/"+ref.ContainerName, ref.PodUID)
-		}
+
 		if hasPreparedKubectlDebugOperation(ds) {
 			for _, operation := range status.Operations {
 				if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared {
-					add("KubectlDebugOperation", "", operation.ID, "")
+					add("", "KubectlDebugOperation", "", operation.ID, "")
 				}
 			}
 		}
@@ -702,10 +704,18 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 	ds *breakglassv1alpha1.DebugSession,
 	baseline ...*breakglassv1alpha1.DebugSessionStatus,
 ) error {
+	var observed *breakglassv1alpha1.DebugSessionStatus
+	if len(baseline) > 0 {
+		observed = baseline[0]
+	}
+	return c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, observed, nil)
+}
+
+func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus, wasFailed *bool) error {
 	desiredStatus := ds.Status
 	cleanupBaseline := desiredStatus
-	if len(baseline) > 0 && baseline[0] != nil {
-		cleanupBaseline = *baseline[0]
+	if baseline != nil {
+		cleanupBaseline = *baseline
 	}
 	var patchedStatus breakglassv1alpha1.DebugSessionStatus
 	var patchedResourceVersion string
@@ -719,6 +729,7 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 			return fmt.Errorf("debug session UID changed while patching cleanup status: expected %q, got %q", ds.UID, current.UID)
 		}
 
+		previouslyFailed := cleanupConditionFailed(current)
 		base := current.DeepCopy()
 		current.Status.DeployedResources = mergeCleanupInventory(
 			cleanupBaseline.DeployedResources, desiredStatus.DeployedResources, current.Status.DeployedResources,
@@ -749,6 +760,9 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 
 		if err := c.client.Status().Patch(ctx, current, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
 			return err
+		}
+		if wasFailed != nil {
+			*wasFailed = previouslyFailed
 		}
 		patchedStatus = current.Status
 		patchedResourceVersion = current.ResourceVersion
@@ -787,18 +801,20 @@ func cleanupStatusHasResiduals(session *breakglassv1alpha1.DebugSession) bool {
 		return true
 	}
 	return status.KubectlDebugStatus != nil &&
-		(len(status.KubectlDebugStatus.CopiedPods) > 0 || len(status.KubectlDebugStatus.EphemeralContainersInjected) > 0)
+		len(status.KubectlDebugStatus.CopiedPods) > 0
 }
 
 func cleanupNeedsTargetCluster(session *breakglassv1alpha1.DebugSession) bool {
 	status := session.Status
-	if utils.DebugSessionHasActionableDeployedResources(session) {
-		return true
+	for _, ref := range status.DeployedResources {
+		if !utils.DebugSessionResourceIntentionallyRetained(session, ref) && (ref.UID != "" || ref.CreateOperationID == "") {
+			return true
+		}
 	}
 	for _, resource := range status.AuxiliaryResourceStatuses {
 		if !auxiliaryStatusHasCleanupResidual(session, resource) {
 			for _, child := range resource.AdditionalResources {
-				if !child.Deleted && shouldDeleteAuxiliaryResource(session, resource.Name) && child.UID != "" {
+				if !child.Deleted && shouldDeleteAuxiliaryResource(session, resource.Name) && (child.UID != "" || child.CreateOperationID == "") {
 					return true
 				}
 			}
@@ -808,13 +824,13 @@ func cleanupNeedsTargetCluster(session *breakglassv1alpha1.DebugSession) bool {
 			return true
 		}
 		for _, child := range resource.AdditionalResources {
-			if !child.Deleted && shouldDeleteAuxiliaryResource(session, resource.Name) && child.UID != "" {
+			if !child.Deleted && shouldDeleteAuxiliaryResource(session, resource.Name) && (child.UID != "" || child.CreateOperationID == "") {
 				return true
 			}
 		}
 	}
 	for _, resource := range status.PodTemplateResourceStatuses {
-		if !resource.Deleted && (resource.Created || resource.UID != "") {
+		if !resource.Deleted && (resource.UID != "" || (resource.Created && resource.CreateOperationID == "")) {
 			return true
 		}
 	}
@@ -858,6 +874,7 @@ func desiredCleanupCondition(conditions []metav1.Condition) *metav1.Condition {
 // writes and must survive, even when the cleanup caller started from an older
 // same-UID session object.
 func mergeCleanupInventory[T any](baseline, desired, current []T, key func(T) string) []T {
+	desired = promoteObservedCleanupIntents(desired, current)
 	baselineKeys := make(map[string]struct{}, len(baseline))
 	for _, item := range baseline {
 		baselineKeys[key(item)] = struct{}{}
@@ -879,6 +896,77 @@ func mergeCleanupInventory[T any](baseline, desired, current []T, key func(T) st
 	return merged
 }
 
+// promoteObservedCleanupIntents folds an unresolved placeholder into its durable
+// UID outcome. Known conflicting UIDs remain separate; no target lookup or
+// marker-based identity adoption occurs here.
+func promoteObservedCleanupIntents[T any](desired, current []T) []T {
+	observed := make(map[string]T)
+	ambiguous := make(map[string]bool)
+	for _, item := range current {
+		operation, uid := cleanupOperationIdentity(item)
+		if operation == "" || uid == "" {
+			continue
+		}
+		if previous, ok := observed[operation]; ok {
+			_, previousUID := cleanupOperationIdentity(previous)
+			if previousUID != uid {
+				ambiguous[operation] = true
+			}
+		}
+		observed[operation] = item
+	}
+	merged := append([]T(nil), desired...)
+	for i, item := range merged {
+		operation, uid := cleanupOperationIdentity(item)
+		if operation == "" || uid != "" || ambiguous[operation] {
+			continue
+		}
+		if resolved, ok := observed[operation]; ok {
+			// Child cleanup is merged separately against its own baseline below.
+			if parent, ok := any(resolved).(breakglassv1alpha1.AuxiliaryResourceStatus); ok {
+				parent.AdditionalResources = any(item).(breakglassv1alpha1.AuxiliaryResourceStatus).AdditionalResources
+				resolved = any(parent).(T)
+			}
+			merged[i] = resolved
+		}
+	}
+	return merged
+}
+
+func cleanupOperationIdentity(item any) (string, string) {
+	switch resource := item.(type) {
+	case breakglassv1alpha1.DeployedResourceRef:
+		if resource.CreateOperationID == "" {
+			return "", resource.UID
+		}
+		uid := resource.UID
+		resource.UID = ""
+		return "deployed:" + deployedResourceKey(resource), uid
+	case breakglassv1alpha1.AuxiliaryResourceStatus:
+		if resource.CreateOperationID == "" {
+			return "", resource.UID
+		}
+		uid := resource.UID
+		resource.UID = ""
+		return "auxiliary:" + auxiliaryResourceStatusKey(resource), uid
+	case breakglassv1alpha1.AdditionalResourceRef:
+		if resource.CreateOperationID == "" {
+			return "", resource.UID
+		}
+		uid := resource.UID
+		resource.UID = ""
+		return "child:" + additionalResourceKey(resource), uid
+	case breakglassv1alpha1.PodTemplateResourceStatus:
+		if resource.CreateOperationID == "" {
+			return "", resource.UID
+		}
+		uid := resource.UID
+		resource.UID = ""
+		return "pod-template:" + podTemplateResourceStatusKey(resource), uid
+	}
+	return "", ""
+}
+
 func deployedResourceKey(ref breakglassv1alpha1.DeployedResourceRef) string {
 	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", ref.APIVersion, ref.Kind, ref.Namespace, ref.Name, ref.Source, ref.UID, ref.CreateOperationID)
 }
@@ -898,6 +986,7 @@ func additionalResourceKey(ref breakglassv1alpha1.AdditionalResourceRef) string 
 func mergeAuxiliaryResourceStatuses(
 	baseline, desired, current []breakglassv1alpha1.AuxiliaryResourceStatus,
 ) []breakglassv1alpha1.AuxiliaryResourceStatus {
+	desired = promoteObservedCleanupIntents(desired, current)
 	merged := append([]breakglassv1alpha1.AuxiliaryResourceStatus(nil), desired...)
 	desiredByKey := make(map[string]int, len(desired))
 	baselineByKey := make(map[string]breakglassv1alpha1.AuxiliaryResourceStatus, len(baseline))
@@ -910,7 +999,17 @@ func mergeAuxiliaryResourceStatuses(
 	for _, status := range current {
 		key := auxiliaryResourceStatusKey(status)
 		if desiredIndex, ok := desiredByKey[key]; ok {
-			baselineStatus := baselineByKey[key]
+			baselineStatus, exists := baselineByKey[key]
+			if !exists {
+				operation, _ := cleanupOperationIdentity(status)
+				for _, previous := range baseline {
+					previousOperation, uid := cleanupOperationIdentity(previous)
+					if operation != "" && operation == previousOperation && uid == "" {
+						baselineStatus = previous
+						break
+					}
+				}
+			}
 			merged[desiredIndex].AdditionalResources = mergeCleanupInventory(
 				baselineStatus.AdditionalResources,
 				desired[desiredIndex].AdditionalResources,
@@ -1039,6 +1138,11 @@ func (c *DebugSessionController) cleanupDeployedResources(
 	remainingDeployedResources := make([]breakglassv1alpha1.DeployedResourceRef, 0, len(ds.Status.DeployedResources))
 
 	for _, ref := range ds.Status.DeployedResources {
+		if ref.UID == "" && ref.CreateOperationID != "" {
+			remainingDeployedResources = append(remainingDeployedResources, ref)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("deployed resource %s/%s creation outcome is unresolved", ref.Namespace, ref.Name))
+			continue
+		}
 		// Skip auxiliary resources - already cleaned up by manager
 		if strings.HasPrefix(ref.Source, "auxiliary:") {
 			if keepAuxiliaryRefs {
@@ -1274,7 +1378,7 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 		// A missing create response leaves an intent with no UID. Keep it and
 		// retry rather than looking up a same-name replacement. A recorded UID
 		// is enough to continue cleanup safely even if Created was not persisted.
-		if !status.Created && status.UID == "" {
+		if status.UID == "" && (!status.Created || status.CreateOperationID != "") {
 			if status.CreateOperationID != "" {
 				status.Error = "creation outcome unresolved; cleanup retry required"
 				remainingStatuses = append(remainingStatuses, *status)

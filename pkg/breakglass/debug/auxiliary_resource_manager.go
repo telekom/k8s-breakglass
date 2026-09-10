@@ -816,6 +816,9 @@ func (m *AuxiliaryResourceManager) deleteResource(
 	status breakglassv1alpha1.AuxiliaryResourceStatus,
 	session *breakglassv1alpha1.DebugSession,
 ) error {
+	if status.UID == "" && status.CreateOperationID != "" {
+		return fmt.Errorf("auxiliary resource %q creation outcome is unresolved", status.Name)
+	}
 	// Create unstructured object for deletion
 	obj := &unstructured.Unstructured{}
 	obj.SetAPIVersion(status.APIVersion)

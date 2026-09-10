@@ -341,7 +341,7 @@ func (c *DebugSessionAPIController) sendDebugSessionCreatedEmail(ctx context.Con
 
 // emitDebugSessionAuditEvent emits an audit event for debug session lifecycle changes
 func (c *DebugSessionAPIController) emitDebugSessionAuditEvent(ctx context.Context, eventType audit.EventType, session *breakglassv1alpha1.DebugSession, user string, message string) {
-	if c.auditService == nil || !c.auditService.IsEnabled() {
+	if c.auditService == nil || !c.auditService.IsEnabled() || !c.shouldEmitAudit(session) {
 		return
 	}
 
