@@ -206,3 +206,8 @@ for storage-debug, dump-reader, and diagnostic-artifact-collector.
 The catalogue utility integration workflow applies its optional dispatch `ref` to
 every job, including diagnostic artifact collection. Without it, all jobs use
 the PR head or triggering commit.
+
+Verify dispatch revision selection in GitHub Actions: dispatch the catalogue
+utility workflow from one branch with `ref` set to a different commit, then
+check that every job's checkout log reports that requested commit. All jobs
+must succeed. Local source assertions cannot establish this GitHub behavior.

@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Redact structured diagnostic authorization headers and remove obsolete variable-sanitization warnings; template serialization remains mandatory.
+
 - Align template and cluster-binding duration schemas with supported week, year, and fractional sub-day values.
 
 - Report invalid terminal-recording retention once and test every catalogue utility job at the requested dispatch revision.

@@ -503,15 +503,6 @@ func (m *AuxiliaryResourceManager) buildVarsFromSession(
 		vars[name] = extractJSONValue(jsonVal.Raw)
 	}
 
-	// Escape at the boundary: these values are end-user controlled and are
-	// substituted into YAML documents, so they must not be able to inject
-	// sibling keys. See template_vars_sanitize.go.
-	vars, changed := sanitizeTemplateVarsReportingChanges(vars)
-	if len(changed) > 0 && m.log != nil {
-		m.log.Warnw("Sanitized YAML-unsafe characters in extraDeployValues before auxiliary template rendering",
-			"session", session.Name, "variables", changed)
-	}
-
 	return vars
 }
 

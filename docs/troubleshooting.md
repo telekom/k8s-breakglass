@@ -820,3 +820,9 @@ kubectl logs -n breakglass-system deployment/breakglass-manager > logs.txt
 - [Webhook Setup](./webhook-setup.md) - Webhook configuration
 - [Cluster Config](./cluster-config.md) - Cluster connection details
 - [API Reference](./api-reference.md) - API endpoints
+
+CI diagnostic redaction covers case-insensitive JSON authorization, proxy
+authorization, cookie and secret-header keys with string or string-array values
+on a log line. Non-secret diagnostic fields are retained. Run
+`bash .github/scripts/test-ci-e2e-diagnostics.sh` to exercise redaction and output
+bounds with synthetic credentials.

@@ -24,6 +24,10 @@ printf '%s\n' \
   'password = "visible password with spaces, braces } and # text"' \
   'api_key: ''visible yaml key with spaces # inside quotes''' \
   '{"client_secret":"visible-json-secret, with spaces and } braces","status":"useful"}' \
+  '{"authorization":"Basic visible-json-auth","status":"auth-useful"}' \
+  '{"Proxy-Authorization":"Bearer visible-json-proxy","status":"proxy-useful"}' \
+  '{"AUTHORIZATION":["Basic visible-json-array", "Bearer visible-json-array-two"],"status":"array-useful"}' \
+  '{"Set-Cookie":["session=visible-json-cookie"],"X-Auth-Token":"visible-json-header-token","status":"headers-useful"}' \
   'token=visible-inline-token status=healthy' \
   '-----BEGIN RSA PRIVATE KEY-----' \
   'visible-private-key-material' \
@@ -32,7 +36,7 @@ printf '%s\n' \
   'status=healthy component=controller latency=12ms' \
   'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJvcGVyYXRvciJ9.qwertyuiopasdfghjklzxcvbnm123456' \
   'short-jwt e30.e30.x' \
-  | ci_write_bounded_redacted_file "$redacted_output" 20 4096
+  | ci_write_bounded_redacted_file "$redacted_output" 200 8192
 
 test -z "$(grep -E 'visible|operator@example.com|eyJhbGci' "$redacted_output" || true)"
 # Verify each supported secret class is transformed, without coupling the test
@@ -45,6 +49,9 @@ grep -Fq 'user=[REDACTED-EMAIL]' "$redacted_output"
 grep -Fq '[REDACTED-JWT]' "$redacted_output"
 grep -Fq 'short-jwt [REDACTED-JWT]' "$redacted_output"
 grep -Fq '"status":"useful"' "$redacted_output"
+for status in auth-useful proxy-useful array-useful headers-useful; do
+  grep -Fq -- "\"status\":\"$status\"" "$redacted_output"
+done
 grep -Fq 'status=healthy component=controller latency=12ms' "$redacted_output"
 # Inline token-bearing lines retain their non-secret diagnostic context.
 grep -Fq 'status=healthy' "$redacted_output"
