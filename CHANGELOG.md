@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Align template and cluster-binding duration schemas with supported week, year, and fractional sub-day values.
 
+- Align all shared `ParseDuration` CRD fields, including debug sessions, pod-copy TTL,
+  recording retention, Keycloak timeouts, and breakglass session/escalation limits,
+  with the supported duration syntax.
+
 - Report invalid terminal-recording retention once and test every catalogue utility job at the requested dispatch revision.
 
 - Omit disabled deployment variables from requester template discovery.

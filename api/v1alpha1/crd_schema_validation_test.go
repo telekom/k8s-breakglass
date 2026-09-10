@@ -224,4 +224,66 @@ func TestCRDInstallation(t *testing.T) {
 			})
 		}
 	})
+	t.Run("shared duration syntax is accepted across resources", func(t *testing.T) {
+		scheme := runtime.NewScheme()
+		require.NoError(t, corev1.AddToScheme(scheme))
+		require.NoError(t, AddToScheme(scheme))
+		apiClient, err := client.New(cfg, client.Options{Scheme: scheme})
+		require.NoError(t, err)
+		ctx := context.Background()
+		namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "duration-parity-"}}
+		require.NoError(t, apiClient.Create(ctx, namespace))
+
+		// "1w" is accepted by ParseDuration but was rejected by the narrower
+		// per-resource schemas. Exercise the real API server validation for every
+		// affected resource family.
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{GenerateName: "duration-template-"},
+			Spec: DebugSessionTemplateSpec{
+				PodTemplateRef: &DebugPodTemplateReference{Name: "debug-pod"},
+				KubectlDebug:   &KubectlDebugConfig{PodCopy: &PodCopyConfig{TTL: "1w"}},
+				Audit:          &DebugSessionAuditConfig{RecordingRetention: "1w"},
+			},
+		}
+		require.NoError(t, apiClient.Create(ctx, template))
+
+		debugSession := &DebugSession{
+			ObjectMeta: metav1.ObjectMeta{GenerateName: "duration-session-", Namespace: namespace.Name},
+			Spec:       DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "user", RequestedDuration: "1w"},
+		}
+		require.NoError(t, apiClient.Create(ctx, debugSession))
+
+		identityProvider := &IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{GenerateName: "duration-idp-"},
+			Spec: IdentityProviderSpec{
+				OIDC:              OIDCConfig{Authority: "https://issuer.example", ClientID: "client", ExpectedAudience: "audience"},
+				GroupSyncProvider: GroupSyncProviderKeycloak,
+				Keycloak: &KeycloakGroupSync{
+					BaseURL: "https://keycloak.example", Realm: "realm", ClientID: "client",
+					ClientSecretRef: SecretKeyReference{Name: "secret", Namespace: namespace.Name, Key: "client-secret"},
+					CacheTTL:        "1w", RequestTimeout: "1w",
+				},
+			},
+		}
+		require.NoError(t, apiClient.Create(ctx, identityProvider))
+
+		escalation := &BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{GenerateName: "duration-escalation-", Namespace: namespace.Name},
+			Spec: BreakglassEscalationSpec{
+				Allowed:     BreakglassEscalationAllowed{Clusters: []string{"cluster"}},
+				Approvers:   BreakglassEscalationApprovers{Groups: []string{"approvers"}},
+				MaxValidFor: "1w", IdleTimeout: "1w", RetainFor: "1w", ApprovalTimeout: "1w",
+			},
+		}
+		require.NoError(t, apiClient.Create(ctx, escalation))
+
+		session := &BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{GenerateName: "duration-breakglass-session-", Namespace: namespace.Name},
+			Spec: BreakglassSessionSpec{
+				Cluster: "cluster", User: "user", GrantedGroup: "group",
+				MaxValidFor: "1w", IdleTimeout: "1w", RetainFor: "1w",
+			},
+		}
+		require.NoError(t, apiClient.Create(ctx, session))
+	})
 }

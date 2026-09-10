@@ -68,7 +68,7 @@ type BreakglassEscalationSpec struct {
 
 	// maxValidFor is the maximum amount of time a session for this escalation will be active for after it is approved.
 	// +default="1h"
-	// +kubebuilder:validation:Pattern="^([0-9]+d([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))*|([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+)$"
+	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
 	MaxValidFor string `json:"maxValidFor,omitempty"`
 
 	// idleTimeout is the duration of inactivity (no authorization requests) after which sessions
@@ -76,19 +76,19 @@ type BreakglassEscalationSpec struct {
 	// If not set, idle timeout is not enforced for sessions created from this escalation.
 	// Must be at least 1m and must not exceed maxValidFor; when maxValidFor is omitted, admission validates against the default 1h.
 	// +optional
-	// +kubebuilder:validation:Pattern="^([0-9]+d([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))*|([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+)$"
+	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
 	IdleTimeout string `json:"idleTimeout,omitempty"`
 
 	// retainFor is the amount of time to wait before removing a session for this escalation after it expired
 	// +optional
-	// +kubebuilder:validation:Pattern="^([0-9]+d([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))*|([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+)$"
+	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
 	RetainFor string `json:"retainFor,omitempty"`
 
 	// approvalTimeout is the maximum amount of time allowed for an approver to approve a session for this escalation.
 	// If this duration elapses without approval, the session expires and transitions to ApprovalTimeout state.
 	// +default="1h"
 	// +optional
-	// +kubebuilder:validation:Pattern="^([0-9]+d([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))*|([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+)$"
+	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
 	ApprovalTimeout string `json:"approvalTimeout,omitempty"`
 
 	// clusterConfigRefs lists ClusterConfig object names this escalation applies to (alternative to allowed.clusters).

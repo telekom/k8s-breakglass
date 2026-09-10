@@ -1829,6 +1829,10 @@ Template and cluster-binding `constraints.maxDuration` and `defaultDuration`
 accept weeks (`1w`), years (`1y`), and fractional sub-day values (`1.5h`),
 consistent with runtime duration parsing. Day, week, and year terms must be integers.
 
+The same duration syntax is accepted for `requestedDuration`, pod-copy `ttl`,
+and audit `recordingRetention`, so admission validation matches the shared
+runtime parser.
+
 When `spec.audit.recordingRetention` is supplied, it must be a positive duration,
 even when terminal recording is disabled. Invalid values produce one field error.
 
