@@ -2104,3 +2104,5 @@ Rejected requests are terminal evidence: explicit `retainFor` is stamped on the
 rejection API transition and is not extended by cleanup retries. Periodic cleanup
 honors that deadline and preserves unresolved resource evidence even after it
 elapses. Rejected requests never count as active sessions.
+
+Replaying a confirmed ephemeral-container completion keeps reference bookkeeping idempotent. Allowed-pod authorization is restored only for an Active session that still passes the expiry fence.
