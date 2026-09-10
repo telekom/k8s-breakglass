@@ -77,7 +77,7 @@ func newDeploymentFenceFixture(t *testing.T) (*DebugSessionController, *breakgla
 	hub := fake.NewClientBuilder().
 		WithScheme(s).
 		WithObjects(cc, secret, ds, template).
-		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).
 		Build()
 	target := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug"}}).

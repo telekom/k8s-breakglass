@@ -130,6 +130,28 @@ func TestApplyDebugSessionStatusRejectsMissingExpiryResurrection(t *testing.T) {
 	assert.Contains(t, err.Error(), "must become terminal")
 }
 
+func TestApplyDebugSessionStatusRejectsRejectedResurrection(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	current := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "rejected-apply", Namespace: "default"},
+		Status:     breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateRejected},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(current).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	desired := current.DeepCopy()
+	desired.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	expiresAt := metav1.NewTime(time.Now().Add(time.Hour))
+	desired.Status.ExpiresAt = &expiresAt
+
+	err := ApplyDebugSessionStatus(context.Background(), fakeClient, desired)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "terminal state")
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(current), &stored))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, stored.Status.State)
+}
+
 func TestApplyDebugSessionStatusRejectsJoinLeaveAfterExpiry(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))

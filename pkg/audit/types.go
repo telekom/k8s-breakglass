@@ -114,6 +114,7 @@ const (
 	EventDebugSessionCreated         EventType = "debug_session.created"
 	EventDebugSessionStarted         EventType = "debug_session.started"
 	EventDebugSessionTerminated      EventType = "debug_session.terminated"
+	EventDebugSessionRejected        EventType = "debug_session.rejected"
 	EventDebugSessionFailed          EventType = "debug_session.failed"
 	EventDebugSessionExpired         EventType = "debug_session.expired"
 	EventDebugSessionApprovalTimeout EventType = "debug_session.approval_timeout"
@@ -338,6 +339,7 @@ func SeverityForEventType(eventType EventType) Severity {
 
 	// Warning events - should be reviewed
 	case EventAccessDenied, EventAccessDeniedPolicy, EventSessionRejected, EventSessionDenied,
+		EventDebugSessionRejected,
 		EventSessionApprovalUnverifiedGroups,
 		EventEscalationRejected, EventPolicyViolation, EventAdmissionDenied,
 		EventSecretAccessed, EventSecretUpdated, EventResourceExec, EventResourceDelete,
@@ -483,7 +485,7 @@ func IsSensitiveEvent(eventType EventType) bool {
 		EventPolicyViolation, EventSecretAccessed, EventSecretCreated,
 		EventSecretUpdated, EventSecretDeleted, EventAuthFailure,
 		EventDebugSessionCreated, EventDebugSessionStarted,
-		EventDebugSessionTerminated, EventDebugSessionFailed,
+		EventDebugSessionTerminated, EventDebugSessionRejected, EventDebugSessionFailed,
 		EventDebugSessionExpired, EventDebugSessionApprovalTimeout,
 		EventDebugSessionBindingUnresolved,
 		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,

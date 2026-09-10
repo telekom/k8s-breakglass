@@ -409,7 +409,7 @@ func TestDebugSessionReconciler_ApprovalWorkflow(t *testing.T) {
 		fetchedSession.Status.Approval.RejectedBy = "security@example.com"
 		fetchedSession.Status.Approval.RejectedAt = &now
 		fetchedSession.Status.Approval.Reason = "Insufficient justification"
-		fetchedSession.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+		fetchedSession.Status.State = breakglassv1alpha1.DebugSessionStateRejected
 		fetchedSession.Status.Message = "Session rejected: Insufficient justification"
 
 		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
@@ -424,7 +424,7 @@ func TestDebugSessionReconciler_ApprovalWorkflow(t *testing.T) {
 
 		assert.Equal(t, "security@example.com", fetchedSession.Status.Approval.RejectedBy)
 		assert.NotNil(t, fetchedSession.Status.Approval.RejectedAt)
-		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, fetchedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, fetchedSession.Status.State)
 	})
 
 	t.Run("session approval times out in reconciler", func(t *testing.T) {
@@ -1792,6 +1792,12 @@ func TestDebugSessionReconciler_InvalidStateTransitions(t *testing.T) {
 			shouldError: true,
 		},
 		{
+			name:        "rejected cannot go to active",
+			fromState:   breakglassv1alpha1.DebugSessionStateRejected,
+			toState:     breakglassv1alpha1.DebugSessionStateActive,
+			shouldError: true,
+		},
+		{
 			name:        "active can go to terminated",
 			fromState:   breakglassv1alpha1.DebugSessionStateActive,
 			toState:     breakglassv1alpha1.DebugSessionStateTerminated,
@@ -1812,6 +1818,7 @@ func TestDebugSessionReconciler_InvalidStateTransitions(t *testing.T) {
 
 			// Terminal states should not transition back to active
 			isTerminalState := tt.fromState == breakglassv1alpha1.DebugSessionStateExpired ||
+				tt.fromState == breakglassv1alpha1.DebugSessionStateRejected ||
 				tt.fromState == breakglassv1alpha1.DebugSessionStateTerminated ||
 				tt.fromState == breakglassv1alpha1.DebugSessionStateFailed
 
@@ -1820,6 +1827,93 @@ func TestDebugSessionReconciler_InvalidStateTransitions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDebugSessionController_RejectedCleanupAndLegacyRejectedMetadata(t *testing.T) {
+	scheme := testScheme()
+
+	t.Run("rejected_with_owned_resource_requeues_cleanup", func(t *testing.T) {
+		session := newTestDebugSession("rejected-cleanup", "test-template", "test-cluster", "user@example.com")
+		session.Finalizers = []string{"breakglass.t-caas.telekom.com/debug-session-cleanup"}
+		session.Status.State = breakglassv1alpha1.DebugSessionStateRejected
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "owned-debug-config", Namespace: "breakglass-debug", Source: "pod-template"},
+		}
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).Build()
+		controller := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil)
+
+		result, err := controller.Reconcile(context.Background(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(session)})
+		require.NoError(t, err)
+		assert.NotEqual(t, reconcile.Result{}, result, "rejected sessions with owned resources must retry cleanup")
+		var stored breakglassv1alpha1.DebugSession
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, stored.Status.State)
+		assert.Equal(t, []string{"breakglass.t-caas.telekom.com/debug-session-cleanup"}, stored.Finalizers)
+	})
+
+	t.Run("legacy_terminated_rejection_metadata_remains_terminal", func(t *testing.T) {
+		rejectedAt := metav1.NewTime(time.Now().Add(-time.Minute))
+		session := newTestDebugSession("legacy-rejected", "test-template", "test-cluster", "user@example.com")
+		session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{RejectedAt: &rejectedAt, RejectedBy: "approver"}
+		template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "test-template"}}
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(session, template).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).Build()
+		controller := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil)
+
+		result, err := controller.Reconcile(context.Background(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(session)})
+		require.NoError(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
+		var stored breakglassv1alpha1.DebugSession
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, stored.Status.State)
+		assert.NotNil(t, stored.Status.Approval.RejectedAt)
+	})
+}
+
+func TestDebugSessionController_CleanupAccountingOnlyReleasesActiveSessionsOnce(t *testing.T) {
+	scheme := testScheme()
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "accounting-template"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+		},
+		Status: breakglassv1alpha1.DebugSessionTemplateStatus{ActiveSessionCount: 1},
+	}
+	startedAt := metav1.NewTime(time.Now().Add(-time.Minute))
+	activeTerminated := newTestDebugSession("accounted-terminated", template.Name, "test-cluster", "user@example.com")
+	activeTerminated.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+	activeTerminated.Status.StartsAt = &startedAt
+	rejected := newTestDebugSession("never-active-rejected", template.Name, "test-cluster", "user@example.com")
+	rejected.Spec.Cluster = "other-cluster"
+	rejected.Status.State = breakglassv1alpha1.DebugSessionStateRejected
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(template, activeTerminated, rejected).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil)
+	activeMetric := metrics.DebugSessionsActive.WithLabelValues(activeTerminated.Spec.Cluster, activeTerminated.Spec.TemplateRef)
+	rejectedMetric := metrics.DebugSessionsActive.WithLabelValues(rejected.Spec.Cluster, rejected.Spec.TemplateRef)
+	activeBaseline := testutil.ToFloat64(activeMetric)
+	activeMetric.Set(activeBaseline + 1)
+	t.Cleanup(func() {
+		metrics.DebugSessionsActive.DeleteLabelValues(activeTerminated.Spec.Cluster, activeTerminated.Spec.TemplateRef)
+		metrics.DebugSessionsActive.DeleteLabelValues(rejected.Spec.Cluster, rejected.Spec.TemplateRef)
+	})
+
+	_, err := controller.handleCleanup(context.Background(), activeTerminated)
+	require.NoError(t, err)
+	assert.Equal(t, activeBaseline, testutil.ToFloat64(activeMetric))
+	_, err = controller.handleCleanup(context.Background(), activeTerminated)
+	require.NoError(t, err)
+	assert.Equal(t, activeBaseline, testutil.ToFloat64(activeMetric))
+
+	_, err = controller.handleCleanup(context.Background(), rejected)
+	require.NoError(t, err)
+	assert.Equal(t, float64(0), testutil.ToFloat64(rejectedMetric), "never-active rejection must not contribute to active metrics")
 }
 
 func TestDebugSessionReconciler_RenewalErrors(t *testing.T) {
@@ -1924,7 +2018,7 @@ func TestDebugSessionReconciler_ApprovalErrors(t *testing.T) {
 	t.Run("cannot approve already rejected session", func(t *testing.T) {
 		now := metav1.Now()
 		session := newTestDebugSession("already-rejected-session", "test-template", "production", "user@example.com")
-		session.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+		session.Status.State = breakglassv1alpha1.DebugSessionStateRejected
 		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{
 			Required:   true,
 			RejectedBy: "security@example.com",
@@ -1947,7 +2041,7 @@ func TestDebugSessionReconciler_ApprovalErrors(t *testing.T) {
 
 		// Session is already rejected - approval should be prevented
 		assert.NotEmpty(t, fetchedSession.Status.Approval.RejectedBy)
-		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, fetchedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, fetchedSession.Status.State)
 	})
 
 	t.Run("cannot approve active session", func(t *testing.T) {
@@ -2461,7 +2555,12 @@ func TestUpdateTemplateStatus(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("increment active session count", func(t *testing.T) {
-		err := ctrl.updateTemplateStatus(ctx, sessionTemplate, true)
+		session := newTestDebugSession("accounting-live", sessionTemplate.Name, "cluster", "user")
+		session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+		now := metav1.Now()
+		session.Status.StartsAt = &now
+		require.NoError(t, fakeClient.Create(ctx, session))
+		err := ctrl.reconcileActiveAccounting(ctx, session, true)
 		require.NoError(t, err)
 
 		// Verify template status was updated
@@ -2479,7 +2578,9 @@ func TestUpdateTemplateStatus(t *testing.T) {
 	})
 
 	t.Run("decrement active session count", func(t *testing.T) {
-		err := ctrl.updateTemplateStatus(ctx, sessionTemplate, false)
+		session := newTestDebugSession("accounting-live", sessionTemplate.Name, "cluster", "user")
+		require.NoError(t, client.IgnoreNotFound(fakeClient.Delete(ctx, session)))
+		err := ctrl.reconcileActiveAccounting(ctx, session, false)
 		require.NoError(t, err)
 
 		// Verify template status was decremented
@@ -2491,7 +2592,9 @@ func TestUpdateTemplateStatus(t *testing.T) {
 
 	t.Run("does not go below zero", func(t *testing.T) {
 		// Decrement again - should stay at 0
-		err := ctrl.updateTemplateStatus(ctx, sessionTemplate, false)
+		session := newTestDebugSession("accounting-live", sessionTemplate.Name, "cluster", "user")
+		require.NoError(t, client.IgnoreNotFound(fakeClient.Delete(ctx, session)))
+		err := ctrl.reconcileActiveAccounting(ctx, session, false)
 		require.NoError(t, err)
 
 		updatedTemplate := &breakglassv1alpha1.DebugSessionTemplate{}

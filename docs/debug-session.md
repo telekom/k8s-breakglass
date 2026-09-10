@@ -123,9 +123,9 @@ Debug sessions follow a strict state machine:
      │                   │                    │
      │                   │                    │
      ▼                   ▼                    ▼
- ┌────────┐          ┌────────┐          ┌─────────┐
- │ Failed │          │ Failed │          │ Expired │
- └────────┘          └────────┘          └─────────┘
+ ┌────────┐          ┌──────────┐        ┌─────────┐
+ │ Failed │          │ Rejected │        │ Expired │
+ └────────┘          └──────────┘        └─────────┘
                                               │
                                               │
                                           ┌──────────────┐
@@ -138,9 +138,10 @@ Debug sessions follow a strict state machine:
 | `Pending` | Session is being set up | ❌ |
 | `PendingApproval` | Waiting for approver action | ❌ |
 | `Active` | Debug pods running, access granted | ✅ |
+| `Rejected` | Approver denied the request | ❌ |
 | `Expired` | Session duration exceeded | ❌ |
 | `Terminated` | Manually ended by owner or admin | ❌ |
-| `Failed` | Setup failed or rejected | ❌ |
+| `Failed` | Setup failed | ❌ |
 
 ## Resource Definitions
 
@@ -1874,6 +1875,10 @@ spec:
 4. **Investigate cleanup retries**: Failed debug-resource deletes and resources held by finalizers keep their status tracking entries so the controller can retry cleanup on the next reconciliation
 5. **Bound Job lifetimes**: Job workloads reconcile their active deadline against the committed session expiry after a delayed start
 
+Terminal cleanup recomputes active-resource accounting from live sessions. This
+makes repeated reconciliation idempotent and leaves never-active rejected or
+pre-activation terminated sessions out of active template and metric counts.
+
 Template and cluster-binding `constraints.maxDuration` and `defaultDuration`
 accept weeks (`1w`), years (`1y`), and fractional sub-day values (`1.5h`),
 consistent with runtime duration parsing. Day, week, and year terms must be integers.
@@ -2059,3 +2064,11 @@ If a tracked-resource create response is lost to a bounded timeout, the
 controller recovers only a live object carrying the session and operation
 markers and matching the requested content, then records its returned UID. Canceled, permanent, and non-timeout
 transport errors do not trigger adoption.
+
+Active accounting is recomputed from live session state: template counts include all clusters, while active gauges remain per cluster and template. Optimistic template conflicts repeat the live list, and Active reconciliation repairs accounting after a transient publication failure. Accounting failures do not prevent spoke resource cleanup.
+
+Active accounting uses the CRD selectable `spec.templateRef` field to bound each authoritative paginated list to the affected template, rather than scanning unrelated session history.
+
+Active-session accounting uses authoritative, paginated template-scoped reads. Lifecycle transitions update counts immediately; periodic repairs are coalesced per template for 30 seconds within each controller and skip unchanged template status writes. Failed accounting retries remain immediate. Optional pod-template usage metadata failures are logged and retried on the next periodic repair without blocking session cleanup.
+
+Accounting scans and gauge publication are serialized per template within each controller, so an older scan cannot overwrite a newer lifecycle count. Completed operations release their locks; bounded periodic bookkeeping evicts only the oldest template instead of resetting other repair intervals.

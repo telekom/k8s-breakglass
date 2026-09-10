@@ -33,6 +33,7 @@ func TestDebugSessionState(t *testing.T) {
 		{"pending state", DebugSessionStatePending},
 		{"pending approval state", DebugSessionStatePendingApproval},
 		{"active state", DebugSessionStateActive},
+		{"rejected state", DebugSessionStateRejected},
 		{"expired state", DebugSessionStateExpired},
 		{"terminated state", DebugSessionStateTerminated},
 		{"failed state", DebugSessionStateFailed},
@@ -1017,6 +1018,7 @@ func TestDebugSession_InvalidState(t *testing.T) {
 		if session.Status.State == DebugSessionStatePending ||
 			session.Status.State == DebugSessionStatePendingApproval ||
 			session.Status.State == DebugSessionStateActive ||
+			session.Status.State == DebugSessionStateRejected ||
 			session.Status.State == DebugSessionStateExpired ||
 			session.Status.State == DebugSessionStateTerminated ||
 			session.Status.State == DebugSessionStateFailed {
@@ -1495,6 +1497,22 @@ func TestDebugSessionValidateUpdateKeepsTerminalStateAndElapsedExpiry(t *testing
 	_, err := resurrected.ValidateUpdate(context.Background(), base, resurrected)
 	if err == nil {
 		t.Fatal("expected terminal DebugSession resurrection to be rejected")
+	}
+}
+
+func TestDebugSessionValidateUpdateRejectsRejectedResurrection(t *testing.T) {
+	base := &DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "rejected", Namespace: "breakglass"},
+		Spec:       DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "user@example.com"},
+		Status:     DebugSessionStatus{State: DebugSessionStateRejected},
+	}
+	resurrected := base.DeepCopy()
+	resurrected.Status.State = DebugSessionStateActive
+	expiresAt := metav1.NewTime(time.Now().Add(time.Hour))
+	resurrected.Status.ExpiresAt = &expiresAt
+
+	if _, err := resurrected.ValidateUpdate(context.Background(), base, resurrected); err == nil {
+		t.Fatal("expected rejected DebugSession resurrection to be rejected")
 	}
 }
 

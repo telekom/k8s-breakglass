@@ -35,7 +35,7 @@ import (
 )
 
 // DebugSessionState represents the current state of a debug session.
-// +kubebuilder:validation:Enum=Pending;PendingApproval;Active;Expired;Terminated;Failed
+// +kubebuilder:validation:Enum=Pending;PendingApproval;Active;Rejected;Expired;Terminated;Failed
 type DebugSessionState string
 
 const (
@@ -45,6 +45,8 @@ const (
 	DebugSessionStatePendingApproval DebugSessionState = "PendingApproval"
 	// DebugSessionStateActive indicates the session is active and debug pods are running.
 	DebugSessionStateActive DebugSessionState = "Active"
+	// DebugSessionStateRejected indicates the approval request was rejected.
+	DebugSessionStateRejected DebugSessionState = "Rejected"
 	// DebugSessionStateExpired indicates the session has expired.
 	DebugSessionStateExpired DebugSessionState = "Expired"
 	// DebugSessionStateTerminated indicates the session was manually terminated.
@@ -1114,7 +1116,7 @@ func validateKubectlDebugOperations(oldOperations, newOperations []KubectlDebugO
 }
 
 func isTerminalDebugSessionState(state DebugSessionState) bool {
-	return state == DebugSessionStateExpired || state == DebugSessionStateTerminated || state == DebugSessionStateFailed
+	return state == DebugSessionStateRejected || state == DebugSessionStateExpired || state == DebugSessionStateTerminated || state == DebugSessionStateFailed
 }
 
 func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *DebugSession) (admission.Warnings, error) {

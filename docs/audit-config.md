@@ -182,12 +182,14 @@ The audit system captures 120+ event types organized by category:
 - `session.approved` - Session approved by approver
 - `session.denied` - Session denied by approver
 - `session.rejected` - Session auto-rejected by policy
+- `session.withdrawn` / `session.dropped` - Session withdrawn or dropped by its requester
 - `session.activated` - Session now active
 - `session.expired` - Session time expired
 - `session.termination_intent` - Duplicate-cleanup decision stored with the terminal state before delivery
 - `session.revoked` - Session manually revoked
 - `session.extended` - Session duration extended
 - `session.validated` / `session.invalidated` - Session validation
+- `session.approval_unverified_groups` - Approval used unverified JWT groups after a cluster-side lookup failure
 
 ### Access Events (per-request granularity)
 - `access.allowed` / `access.granted` - Access permitted
@@ -220,6 +222,8 @@ These capture access to non-API endpoints:
 ### Secret Access (high security)
 - `secret.accessed` / `secret.created`
 - `secret.updated` / `secret.deleted`
+- `configmap.accessed` / `serviceaccount.used`
+- `token.generated` / `token.validated` / `token.revoked`
 
 ### RBAC Events
 - `role.created` / `role.updated` / `role.deleted`
@@ -229,7 +233,9 @@ These capture access to non-API endpoints:
 
 ### Debug Session Events
 - `debug_session.created` / `debug_session.started`
-- `debug_session.attached` / `debug_session.terminated`
+- `debug_session.attached` / `debug_session.terminated` / `debug_session.rejected`
+- `debug_session.failed` / `debug_session.expired` / `debug_session.approval_timeout`
+- `debug_session.binding_unresolved`
 - `debug_session.command` / `debug_session.file_access`
 
 ### Authentication Events
@@ -346,8 +352,9 @@ spec:
 
 > **Sensitive event guarantee:** The following event types are **never sampled**
 > regardless of the `rate` setting: session request/approve/deny/reject/expire/
-> revoke/withdraw/drop, access denial, secret CRUD, auth failure, debug session
-> create/start/terminate/fail/expire/approval-timeout, cluster role binding
+> revoke/withdraw/drop/invalidation/termination intent/unverified-group approval,
+> access denial, secret CRUD, auth failure, debug session create/start/reject/
+> terminate/fail/expire/approval-timeout/binding-unresolved, cluster role binding
 > create/delete, resource impersonation, policy bypass/violation, and pod
 > security deny/warning/override. When the manager's main async queue is full,
 > sensitive events fall back to a **direct synchronous write** path, blocking up

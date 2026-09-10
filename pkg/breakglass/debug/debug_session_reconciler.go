@@ -27,6 +27,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -39,6 +40,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -78,23 +80,33 @@ func debugSessionIdentity(ds *breakglassv1alpha1.DebugSession) string {
 	return ds.Name
 }
 
+type accountingLock struct {
+	mu    sync.Mutex
+	users int
+}
+
 // DebugSessionController manages DebugSession lifecycle
 type DebugSessionController struct {
-	quotaNamespace string
-	quotaEnabled   bool
-	log            *zap.SugaredLogger
-	client         ctrlclient.Client
-	reader         ctrlclient.Reader
-	apiReader      ctrlclient.Reader
-	ccProvider     *cluster.ClientProvider
-	targetClients  ClientProviderInterface
-	auditService   *audit.Service
-	auditManager   *audit.Manager
-	mailService    breakglass.MailEnqueuer
-	auxiliaryMgr   *AuxiliaryResourceManager
-	brandingName   string
-	baseURL        string
-	disableEmail   bool
+	accountingMu             sync.Mutex
+	accountingLast           map[string]time.Time
+	accountingLocks          map[string]*accountingLock
+	accountingFlight         singleflight.Group
+	accountingFailureVersion uint64
+	quotaNamespace           string
+	quotaEnabled             bool
+	log                      *zap.SugaredLogger
+	client                   ctrlclient.Client
+	reader                   ctrlclient.Reader
+	apiReader                ctrlclient.Reader
+	ccProvider               *cluster.ClientProvider
+	targetClients            ClientProviderInterface
+	auditService             *audit.Service
+	auditManager             *audit.Manager
+	mailService              breakglass.MailEnqueuer
+	auxiliaryMgr             *AuxiliaryResourceManager
+	brandingName             string
+	baseURL                  string
+	disableEmail             bool
 	// targetClientFactory and beforeDebugTargetWrite are nil in production. They
 	// are narrow seams for deployment fence tests: the former keeps tests from
 	// needing a live spoke API, while the latter injects a hub-side change after
@@ -259,7 +271,7 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		return c.handlePendingApproval(ctx, ds)
 	case breakglassv1alpha1.DebugSessionStateActive:
 		return c.handleActive(ctx, ds)
-	case breakglassv1alpha1.DebugSessionStateExpired, breakglassv1alpha1.DebugSessionStateTerminated:
+	case breakglassv1alpha1.DebugSessionStateRejected, breakglassv1alpha1.DebugSessionStateExpired, breakglassv1alpha1.DebugSessionStateTerminated:
 		return c.handleCleanup(ctx, ds)
 	case breakglassv1alpha1.DebugSessionStateFailed:
 		// Terminal state — but only once the spoke cluster is actually clean.
@@ -392,9 +404,9 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 		return c.activateSession(ctx, ds, template, binding)
 	}
 
-	// If rejected, mark as terminated
+	// Rejection is terminal and durable; cleanup handles any resources recorded before rejection.
 	if ds.Status.Approval != nil && ds.Status.Approval.RejectedAt != nil {
-		ds.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+		ds.Status.State = breakglassv1alpha1.DebugSessionStateRejected
 		ds.Status.Message = fmt.Sprintf("Rejected by %s: %s", ds.Status.Approval.RejectedBy, ds.Status.Approval.Reason)
 		return ctrl.Result{}, breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
 	}
@@ -491,8 +503,14 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		}
 		c.sendDebugSessionExpiredEmail(*notificationSession)
 		log.Info("Debug session expired")
-		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
+		if err := c.reconcileActiveAccounting(ctx, ds, false); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	}
+
+	if err := c.reconcilePeriodicActiveAccounting(ctx, ds); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Renewal commits session status before touching the spoke Job. Reconcile
@@ -528,21 +546,8 @@ func (c *DebugSessionController) terminalizeActiveSessionWithoutExpiry(ctx conte
 	}
 	c.log.Errorw("Debug session failed closed because its active lease is missing",
 		"debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
-	// This is an Active -> Failed transition, so release the active aggregates
-	// at the transition boundary.  handleFailedCleanup intentionally does not
-	// decrement them: it may run repeatedly while spoke cleanup is retried.
-	metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
-	if ds.Spec.TemplateRef != "" {
-		template, templateErr := c.getTemplate(ctx, ds.Spec.TemplateRef)
-		if templateErr == nil {
-			if updateErr := c.updateTemplateStatus(ctx, template, false); updateErr != nil {
-				c.log.Warnw("Failed to decrement template active session count after failed debug session",
-					"template", ds.Spec.TemplateRef, "error", updateErr)
-			}
-		} else {
-			c.log.Warnw("Failed to load template after failed debug session",
-				"template", ds.Spec.TemplateRef, "error", templateErr)
-		}
+	if err := c.reconcileActiveAccounting(ctx, ds, false); err != nil {
+		return ctrl.Result{}, err
 	}
 	metrics.DebugSessionsFailed.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()
 	return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
@@ -568,6 +573,9 @@ func (c *DebugSessionController) sendDebugSessionExpiredEmail(ds breakglassv1alp
 // but reconciliation keeps retrying the delete until the status lists are empty.
 func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	if !hasTrackedSpokeResources(ds) {
+		if err := c.reconcileActiveAccounting(ctx, ds, false); err != nil {
+			return ctrl.Result{}, err
+		}
 		releaseSessionMetricSeries(ds.Name)
 		return ctrl.Result{}, nil // Nothing left on the spoke: genuinely terminal.
 	}
@@ -592,6 +600,9 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 	}
 
 	log.Infow("Cleanup of spoke resources completed for failed debug session")
+	if err := c.reconcileActiveAccounting(ctx, ds, false); err != nil {
+		return ctrl.Result{}, err
+	}
 	releaseSessionMetricSeries(ds.Name)
 	return ctrl.Result{}, nil
 }
@@ -658,27 +669,12 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
 
-	// Decrement active gauge for terminated sessions. Expired sessions are
-	// already decremented in handleActive before entering cleanup.
-	if ds.Status.State == breakglassv1alpha1.DebugSessionStateTerminated {
-		metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Dec()
-	}
-
-	// Record metrics
 	if ds.Status.StartsAt != nil {
 		duration := time.Since(ds.Status.StartsAt.Time).Seconds()
 		metrics.DebugSessionDuration.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Observe(duration)
 	}
-
-	// Update template status to decrement active session count
-	if ds.Spec.TemplateRef != "" {
-		template, err := c.getTemplate(ctx, ds.Spec.TemplateRef)
-		if err == nil {
-			if err := c.updateTemplateStatus(ctx, template, false); err != nil {
-				log.Warnw("Failed to update template status during cleanup", "template", ds.Spec.TemplateRef, "error", err)
-				// Non-fatal: cleanup still succeeds
-			}
-		}
+	if err := c.reconcileActiveAccounting(ctx, ds, false); err != nil {
+		return ctrl.Result{}, fmt.Errorf("reconcile terminal accounting: %w", err)
 	}
 
 	// Release the per-session metric series. The "session" label is unique per
@@ -818,12 +814,8 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	}
 
 	metrics.DebugSessionsCreated.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()
-	metrics.DebugSessionsActive.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()
-
-	// Update template status to reflect active session
-	if err := c.updateTemplateStatus(ctx, template, true); err != nil {
-		log.Warnw("Failed to update template status", "template", template.Name, "error", err)
-		// Non-fatal: session activation still succeeds
+	if err := c.reconcileActiveAccounting(ctx, ds, true); err != nil {
+		return ctrl.Result{}, fmt.Errorf("reconcile active accounting: %w", err)
 	}
 
 	log.Infow("Debug session activated",

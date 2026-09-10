@@ -240,7 +240,7 @@ ownerReference across clusters. The upstream controller records created
 resources in `status.deployedResources`,
 `status.auxiliaryResourceStatuses`, and
 `status.podTemplateResourceStatuses`, then explicitly deletes them when a
-session reaches `Expired`, `Terminated`, or `Failed`. Auxiliary resources with
+session reaches `Rejected`, `Expired`, `Terminated`, or `Failed`. Auxiliary resources with
 `deleteAfter: false` are intentionally retained. Cleanup errors remain in
 status and are retried; verify the status lists and the target cluster rather
 than relying on a successful delete request alone.
