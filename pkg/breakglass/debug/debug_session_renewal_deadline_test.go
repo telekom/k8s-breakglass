@@ -114,6 +114,7 @@ func TestExtendTrackedJobDeadlinesRejectsMissingDeadline(t *testing.T) {
 func TestExtendTrackedJobDeadlinesUsesUIDAndIsIdempotent(t *testing.T) {
 	start := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
 	deadline := int64(3600)
+	liveExpiry := metav1.NewTime(start.Add(2 * time.Hour))
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: "debug-job", Namespace: "default", UID: "replacement-uid"},
 		Status:     batchv1.JobStatus{StartTime: &start},
@@ -122,7 +123,7 @@ func TestExtendTrackedJobDeadlinesUsesUIDAndIsIdempotent(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "renew-job-session", Namespace: "default"},
 		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "production"},
-		Status: breakglassv1alpha1.DebugSessionStatus{DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{
+		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &liveExpiry, DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{
 			APIVersion: "batch/v1", Kind: "Job", Name: job.Name, Namespace: job.Namespace, UID: "original-uid", Source: "debug-pod",
 		}}},
 	}
@@ -157,8 +158,7 @@ func TestExtendTrackedJobDeadlinesRejectsExpiryBeforeStart(t *testing.T) {
 		}}},
 	}
 	targetClient := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(job).Build()
-	ctrl := newRenewalDeadlineController(t, session, targetClient)
-	require.ErrorContains(t, ctrl.extendTrackedJobDeadlines(context.Background(), session, metav1.NewTime(start.Add(-time.Second))), "precedes its start time")
+	require.ErrorContains(t, syncTrackedDebugJobDeadlines(context.Background(), targetClient, session, metav1.NewTime(start.Add(-time.Second)), nil), "precedes its start time")
 }
 
 func TestExtendTrackedJobDeadlinesIgnoresNonWorkloadJobs(t *testing.T) {
@@ -178,7 +178,7 @@ func TestExtendTrackedJobDeadlinesIgnoresNonWorkloadJobs(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "renew-job-session", Namespace: "default"},
 		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "production"},
-		Status: breakglassv1alpha1.DebugSessionStatus{DeployedResources: []breakglassv1alpha1.DeployedResourceRef{
+		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: ptrTime(metav1.NewTime(start.Add(2 * time.Hour))), DeployedResources: []breakglassv1alpha1.DeployedResourceRef{
 			{APIVersion: "batch/v1", Kind: "Job", Name: workload.Name, Namespace: workload.Namespace, UID: string(workload.UID), Source: "debug-pod"},
 			{APIVersion: "batch/v1", Kind: "Job", Name: auxiliary.Name, Namespace: auxiliary.Namespace, UID: string(auxiliary.UID), Source: "auxiliary:collector"},
 			{APIVersion: "batch/v1", Kind: "Job", Name: "pod-template-job", Namespace: "default", UID: "pod-template-uid", Source: "pod-template"},
@@ -221,4 +221,43 @@ func TestTrackedJobDeadlineWaitsForStart(t *testing.T) {
 	require.Equal(t, 1, patches)
 	require.NoError(t, target.Get(context.Background(), client.ObjectKeyFromObject(job), job))
 	require.Equal(t, int64(7200), *job.Spec.ActiveDeadlineSeconds)
+}
+
+func TestTrackedJobDeadlineUsesCommittedExpiry(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		currentSeconds int64
+		committed      time.Duration
+		requested      time.Duration
+	}{
+		{name: "delayed start clamps initial duration", currentSeconds: 1800, committed: 25 * time.Minute, requested: 30 * time.Minute},
+		{name: "stale sync preserves newer renewal", currentSeconds: 10800, committed: 3 * time.Hour, requested: 90 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			start := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
+			expiry := metav1.NewTime(start.Add(tc.committed))
+			job := &batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{Name: "debug-job", Namespace: "default", UID: "job-uid"},
+				Status:     batchv1.JobStatus{StartTime: &start},
+				Spec:       batchv1.JobSpec{ActiveDeadlineSeconds: &tc.currentSeconds},
+			}
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "deadline-session", Namespace: "default", UID: "session-uid"},
+				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "production"},
+				Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expiry, DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{
+					APIVersion: "batch/v1", Kind: "Job", Name: job.Name, Namespace: job.Namespace, UID: string(job.UID), Source: "debug-pod",
+				}}},
+			}
+			target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(job).Build()
+			ctrl := newRenewalDeadlineController(t, session, target)
+			stale := session.DeepCopy()
+			requested := metav1.NewTime(start.Add(tc.requested))
+			stale.Status.ExpiresAt = &requested
+			require.NoError(t, ctrl.extendTrackedJobDeadlines(context.Background(), stale, requested))
+			updated := &batchv1.Job{}
+			require.NoError(t, target.Get(context.Background(), client.ObjectKeyFromObject(job), updated))
+			require.NotNil(t, updated.Spec.ActiveDeadlineSeconds)
+			require.Equal(t, int64(tc.committed/time.Second), *updated.Spec.ActiveDeadlineSeconds)
+		})
+	}
 }

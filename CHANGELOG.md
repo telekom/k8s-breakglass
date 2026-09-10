@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Omit disabled deployment variables from requester template discovery.
 
 - Retry deadline synchronization quietly while tracked Jobs are waiting to start.
+- Keep tracked debug Job deadlines aligned with the latest committed session expiry,
+  including delayed starts and shorter live leases.
 
 - Include diagnostic-artifact-collector in aggregate multi-platform utility builds.
 

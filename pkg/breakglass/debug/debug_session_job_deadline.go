@@ -16,9 +16,8 @@ import (
 
 type debugJobDeadlineFence func(context.Context, metav1.Time) (metav1.Time, error)
 
-// syncTrackedDebugJobDeadlines makes every tracked workload Job at least as
-// long-lived as the committed session expiry. It is deliberately monotonic:
-// retries never shorten a deadline, and the recorded UID and optimistic
+// syncTrackedDebugJobDeadlines keeps every tracked workload Job aligned with
+// the committed session expiry. The recorded UID and optimistic
 // resource-version patch prevent changing a same-name replacement.
 func syncTrackedDebugJobDeadlines(
 	ctx context.Context,
@@ -69,13 +68,10 @@ func syncTrackedDebugJobDeadlines(
 		}
 		remaining := effectiveExpiry.Sub(job.Status.StartTime.Time)
 		desiredSeconds := int64(remaining / time.Second)
-		if remaining%time.Second != 0 {
-			desiredSeconds++
-		}
 		if desiredSeconds < 1 {
 			return fmt.Errorf("tracked Job %s/%s renewed expiry precedes its start time", ref.Namespace, ref.Name)
 		}
-		if *job.Spec.ActiveDeadlineSeconds >= desiredSeconds {
+		if *job.Spec.ActiveDeadlineSeconds == desiredSeconds {
 			continue
 		}
 
@@ -83,7 +79,7 @@ func syncTrackedDebugJobDeadlines(
 		deadline := desiredSeconds
 		updated.Spec.ActiveDeadlineSeconds = &deadline
 		if err := targetClient.Patch(ctx, updated, ctrlclient.MergeFromWithOptions(job, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
-			return fmt.Errorf("extend tracked Job %s/%s deadline: %w", ref.Namespace, ref.Name, err)
+			return fmt.Errorf("synchronize tracked Job %s/%s deadline: %w", ref.Namespace, ref.Name, err)
 		}
 	}
 	return nil
@@ -124,8 +120,8 @@ func liveDebugSessionDeadline(
 		live.Status.ExpiresAt == nil || !time.Now().UTC().Before(live.Status.ExpiresAt.Time) {
 		return requested, fmt.Errorf("debug session is no longer active")
 	}
-	if live.Status.ExpiresAt.Before(&requested) {
-		return *live.Status.ExpiresAt, nil
-	}
-	return requested, nil
+	// The live status is the committed source of truth. Returning the caller's
+	// requested value when it is older would let a stale renewal shorten a Job
+	// after a newer renewal has already committed.
+	return *live.Status.ExpiresAt, nil
 }

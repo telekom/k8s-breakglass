@@ -1340,7 +1340,11 @@ update fails, the renewal remains accepted and the active reconciler retries
 the deadline sync without counting the renewal again. Each target patch is
 fenced by a live session and privileged cluster-configuration check. Jobs that
 have not started yet defer synchronization until their start time is available;
-normal reconciliation retries without warning.
+normal reconciliation retries without warning. Once a Job has started, the
+sync adjusts its relative deadline in either direction to match the latest
+committed session expiry. Kubernetes measures this deadline from the Job start
+time, so delayed startup requires a subsequent controller reconciliation;
+controller downtime can delay that adjustment and cleanup.
 Only the requester or an active `owner`/`participant` status entry can renew a
 session; `viewer` entries and participants with `leftAt` set cannot renew.
 The active-session expiry, approval-timeout, expiring-soon message, cleanup
@@ -1819,6 +1823,7 @@ spec:
 2. **Review long-running sessions**: Set alerts for sessions approaching max duration
 3. **Use termination**: Actively terminate sessions when done
 4. **Investigate cleanup retries**: Failed debug-resource deletes keep their status tracking entries so the controller can retry cleanup on the next reconciliation
+5. **Bound Job lifetimes**: Job workloads reconcile their active deadline against the committed session expiry after a delayed start
 
 ## Troubleshooting
 
