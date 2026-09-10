@@ -6,6 +6,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -58,7 +60,32 @@ func main() {
 		log.Fatal("unknown mode")
 	}
 	upstream, _ := url.Parse("http://127.0.0.1:8080")
-	server := &http.Server{Addr: ":8444", ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, Handler: httputil.NewSingleHostReverseProxy(upstream)}
+	proxy := httputil.NewSingleHostReverseProxy(upstream)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for strings.HasPrefix(r.URL.Path, "/api/debugSessionArtifactUploads/") {
+			if _, err := os.Stat("/artifacts/pause-uploads"); os.IsNotExist(err) {
+				break
+			}
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+		proxy.ServeHTTP(w, r)
+	})
+	providerURL, _ := url.Parse("https://127.0.0.1:9000")
+	providerProxy := httputil.NewSingleHostReverseProxy(providerURL)
+	providerProxy.Transport = &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: "artifact-s3.breakglass-system.svc"}}
+	provider := &http.Server{Addr: ":9002", ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := os.Stat("/artifacts/provider-outage"); err == nil {
+			http.Error(w, "disposable fixture provider unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		providerProxy.ServeHTTP(w, r)
+	})}
+	go func() { log.Fatal(provider.ListenAndServeTLS("/fixture-tls/tls.crt", "/fixture-tls/tls.key")) }()
+	server := &http.Server{Addr: ":8444", ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, Handler: handler}
 	log.Fatal(server.ListenAndServeTLS("/fixture-tls/tls.crt", "/fixture-tls/tls.key"))
 }
 
@@ -79,6 +106,38 @@ func s3Fixture(mode string) error {
 	})
 	cfg := artifacts3.Config{Endpoint: "https://artifact-s3.breakglass-system.svc:9000", Region: "us-east-1", Bucket: "artifact-kind", Prefix: "e2e", InstanceID: "kind-artifact-s3-fixture-v1", UsePathStyle: true, RequireVersioned: true}
 	c := awss3.NewFromConfig(aws.Config{Region: cfg.Region, Credentials: creds}, func(o *awss3.Options) { o.BaseEndpoint = aws.String(cfg.Endpoint); o.UsePathStyle = true })
+	if mode == "s3-conflict-add" {
+		key := os.Getenv("ARTIFACT_FIXTURE_OBJECT")
+		if !strings.HasPrefix(key, "e2e/") {
+			return fmt.Errorf("invalid fixture object key")
+		}
+		result, err := c.PutObject(ctx, &awss3.PutObjectInput{Bucket: aws.String(cfg.Bucket), Key: aws.String(key), Body: strings.NewReader("foreign fixture version"), Metadata: map[string]string{"runtime-binding-sha256": "foreign"}})
+		if err != nil {
+			return err
+		}
+		data, err := json.Marshal(map[string]string{"key": key, "version": aws.ToString(result.VersionId)})
+		if err != nil {
+			return err
+		}
+		return os.WriteFile("/artifacts/conflict-version.json", data, 0600)
+	}
+	if mode == "s3-conflict-remove" {
+		data, err := os.ReadFile("/artifacts/conflict-version.json")
+		if err != nil {
+			return err
+		}
+		var identity map[string]string
+		if err = json.Unmarshal(data, &identity); err != nil {
+			return err
+		}
+		if !strings.HasPrefix(identity["key"], "e2e/") || identity["version"] == "" {
+			return fmt.Errorf("invalid fixture version identity")
+		}
+		if _, err = c.DeleteObject(ctx, &awss3.DeleteObjectInput{Bucket: aws.String(cfg.Bucket), Key: aws.String(identity["key"]), VersionId: aws.String(identity["version"])}); err != nil {
+			return err
+		}
+		return os.Remove("/artifacts/conflict-version.json")
+	}
 	if mode == "s3-ready" {
 		_, err := c.ListBuckets(ctx, &awss3.ListBucketsInput{})
 		return err

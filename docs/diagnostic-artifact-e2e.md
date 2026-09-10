@@ -86,3 +86,28 @@ The versioned bucket and backend sentinel are provisioned by the test helper.
 
 Compilation and lint are local checks only. Actual container, storage, admitted
 Pod and lifecycle behavior requires the named Kind CI matrix to pass.
+
+## Failure injection
+
+A fixture-only HTTPS edge can pause collector uploads while the test sends a
+freshly issued artifact token directly to the real Breakglass upload handler.
+A valid re-bound archive is accepted first; missing/extra outputs, a wrong output
+declaration, a cross-recipe manifest and a wrong session identity must then be
+rejected on separate reservations. The independent native
+`TestArtifactArchiveMutationContract` verifies the probe's payload-tar checksum,
+so rejection cannot be attributed solely to broken fixture serialization.
+
+The deletion paths also exercise real failure retention before repair:
+
+- Local/PVC: temporarily unreadable object root, then a corrupted stored file.
+- S3: a fixture HTTP 503 outage, then an actual foreign object version with
+  mismatched ownership metadata in the disposable versioned bucket.
+- Both: a persisted cleanup reference to a nonexistent ClusterConfig, while the
+  original tracked Job and Secret still exist.
+
+Each failure must preserve the artifact finalizer and tracked resource inventory.
+Provider failures must set the cleanup-ambiguous status. Repair restores the
+original fixture evidence, triggers reconciliation, and must remove only the
+owned artifact while keeping its control artifact readable. The missing-config
+case repairs the original reference without creating a substitute ClusterConfig
+or changing its UID. These controls exist only in the disposable E2E fixture.

@@ -11,6 +11,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -253,7 +254,7 @@ spec:
 		entries := map[string][]byte{}
 		for {
 			h, err := tr.Next()
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			require.NoError(t, err)
@@ -276,6 +277,9 @@ spec:
 	}
 	first, data, token := collect()
 	assertArtifactRequesterCannotForge(t, s, first)
+	if cleanup == "terminate" {
+		assertArtifactArchiveRejections(t, s, requester, session.Name, request, data, status)
+	}
 	afterFirst := files()
 	require.Len(t, afterFirst, len(baseline)+1)
 	control, controlData, _ := collect()
@@ -338,7 +342,88 @@ spec:
 		}
 	}
 	require.Equal(t, 2, count)
+	// Inject an actual provider/read failure before deleting the first artifact.
+	// The unrelated control object remains available after the fault is removed.
+	fixture := func(args ...string) {
+		base := []string{"-n", ns, "exec", "deployment/breakglass-manager", "-c", "artifact-tls", "--"}
+		out, e := exec.CommandContext(ctx, "kubectl", append(base, args...)...).CombinedOutput()
+		require.NoError(t, e, string(out))
+	}
+	restore := func() {}
+	originalCluster := first.Status.TargetCluster
+	firstProviderIdentity := ""
+	for _, candidate := range afterFirst {
+		found := false
+		for _, existing := range baseline {
+			if candidate == existing {
+				found = true
+				break
+			}
+		}
+		if !found {
+			firstProviderIdentity = candidate
+			break
+		}
+	}
+	require.NotEmpty(t, firstProviderIdentity)
+	switch cleanup {
+	case "terminate":
+		if backend == "s3" {
+			fixture("touch", "/artifacts/provider-outage")
+			restore = func() { fixture("rm", "-f", "/artifacts/provider-outage") }
+		} else {
+			fixture("chmod", "000", "/artifacts/objects")
+			restore = func() { fixture("chmod", "700", "/artifacts/objects") }
+		}
+	case "expire":
+		if backend == "s3" {
+			key := strings.Split(firstProviderIdentity, "@")[0]
+			fixture("env", "ARTIFACT_FIXTURE_OBJECT="+key, "/fixture", "s3-conflict-add")
+			restore = func() { fixture("/fixture", "s3-conflict-remove") }
+		} else {
+			path := firstProviderIdentity
+			fixture("cp", path, "/artifacts/fault-backup")
+			fixture("sh", "-c", `printf corruption >> "$1"`, "fixture", path)
+			restore = func() { fixture("cp", "/artifacts/fault-backup", path); fixture("rm", "-f", "/artifacts/fault-backup") }
+		}
+	case "delete":
+		require.NoError(t, s.Client.Get(ctx, client.ObjectKeyFromObject(first), first))
+		before := first.DeepCopy()
+		first.Status.TargetCluster = "artifact-fixture-missing-cluster"
+		require.NoError(t, s.Client.Status().Patch(ctx, first, client.MergeFrom(before)))
+		restore = func() {
+			var live breakglassv1alpha1.DebugSessionArtifact
+			require.NoError(t, s.Client.Get(ctx, client.ObjectKeyFromObject(first), &live))
+			before := live.DeepCopy()
+			live.Status.TargetCluster = originalCluster
+			require.NoError(t, s.Client.Status().Patch(ctx, &live, client.MergeFrom(before)))
+		}
+	}
+	restored := false
+	t.Cleanup(func() {
+		if !restored {
+			restore()
+		}
+	})
 	require.NoError(t, s.Client.Delete(ctx, first))
+	require.Eventually(t, func() bool {
+		var live breakglassv1alpha1.DebugSessionArtifact
+		if s.Client.Get(ctx, client.ObjectKeyFromObject(first), &live) != nil {
+			return false
+		}
+		return !live.DeletionTimestamp.IsZero() && len(live.Finalizers) > 0 && len(live.Status.Resources) > 0 && (live.Status.CleanupAmbiguous || (cleanup == "delete" && string(live.Status.State) == "Deleted"))
+	}, helpers.WaitForStateTimeout, time.Second, "failed cleanup must retain finalizer and resource inventory")
+	restore()
+	restored = true
+	// A metadata update triggers an immediate retry after repairing the fixture.
+	var retry breakglassv1alpha1.DebugSessionArtifact
+	require.NoError(t, s.Client.Get(ctx, client.ObjectKeyFromObject(first), &retry))
+	beforeRetry := retry.DeepCopy()
+	if retry.Annotations == nil {
+		retry.Annotations = map[string]string{}
+	}
+	retry.Annotations["artifact-fixture-repaired"] = time.Now().Format(time.RFC3339Nano)
+	require.NoError(t, s.Client.Patch(ctx, &retry, client.MergeFrom(beforeRetry)))
 	require.Eventually(t, func() bool {
 		return apierrors.IsNotFound(s.Client.Get(ctx, client.ObjectKeyFromObject(first), &breakglassv1alpha1.DebugSessionArtifact{}))
 	}, helpers.WaitForStateTimeout, time.Second)
@@ -396,7 +481,8 @@ func assertArtifactRequesterCannotForge(t *testing.T, s *helpers.TestSetup, arti
 	t.Helper()
 	config := rest.CopyConfig(helpers.GetConfig(t))
 	user := helpers.TestUsers.SecurityRequester
-	config.Impersonate = rest.ImpersonationConfig{UserName: user.Email, Groups: user.Groups}
+	groups := append(append([]string(nil), user.Groups...), "system:authenticated")
+	config.Impersonate = rest.ImpersonationConfig{UserName: user.Email, Groups: groups}
 	low, err := client.New(config, client.Options{Scheme: s.Client.Scheme()})
 	require.NoError(t, err)
 	objects := []client.Object{}
@@ -431,8 +517,191 @@ func assertArtifactRequesterCannotForge(t *testing.T, s *helpers.TestSetup, arti
 	// This upstream fixture has no Kyverno installation: verify authorization,
 	// without pretending that a fake CRD proves downstream policy execution.
 	for _, verb := range []string{"create", "patch", "delete"} {
-		review := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: user.Email, Groups: user.Groups, ResourceAttributes: &authorizationv1.ResourceAttributes{Namespace: artifact.Namespace, Group: "kyverno.io", Resource: "policyexceptions", Verb: verb}}}
+		review := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: user.Email, Groups: groups, ResourceAttributes: &authorizationv1.ResourceAttributes{Namespace: artifact.Namespace, Group: "kyverno.io", Resource: "policyexceptions", Verb: verb}}}
 		require.NoError(t, s.Client.Create(s.Ctx, review))
 		require.False(t, review.Status.Allowed)
+	}
+}
+
+// Hold only the disposable uploader's HTTPS edge while exercising the actual
+// Breakglass upload handler with each freshly issued single-artifact token.
+func assertArtifactArchiveRejections(t *testing.T, s *helpers.TestSetup, api *helpers.APIClient, session string, request helpers.DebugSessionArtifactRequest, source []byte, status func(*helpers.APIClient, string, string, []byte, string) int) {
+	t.Helper()
+	fixture := func(args ...string) {
+		base := []string{"-n", s.Namespace, "exec", "deployment/breakglass-manager", "-c", "artifact-tls", "--"}
+		out, err := exec.CommandContext(s.Ctx, "kubectl", append(base, args...)...).CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+	fixture("touch", "/artifacts/pause-uploads")
+	t.Cleanup(func() { fixture("rm", "-f", "/artifacts/pause-uploads") })
+	for _, mutation := range []string{"valid-rebinding", "missing-output", "extra-output", "wrong-declaration", "cross-recipe", "wrong-identity"} {
+		admitted, err := api.CollectDebugSessionArtifact(s.Ctx, s.Namespace, session, request)
+		require.NoError(t, err)
+		var object breakglassv1alpha1.DebugSessionArtifact
+		var uploadToken string
+		require.Eventually(t, func() bool {
+			list := &breakglassv1alpha1.DebugSessionArtifactList{}
+			if s.Client.List(s.Ctx, list, client.InNamespace(s.Namespace)) != nil {
+				return false
+			}
+			for _, item := range list.Items {
+				if item.Spec.ArtifactID == admitted.ArtifactID {
+					object = item
+					for _, ref := range item.Status.Resources {
+						if ref.Kind == "Secret" && ref.UID != "" {
+							var secret corev1.Secret
+							if s.Client.Get(s.Ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, &secret) == nil && string(secret.UID) == ref.UID {
+								uploadToken = string(secret.Data["token"])
+							}
+						}
+					}
+					confirmed := 0
+					for _, ref := range item.Status.Resources {
+						if ref.UID != "" {
+							confirmed++
+						}
+					}
+					return confirmed == 2 && uploadToken != ""
+				}
+			}
+			return false
+		}, helpers.WaitForStateTimeout, time.Second)
+		corrupt := mutateArtifactArchive(t, source, admitted.ArtifactID, mutation)
+		route := "/api/debugSessionArtifactUploads/" + s.Namespace + "/" + session + "/" + admitted.ArtifactID
+		if mutation == "valid-rebinding" {
+			require.Equal(t, http.StatusCreated, status(api, http.MethodPut, route, corrupt, uploadToken), "rebinding control must be a valid archive")
+			require.NoError(t, s.Client.Delete(s.Ctx, &object))
+		} else {
+			require.Equal(t, http.StatusBadRequest, status(api, http.MethodPut, route, corrupt, uploadToken), mutation)
+		}
+		require.Eventually(t, func() bool {
+			return apierrors.IsNotFound(s.Client.Get(s.Ctx, client.ObjectKeyFromObject(&object), &breakglassv1alpha1.DebugSessionArtifact{}))
+		}, helpers.WaitForStateTimeout, time.Second, "probe reservation must clean its Job/Secret and provider objects")
+		for _, ref := range object.Status.Resources {
+			var resource client.Object = &corev1.Secret{}
+			if ref.Kind == "Job" {
+				resource = &batchv1.Job{}
+			}
+			require.True(t, apierrors.IsNotFound(s.Client.Get(s.Ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, resource)))
+		}
+	}
+	fixture("rm", "-f", "/artifacts/pause-uploads")
+}
+
+type artifactTarEntry struct {
+	header *tar.Header
+	body   []byte
+}
+
+func encodeArtifactTar(t *testing.T, entries []artifactTarEntry, skipManifest bool) []byte {
+	t.Helper()
+	var result bytes.Buffer
+	writer := tar.NewWriter(&result)
+	for _, entry := range entries {
+		if skipManifest && entry.header.Name == "manifest.json" {
+			continue
+		}
+		header := *entry.header
+		header.Size = int64(len(entry.body))
+		require.NoError(t, writer.WriteHeader(&header))
+		_, err := writer.Write(entry.body)
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close())
+	return result.Bytes()
+}
+
+func mutateArtifactArchive(t *testing.T, source []byte, id, mutation string) []byte {
+	t.Helper()
+	input, err := gzip.NewReader(bytes.NewReader(source))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, input.Close()) }()
+	reader := tar.NewReader(input)
+	entries := []artifactTarEntry{}
+	for {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+		body, err := io.ReadAll(io.LimitReader(reader, 16777217))
+		require.NoError(t, err)
+		if mutation == "missing-output" && header.Name == "stderr.log" {
+			continue
+		}
+		entries = append(entries, artifactTarEntry{header: header, body: body})
+	}
+	if mutation == "extra-output" {
+		entries = append(entries, artifactTarEntry{header: &tar.Header{Name: "files/undeclared.txt", Typeflag: tar.TypeReg, Mode: 0600}, body: []byte("undeclared output")})
+	}
+	// Recompute the raw payload tar checksum after re-encoding headers. This
+	// keeps the valid-rebinding control valid and isolates each negative mutation.
+	digest := fmt.Sprintf("%x", sha256.Sum256(encodeArtifactTar(t, entries, true)))
+	for i := range entries {
+		if entries[i].header.Name != "manifest.json" {
+			continue
+		}
+		var manifest artifactarchive.Manifest
+		require.NoError(t, json.Unmarshal(entries[i].body, &manifest))
+		manifest.ArtifactID = id
+		manifest.PayloadSHA256 = digest
+		switch mutation {
+		case "wrong-declaration":
+			manifest.DeclaredOutputs = []string{"files/wrong", "manifest.json", "stderr.log", "stdout.log"}
+		case "cross-recipe":
+			if manifest.Recipe == artifactarchive.SystemSummaryRecipe {
+				manifest.Recipe = artifactarchive.CrashdumpCollectionRecipe
+			} else {
+				manifest.Recipe = artifactarchive.SystemSummaryRecipe
+			}
+		case "wrong-identity":
+			manifest.Session.UID = "00000000-0000-0000-0000-000000000000"
+		}
+		entries[i].body, err = json.Marshal(manifest)
+		require.NoError(t, err)
+	}
+	var output bytes.Buffer
+	compressed := gzip.NewWriter(&output)
+	_, err = compressed.Write(encodeArtifactTar(t, entries, false))
+	require.NoError(t, err)
+	require.NoError(t, compressed.Close())
+	return output.Bytes()
+}
+
+// This test runs without a cluster and proves that negative probes do not all
+// fail merely because the fixture's tar re-encoding broke its payload checksum.
+func TestArtifactArchiveMutationContract(t *testing.T) {
+	detail := "basic"
+	expected := artifactarchive.Expected{Recipe: artifactarchive.SystemSummaryRecipe, RecipeVersion: 1, ArtifactID: "dsa-0123456789abcdef01234567", SessionNamespace: "fixture", SessionName: "session", SessionUID: "session-uid", RedactionProfile: "credential-text.v1", RedactionVersion: 1, Inputs: artifactarchive.Inputs{MaxArchiveBytes: 16777216, DetailLevel: &detail}}
+	manifest := artifactarchive.Manifest{SchemaVersion: artifactarchive.SchemaV1, Recipe: expected.Recipe, RecipeVersion: 1, ArtifactID: expected.ArtifactID, ArchiveFormat: artifactarchive.ArchiveFormatTarGzip, Inputs: expected.Inputs, DeclaredOutputs: []string{"files/system-summary.json", "manifest.json", "stderr.log", "stdout.log"}, FileCount: 1, Bytes: 3, ExitSemantics: artifactarchive.ExitSemanticsCompleteOnly}
+	manifest.Session.Namespace, manifest.Session.Name, manifest.Session.UID = expected.SessionNamespace, expected.SessionName, expected.SessionUID
+	manifest.Redaction.Profile, manifest.Redaction.Version = expected.RedactionProfile, expected.RedactionVersion
+	entries := []artifactTarEntry{
+		{header: &tar.Header{Name: "files/", Typeflag: tar.TypeDir, Mode: 0700}},
+		{header: &tar.Header{Name: "files/system-summary.json", Typeflag: tar.TypeReg, Mode: 0600}, body: []byte("{}\n")},
+		{header: &tar.Header{Name: "manifest.json", Typeflag: tar.TypeReg, Mode: 0600}},
+		{header: &tar.Header{Name: "stderr.log", Typeflag: tar.TypeReg, Mode: 0600}},
+		{header: &tar.Header{Name: "stdout.log", Typeflag: tar.TypeReg, Mode: 0600}, body: []byte("summary\n")},
+	}
+	manifest.PayloadSHA256 = fmt.Sprintf("%x", sha256.Sum256(encodeArtifactTar(t, entries, true)))
+	body, err := json.Marshal(manifest)
+	require.NoError(t, err)
+	entries[2].body = body
+	var source bytes.Buffer
+	compressor := gzip.NewWriter(&source)
+	_, err = compressor.Write(encodeArtifactTar(t, entries, false))
+	require.NoError(t, err)
+	require.NoError(t, compressor.Close())
+	expected.ArtifactID = "dsa-abcdef0123456789abcdef01"
+	for _, mutation := range []string{"valid-rebinding", "missing-output", "extra-output", "wrong-declaration", "cross-recipe", "wrong-identity"} {
+		t.Run(mutation, func(t *testing.T) {
+			archive := mutateArtifactArchive(t, source.Bytes(), expected.ArtifactID, mutation)
+			_, err := artifactarchive.Validate(t.Context(), bytes.NewReader(archive), int64(len(archive)), expected, artifactarchive.Limits{})
+			if mutation == "valid-rebinding" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
 	}
 }

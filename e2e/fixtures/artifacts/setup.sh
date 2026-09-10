@@ -134,7 +134,7 @@ spec:
     app: breakglass
   ports:
     - port: 9000
-      targetPort: 9000
+      targetPort: 9002
 YAML
 kubectl replace -f "$work/config.json"
 kubectl replace -f "$work/deployment.json"
