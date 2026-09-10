@@ -229,7 +229,18 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	streamWriter := &terminalRecordingFlushWriter{writer: ctx.Writer}
 	guardedInput := authorizedRecordingReader{ctx: apiCtx, reader: ctx.Request.Body, authorize: connection.Validate}
 	guardedOutput := authorizedRecordingWriter{ctx: apiCtx, writer: streamWriter, authorize: connection.Validate}
-	recording, streamErr := streamTerminalWithLease(apiCtx, connection, binding.ExpiresAt, executor, guardedInput, guardedOutput, guardedOutput, recorder)
+	responseControl := http.NewResponseController(ctx.Writer)
+	_ = responseControl.SetReadDeadline(binding.ExpiresAt)
+	_ = responseControl.SetWriteDeadline(binding.ExpiresAt)
+	requestBody := ctx.Request.Body
+	abortTransport := func() {
+		// A canceled SPDY executor must also unblock an HTTP client that stopped
+		// reading output or left its request body open.
+		_ = responseControl.SetWriteDeadline(time.Now())
+		_ = responseControl.SetReadDeadline(time.Now())
+		_ = requestBody.Close()
+	}
+	recording, streamErr := streamTerminalWithLease(apiCtx, connection, binding.ExpiresAt, executor, guardedInput, guardedOutput, guardedOutput, recorder, abortTransport)
 	finalizeCtx, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx.Request.Context()), terminalRecordingFinalizeTimeout)
 	defer finalizeCancel()
 	validatedBinding := connection.Binding()
@@ -282,9 +293,25 @@ func (w *terminalRecordingFlushWriter) Write(payload []byte) (int, error) {
 
 func (w *terminalRecordingFlushWriter) WriteHeader(statusCode int) { w.writer.WriteHeader(statusCode) }
 
-func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingConnection, expiresAt time.Time, executor remotecommand.Executor, stdin io.Reader, stdout, stderr io.Writer, recorder *TerminalRecorder) (TerminalRecording, error) {
+func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingConnection, expiresAt time.Time, executor remotecommand.Executor, stdin io.Reader, stdout, stderr io.Writer, recorder *TerminalRecorder, abortTransport func()) (TerminalRecording, error) {
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	stopAbort := func() {}
+	if abortTransport != nil {
+		abortDone := make(chan struct{})
+		stop := context.AfterFunc(streamCtx, func() { defer close(abortDone); abortTransport() })
+		stopped := false
+		stopAbort = func() {
+			if stopped {
+				return
+			}
+			stopped = true
+			if !stop() {
+				<-abortDone
+			}
+		}
+	}
+	defer stopAbort()
 	if closer, ok := stdin.(io.Closer); ok {
 		stopClose := context.AfterFunc(streamCtx, func() { _ = closer.Close() })
 		defer stopClose()
@@ -319,6 +346,7 @@ func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingCo
 		}
 	}()
 	recording, streamErr := StreamTerminal(streamCtx, executor, stdin, stdout, stderr, recorder)
+	stopAbort()
 	cancel()
 	<-watchDone
 	select {

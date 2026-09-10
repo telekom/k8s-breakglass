@@ -32,6 +32,8 @@ identity, runtime binding digest, and version ID.
 The bounded artifact volume is 512 MiB (`defaultTerminalRecordingMaxBytes`),
 with at most two concurrent streams per serving process. The HTTP transport
 requires full duplex: output is flushed before further input is supplied.
+Expiry or revocation also closes blocked HTTP input/output so a slow client
+cannot keep a revoked transport alive.
 Every input/output boundary rechecks the live session identity, participant
 issuer, allowed target Pod UID, profile, expiry, and connection lease. Target
 lookup is bracketed by live session checks. Rejected input is never forwarded

@@ -64,13 +64,13 @@ func (e *testTerminalExecutor) StreamWithContext(_ context.Context, options remo
 
 func recordingFixture(enabled bool) (*breakglassv1alpha1.DebugSession, *breakglassv1alpha1.DebugSessionTemplate) {
 	return &breakglassv1alpha1.DebugSession{
-		ObjectMeta: metav1.ObjectMeta{Name: "debug-one", Namespace: "breakglass"},
-		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "prod", TemplateRef: "netshoot"},
-	}, &breakglassv1alpha1.DebugSessionTemplate{
-		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
-			Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: enabled, RecordingRetention: "30d"},
-		},
-	}
+			ObjectMeta: metav1.ObjectMeta{Name: "debug-one", Namespace: "breakglass"},
+			Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "prod", TemplateRef: "netshoot"},
+		}, &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: enabled, RecordingRetention: "30d"},
+			},
+		}
 }
 
 func TestRejectUnsupportedTerminalRecordingContract(t *testing.T) {
@@ -152,11 +152,17 @@ func TestStreamTerminalPreservesPartialRecordingWhenExecutorFails(t *testing.T) 
 }
 
 func TestStreamTerminalWithLeaseStopsAtBindingExpiryAndKeepsEvidence(t *testing.T) {
+	aborted := make(chan struct{})
 	recorder := NewTerminalRecorder(1024)
 	var stdout bytes.Buffer
-	recording, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now().Add(20*time.Millisecond), blockingTerminalExecutor{}, nil, &stdout, &stdout, recorder)
+	recording, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now().Add(20*time.Millisecond), blockingTerminalExecutor{}, nil, &stdout, &stdout, recorder, func() { close(aborted) })
 	if err == nil || !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("streamTerminalWithLease() error = %v, want expiry cancellation", err)
+	}
+	select {
+	case <-aborted:
+	default:
+		t.Fatal("HTTP transport was not aborted on expiry")
 	}
 	if stdout.String() != "before-expiry" || len(recording.Bytes) == 0 {
 		t.Fatalf("expiry discarded partial output: stdout=%q recording=%d", stdout.String(), len(recording.Bytes))
