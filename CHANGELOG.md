@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Register connection leases in the production client scheme; validate complete
   collector Job execution, live artifact-list bindings, collection body limits,
   and distinguish invalid uploads from provider failures.
+- Preserve effective retention for early debug quota rejection and require complete auxiliary identities before exempting retained resources from cleanup or failed-session bookkeeping.
+
+- Preserve per-template accounting repair intervals and metric publication order; align the built-in rejected mock session and CLI rejection test with `Rejected`.
 
 - Remove completed diagnostic collector artifacts when their session ends, while preserving independent terminal-recording retention.
 
