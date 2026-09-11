@@ -26,12 +26,12 @@ func FindDebugSessionBinding(ctx context.Context, reader ctrlclient.Reader, temp
 	var clusterConfig *breakglassv1alpha1.ClusterConfig
 	clusterConfigList := &breakglassv1alpha1.ClusterConfigList{}
 	if err := reader.List(ctx, clusterConfigList); err != nil {
-		return nil, fmt.Errorf("list cluster configs for binding binding resolution: %w", err)
+		return nil, fmt.Errorf("list cluster configs for binding resolution: %w", err)
 	}
 	for i := range clusterConfigList.Items {
 		if clusterConfigList.Items[i].Name == clusterName {
 			if clusterConfig != nil {
-				return nil, fmt.Errorf("ambiguous cluster config for binding binding resolution")
+				return nil, fmt.Errorf("ambiguous cluster config for binding resolution")
 			}
 			clusterConfig = &clusterConfigList.Items[i]
 		}
