@@ -3,9 +3,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Extract only the five published catalogue utility images from rendered chart
-# values. Explicit example.invalid placeholders are intentionally excluded;
-# every canonical public utility image must be present exactly once.
+# Extract the seven published catalogue utility images from rendered chart
+# values; every canonical public utility image must be present exactly once.
 
 set -Eeuo pipefail
 
@@ -23,7 +22,9 @@ ruby -ryaml -e '
     "ghcr.io/telekom/k8s-breakglass/utils/network-debug" => "network",
     "ghcr.io/telekom/k8s-breakglass/utils/storage-debug" => "storage",
     "ghcr.io/telekom/k8s-breakglass/utils/node-maintenance" => "node-maintenance",
-    "ghcr.io/telekom/k8s-breakglass/utils/diagnostic-artifact-collector" => "diagnostic-artifact-collector"
+    "ghcr.io/telekom/k8s-breakglass/utils/diagnostic-artifact-collector" => "diagnostic-artifact-collector",
+    "ghcr.io/telekom/k8s-breakglass/utils/dump-reader" => "dump-reader",
+    "ghcr.io/telekom/k8s-breakglass/utils/cluster-validator" => "cluster-validator"
   }
   public = {}
   images.each_value do |image|
@@ -34,7 +35,7 @@ ruby -ryaml -e '
       abort("public utility #{name} is not digest-pinned") unless digest.match?(/\Asha256:[0-9a-f]{64}\z/)
       abort("conflicting public utility digest: #{repository}") if public.key?(repository) && public[repository] != "#{repository}@#{digest}"
       public[repository] = "#{repository}@#{digest}"
-    elsif repository != "example.invalid/breakglass/dump-reader-not-published" && repository != "example.invalid/breakglass/cluster-validator-internal"
+    else
       abort("unexpected non-public utility repository: #{repository}")
     end
   end

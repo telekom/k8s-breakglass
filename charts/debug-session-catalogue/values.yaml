@@ -22,17 +22,17 @@ maxDuration: 1h
 maxConcurrentSessions: 1
 imagePullPolicy: IfNotPresent
 
-# Image defaults are deliberately non-runnable placeholders. Public image
-# references use the canonical utility paths; internal hooks remain non-public
-# until separately approved. Release packaging injects verified refs.
+# Image defaults are deliberately non-runnable placeholders. All catalogue
+# utility references use the canonical paths; release packaging injects
+# independently verified refs.
 images:
   workload: {repository: ghcr.io/telekom/k8s-breakglass/utils/workload-debug, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
   network: {repository: ghcr.io/telekom/k8s-breakglass/utils/network-debug, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
   storage: {repository: ghcr.io/telekom/k8s-breakglass/utils/storage-debug, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
-  dumpAccess: {repository: example.invalid/breakglass/dump-reader-not-published, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
+  dumpAccess: {repository: ghcr.io/telekom/k8s-breakglass/utils/dump-reader, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
   networkRepair: {repository: ghcr.io/telekom/k8s-breakglass/utils/node-maintenance, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
   nodeRecovery: {repository: ghcr.io/telekom/k8s-breakglass/utils/node-maintenance, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
-  clusterValidation: {repository: example.invalid/breakglass/cluster-validator-internal, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
+  clusterValidation: {repository: ghcr.io/telekom/k8s-breakglass/utils/cluster-validator, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
   diagnosticArtifactCollector: {repository: ghcr.io/telekom/k8s-breakglass/utils/diagnostic-artifact-collector, digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
 
 # Ordered, extensible profile list. Map-shaped profiles from versions before

@@ -33,9 +33,8 @@ helm install debug-catalogue \
 The default empty requester, approver, and target lists intentionally make the
 catalogue unusable until an administrator supplies local policy. The checked-in
 utility image references are also non-runnable zero-digest placeholders. The
-five public utility names use the canonical `utils/<intent-image>` path;
-`dump-access` and internal `cluster-validation` deliberately retain non-public
-placeholders until their separate contracts are approved. Replace public
+seven utility names use the canonical `utils/<intent-image>` path, including
+`dump-reader` and the provider-neutral `cluster-validator`. Replace public
 images with verified release digests before enabling access; release packaging
 injects those values from `release-refs/*.ref`. This prevents
 a chart installation from accidentally granting access to every user or
@@ -87,7 +86,7 @@ immutable image digest:
 ```yaml
 images:
   dumpAccess:
-    repository: ghcr.io/telekom/k8s-breakglass/utils/workload-debug
+    repository: ghcr.io/telekom/k8s-breakglass/utils/dump-reader
     digest: sha256:<64 lowercase hexadecimal characters>
 ```
 

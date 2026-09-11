@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Release-value generation and catalogue validation now consume all seven
+  canonical utility-image references, including `dump-reader` and
+  `cluster-validator`, while checked-in values remain zero-digest placeholders.
+
 - Preserve per-template accounting repair intervals and metric publication order; align the built-in rejected mock session and CLI rejection test with `Rejected`.
 
 - Align rejection API, mock, E2E, and audit contracts with `Rejected`; coalesce periodic active accounting while preserving immediate lifecycle and failure repair.
