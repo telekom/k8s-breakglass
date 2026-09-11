@@ -1002,6 +1002,11 @@ spec:
           status:
             description: DebugSessionStatus defines the observed state of DebugSession.
             properties:
+              activityCount:
+                description: ActivityCount counts successful server-observed debug
+                  operations.
+                format: int64
+                type: integer
               allowedPodOperations:
                 description: |-
                   allowedPodOperations caches the resolved pod operations from the template.
@@ -1558,6 +1563,11 @@ spec:
                       type: object
                     type: array
                 type: object
+              lastActivity:
+                description: LastActivity is the latest successful operation observed
+                  by the server.
+                format: date-time
+                type: string
               message:
                 description: message provides human-readable status information.
                 type: string
@@ -2994,6 +3004,12 @@ spec:
                           if not specified.
                         pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                         type: string
+                      idleTimeout:
+                        description: |-
+                          idleTimeout expires an active session after this duration without a
+                          successful server-observed debug operation. Empty preserves legacy behavior.
+                        pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
+                        type: string
                       maxConcurrentSessions:
                         default: 2
                         description: maxConcurrentSessions limits concurrent debug
@@ -3017,6 +3033,12 @@ spec:
                           instead. Removal target: v1beta1.'
                         format: int32
                         type: integer
+                      retainFor:
+                        description: |-
+                          retainFor keeps the session object and its terminal evidence after cleanup.
+                          Empty preserves the cleanup service's configured retention policy.
+                        pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
+                        type: string
                     type: object
                   deprecated:
                     default: false
@@ -6229,6 +6251,11 @@ spec:
                     - Job
                     type: string
                 type: object
+              retainedUntil:
+                description: RetainedUntil is the earliest time this terminal session
+                  may be removed.
+                format: date-time
+                type: string
               startsAt:
                 description: startsAt is when the session became active.
                 format: date-time

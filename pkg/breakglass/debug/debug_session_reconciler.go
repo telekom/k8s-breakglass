@@ -24,8 +24,6 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
-	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -39,13 +37,13 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -242,7 +240,7 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		if ds.Status.ExpiresAt == nil || ds.Status.ExpiresAt.IsZero() {
 			return c.terminalizeActiveSessionWithoutExpiry(ctx, ds)
 		}
-		if !time.Now().Before(ds.Status.ExpiresAt.Time) {
+		if isDebugSessionExpired(ds, time.Now()) {
 			return c.handleActive(ctx, ds)
 		}
 	}
@@ -251,6 +249,9 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 			if errors.Is(err, quotas.ErrFull) {
 				if ds.Status.State == breakglassv1alpha1.DebugSessionStateActive && ds.Status.ExpiresAt != nil && !ds.Status.ExpiresAt.IsZero() {
 					delay := time.Until(ds.Status.ExpiresAt.Time)
+					if idle, ok := debugSessionIdleDeadline(ds); ok && time.Until(idle) < delay {
+						delay = time.Until(idle)
+					}
 					if delay > 0 {
 						return ctrl.Result{RequeueAfter: delay}, nil
 					}
@@ -295,9 +296,6 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		log.Errorw("Failed to get DebugSessionTemplate", "template", ds.Spec.TemplateRef, "error", err)
 		return c.failSession(ctx, ds, fmt.Sprintf("template not found: %s", ds.Spec.TemplateRef))
 	}
-	if err := rejectUnsupportedTerminalRecording(template); err != nil {
-		return c.failSession(ctx, ds, err.Error())
-	}
 
 	// Find binding early so we can check its approvers for the approval decision
 	// This ensures bindings with approvers properly trigger approval workflow.
@@ -330,6 +328,14 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	// Cache the resolved template in status after applying binding-level duration overrides.
 	resolvedTemplate := template.Spec.DeepCopy()
 	resolvedTemplate.Constraints = effectiveDebugSessionConstraints(template, binding)
+	// Failure retention uses an existing approved snapshot, or the effective
+	// constraints just resolved for a request that has no snapshot yet.
+	if err := rejectUnsupportedTerminalRecording(template); err != nil {
+		if ds.Status.ResolvedTemplate == nil {
+			ds.Status.ResolvedTemplate = resolvedTemplate
+		}
+		return c.failSession(ctx, ds, err.Error())
+	}
 	ds.Status.ResolvedTemplate = resolvedTemplate
 	ds.Status.ResolvedBindingSnapshotCaptured = true
 	if binding != nil {
@@ -461,36 +467,32 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		log.Warnw("Failed to recover prepared kubectl-debug operations", "error", err)
 	}
 
-	// Emit expiring-soon status message when within grace period
-	if ds.Status.ExpiresAt != nil && ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry != "" {
-		grace, err := breakglassv1alpha1.ParseDuration(ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry)
-		if err == nil {
-			until := time.Until(ds.Status.ExpiresAt.Time)
-			if until > 0 && until <= grace && ds.Status.Message != "Session expiring soon" {
-				if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
-					status.Message = "Session expiring soon"
-				}); err != nil {
-					if apierrors.IsConflict(err) {
-						log.Debugw("skipping expiring-soon status update after concurrent debug session change", "error", err)
-						return ctrl.Result{}, nil
-					}
-					return ctrl.Result{}, err
-				}
-			}
-		}
-	}
-
 	// Check expiration
-	if ds.Status.ExpiresAt != nil && time.Now().After(ds.Status.ExpiresAt.Time) {
+	if isDebugSessionExpired(ds, time.Now().UTC()) {
+		expired := false
 		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+			// Decide from the freshly read status and one post-read timestamp.
+			now := time.Now().UTC()
+			current := &breakglassv1alpha1.DebugSession{Status: *status}
+			if !isDebugSessionExpired(current, now) {
+				return
+			}
+			idleOnly := breakglass.DebugSessionIdleExpired(current, now) && status.ExpiresAt != nil && now.Before(status.ExpiresAt.Time)
 			status.State = breakglassv1alpha1.DebugSessionStateExpired
 			status.Message = "Session expired"
+			if idleOnly {
+				status.Message = "Session expired due to inactivity"
+			}
+			expired = true
 		}); err != nil {
 			if apierrors.IsConflict(err) {
 				log.Debugw("skipping expiration status update after concurrent debug session change", "error", err)
 				return ctrl.Result{}, nil
 			}
 			return ctrl.Result{}, err
+		}
+		if !expired {
+			return ctrl.Result{RequeueAfter: time.Millisecond}, nil
 		}
 		notificationSession := ds.DeepCopy()
 		if notificationSession.Status.ResolvedTemplate != nil && notificationSession.Status.ResolvedTemplate.ExpirationBehavior == "notify-only" {
@@ -513,6 +515,25 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		return ctrl.Result{}, err
 	}
 
+	// Emit expiring-soon status message when within grace period
+	if ds.Status.ExpiresAt != nil && ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry != "" {
+		grace, err := breakglassv1alpha1.ParseDuration(ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry)
+		if err == nil {
+			until := time.Until(ds.Status.ExpiresAt.Time)
+			if until > 0 && until <= grace && ds.Status.Message != "Session expiring soon" {
+				if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+					status.Message = "Session expiring soon"
+				}); err != nil {
+					if apierrors.IsConflict(err) {
+						log.Debugw("skipping expiring-soon status update after concurrent debug session change", "error", err)
+						return ctrl.Result{}, nil
+					}
+					return ctrl.Result{}, err
+				}
+			}
+		}
+	}
+
 	// Renewal commits session status before touching the spoke Job. Reconcile
 	// from that durable expiry so a target failure or a lost API response
 	// converges without counting the renewal again.
@@ -527,13 +548,24 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 
 	// Calculate next requeue based on expiration
 	if ds.Status.ExpiresAt != nil {
-		until := time.Until(ds.Status.ExpiresAt.Time)
+		now := time.Now()
+		until := ds.Status.ExpiresAt.Sub(now)
+		if idle, ok := debugSessionIdleDeadline(ds); ok && idle.Sub(now) < until {
+			until = idle.Sub(now)
+		}
+		if until <= 0 {
+			return ctrl.Result{RequeueAfter: time.Millisecond}, nil
+		}
 		if until > 0 && until < DefaultDebugSessionRequeue {
 			return ctrl.Result{RequeueAfter: until + time.Second}, nil
 		}
 	}
 
 	return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
+}
+
+func debugSessionIdleDeadline(ds *breakglassv1alpha1.DebugSession) (time.Time, bool) {
+	return breakglass.DebugSessionIdleDeadline(ds)
 }
 
 func (c *DebugSessionController) terminalizeActiveSessionWithoutExpiry(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
@@ -610,11 +642,15 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 // hasTrackedSpokeResources reports whether the session status still references
 // anything that was deployed to the spoke cluster.
 func hasTrackedSpokeResources(ds *breakglassv1alpha1.DebugSession) bool {
-	if len(ds.Status.DeployedResources) > 0 ||
+	if utils.DebugSessionHasActionableDeployedResources(ds) ||
 		hasOutstandingAuxiliaryResources(ds) ||
-		len(ds.Status.PodTemplateResourceStatuses) > 0 ||
 		len(ds.Status.AllowedPods) > 0 {
 		return true
+	}
+	for _, status := range ds.Status.PodTemplateResourceStatuses {
+		if utils.DebugSessionPodTemplateStatusHasCleanupResidual(status) {
+			return true
+		}
 	}
 	if status := ds.Status.KubectlDebugStatus; status != nil {
 		if len(status.CopiedPods) > 0 {
@@ -643,11 +679,11 @@ func hasPreparedKubectlDebugOperation(ds *breakglassv1alpha1.DebugSession) bool 
 
 func hasOutstandingAuxiliaryResources(ds *breakglassv1alpha1.DebugSession) bool {
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
-		if status.Created && !status.Deleted {
+		if utils.DebugSessionAuxiliaryStatusHasCleanupResidual(ds, status) {
 			return true
 		}
 		for _, child := range status.AdditionalResources {
-			if !child.Deleted {
+			if utils.DebugSessionAuxiliaryChildHasCleanupResidual(ds, status.Name, child) {
 				return true
 			}
 		}
@@ -1155,55 +1191,7 @@ func (c *DebugSessionController) deferOnUnresolvedBinding(
 // This enables binding configuration to be applied even when BindingRef is not explicitly set.
 // Returns nil if no matching binding is found.
 func (c *DebugSessionController) findBindingForSession(ctx context.Context, template *breakglassv1alpha1.DebugSessionTemplate, clusterName string) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
-	bindingList := &breakglassv1alpha1.DebugSessionClusterBindingList{}
-	if err := c.approvalReader().List(ctx, bindingList); err != nil {
-		return nil, fmt.Errorf("failed to list cluster bindings: %w", err)
-	}
-
-	// Get cluster config for label-based matching
-	var clusterConfig *breakglassv1alpha1.ClusterConfig
-	clusterConfigList := &breakglassv1alpha1.ClusterConfigList{}
-	if err := c.approvalReader().List(ctx, clusterConfigList); err != nil {
-		return nil, fmt.Errorf("list cluster configs for binding quota resolution: %w", err)
-	}
-	for i := range clusterConfigList.Items {
-		if clusterConfigList.Items[i].Name == clusterName {
-			if clusterConfig != nil {
-				return nil, fmt.Errorf("ambiguous cluster config for binding quota resolution")
-			}
-			clusterConfig = &clusterConfigList.Items[i]
-		}
-	}
-
-	sort.Slice(bindingList.Items, func(i, j int) bool {
-		a, b := bindingList.Items[i], bindingList.Items[j]
-		return a.Namespace+"/"+a.Name < b.Namespace+"/"+b.Name
-	})
-	for i := range bindingList.Items {
-		binding := &bindingList.Items[i]
-		if !breakglass.IsBindingActive(binding) {
-			continue
-		}
-
-		// Check if binding references this template
-		if !c.bindingMatchesTemplate(binding, template) {
-			continue
-		}
-
-		if binding.Spec.ClusterSelector != nil && clusterConfig == nil && !slices.Contains(binding.Spec.Clusters, clusterName) {
-			return nil, fmt.Errorf("cluster config required to resolve binding selector")
-		}
-
-		// Check if binding matches this cluster
-		if !c.bindingMatchesCluster(binding, clusterName, clusterConfig) {
-			continue
-		}
-
-		// Found a matching binding
-		return binding, nil
-	}
-
-	return nil, nil // No matching binding found (not an error)
+	return utils.FindDebugSessionBinding(ctx, c.approvalReader(), template, clusterName)
 }
 
 func (c *DebugSessionController) approvalReader() ctrlclient.Reader {
@@ -1226,44 +1214,10 @@ func (c *DebugSessionController) newKubectlDebugHandler() *KubectlDebugHandler {
 
 // bindingMatchesTemplate checks if a binding references the given template
 func (c *DebugSessionController) bindingMatchesTemplate(binding *breakglassv1alpha1.DebugSessionClusterBinding, template *breakglassv1alpha1.DebugSessionTemplate) bool {
-	// Check templateRef
-	if binding.Spec.TemplateRef != nil && binding.Spec.TemplateRef.Name == template.Name {
-		return true
-	}
-	// Check templateSelector
-	if binding.Spec.TemplateSelector != nil {
-		selector, err := metav1.LabelSelectorAsSelector(binding.Spec.TemplateSelector)
-		if err == nil {
-			templateLabels := labels.Set(template.Labels)
-			if selector.Matches(templateLabels) {
-				return true
-			}
-		}
-	}
-	return false
+	return utils.DebugBindingMatchesTemplate(binding, template)
 }
-
-// bindingMatchesCluster checks if a binding applies to the given cluster
 func (c *DebugSessionController) bindingMatchesCluster(binding *breakglassv1alpha1.DebugSessionClusterBinding, clusterName string, clusterConfig *breakglassv1alpha1.ClusterConfig) bool {
-	// Check explicit cluster list
-	for _, cluster := range binding.Spec.Clusters {
-		if cluster == clusterName {
-			return true
-		}
-	}
-
-	// Check clusterSelector
-	if binding.Spec.ClusterSelector != nil && clusterConfig != nil {
-		selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
-		if err == nil {
-			clusterLabels := labels.Set(clusterConfig.Labels)
-			if selector.Matches(clusterLabels) {
-				return true
-			}
-		}
-	}
-
-	return false
+	return utils.DebugBindingMatchesCluster(binding, clusterName, clusterConfig)
 }
 
 // resolveImpersonationConfig determines the impersonation configuration for a session.

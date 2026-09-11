@@ -12,10 +12,12 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // ActivityCleaner is the interface for pruning orphaned activity tracker entries.
@@ -342,8 +344,22 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 			ds.Status.State == breakglassv1alpha1.DebugSessionStateRejected ||
 			ds.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
 			ds.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
-			// Check if session should be deleted after retention period
-			// Use ExpiresAt or CreationTimestamp to determine retention eligibility
+			if debugSessionCleanupOutstanding(&ds) {
+				continue
+			}
+			// Prefer the session's durable retention deadline; legacy sessions fall
+			// back to the historical expiry/creation based retention window.
+			if ds.Status.RetainedUntil != nil && !ds.Status.RetainedUntil.IsZero() {
+				if now.Before(ds.Status.RetainedUntil.Time) {
+					continue
+				}
+				if err := routine.Manager.Delete(ctx, &ds, client.Preconditions{UID: &ds.UID, ResourceVersion: &ds.ResourceVersion}); err != nil {
+					routine.Log.Errorw("error deleting debug session past retention", "error", err)
+					continue
+				}
+				deletedCount++
+				continue
+			}
 			retentionStart := ds.CreationTimestamp.Time
 			if ds.Status.ExpiresAt != nil && !ds.Status.ExpiresAt.IsZero() {
 				retentionStart = ds.Status.ExpiresAt.Time
@@ -355,7 +371,7 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 						"state", ds.Status.State,
 						"retentionPeriod", DebugSessionRetentionPeriod.String())...)
 
-				if err := routine.Manager.Delete(ctx, &ds); err != nil {
+				if err := routine.Manager.Delete(ctx, &ds, client.Preconditions{UID: &ds.UID, ResourceVersion: &ds.ResourceVersion}); err != nil {
 					routine.Log.Errorw("error deleting debug session past retention",
 						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
 					continue
@@ -371,10 +387,21 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 
 		// Check if active session has expired
 		if ds.Status.State == breakglassv1alpha1.DebugSessionStateActive {
-			if ds.Status.ExpiresAt != nil && now.After(ds.Status.ExpiresAt.Time) {
+			if DebugSessionIdleExpired(&ds, now) || (ds.Status.ExpiresAt != nil && !now.Before(ds.Status.ExpiresAt.Time)) {
+				expired := false
 				if err := PatchDebugSessionStatusWithOptimisticLock(ctx, routine.Manager, &ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+					checkedAt := time.Now().UTC()
+					current := &breakglassv1alpha1.DebugSession{Status: *status}
+					hardExpired := status.ExpiresAt != nil && !checkedAt.Before(status.ExpiresAt.Time)
+					if status.State != breakglassv1alpha1.DebugSessionStateActive || (!hardExpired && !DebugSessionIdleExpired(current, checkedAt)) {
+						return
+					}
 					status.State = breakglassv1alpha1.DebugSessionStateExpired
 					status.Message = "Session expired (cleanup routine)"
+					if !hardExpired {
+						status.Message = "Session expired due to inactivity"
+					}
+					expired = true
 				}); err != nil {
 					if apierrors.IsConflict(err) {
 						routine.Log.Debugw("skipping expired debug session status update after concurrent change",
@@ -383,6 +410,9 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 					}
 					routine.Log.Errorw("error updating expired debug session status",
 						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
+					continue
+				}
+				if !expired {
 					continue
 				}
 				routine.Log.Infow("Debug session expired, marking as Expired",
@@ -562,4 +592,50 @@ func buildDebugSessionNotificationRecipients(ds breakglassv1alpha1.DebugSession)
 		recipients = filtered
 	}
 	return recipients
+}
+
+// debugSessionCleanupOutstanding preserves evidence for completed and ambiguous spoke creates.
+func debugSessionCleanupOutstanding(ds *breakglassv1alpha1.DebugSession) bool {
+	for _, ref := range ds.Status.DeployedResources {
+		if !debugSessionResourceIntentionallyRetained(ds, ref) {
+			return true
+		}
+	}
+	for _, resource := range ds.Status.PodTemplateResourceStatuses {
+		if utils.DebugSessionPodTemplateStatusHasCleanupResidual(resource) {
+			return true
+		}
+	}
+	if len(ds.Status.AllowedPods) > 0 {
+		return true
+	}
+	// Completed operation history is retained evidence, not a pending cleanup.
+	// Preserve unresolved outcomes for recovery or operator investigation.
+	if status := ds.Status.KubectlDebugStatus; status != nil {
+		if len(status.CopiedPods) > 0 {
+			return true
+		}
+		for _, operation := range status.Operations {
+			if operation.State != breakglassv1alpha1.KubectlDebugOperationCompleted && operation.State != breakglassv1alpha1.KubectlDebugOperationFailed {
+				return true
+			}
+		}
+	}
+	for _, resource := range ds.Status.AuxiliaryResourceStatuses {
+		if utils.DebugSessionAuxiliaryStatusHasCleanupResidual(ds, resource) {
+			return true
+		}
+		for _, child := range resource.AdditionalResources {
+			if utils.DebugSessionAuxiliaryChildHasCleanupResidual(ds, resource.Name, child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Exempt only the exact observed auxiliary identity selected for retention.
+// Unknown create outcomes and name-reused resources still require cleanup review.
+func debugSessionResourceIntentionallyRetained(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
+	return utils.DebugSessionResourceIntentionallyRetained(ds, ref)
 }

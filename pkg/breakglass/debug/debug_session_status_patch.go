@@ -28,7 +28,11 @@ func (c *DebugSessionController) patchDebugSessionAllowedPods(
 	ds *breakglassv1alpha1.DebugSession,
 	allowedPods []breakglassv1alpha1.AllowedPodRef,
 ) error {
-	return breakglass.PatchDebugSessionStatusWithReader(ctx, c.client, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+	reader := c.reader
+	if reader == nil {
+		reader = c.client
+	}
+	return breakglass.PatchDebugSessionStatusWithReader(ctx, c.client, reader, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.AllowedPods = allowedPods
 	})
 }
@@ -39,7 +43,11 @@ func (c *DebugSessionController) patchDebugSessionAllowedPodsAndAuxiliaryStatuse
 	allowedPods []breakglassv1alpha1.AllowedPodRef,
 	auxiliaryResourceStatuses []breakglassv1alpha1.AuxiliaryResourceStatus,
 ) error {
-	return breakglass.PatchDebugSessionStatusWithReader(ctx, c.client, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+	reader := c.reader
+	if reader == nil {
+		reader = c.client
+	}
+	return breakglass.PatchDebugSessionStatusWithReader(ctx, c.client, reader, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.AllowedPods = allowedPods
 		status.AuxiliaryResourceStatuses = auxiliaryResourceStatuses
 	})

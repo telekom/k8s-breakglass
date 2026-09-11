@@ -10,6 +10,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap/zaptest"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -1571,4 +1572,152 @@ func TestCleanupRoutine_pruneActivityTracker(t *testing.T) {
 		require.Len(t, mock.cleanupCalls, 1)
 		assert.Empty(t, mock.cleanupCalls[0])
 	})
+}
+
+func TestDebugSessionRetentionUsesExplicitDeadlineOrLegacyConfiguredFallback(t *testing.T) {
+	original := DebugSessionRetentionPeriod
+	t.Cleanup(func() { DebugSessionRetentionPeriod = original })
+	for _, tt := range []struct {
+		name, env             string
+		retained              *metav1.Time
+		active, wantDeleted   bool
+		rejected, outstanding bool
+	}{
+		{name: "unset default remains seven days"},
+		{name: "rejected retained until explicit deadline", rejected: true, retained: func() *metav1.Time { v := metav1.NewTime(time.Now().Add(time.Hour)); return &v }()},
+		{name: "rejected removed after explicit deadline", rejected: true, retained: func() *metav1.Time { v := metav1.NewTime(time.Now().Add(-time.Hour)); return &v }(), wantDeleted: true},
+		{name: "rejected unresolved evidence survives deadline", rejected: true, outstanding: true, retained: func() *metav1.Time { v := metav1.NewTime(time.Now().Add(-time.Hour)); return &v }()},
+		{name: "unset honors legacy environment", env: "72h", wantDeleted: true},
+		{name: "explicit future retains evidence", env: "1h", retained: func() *metav1.Time { v := metav1.NewTime(time.Now().Add(time.Hour)); return &v }()},
+		{name: "explicit elapsed deadline", retained: func() *metav1.Time { v := metav1.NewTime(time.Now().Add(-time.Hour)); return &v }(), wantDeleted: true},
+		{name: "active never deleted by retention", retained: func() *metav1.Time { v := metav1.NewTime(time.Now().Add(-time.Hour)); return &v }(), active: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("DEBUG_SESSION_RETENTION_PERIOD", tt.env)
+			DebugSessionRetentionPeriod = getDebugSessionRetentionPeriod()
+			expiry := metav1.NewTime(time.Now().Add(-96 * time.Hour))
+			state := breakglassv1alpha1.DebugSessionStateTerminated
+			if tt.rejected {
+				state = breakglassv1alpha1.DebugSessionStateRejected
+			}
+			if tt.active {
+				state = breakglassv1alpha1.DebugSessionStateActive
+				expiry = metav1.NewTime(time.Now().Add(time.Hour))
+			}
+			ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "retained", Namespace: "default", UID: "retained-uid", CreationTimestamp: metav1.NewTime(time.Now().Add(-96 * time.Hour))}, Status: breakglassv1alpha1.DebugSessionStatus{State: state, ExpiresAt: &expiry, RetainedUntil: tt.retained}}
+			if tt.outstanding {
+				ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{{ResourceName: "unknown-create"}}
+			}
+			scheme := runtime.NewScheme()
+			require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+			hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
+			routine := CleanupRoutine{Log: zaptest.NewLogger(t).Sugar(), Manager: &SessionManager{Client: hub}}
+			routine.cleanupExpiredDebugSessions(context.Background())
+			var stored breakglassv1alpha1.DebugSession
+			err := hub.Get(context.Background(), client.ObjectKeyFromObject(ds), &stored)
+			if tt.wantDeleted {
+				require.True(t, apierrors.IsNotFound(err))
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestDebugSessionCleanupPreservesPendingResourcesAndExpiresIdle(t *testing.T) {
+	for _, name := range []string{"idle", "deployed", "unknown auxiliary", "pod template", "deleted pod template", "blank pod template", "retained created only", "retained name only", "retained empty child", "retained uid only", "cleaned auxiliary", "intentionally retained auxiliary", "retained parent unknown child", "completed operation", "failed operation", "prepared operation", "unknown operation", "copied pod"} {
+		t.Run(name, func(t *testing.T) {
+			past := metav1.NewTime(time.Now().Add(-time.Hour))
+			future := metav1.NewTime(time.Now().Add(time.Hour))
+			ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "cleanup", Namespace: "default", UID: "cleanup-uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateTerminated, RetainedUntil: &past}}
+			switch name {
+			case "completed operation", "failed operation", "prepared operation", "unknown operation":
+				state := map[string]breakglassv1alpha1.KubectlDebugOperationState{"completed operation": breakglassv1alpha1.KubectlDebugOperationCompleted, "failed operation": breakglassv1alpha1.KubectlDebugOperationFailed, "prepared operation": breakglassv1alpha1.KubectlDebugOperationPrepared, "unknown operation": breakglassv1alpha1.KubectlDebugOperationUnknown}[name]
+				ds.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{{ID: "operation", State: state}}}
+			case "copied pod":
+				ds.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{CopiedPods: []breakglassv1alpha1.CopiedPodRef{{CopyName: "pending-cleanup"}}}
+
+			case "idle":
+				ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
+				ds.Status.RetainedUntil = nil
+				ds.Status.ExpiresAt = &future
+				ds.Status.LastActivity = &past
+				ds.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m", RetainFor: "2h"}}
+			case "deployed":
+				ds.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{{Name: "pending"}}
+			case "unknown auxiliary":
+				ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{{CreateOperationID: "prepared", ResourceName: "unknown"}}
+			case "pod template":
+				ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{{CreateOperationID: "prepared", ResourceName: "unknown"}}
+			case "deleted pod template":
+				ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{{Deleted: true, Created: true, UID: "history"}}
+			case "blank pod template":
+				ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{{}}
+			case "retained created only", "retained name only", "retained empty child", "retained uid only":
+				ds.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "keep", DeleteAfter: false}}}
+				resource := breakglassv1alpha1.AuxiliaryResourceStatus{Name: "keep"}
+				if name == "retained uid only" {
+					resource.UID = "retained"
+				}
+				if name == "retained created only" {
+					resource.Created = true
+				}
+				if name == "retained name only" {
+					resource.ResourceName = "unknown"
+				}
+				if name == "retained empty child" {
+					resource.UID = "retained"
+					resource.AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{{}}
+				}
+				ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{resource}
+			case "intentionally retained auxiliary":
+				ds.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "keep", DeleteAfter: false}}}
+				ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "keep", Created: true, UID: "retained-uid", APIVersion: "v1", Kind: "Namespace", ResourceName: "kept"}}
+			case "retained parent unknown child":
+				ds.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "keep", DeleteAfter: false}}}
+				ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "keep", Created: true, UID: "retained-uid", APIVersion: "v1", Kind: "Namespace", ResourceName: "kept", AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{{CreateOperationID: "unknown-child"}}}}
+			case "cleaned auxiliary":
+				ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{{Created: true, Deleted: true}}
+			}
+			scheme := runtime.NewScheme()
+			require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+			hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
+			routine := CleanupRoutine{Log: zaptest.NewLogger(t).Sugar(), Manager: &SessionManager{Client: hub}}
+			routine.cleanupExpiredDebugSessions(context.Background())
+			var stored breakglassv1alpha1.DebugSession
+			err := hub.Get(context.Background(), client.ObjectKeyFromObject(ds), &stored)
+			if name == "deleted pod template" || name == "cleaned auxiliary" || name == "intentionally retained auxiliary" || name == "completed operation" || name == "failed operation" {
+				require.True(t, apierrors.IsNotFound(err))
+				return
+			}
+			require.NoError(t, err)
+			if name == "idle" {
+				require.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, stored.Status.State)
+				require.Equal(t, "Session expired due to inactivity", stored.Status.Message)
+				require.NotNil(t, stored.Status.RetainedUntil)
+				require.True(t, stored.Status.RetainedUntil.After(time.Now().Add(time.Hour)))
+			}
+		})
+	}
+}
+
+func TestDebugSessionRetentionExemptsOnlyKnownRetainedDeployedAuxiliary(t *testing.T) {
+	ref := breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "ConfigMap", Name: "evidence", Namespace: "default", UID: "evidence-uid", Source: "auxiliary:evidence"}
+	session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "evidence", DeleteAfter: false}}}, DeployedResources: []breakglassv1alpha1.DeployedResourceRef{ref}, AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "evidence", Created: true, APIVersion: ref.APIVersion, Kind: ref.Kind, ResourceName: ref.Name, Namespace: ref.Namespace, UID: ref.UID}}}}
+	require.False(t, debugSessionCleanupOutstanding(session))
+	for _, mutate := range []func(*breakglassv1alpha1.DebugSession){
+		func(ds *breakglassv1alpha1.DebugSession) { ds.Status.DeployedResources[0].UID = "" },
+		func(ds *breakglassv1alpha1.DebugSession) { ds.Status.DeployedResources[0].UID = "replacement" },
+		func(ds *breakglassv1alpha1.DebugSession) { ds.Status.DeployedResources[0].Source = "debug-pod" },
+		func(ds *breakglassv1alpha1.DebugSession) {
+			ds.Status.ResolvedTemplate.AuxiliaryResources[0].DeleteAfter = true
+		},
+		func(ds *breakglassv1alpha1.DebugSession) {
+			ds.Status.AuxiliaryResourceStatuses[0].AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{{CreateOperationID: "unknown"}}
+		},
+	} {
+		candidate := session.DeepCopy()
+		mutate(candidate)
+		require.True(t, debugSessionCleanupOutstanding(candidate))
+	}
 }

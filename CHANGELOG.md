@@ -13,11 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   images through the signed utility-image release matrix, with their existing
   runtime behavior gates and multi-architecture build contexts.
 
+- Add DebugSession inactivity expiry and explicit terminal evidence retention, preserving the existing unset retention policy and enforcing idle expiry at final authorization and mutation checks.
+
 - The debug-session-catalogue Helm chart provides administrator-authored,
   restricted DebugSession profiles for workload, network, storage, dump-access,
   and cluster-validation diagnostics.
 
 ### Fixed
+
+- Preserve effective retention for early debug quota rejection and require complete auxiliary identities before exempting retained resources from cleanup or failed-session bookkeeping.
 
 - Preserve per-template accounting repair intervals and metric publication order; align the built-in rejected mock session and CLI rejection test with `Rejected`.
 
@@ -29,6 +33,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reconciliation, cleanup, CLI filters, and the frontend.
 - Make terminal cleanup accounting idempotent and avoid decrementing active
   counts for sessions rejected before activation.
+- Preserve explicit retention on early debug-session rejection and use consistent cleanup evidence for deleted pod-template history and unresolved auxiliary identities.
+
+- Preserve prepared operation outcomes after inactivity or hard expiry without granting access, and release cluster cleanup for confirmed retained auxiliary resources.
+
+- Preserve pending binding quotas and explicit retention during cluster deletion, reject renewal without a live deadline, and fence idle expiry after workload reads.
+
+- Allow debug-session retention cleanup after completed operation history while preserving unresolved outcomes and pending copied-pod cleanup.
+
+- Preserve debug-session cleanup evidence past retention, enforce inactivity in fallback cleanup, and retain explicit evidence deadlines when a cluster is deleted.
+
+- Retry final quota-admission completion after same-UID resource-version
+  conflicts, while refusing terminal or replacement sessions.
 
 - If a debug session expires after an ephemeral-container intent is persisted
   but before the target write, record the operation as Failed without touching

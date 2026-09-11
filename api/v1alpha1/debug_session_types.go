@@ -244,6 +244,18 @@ type DebugSessionStatus struct {
 	// +optional
 	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
 
+	// LastActivity is the latest successful operation observed by the server.
+	// +optional
+	LastActivity *metav1.Time `json:"lastActivity,omitempty"`
+
+	// ActivityCount counts successful server-observed debug operations.
+	// +optional
+	ActivityCount int64 `json:"activityCount,omitempty"`
+
+	// RetainedUntil is the earliest time this terminal session may be removed.
+	// +optional
+	RetainedUntil *metav1.Time `json:"retainedUntil,omitempty"`
+
 	// renewalCount tracks how many times the session has been renewed.
 	// +optional
 	RenewalCount int32 `json:"renewalCount,omitempty"`
@@ -809,6 +821,7 @@ func (ds *DebugSession) ValidateCreate(ctx context.Context, obj *DebugSession) (
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
 func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) field.ErrorList {
 	var errs field.ErrorList
+	now := time.Now().UTC()
 	statusPath := field.NewPath("status")
 
 	checkTime := func(oldT, newT *metav1.Time, path *field.Path) {
@@ -822,6 +835,14 @@ func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) fie
 	}
 
 	checkTime(oldObj.Status.StartsAt, newObj.Status.StartsAt, statusPath.Child("startsAt"))
+	checkTime(oldObj.Status.LastActivity, newObj.Status.LastActivity, statusPath.Child("lastActivity"))
+	checkTime(oldObj.Status.RetainedUntil, newObj.Status.RetainedUntil, statusPath.Child("retainedUntil"))
+	if newObj.Status.ActivityCount < oldObj.Status.ActivityCount {
+		errs = append(errs, field.Invalid(statusPath.Child("activityCount"), newObj.Status.ActivityCount, "activityCount must not decrease"))
+	}
+	if deadline, configured := DebugSessionIdleDeadline(oldObj); configured && oldObj.Status.State == DebugSessionStateActive && !now.Before(deadline) && !isTerminalDebugSessionState(newObj.Status.State) && !AllowsExpiredActiveEphemeralOperationOutcome(oldObj.Status, newObj.Status, now) {
+		errs = append(errs, field.Invalid(statusPath.Child("state"), newObj.Status.State, "an idle-expired debug session must become terminal"))
+	}
 
 	oldExpiry := oldObj.Status.ExpiresAt
 	newExpiry := newObj.Status.ExpiresAt
@@ -842,7 +863,7 @@ func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) fie
 			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), newExpiry.Time, "timestamp must not move backwards"))
 		} else if newExpiry.Time.After(oldExpiry.Time) &&
 			(oldObj.Status.State != DebugSessionStateActive || newObj.Status.State != DebugSessionStateActive ||
-				!time.Now().Before(oldExpiry.Time) || newObj.Status.RenewalCount != oldObj.Status.RenewalCount+1) {
+				!now.Before(oldExpiry.Time) || newObj.Status.RenewalCount != oldObj.Status.RenewalCount+1) {
 			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), newExpiry.Time,
 				"an expiry may only be extended by one renewal while the session is active and unexpired"))
 		}
@@ -856,8 +877,8 @@ func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) fie
 			"a terminal debug session state cannot change"))
 	}
 	if newObj.Status.State == DebugSessionStateActive &&
-		(newExpiry == nil || newExpiry.IsZero() || !time.Now().Before(newExpiry.Time)) {
-		if !AllowsExpiredActiveEphemeralOperationFailure(oldObj.Status, newObj.Status, time.Now()) {
+		(newExpiry == nil || newExpiry.IsZero() || !now.Before(newExpiry.Time)) {
+		if !AllowsExpiredActiveEphemeralOperationOutcome(oldObj.Status, newObj.Status, now) {
 			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), newExpiry,
 				"an active debug session must have a future expiry"))
 		}
@@ -878,17 +899,21 @@ func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) fie
 	return errs
 }
 
-// AllowsExpiredActiveEphemeralOperationFailure permits the controller to
-// record a failed prepared operation after an Active session's expiry has
+// AllowsExpiredActiveEphemeralOperationOutcome permits the controller to
+// record a prepared operation outcome after an Active session's hard or idle expiry has
 // elapsed. It is deliberately limited to operation evidence: the session
 // remains Active for the normal expiry reconciler to perform its lifecycle
 // effects, and every other status field must remain unchanged.
-func AllowsExpiredActiveEphemeralOperationFailure(oldStatus, newStatus DebugSessionStatus, now time.Time) bool {
+func AllowsExpiredActiveEphemeralOperationOutcome(oldStatus, newStatus DebugSessionStatus, now time.Time) bool {
 	if oldStatus.State != DebugSessionStateActive || newStatus.State != DebugSessionStateActive ||
 		oldStatus.ExpiresAt == nil || oldStatus.ExpiresAt.IsZero() ||
 		newStatus.ExpiresAt == nil || newStatus.ExpiresAt.IsZero() ||
-		!oldStatus.ExpiresAt.Time.Equal(newStatus.ExpiresAt.Time) || now.Before(oldStatus.ExpiresAt.Time) ||
+		!oldStatus.ExpiresAt.Time.Equal(newStatus.ExpiresAt.Time) ||
 		oldStatus.KubectlDebugStatus == nil || newStatus.KubectlDebugStatus == nil {
+		return false
+	}
+	idleDeadline, idleConfigured := DebugSessionIdleDeadline(&DebugSession{Status: oldStatus})
+	if now.Before(oldStatus.ExpiresAt.Time) && (!idleConfigured || now.Before(idleDeadline)) {
 		return false
 	}
 	oldOther := oldStatus
@@ -921,7 +946,7 @@ func AllowsExpiredActiveEphemeralOperationFailure(oldStatus, newStatus DebugSess
 			if !kubectlDebugOperationIntentEqual(oldOperation, operation) {
 				return false
 			}
-			if operation.State == KubectlDebugOperationFailed {
+			if isTerminalKubectlDebugOperationState(operation.State) {
 				if operation.CompletedAt == nil || operation.CompletedAt.IsZero() {
 					return false
 				}
@@ -1231,4 +1256,22 @@ type DebugSessionList struct {
 
 func init() {
 	SchemeBuilder.Register(&DebugSession{}, &DebugSessionList{})
+}
+
+// AllowsExpiredActiveEphemeralOperationFailure retains the failure-only compatibility contract.
+func AllowsExpiredActiveEphemeralOperationFailure(oldStatus, newStatus DebugSessionStatus, now time.Time) bool {
+	if !AllowsExpiredActiveEphemeralOperationOutcome(oldStatus, newStatus, now) {
+		return false
+	}
+	for _, oldOperation := range oldStatus.KubectlDebugStatus.Operations {
+		if oldOperation.State != KubectlDebugOperationPrepared {
+			continue
+		}
+		for _, operation := range newStatus.KubectlDebugStatus.Operations {
+			if operation.ID == oldOperation.ID && operation.State != KubectlDebugOperationPrepared && operation.State != KubectlDebugOperationFailed {
+				return false
+			}
+		}
+	}
+	return true
 }
