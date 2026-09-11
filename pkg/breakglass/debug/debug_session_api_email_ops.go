@@ -374,19 +374,7 @@ func (c *DebugSessionAPIController) emitDebugSessionAuditEvent(ctx context.Conte
 }
 
 func (c *DebugSessionAPIController) shouldEmitAudit(ctx context.Context, session *breakglassv1alpha1.DebugSession) bool {
-	policy := session.Status.ResolvedTemplate
-	if policy == nil {
-		if session.Spec.TemplateRef == "" {
-			return true
-		}
-		template := &breakglassv1alpha1.DebugSessionTemplate{}
-		if err := c.reader().Get(ctx, ctrlclient.ObjectKey{Name: session.Spec.TemplateRef}, template); err != nil {
-			c.log.Warnw("Skipping debug session audit event: template audit policy unavailable", "session", session.Name, "template", session.Spec.TemplateRef, "error", err)
-			return false
-		}
-		policy = &template.Spec
-	}
-	return policy.Audit == nil || policy.Audit.Enabled
+	return shouldEmitDebugSessionAudit(ctx, c.reader(), c.log, session)
 }
 
 // handleInjectEphemeralContainer injects a debug container into an existing pod

@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Apply captured or live audit opt-out policy consistently to controller validation events and bound cleanup evidence allocation.
+
 - Clear terminal authorization-only cleanup bookkeeping without a cluster provider, and honor live template audit opt-out before snapshot capture.
 
 - Preserve auxiliary retention for legacy source-less references and retain mismatched UID evidence during cleanup.

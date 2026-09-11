@@ -2498,7 +2498,7 @@ func TestDebugSessionController_ShouldEmitAudit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ctrl.shouldEmitAudit(tt.session)
+			result := ctrl.shouldEmitAudit(context.Background(), tt.session)
 			assert.Equal(t, tt.expectedEmitAudit, result)
 		})
 	}
