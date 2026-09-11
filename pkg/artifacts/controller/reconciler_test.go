@@ -98,7 +98,7 @@ func TestValidateCollectorJobRequiresMatchingArtifactOwnership(t *testing.T) {
 	artifact := artifactForValidation()
 	group := int64(65532)
 	valid := batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: artifact.Namespace, Annotations: map[string]string{"breakglass.t-caas.telekom.com/plan-sha256": artifact.Spec.PlanDigest, "breakglass.t-caas.telekom.com/artifact-uid": string(artifact.UID), "breakglass.t-caas.telekom.com/operation-id": "op"}, Labels: map[string]string{"breakglass.t-caas.telekom.com/artifact": artifact.Spec.ArtifactID, "breakglass.t-caas.telekom.com/session-uid": artifact.Spec.SessionRef.UID}}, Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{"breakglass.t-caas.telekom.com/plan-sha256": artifact.Spec.PlanDigest}}, Spec: corev1.PodSpec{AutomountServiceAccountToken: boolPtr(false), SecurityContext: &corev1.PodSecurityContext{FSGroup: &group}, InitContainers: []corev1.Container{{Name: "collector"}}, Containers: []corev1.Container{{Name: "uploader"}}}}}}
-	if err := validateCollectorJob(valid, artifact, artifact.Namespace, "op"); err != nil {
+	if err := validateCollectorJob(valid, valid, artifact, artifact.Namespace, "op"); err != nil {
 		t.Fatalf("valid collector Job rejected: %v", err)
 	}
 	for name, mutate := range map[string]func(*batchv1.Job){
@@ -110,7 +110,7 @@ func TestValidateCollectorJobRequiresMatchingArtifactOwnership(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			modified := valid.DeepCopy()
 			mutate(modified)
-			if err := validateCollectorJob(*modified, artifact, artifact.Namespace, "op"); err == nil {
+			if err := validateCollectorJob(*modified, valid, artifact, artifact.Namespace, "op"); err == nil {
 				t.Fatal("invalid collector Job accepted")
 			}
 		})
@@ -151,6 +151,11 @@ func TestEnsureUploadResourcesWritesOnlyToTargetClientAndCapturesUIDs(t *testing
 	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(&artifact), &updated))
 	require.Equal(t, string(spokeSecret.UID), updated.Status.Resources[0].UID)
 	require.Equal(t, string(spokeJob.UID), updated.Status.Resources[1].UID)
+	record := backend.Record{ArtifactID: artifact.Spec.ArtifactID, ArtifactUID: string(artifact.UID), SessionUID: artifact.Spec.SessionRef.UID, Namespace: artifact.Spec.SessionRef.Namespace, SessionName: artifact.Spec.SessionRef.Name, ExpiresAt: expires.Time}
+	require.NoError(t, reconciler.ensureUploadResources(context.Background(), updated, record), "unchanged existing Job remains valid")
+	spokeJob.Spec.Template.Spec.Containers[0].Command = []string{"unauthorized-command"}
+	require.NoError(t, spoke.Update(context.Background(), &spokeJob))
+	require.ErrorContains(t, reconciler.ensureUploadResources(context.Background(), updated, record), "execution differs")
 	// A same-name replacement must never be adopted after the persisted UID
 	// changes. The controller fails closed and leaves cleanup evidence intact.
 	require.NoError(t, spoke.Delete(context.Background(), &spokeSecret))

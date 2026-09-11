@@ -4,6 +4,7 @@
 package host
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -44,7 +45,16 @@ func (c *collectionController) Register(group *gin.RouterGroup) error {
 }
 func (c *collectionController) create(ctx *gin.Context) {
 	var request collectionRequest
-	decoder := json.NewDecoder(io.LimitReader(ctx.Request.Body, 4097))
+	body, err := io.ReadAll(io.LimitReader(ctx.Request.Body, 4097))
+	if err != nil {
+		ctx.Status(http.StatusBadRequest)
+		return
+	}
+	if len(body) > 4096 {
+		ctx.Status(http.StatusRequestEntityTooLarge)
+		return
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
 		ctx.Status(http.StatusBadRequest)

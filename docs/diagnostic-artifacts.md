@@ -11,7 +11,11 @@ UID, target identity digest, recipe plan digest, redaction policy, bounded
 inputs, size limit, and expiry. Its specification cannot be changed after
 creation.
 
-The controller renders a fixed collector Job. The Job has a private emptyDir,
+The controller renders a fixed collector Job. On retry it compares the complete
+execution specification with the approved rendering, permitting only standard
+Kubernetes defaults and controller-generated Job identity labels and selectors.
+Changed commands, images, credential references, mounts, limits, or security
+settings fail closed. The Job has a private emptyDir,
 fixed collector and uploader commands, a pinned image digest, and the least
 privilege security context required by the selected recipe. The crashdump
 recipe additionally pins the Job to its selected node and mounts only the
@@ -161,3 +165,14 @@ terminal, or expired, or its recorded Lease is revoked. Transient live-read erro
 remain retryable and do not themselves prove revocation. Cleanup retains unknown
 resource identities and ambiguous provider writes until they can be resolved;
 slot reuse never authorizes cleanup of a replacement artifact UID.
+
+Collection request bodies are limited to 4096 bytes, including trailing whitespace;
+oversized requests return HTTP 413 before reservation. Metadata lists validate each
+artifact's full live target and lease binding, so an old lease incarnation cannot
+expose retained metadata. Invalid archives and size violations return HTTP 400;
+provider failures, ambiguous inventory, and request deadline failures return HTTP
+503 without exposing provider details. Authentication and lifecycle failures keep
+their existing 404, 409, and 410 responses.
+
+The shared production Kubernetes scheme includes coordination/v1 Lease objects,
+which are required before debug-session activation can acquire its durable lease.

@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Register connection leases in the production client scheme; validate complete
+  collector Job execution, live artifact-list bindings, collection body limits,
+  and distinguish invalid uploads from provider failures.
+
 - Remove completed diagnostic collector artifacts when their session ends, while preserving independent terminal-recording retention.
 
 - Clean up rejected artifact reservations and revoked collectors, preserve replacement artifact identities during upload cleanup, and document in-flight terminal output revocation limits.

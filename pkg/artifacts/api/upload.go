@@ -70,8 +70,10 @@ func writeUploadError(context *gin.Context, err error) {
 		context.Status(http.StatusGone)
 	case errors.Is(err, backend.ErrReplay), errors.Is(err, backend.ErrConflict):
 		context.Status(http.StatusConflict)
-	default:
+	case errors.Is(err, backend.ErrInvalid):
 		context.Status(http.StatusBadRequest)
+	default:
+		context.Status(http.StatusServiceUnavailable)
 	}
 }
 

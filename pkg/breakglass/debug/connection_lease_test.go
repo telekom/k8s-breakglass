@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/quotas"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -45,8 +46,8 @@ func (r *delayedLeaseReader) Get(ctx context.Context, key types.NamespacedName, 
 
 func TestConnectionLeaseAcquireValidateRecreateFencesOldReference(t *testing.T) {
 	ctx := context.Background()
-	scheme := testScheme()
-	require.NoError(t, coordinationv1.AddToScheme(scheme))
+	scheme, err := utils.CreateScheme()
+	require.NoError(t, err)
 	client := newLeaseClient(fake.NewClientBuilder().WithScheme(scheme))
 	service := NewConnectionLeaseService(client)
 	proof := ConnectionLeaseProof{Namespace: "controller", SessionUID: "session-a", TargetUID: "cluster-a", ProfileDigest: "sha256:a", ExpiresAt: time.Now().Add(time.Minute)}

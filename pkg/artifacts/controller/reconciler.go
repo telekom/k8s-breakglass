@@ -25,7 +25,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/pkg/artifacts/archive"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	artifactjob "github.com/telekom/k8s-breakglass/pkg/artifacts/job"
 	artifactkube "github.com/telekom/k8s-breakglass/pkg/artifacts/kube"
@@ -306,24 +305,6 @@ func (reconciler *Reconciler) ensureUploadResources(ctx context.Context, object 
 	if err != nil {
 		return err
 	}
-	var existing batchv1.Job
-	if err := targetClient.Get(ctx, types.NamespacedName{Namespace: targetNamespace, Name: jobName}, &existing); err == nil {
-		if jobRef.UID == "" {
-			return errors.New("artifact collector Job exists without the recorded creation UID")
-		}
-		if string(existing.UID) != jobRef.UID {
-			return errors.New("artifact collector Job was replaced; refusing adoption")
-		}
-		if err := validateCollectorJob(existing, object, targetNamespace, jobRef.OperationID); err != nil {
-			return err
-		}
-		return nil
-	} else if !apierrors.IsNotFound(err) {
-		return fmt.Errorf("get diagnostic artifact collector Job: %w", err)
-	}
-	if jobRef.UID != "" {
-		return errors.New("artifact collector Job disappeared after creation; refusing replacement adoption")
-	}
 	config := artifactjob.Config{Namespace: targetNamespace, Name: jobName, ArtifactID: object.Spec.ArtifactID, ArtifactName: object.Name, ArtifactUID: string(object.UID), SessionNamespace: object.Spec.SessionRef.Namespace, SessionName: object.Spec.SessionRef.Name, SessionUID: object.Spec.SessionRef.UID, Recipe: object.Spec.Recipe, RecipeVersion: int(object.Spec.RecipeVersion), PlanDigest: object.Spec.PlanDigest, RuntimeBindingDigest: object.Spec.RuntimeBindingDigest, RedactionProfile: object.Spec.RedactionProfile, RedactionVersion: int(object.Spec.RedactionVersion), UploadURL: strings.TrimSuffix(reconciler.ControllerURL, "/") + route, UploadTokenSecretName: secretName, Image: reconciler.Image, Node: valueOrEmpty(object.Spec.Node), MaxBytes: object.Spec.MaxBytes, TimeoutSeconds: object.Spec.TimeoutSeconds, DetailLevel: valueOrEmpty(object.Spec.Inputs.DetailLevel), MaxAgeMinutes: valueOrZero(object.Spec.Inputs.MaxAgeMinutes)}
 	collectorJob, err := artifactjob.Build(config)
 	if err != nil {
@@ -335,6 +316,24 @@ func (reconciler *Reconciler) ensureUploadResources(ctx context.Context, object 
 	}
 	collectorJob.Annotations["breakglass.t-caas.telekom.com/artifact-uid"] = string(object.UID)
 	collectorJob.Annotations["breakglass.t-caas.telekom.com/operation-id"] = jobRef.OperationID
+	var existing batchv1.Job
+	if err := targetClient.Get(ctx, types.NamespacedName{Namespace: targetNamespace, Name: jobName}, &existing); err == nil {
+		if jobRef.UID == "" {
+			return errors.New("artifact collector Job exists without the recorded creation UID")
+		}
+		if string(existing.UID) != jobRef.UID {
+			return errors.New("artifact collector Job was replaced; refusing adoption")
+		}
+		if err := validateCollectorJob(existing, *collectorJob, object, targetNamespace, jobRef.OperationID); err != nil {
+			return err
+		}
+		return nil
+	} else if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("get diagnostic artifact collector Job: %w", err)
+	}
+	if jobRef.UID != "" {
+		return errors.New("artifact collector Job disappeared after creation; refusing replacement adoption")
+	}
 	if err := reconciler.validateSpokeWrite(ctx, &object, session, target, targetClient); err != nil {
 		return err
 	}
@@ -360,27 +359,14 @@ func validateTokenSecret(secret corev1.Secret, object breakglassv1alpha1.DebugSe
 	return errors.New("diagnostic artifact upload token Secret is not bound to the artifact")
 }
 
-func validateCollectorJob(job batchv1.Job, object breakglassv1alpha1.DebugSessionArtifact, expectedNamespace, operationID string) error {
+func validateCollectorJob(job, expected batchv1.Job, object breakglassv1alpha1.DebugSessionArtifact, expectedNamespace, operationID string) error {
 	if job.Namespace != expectedNamespace || job.Labels["breakglass.t-caas.telekom.com/artifact"] != object.Spec.ArtifactID || job.Labels["breakglass.t-caas.telekom.com/session-uid"] != object.Spec.SessionRef.UID || job.Annotations["breakglass.t-caas.telekom.com/plan-sha256"] != object.Spec.PlanDigest || job.Annotations["breakglass.t-caas.telekom.com/operation-id"] != operationID {
 		return errors.New("diagnostic artifact collector Job does not match the artifact binding")
 	}
-	pod := job.Spec.Template.Spec
-	if len(pod.InitContainers) != 1 || pod.InitContainers[0].Name != "collector" || len(pod.Containers) != 1 || pod.Containers[0].Name != "uploader" {
-		return errors.New("diagnostic artifact collector Job does not enforce collector-before-uploader ordering")
+	if job.Annotations["breakglass.t-caas.telekom.com/artifact-uid"] != string(object.UID) {
+		return errors.New("diagnostic artifact collector Job is not bound to the artifact")
 	}
-	if pod.SecurityContext == nil || pod.SecurityContext.FSGroup == nil || *pod.SecurityContext.FSGroup != 65532 || pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken {
-		return errors.New("diagnostic artifact collector Job does not satisfy its filesystem and token contract")
-	}
-	if job.Spec.Template.Annotations["breakglass.t-caas.telekom.com/plan-sha256"] != object.Spec.PlanDigest {
-		return errors.New("diagnostic artifact collector Pod template does not carry the full plan digest")
-	}
-	if object.Spec.Recipe == archive.CrashdumpCollectionRecipe && object.Spec.Node != nil && pod.NodeName != *object.Spec.Node {
-		return errors.New("diagnostic artifact crashdump Job is not pinned to its approved node")
-	}
-	if job.Annotations["breakglass.t-caas.telekom.com/artifact-uid"] == string(object.UID) && job.Annotations["breakglass.t-caas.telekom.com/operation-id"] == operationID {
-		return nil
-	}
-	return errors.New("diagnostic artifact collector Job is not bound to the artifact")
+	return artifactjob.ValidateExecution(job, expected)
 }
 
 func valueOrEmpty(value *string) string {

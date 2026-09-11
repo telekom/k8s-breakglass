@@ -27,6 +27,7 @@ var (
 	ErrConflict  = errors.New("artifact lifecycle conflict")
 	ErrExpired   = errors.New("artifact access has expired")
 	ErrReplay    = errors.New("artifact upload has already been consumed")
+	ErrInvalid   = errors.New("invalid artifact input")
 )
 
 func artifactStorageKey(record Record) (string, error) {
@@ -238,9 +239,21 @@ func (service *Service) ListAuthorized(ctx context.Context, namespace, name, uid
 	}
 	result := make([]PublicRecord, 0, len(records))
 	for _, record := range records {
-		if record.Namespace == namespace && record.SessionName == name && record.SessionUID == uid && record.Recipe != TerminalRecordingRecipe {
-			result = append(result, service.Public(record))
+		if record.Namespace != namespace || record.SessionName != name || record.SessionUID != uid || record.Recipe == TerminalRecordingRecipe {
+			continue
 		}
+		// Each artifact may target a different Pod. Validate its complete immutable
+		// binding against the current session, target and lease before disclosure.
+		if err := service.authorize(ctx, record, uid, record.TargetIdentityDigest, record.OperationEpoch); err != nil {
+			if errors.Is(err, ErrForbidden) || errors.Is(err, ErrExpired) {
+				continue
+			}
+			return nil, err
+		}
+		result = append(result, service.Public(record))
+	}
+	if err := authorize(); err != nil {
+		return nil, err
 	}
 	return result, nil
 }
@@ -295,7 +308,11 @@ func (service *Service) Upload(ctx context.Context, encodedToken string, route s
 	validation, err := archive.Validate(ctx, staged, size, record.Expected, archive.Limits{MaxCompressedBytes: record.MaxBytes})
 	if err != nil {
 		service.restoreUnknown(ctx, record)
-		return PublicRecord{}, fmt.Errorf("validate diagnostic artifact: %w", err)
+		var pathError *os.PathError
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &pathError) {
+			return PublicRecord{}, fmt.Errorf("validate diagnostic artifact: %w", err)
+		}
+		return PublicRecord{}, fmt.Errorf("%w: validate diagnostic artifact: %w", ErrInvalid, err)
 	}
 	if validation.CompressedSHA256 != digest {
 		service.restoreUnknown(ctx, record)
@@ -679,7 +696,7 @@ func (service *Service) stage(ctx context.Context, source io.Reader, maxBytes in
 		return nil, 0, "", fmt.Errorf("stage diagnostic artifact: %w", err)
 	}
 	if read < 1 || read > maxBytes {
-		return nil, 0, "", errors.New("diagnostic artifact exceeds its configured size limit")
+		return nil, 0, "", fmt.Errorf("%w: diagnostic artifact exceeds its configured size limit", ErrInvalid)
 	}
 	if err := file.Sync(); err != nil {
 		return nil, 0, "", fmt.Errorf("sync diagnostic artifact staging file: %w", err)

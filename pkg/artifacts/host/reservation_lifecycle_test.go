@@ -66,6 +66,13 @@ type ambiguousStore struct {
 	inventoryErr error
 }
 
+func (s *ambiguousStore) StatVersion(ctx context.Context, object storage.Object, expected storage.Metadata) (storage.Metadata, error) {
+	if s.inventoryErr != nil {
+		return storage.Metadata{}, s.inventoryErr
+	}
+	return s.Store.StatVersion(ctx, object, expected)
+}
+
 func (s *ambiguousStore) Inventory(ctx context.Context, object storage.Object) ([]storage.Version, error) {
 	if s.inventoryErr != nil {
 		return nil, s.inventoryErr
@@ -328,7 +335,13 @@ func TestRegisteredCollectorAdmissionCreatesJobWithReservedToken(t *testing.T) {
 	require.NoError(t, hub.Update(ctx, session))
 	denied := send(`{"recipe":"system-summary.v1","podNamespace":"target","podName":"approved","image":"evil"}`)
 	require.Equal(t, http.StatusBadRequest, denied.Code)
-	response := send(`{"recipe":"system-summary.v1","podNamespace":"target","podName":"approved"}`)
+	requestBody := `{"recipe":"system-summary.v1","podNamespace":"target","podName":"approved"}`
+	oversized := send(requestBody + strings.Repeat(" ", 4097-len(requestBody)) + `{}`)
+	require.Equal(t, http.StatusRequestEntityTooLarge, oversized.Code)
+	var beforeReservations breakglassv1alpha1.DebugSessionArtifactList
+	require.NoError(t, hub.List(ctx, &beforeReservations))
+	require.Empty(t, beforeReservations.Items)
+	response := send(requestBody + strings.Repeat(" ", 4096-len(requestBody)))
 	require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
 	var public backend.PublicRecord
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &public))
@@ -500,6 +513,10 @@ func TestCollectorLeaseRecreationDeniesOldUploadTokenAndDownload(t *testing.T) {
 	_, err = io.ReadAll(reader)
 	require.NoError(t, err)
 	require.NoError(t, reader.Close())
+	listed, err := service.ListAuthorized(ctx, "hub", "session", "session-uid", func() error { return nil })
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	require.Equal(t, record.ArtifactID, listed[0].ArtifactID)
 	require.NoError(t, hub.Delete(ctx, lease))
 	replacement := lease.DeepCopy()
 	replacement.UID = "replacement-lease"
@@ -512,6 +529,9 @@ func TestCollectorLeaseRecreationDeniesOldUploadTokenAndDownload(t *testing.T) {
 	require.ErrorIs(t, err, backend.ErrForbidden)
 	_, _, err = service.Download(ctx, "hub", "session", record.ArtifactID, binding)
 	require.ErrorIs(t, err, backend.ErrForbidden)
+	listed, err = service.ListAuthorized(ctx, "hub", "session", "session-uid", func() error { return nil })
+	require.NoError(t, err)
+	require.Empty(t, listed, "same-epoch replacement lease must not disclose old artifact metadata")
 }
 
 func TestRejectedRecordingReservationIsDurablyCanceled(t *testing.T) {

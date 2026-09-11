@@ -108,8 +108,10 @@ func writeReadError(context *gin.Context, err error) {
 		context.Status(http.StatusGone)
 	case errors.Is(err, backend.ErrConflict), errors.Is(err, storage.ErrConflict):
 		context.Status(http.StatusConflict)
-	default:
+	case errors.Is(err, backend.ErrInvalid):
 		context.Status(http.StatusBadRequest)
+	default:
+		context.Status(http.StatusServiceUnavailable)
 	}
 }
 

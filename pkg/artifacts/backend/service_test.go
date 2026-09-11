@@ -292,3 +292,31 @@ func TestStagePreservesBinaryPayloadAndDigest(t *testing.T) {
 	expected := sha256.Sum256(payload)
 	require.Equal(t, hex.EncodeToString(expected[:]), digest)
 }
+
+type bindingAuthorizerFunc func(context.Context, SessionBinding) error
+
+func (f bindingAuthorizerFunc) AuthorizeArtifact(ctx context.Context, binding SessionBinding) error {
+	return f(ctx, binding)
+}
+
+func TestListAuthorizedChecksCompleteArtifactBinding(t *testing.T) {
+	record := Record{Namespace: "ns", SessionName: "session", SessionUID: "uid", ArtifactID: "dsa-0123456789abcdef01234567", TargetClusterUID: "cluster", TargetPodNamespace: "target", TargetPodName: "pod", TargetPodUID: "pod-uid", TargetNodeUID: "node-uid", ConnectionLeaseUID: "lease-uid", TargetIdentityDigest: "digest", OperationEpoch: 3}
+	expected := SessionBinding{Namespace: "ns", Name: "session", UID: "uid", TargetClusterUID: "cluster", TargetPodNamespace: "target", TargetPodName: "pod", TargetPodUID: "pod-uid", TargetNodeUID: "node-uid", ConnectionLeaseUID: "lease-uid", TargetIdentityDigest: "digest", OperationEpoch: 3}
+	for _, reject := range []bool{false, true} {
+		service := newServiceForTest(t, &memoryRepository{record: record}, &fakeStore{}, bindingAuthorizerFunc(func(_ context.Context, binding SessionBinding) error {
+			require.Equal(t, expected, binding)
+			if reject {
+				return ErrForbidden
+			}
+			return nil
+		}))
+		records, err := service.ListAuthorized(context.Background(), "ns", "session", "uid", func() error { return nil })
+		require.NoError(t, err)
+		if reject {
+			require.Empty(t, records)
+		} else {
+			require.Len(t, records, 1)
+			require.Equal(t, record.ArtifactID, records[0].ArtifactID)
+		}
+	}
+}
