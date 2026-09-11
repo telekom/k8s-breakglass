@@ -8,7 +8,7 @@ import breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 // Exempt only the exact observed auxiliary identity selected for retention.
 // Unknown create outcomes and name-reused resources still require cleanup review.
 func DebugSessionResourceIntentionallyRetained(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
-	if ref.UID == "" || ds.Status.ResolvedTemplate == nil {
+	if !completeDebugResourceIdentity(ref.UID, ref.APIVersion, ref.Kind, ref.Name) || ds.Status.ResolvedTemplate == nil {
 		return false
 	}
 	for _, configured := range ds.Status.ResolvedTemplate.AuxiliaryResources {
@@ -56,16 +56,21 @@ func DebugSessionDeletesAuxiliaryResource(session *breakglassv1alpha1.DebugSessi
 
 // DebugSessionAuxiliaryStatusHasCleanupResidual preserves unknown outcomes even for retained resources.
 func DebugSessionAuxiliaryStatusHasCleanupResidual(session *breakglassv1alpha1.DebugSession, status breakglassv1alpha1.AuxiliaryResourceStatus) bool {
-	return !status.Deleted && (status.Created || status.CreateOperationID != "" || status.UID != "" || status.ResourceName != "") && (status.UID == "" || DebugSessionDeletesAuxiliaryResource(session, status.Name))
+	return !status.Deleted && (status.Created || status.CreateOperationID != "" || status.UID != "" || status.ResourceName != "" || status.APIVersion != "" || status.Kind != "") && (!completeDebugResourceIdentity(status.UID, status.APIVersion, status.Kind, status.ResourceName) || DebugSessionDeletesAuxiliaryResource(session, status.Name))
 }
 
 // DebugSessionAuxiliaryChildHasCleanupResidual preserves unknown child outcomes independently of its parent.
 func DebugSessionAuxiliaryChildHasCleanupResidual(session *breakglassv1alpha1.DebugSession, parent string, child breakglassv1alpha1.AdditionalResourceRef) bool {
-	return !child.Deleted && (child.UID == "" || DebugSessionDeletesAuxiliaryResource(session, parent))
+	return !child.Deleted && (!completeDebugResourceIdentity(child.UID, child.APIVersion, child.Kind, child.ResourceName) || DebugSessionDeletesAuxiliaryResource(session, parent))
 }
 
 // DebugSessionPodTemplateStatusHasCleanupResidual treats every unconfirmed
 // deletion as outstanding, including partially populated creation evidence.
 func DebugSessionPodTemplateStatusHasCleanupResidual(status breakglassv1alpha1.PodTemplateResourceStatus) bool {
 	return !status.Deleted
+}
+
+// Namespace is optional because auxiliary resources may be cluster-scoped.
+func completeDebugResourceIdentity(uid, apiVersion, kind, name string) bool {
+	return uid != "" && apiVersion != "" && kind != "" && name != ""
 }

@@ -1340,11 +1340,18 @@ func TestClusterConfigReconciler_AutoDiscoveredRetentionResolvedBeforeTerminatio
 }
 
 func TestClusterConfigCleanupUsesRetainedAndUnknownInventory(t *testing.T) {
-	for _, evidence := range []string{"none", "operation", "created only", "name only", "empty child", "pod name only", "blank pod"} {
+	for _, evidence := range []string{"none", "operation", "created only", "name only", "empty child", "pod name only", "blank pod", "uid only", "kind only", "child uid only"} {
 		t.Run(evidence, func(t *testing.T) {
 			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "cleanup", Namespace: "ns", UID: "uid"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateTerminated, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "kept", DeleteAfter: false}}}, DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{Source: "auxiliary:kept", APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", Name: "kept", UID: "kept-uid"}}, AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "kept", Created: true, APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", ResourceName: "kept", UID: "kept-uid"}}, PodTemplateResourceStatuses: []breakglassv1alpha1.PodTemplateResourceStatus{{Created: true, Deleted: true, UID: "deleted"}}}}
 			session.Status.DeployedResources = nil
 			switch evidence {
+			case "uid only":
+				session.Status.AuxiliaryResourceStatuses[0] = breakglassv1alpha1.AuxiliaryResourceStatus{Name: "kept", UID: "kept-uid"}
+			case "kind only":
+				session.Status.AuxiliaryResourceStatuses[0] = breakglassv1alpha1.AuxiliaryResourceStatus{Name: "kept", Kind: "ConfigMap"}
+			case "child uid only":
+				session.Status.AuxiliaryResourceStatuses[0].AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{{UID: "child"}}
+
 			case "operation":
 				session.Status.AuxiliaryResourceStatuses = append(session.Status.AuxiliaryResourceStatuses, breakglassv1alpha1.AuxiliaryResourceStatus{Name: "unknown", CreateOperationID: "pending"})
 			case "created only":

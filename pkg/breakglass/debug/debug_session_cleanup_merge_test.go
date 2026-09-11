@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -44,4 +45,41 @@ func TestReviewFailedCleanupCompletesDeletedHistory(t *testing.T) {
 	result, err := controller.handleFailedCleanup(context.Background(), session)
 	require.NoError(t, err)
 	require.Zero(t, result.RequeueAfter)
+}
+
+func TestFailedCleanupCompletesConfirmedRetention(t *testing.T) {
+	for _, missing := range []string{"", "uid", "version", "kind", "name"} {
+		t.Run(missing, func(t *testing.T) {
+			c, session, template, _ := newDeploymentFenceFixture(t)
+			session.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+			session.Status.AllowedPods = nil
+			session.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "keep"}}}
+			status := breakglassv1alpha1.AuxiliaryResourceStatus{Name: "keep", Created: true, APIVersion: "v1", Kind: "Namespace", ResourceName: "evidence", UID: "uid"}
+			switch missing {
+			case "uid":
+				status.UID = ""
+			case "version":
+				status.APIVersion = ""
+			case "kind":
+				status.Kind = ""
+			case "name":
+				status.ResourceName = ""
+			}
+			session.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{status}
+			session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{{APIVersion: status.APIVersion, Kind: status.Kind, Name: status.ResourceName, UID: status.UID, Source: "auxiliary:keep"}}
+			require.NoError(t, c.client.Status().Update(t.Context(), session))
+			require.Equal(t, missing != "", hasTrackedSpokeResources(session))
+			if missing != "" {
+				return
+			}
+			template.Status.ActiveSessionCount = 1
+			require.NoError(t, c.client.Status().Update(t.Context(), template))
+			result, err := c.handleFailedCleanup(t.Context(), session)
+			require.NoError(t, err)
+			require.Zero(t, result.RequeueAfter)
+			require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(template), template))
+			require.Zero(t, template.Status.ActiveSessionCount)
+			require.Len(t, session.Status.AuxiliaryResourceStatuses, 1, "intentional retention history remains")
+		})
+	}
 }
