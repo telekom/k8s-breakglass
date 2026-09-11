@@ -189,7 +189,7 @@ func BreakglassSessionStatusFrom(status *breakglassv1alpha1.BreakglassSessionSta
 		result.WithReasonEnded(status.ReasonEnded)
 	}
 
-	// NOTE: LastActivity and ActivityCount are intentionally NOT included here.
+	// NOTE: BreakglassSession LastActivity and ActivityCount are intentionally NOT included here.
 	// These fields are managed exclusively by the activity tracker
 	// (see pkg/webhook/activity_tracker.go) via status merge-patch and must
 	// not be set by the main controller to avoid conflicting updates.
@@ -198,6 +198,8 @@ func BreakglassSessionStatusFrom(status *breakglassv1alpha1.BreakglassSessionSta
 }
 
 // DebugSessionStatusFrom converts a DebugSessionStatus to its ApplyConfiguration.
+// Unlike BreakglassSession activity, DebugSession activity is included: callers
+// must use the shared live-read status writers to preserve monotonic updates.
 func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.DebugSessionStatusApplyConfiguration {
 	if status == nil {
 		return nil

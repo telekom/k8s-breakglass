@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve effective retention for early debug quota rejection and require complete auxiliary identities before exempting retained resources from cleanup or failed-session bookkeeping.
+
 - Preserve per-template accounting repair intervals and metric publication order; align the built-in rejected mock session and CLI rejection test with `Rejected`.
 
 - Align rejection API, mock, E2E, and audit contracts with `Rejected`; coalesce periodic active accounting while preserving immediate lifecycle and failure repair.
