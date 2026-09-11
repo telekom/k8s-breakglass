@@ -150,3 +150,14 @@ func TestAwaitShutdownSignal_BothChannelsReady(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func TestArtifactDeploymentRequiresControllersOnlyWhenEnabled(t *testing.T) {
+	for _, artifacts := range []bool{false, true} {
+		for _, controllers := range []bool{false, true} {
+			err := validateArtifactDeployment(artifacts, controllers)
+			if (err != nil) != (artifacts && !controllers) {
+				t.Fatalf("artifacts=%v controllers=%v: %v", artifacts, controllers, err)
+			}
+		}
+	}
+}

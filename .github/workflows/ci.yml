@@ -1190,6 +1190,28 @@ jobs:
           # Enable audit webhook tests
           AUDIT_WEBHOOK_TEST: "true"
 
+      - name: Provision diagnostic artifact HTTPS and private storage fixture
+        run: bash e2e/fixtures/artifacts/setup.sh
+
+      - name: Run real diagnostic artifact collector E2E
+        run: |
+          set -o pipefail
+          go test -tags=e2e -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract)$' -count=1 -timeout 30m 2>&1 | tee e2e-artifact-results.txt
+        env:
+          E2E_TEST: "true"
+          E2E_NAMESPACE: "breakglass-system"
+
+      - name: Explicitly select disposable S3 backend
+        run: bash e2e/fixtures/artifacts/select-s3.sh
+
+      - name: Run real diagnostic artifact collector S3 matrix
+        run: |
+          set -o pipefail
+          go test -tags=e2e -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract)$' -count=1 -timeout 30m 2>&1 | tee e2e-artifact-s3-results.txt
+        env:
+          E2E_TEST: "true"
+          E2E_NAMESPACE: "breakglass-system"
+
       - name: Run OIDC E2E tests
         run: |
           set -o pipefail
@@ -1294,6 +1316,7 @@ jobs:
           timeout 10 kubectl get breakglasssession -A -o yaml > "$DIAG_DIR/resources/sessions.yaml" 2>&1 &
           timeout 10 kubectl get denypolicy -A -o yaml > "$DIAG_DIR/resources/denypolicies.yaml" 2>&1 &
           timeout 10 kubectl get debugsession -A -o yaml > "$DIAG_DIR/resources/debugsessions.yaml" 2>&1 &
+          timeout 10 kubectl get debugsessionartifact -A -o yaml > "$DIAG_DIR/resources/debugsessionartifacts.yaml" 2>&1 &
           timeout 10 kubectl get debugsessiontemplate -A -o yaml > "$DIAG_DIR/resources/debugsessiontemplates.yaml" 2>&1 &
           timeout 10 kubectl get auditconfig -A -o yaml > "$DIAG_DIR/resources/auditconfigs.yaml" 2>&1 &
           wait
@@ -1340,6 +1363,7 @@ jobs:
           echo "--- Test results ---"
           cp e2e-core-results.txt "$DIAG_DIR/" 2>/dev/null || true
           cp e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
+          cp e2e-artifact-results.txt e2e-artifact-s3-results.txt "$DIAG_DIR/" 2>/dev/null || true
           cp oidc-e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
           
           # ===========================================

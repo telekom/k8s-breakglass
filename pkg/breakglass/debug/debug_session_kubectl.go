@@ -47,11 +47,18 @@ import (
 
 // KubectlDebugHandler handles kubectl-debug mode operations
 type KubectlDebugHandler struct {
-	identity   debugSessionReadIdentity
-	client     ctrlclient.Client
-	reader     ctrlclient.Reader
-	apiReader  ctrlclient.Reader
-	ccProvider ClientProviderInterface
+	identity                 debugSessionReadIdentity
+	client                   ctrlclient.Client
+	reader                   ctrlclient.Reader
+	apiReader                ctrlclient.Reader
+	ccProvider               ClientProviderInterface
+	connectionLeaseValidator func(context.Context, *breakglassv1alpha1.DebugSession) error
+}
+
+// WithConnectionLeaseValidator installs the controller-owned access fence.
+func (h *KubectlDebugHandler) WithConnectionLeaseValidator(validate func(context.Context, *breakglassv1alpha1.DebugSession) error) *KubectlDebugHandler {
+	h.connectionLeaseValidator = validate
+	return h
 }
 
 func (h *KubectlDebugHandler) withIdentity(identity debugSessionReadIdentity) *KubectlDebugHandler {
@@ -576,6 +583,8 @@ func (h *KubectlDebugHandler) completeEphemeralContainerOperation(
 	}
 	return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		kubectlStatus := ensureKubectlDebugStatus(status)
+		// Expired access permits only final operation evidence, never new authorization refs.
+		recordRefs := status.State != breakglassv1alpha1.DebugSessionStateActive || !isDebugSessionExpired(&breakglassv1alpha1.DebugSession{Status: *status}, time.Now().UTC())
 		defer func() {
 			kubectlStatus.Operations = terminalKubectlDebugOperations(kubectlStatus.Operations)
 		}()
@@ -586,11 +595,10 @@ func (h *KubectlDebugHandler) completeEphemeralContainerOperation(
 			}
 			if operation.State != breakglassv1alpha1.KubectlDebugOperationPrepared {
 				if operation.State == breakglassv1alpha1.KubectlDebugOperationCompleted && state == breakglassv1alpha1.KubectlDebugOperationCompleted {
-					if ref != nil {
+					if ref != nil && recordRefs {
 						addEphemeralContainerRefIfMissing(status, *ref)
 					}
-					if ref != nil && status.State == breakglassv1alpha1.DebugSessionStateActive {
-						addEphemeralContainerRefIfMissing(status, *ref)
+					if ref != nil && recordRefs && status.State == breakglassv1alpha1.DebugSessionStateActive {
 						addAllowedPodIfMissing(status, breakglassv1alpha1.AllowedPodRef{Namespace: ref.Namespace, Name: ref.PodName, UID: ref.PodUID, Ready: true})
 					}
 				}
@@ -608,7 +616,7 @@ func (h *KubectlDebugHandler) completeEphemeralContainerOperation(
 				kubectlStatus.Operations = append(kubectlStatus.Operations[:index:index], kubectlStatus.Operations[index+1:]...)
 				kubectlStatus.Operations = append(kubectlStatus.Operations, finalized)
 			}
-			if ref != nil && state == breakglassv1alpha1.KubectlDebugOperationCompleted {
+			if ref != nil && recordRefs && state == breakglassv1alpha1.KubectlDebugOperationCompleted {
 				addEphemeralContainerRefIfMissing(status, *ref)
 				if status.State == breakglassv1alpha1.DebugSessionStateActive {
 					addAllowedPodIfMissing(status, breakglassv1alpha1.AllowedPodRef{Namespace: ref.Namespace, Name: ref.PodName, UID: ref.PodUID, Ready: true})
@@ -858,7 +866,7 @@ func (h *KubectlDebugHandler) liveSessionForMutation(
 		return nil, kubectlDebugPolicyErrorf("debug session changed during mutation authorization")
 	}
 	if !live.DeletionTimestamp.IsZero() || live.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
-		live.Status.ExpiresAt == nil || !time.Now().UTC().Before(live.Status.ExpiresAt.Time) {
+		live.Status.ExpiresAt == nil || isDebugSessionExpired(live, time.Now().UTC()) {
 		return nil, kubectlDebugPolicyErrorf("debug session is no longer active")
 	}
 	identity := h.operationIdentity(user)
@@ -874,6 +882,11 @@ func (h *KubectlDebugHandler) liveSessionForMutation(
 		}
 		if !allowed {
 			return nil, kubectlDebugPolicyErrorf("user is not an active debug-session participant")
+		}
+	}
+	if h.connectionLeaseValidator != nil {
+		if err := h.connectionLeaseValidator(ctx, live); err != nil {
+			return nil, kubectlDebugPolicyErrorf("connection lease is no longer valid: %w", err)
 		}
 	}
 	return live, nil

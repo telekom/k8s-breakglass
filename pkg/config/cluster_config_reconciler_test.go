@@ -546,7 +546,8 @@ func TestClusterConfigReconciler_DeleteTerminatesDebugSessions(t *testing.T) {
 			Cluster: "test-cluster",
 		},
 		Status: breakglassv1alpha1.DebugSessionStatus{
-			State: breakglassv1alpha1.DebugSessionStateActive,
+			State:            breakglassv1alpha1.DebugSessionStateActive,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: "2h"}},
 		},
 	}
 
@@ -615,6 +616,8 @@ func TestClusterConfigReconciler_DeleteTerminatesDebugSessions(t *testing.T) {
 	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, active.Status.State)
 	assert.Contains(t, active.Status.Message, "ClusterConfig")
 	assert.Contains(t, active.Status.Message, "deleted")
+	require.NotNil(t, active.Status.RetainedUntil)
+	assert.True(t, active.Status.RetainedUntil.After(time.Now().Add(time.Hour)))
 
 	// Verify pending debug session was terminated so cleanup can run
 	var pending breakglassv1alpha1.DebugSession
@@ -1243,4 +1246,136 @@ func TestClusterConfigReconciler_DebugSessionCleanupFailureBlocksDeletion(t *tes
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &updated)
 	require.NoError(t, err, "ClusterConfig should still exist because cleanup failed")
 	assert.Contains(t, updated.Finalizers, ClusterConfigFinalizer, "Finalizer should still be present")
+}
+
+func TestClusterConfigReconciler_DebugReplacementIsNotTerminated(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestClusterConfigReconcilerScheme()
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "reused", Namespace: "default", UID: "old"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive}}
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).WithIndex(session, "spec.cluster", func(obj client.Object) []string { return []string{obj.(*breakglassv1alpha1.DebugSession).Spec.Cluster} }).Build()
+	replaced := false
+	wrapped := interceptor.NewClient(hub, interceptor.Funcs{List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+		if err := cl.List(ctx, list, opts...); err != nil {
+			return err
+		}
+		if !replaced {
+			replaced = true
+			require.NoError(t, cl.Delete(ctx, session))
+			replacement := session.DeepCopy()
+			replacement.UID = "new"
+			replacement.ResourceVersion = ""
+			require.NoError(t, cl.Create(ctx, replacement))
+		}
+		return nil
+	}})
+	r := &ClusterConfigReconciler{Client: wrapped, Scheme: scheme, Log: zap.NewNop().Sugar()}
+	require.ErrorContains(t, r.terminateDebugSessionsForCluster(ctx, "cluster", r.Log), "identity changed")
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(session), &stored))
+	require.Equal(t, types.UID("new"), stored.UID)
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, stored.Status.State)
+	require.Nil(t, stored.Status.RetainedUntil)
+}
+
+func TestClusterConfigReconciler_PendingRetentionResolvedBeforeTermination(t *testing.T) {
+	for _, bindingRetention := range []string{"", "30m", "3h"} {
+		t.Run(bindingRetention, func(t *testing.T) {
+			scheme := newTestClusterConfigReconcilerScheme()
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "pending-retention", Namespace: "default", UID: "session-uid"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", BindingRef: &breakglassv1alpha1.BindingReference{Name: "binding", Namespace: "default"}}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePendingApproval}}
+			template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: "2h"}}}
+			binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: bindingRetention}}}
+			hub := newTestClusterConfigFakeClient(scheme, session, template, binding)
+			r := &ClusterConfigReconciler{Client: hub, Scheme: scheme, Log: zap.NewNop().Sugar()}
+			before := time.Now()
+			require.NoError(t, r.terminateDebugSessionsForCluster(context.Background(), "cluster", r.Log))
+			live := &breakglassv1alpha1.DebugSession{}
+			require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), live))
+			require.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, live.Status.State)
+			require.NotNil(t, live.Status.RetainedUntil)
+			want := 2 * time.Hour
+			if bindingRetention == "3h" {
+				want = 3 * time.Hour
+			}
+			require.WithinDuration(t, before.Add(want), live.Status.RetainedUntil.Time, 2*time.Second)
+			require.Nil(t, live.Status.ResolvedTemplate)
+		})
+	}
+}
+
+func TestClusterConfigReconciler_RetentionResolutionFailurePreservesPending(t *testing.T) {
+	scheme := newTestClusterConfigReconcilerScheme()
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "pending", Namespace: "default", UID: "session-uid"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster", TemplateRef: "missing"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending}}
+	hub := newTestClusterConfigFakeClient(scheme, session)
+	r := &ClusterConfigReconciler{Client: hub, Scheme: scheme, Log: zap.NewNop().Sugar()}
+	require.ErrorContains(t, r.terminateDebugSessionsForCluster(context.Background(), "cluster", r.Log), "resolve debug session retention template")
+	live := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), live))
+	require.Equal(t, breakglassv1alpha1.DebugSessionStatePending, live.Status.State)
+	require.Nil(t, live.Status.RetainedUntil)
+}
+
+func TestClusterConfigReconciler_AutoDiscoveredRetentionResolvedBeforeTermination(t *testing.T) {
+	for _, bindingRetention := range []string{"", "30m", "3h"} {
+		t.Run(bindingRetention, func(t *testing.T) {
+			scheme := newTestClusterConfigReconcilerScheme()
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "pending-retention", Namespace: "default", UID: "session-uid"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster", TemplateRef: "template"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePendingApproval}}
+			template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: "2h"}}}
+			binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template"}, Clusters: []string{"cluster"}, Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: bindingRetention}}}
+			hub := newTestClusterConfigFakeClient(scheme, session, template, binding)
+			r := &ClusterConfigReconciler{Client: hub, Scheme: scheme, Log: zap.NewNop().Sugar()}
+			before := time.Now()
+			require.NoError(t, r.terminateDebugSessionsForCluster(context.Background(), "cluster", r.Log))
+			live := &breakglassv1alpha1.DebugSession{}
+			require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), live))
+			require.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, live.Status.State)
+			require.NotNil(t, live.Status.RetainedUntil)
+			want := 2 * time.Hour
+			if bindingRetention == "3h" {
+				want = 3 * time.Hour
+			}
+			require.WithinDuration(t, before.Add(want), live.Status.RetainedUntil.Time, 2*time.Second)
+			require.Nil(t, live.Status.ResolvedTemplate)
+		})
+	}
+}
+
+func TestClusterConfigCleanupUsesRetainedAndUnknownInventory(t *testing.T) {
+	for _, evidence := range []string{"none", "operation", "created only", "name only", "empty child", "pod name only", "blank pod", "uid only", "kind only", "child uid only"} {
+		t.Run(evidence, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "cleanup", Namespace: "ns", UID: "uid"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateTerminated, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "kept", DeleteAfter: false}}}, DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{Source: "auxiliary:kept", APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", Name: "kept", UID: "kept-uid"}}, AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "kept", Created: true, APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", ResourceName: "kept", UID: "kept-uid"}}, PodTemplateResourceStatuses: []breakglassv1alpha1.PodTemplateResourceStatus{{Created: true, Deleted: true, UID: "deleted"}}}}
+			session.Status.DeployedResources = nil
+			switch evidence {
+			case "uid only":
+				session.Status.AuxiliaryResourceStatuses[0] = breakglassv1alpha1.AuxiliaryResourceStatus{Name: "kept", UID: "kept-uid"}
+			case "kind only":
+				session.Status.AuxiliaryResourceStatuses[0] = breakglassv1alpha1.AuxiliaryResourceStatus{Name: "kept", Kind: "ConfigMap"}
+			case "child uid only":
+				session.Status.AuxiliaryResourceStatuses[0].AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{{UID: "child"}}
+
+			case "operation":
+				session.Status.AuxiliaryResourceStatuses = append(session.Status.AuxiliaryResourceStatuses, breakglassv1alpha1.AuxiliaryResourceStatus{Name: "unknown", CreateOperationID: "pending"})
+			case "created only":
+				session.Status.AuxiliaryResourceStatuses[0].UID = ""
+				session.Status.AuxiliaryResourceStatuses[0].ResourceName = ""
+			case "name only":
+				session.Status.AuxiliaryResourceStatuses[0].UID = ""
+				session.Status.AuxiliaryResourceStatuses[0].Created = false
+			case "empty child":
+				session.Status.AuxiliaryResourceStatuses[0].AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{{}}
+			case "pod name only":
+				session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{{ResourceName: "unknown"}}
+			case "blank pod":
+				session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{{}}
+			}
+			scheme := newTestClusterConfigReconcilerScheme()
+			hub := newTestClusterConfigFakeClient(scheme, session)
+			reconciler := &ClusterConfigReconciler{Client: hub, Scheme: scheme, Log: zap.NewNop().Sugar()}
+			err := reconciler.terminateDebugSessionsForCluster(context.Background(), "cluster", reconciler.Log)
+			if evidence != "none" {
+				require.ErrorContains(t, err, "still tracks spoke resources")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }

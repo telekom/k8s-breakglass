@@ -12,6 +12,7 @@ The breakglass configuration file controls:
 - Server and TLS settings
 - Frontend UI behavior
 - Kubernetes cluster settings
+- Opt-in diagnostic artifact storage and transport
 
 **Note:** The following are **NOT** configured in config.yaml:
 
@@ -41,6 +42,79 @@ kubernetes:
 - OIDC/IDP configuration has been moved to **IdentityProvider CRDs** - see [Identity Provider documentation](identity-provider.md)
 
 ## Section Reference
+
+### `artifacts` (Optional)
+
+Disabled by default. Enabling this section requires `--enable-controllers=true`
+on the process; startup rejects artifact admission without its collection and
+cleanup controller. `--enable-api=false` remains valid for a controller-only
+worker. Storage and signing configuration is read at startup; restart after
+changing these settings or Secrets.
+
+```yaml
+artifacts:
+  enabled: true
+  backend: s3
+  stagingDir: /var/lib/breakglass/upload-staging
+  collectorImage: registry.example/breakglass/diagnostic-artifact-collector@sha256:<64-hex-digest>
+  controllerURL: https://breakglass.example.com
+  uploadMaxBytes: 67108864
+  tokenSecretName: artifact-signing
+  tokenSignerKeyID: active
+  s3:
+    region: eu-central-1
+    bucket: breakglass-artifacts
+    prefix: evidence
+    instanceID: artifact-instance-0123456789
+    requireVersioned: true
+    credentialsSecretName: artifact-s3
+    # endpoint: https://s3.example.com  # optional S3-compatible HTTPS origin
+    # usePathStyle: true
+```
+
+Replace the image placeholder with an actually published immutable digest.
+`stagingDir` must be a writable private staging directory. Use an HTTPS origin for `controllerURL`, reachable by collector Jobs; query
+and fragment components are rejected. Do not put credentials in this URL. `uploadMaxBytes` is required and must be between 1 and 536870912
+bytes; recipes impose additional limits. Requests cannot override the image,
+provider, signing key, target identity or these limits.
+
+`tokenSecretName` and `s3.credentialsSecretName` refer to existing Secrets in the
+configured Breakglass namespace. The signing Secret contains 1–32 data keys;
+each key name is its key ID and each value is at least 32 bytes. `tokenSignerKeyID`
+selects one existing key; retained keys permit verification during rotation.
+The S3 Secret uses `accessKeyID`, `secretAccessKey`, and optional `sessionToken`.
+These credentials are not sent to collector Jobs. The administrator must grant
+the controller access to those exact Secrets and provision the storage sentinel.
+
+Choose exactly one backend subsection. S3 requires `region`, a valid general
+purpose `bucket`, a 16–128 character non-whitespace `instanceID`, versioning and
+matching instance sentinel. Optional `prefix` is at most 256 characters and
+cannot contain NUL or line breaks. An explicit `endpoint` must be an HTTPS
+origin. `usePathStyle` selects path-style addressing for compatible providers.
+Startup verifies the bucket/versioning/sentinel contract before exposing routes.
+
+For `backend: local`, replace `s3` with `local`:
+
+| Setting | Required contract |
+| --- | --- |
+| `privateRootAcknowledged` | `true`; storage is private to the serving process |
+| `artifactRoot`, `stagingRoot` | Preprovisioned, distinct, unnested clean absolute directories, not `/` |
+| `instanceID` | Stable instance identity matching both preprovisioned sentinels |
+| `expectedUID`, `expectedGID` | Nonnegative numeric owner IDs matching the process and roots |
+| `servingReplicas` | `1` |
+| `accessMode` | `ReadWriteOnce` |
+| `deploymentStrategy` | `Recreate` |
+| `encryptionAcknowledged` | `true`; storage encryption is administrator-managed |
+| `snapshotPolicy` | `prohibited` or `outside-breakglass-deletion-boundary` |
+| `maximumObjectBytes` | 1–536870912 bytes; zero defaults to 536870912 |
+| `minimumFreeBytes` | Nonnegative free-space reserve, bounded against object/header size overflow |
+
+Local storage never substitutes for unavailable S3 and does not provision its
+own directories or sentinels at startup. Configure the separate top-level
+`stagingDir` as well. See [diagnostic artifacts](diagnostic-artifacts.md) for
+reservation, publication, replay and cleanup behavior, and
+[terminal recording](terminal-recording.md) for its additional fail-closed
+generation readiness requirement.
 
 ### `server`
 

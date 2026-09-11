@@ -732,6 +732,79 @@ type DebugSessionRequest struct {
 	SelectedSchedulingOption string            `json:"selectedSchedulingOption,omitempty"` // User-selected scheduling option
 }
 
+// DebugSessionArtifactRequest is the administrator-selected collection input.
+// The server resolves the session lease and target Pod; callers cannot supply
+// provider or uploader details.
+type DebugSessionArtifactRequest struct {
+	Recipe        string `json:"recipe"`
+	PodNamespace  string `json:"podNamespace"`
+	PodName       string `json:"podName"`
+	DetailLevel   string `json:"detailLevel,omitempty"`
+	MaxAgeMinutes int64  `json:"maxAgeMinutes,omitempty"`
+}
+
+// DebugSessionArtifact is the public artifact metadata returned by the API.
+type DebugSessionArtifact struct {
+	ArtifactID    string    `json:"artifactID"`
+	Recipe        string    `json:"recipe"`
+	RecipeVersion int       `json:"recipeVersion"`
+	State         string    `json:"state"`
+	Size          int64     `json:"size,omitempty"`
+	SHA256        string    `json:"sha256,omitempty"`
+	ExpiresAt     time.Time `json:"expiresAt"`
+}
+
+// CollectDebugSessionArtifact reserves one artifact through the registered API.
+func (c *APIClient) CollectDebugSessionArtifact(ctx context.Context, namespace, session string, req DebugSessionArtifactRequest) (*DebugSessionArtifact, error) {
+	resp, err := c.doRequest(ctx, http.MethodPost, "/api/debugSessionArtifacts/"+namespace+"/"+session, req)
+	if err != nil {
+		return nil, fmt.Errorf("collect debug session artifact: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("collect debug session artifact: status=%d", resp.StatusCode)
+	}
+	var result DebugSessionArtifact
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode collected artifact: %w", err)
+	}
+	return &result, nil
+}
+
+// ListDebugSessionArtifacts reads the authenticated artifact inventory.
+func (c *APIClient) ListDebugSessionArtifacts(ctx context.Context, namespace, session string) ([]DebugSessionArtifact, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/api/debugSessionArtifacts/"+namespace+"/"+session, nil)
+	if err != nil {
+		return nil, fmt.Errorf("list debug session artifacts: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list debug session artifacts: status=%d", resp.StatusCode)
+	}
+	var result []DebugSessionArtifact
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode artifact list: %w", err)
+	}
+	return result, nil
+}
+
+// DownloadDebugSessionArtifact downloads the authenticated archive bytes.
+func (c *APIClient) DownloadDebugSessionArtifact(ctx context.Context, namespace, session, artifactID string) ([]byte, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/api/debugSessionArtifacts/"+namespace+"/"+session+"/"+artifactID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("download debug session artifact: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download debug session artifact: status=%d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read downloaded artifact: %w", err)
+	}
+	return data, nil
+}
+
 // CreateDebugSession creates a debug session via the REST API.
 // This is the preferred way to create debug sessions in E2E tests as it goes through
 // the real session controller which sets proper status, sends notifications, etc.

@@ -24,14 +24,13 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
-	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 	"unicode"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
@@ -39,13 +38,13 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -107,27 +106,54 @@ type DebugSessionController struct {
 	brandingName             string
 	baseURL                  string
 	disableEmail             bool
+	connectionLeases         *ConnectionLeaseService
 	// targetClientFactory and beforeDebugTargetWrite are nil in production. They
 	// are narrow seams for deployment fence tests: the former keeps tests from
 	// needing a live spoke API, while the latter injects a hub-side change after
 	// preparation and before the next authorization fence.
 	targetClientFactory    func(*rest.Config) (ctrlclient.Client, error)
 	beforeDebugTargetWrite func(string)
+	recordingArtifacts     *backend.Service
+	recordingConnections   TerminalRecordingConnectionProvider
+}
+
+// WithTerminalRecordingArtifacts configures the shared artifact backend used by
+// controller-owned terminal recording. A nil store keeps recording disabled.
+func (c *DebugSessionController) WithTerminalRecordingArtifacts(service *backend.Service) *DebugSessionController {
+	c.recordingArtifacts = service
+	return c
+}
+
+// WithTerminalRecordingConnections configures the controller-owned lease
+// service that fences target identity and connection lifetime.
+func (c *DebugSessionController) WithTerminalRecordingConnections(provider TerminalRecordingConnectionProvider) *DebugSessionController {
+	c.recordingConnections = provider
+	return c
+}
+
+func (c *DebugSessionController) terminalRecordingConfigured() bool {
+	return c.recordingArtifacts != nil && c.recordingConnections != nil
 }
 
 func (c *DebugSessionController) WithAPIReader(reader ctrlclient.Reader) *DebugSessionController {
 	c.apiReader = reader
+	if c.connectionLeases != nil {
+		c.connectionLeases.WithLiveReader(reader)
+	}
 	return c
 }
 
 // NewDebugSessionController creates a new DebugSessionController
 func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client, ccProvider *cluster.ClientProvider) *DebugSessionController {
+	connectionLeases := NewConnectionLeaseService(client)
 	return &DebugSessionController{
-		log:          log,
-		client:       client,
-		reader:       client,
-		ccProvider:   ccProvider,
-		auxiliaryMgr: NewAuxiliaryResourceManager(log.Named("auxiliary"), client),
+		log:                  log,
+		client:               client,
+		reader:               client,
+		ccProvider:           ccProvider,
+		connectionLeases:     connectionLeases,
+		recordingConnections: NewTerminalRecordingConnectionProvider(connectionLeases),
+		auxiliaryMgr:         NewAuxiliaryResourceManager(log.Named("auxiliary"), client),
 	}
 }
 
@@ -137,6 +163,9 @@ func (c *DebugSessionController) WithLiveReader(reader ctrlclient.Reader) *Debug
 	if reader != nil {
 		c.reader = reader
 		c.apiReader = reader
+		if c.connectionLeases != nil {
+			c.connectionLeases.WithLiveReader(reader)
+		}
 	}
 	return c
 }
@@ -236,13 +265,12 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		// Return nil error to skip requeue - malformed resource won't fix itself
 		return ctrl.Result{}, nil
 	}
-
 	log = log.With("state", ds.Status.State, "cluster", ds.Spec.Cluster)
 	if ds.Status.State == breakglassv1alpha1.DebugSessionStateActive {
 		if ds.Status.ExpiresAt == nil || ds.Status.ExpiresAt.IsZero() {
 			return c.terminalizeActiveSessionWithoutExpiry(ctx, ds)
 		}
-		if !time.Now().Before(ds.Status.ExpiresAt.Time) {
+		if isDebugSessionExpired(ds, time.Now()) {
 			return c.handleActive(ctx, ds)
 		}
 	}
@@ -251,6 +279,9 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 			if errors.Is(err, quotas.ErrFull) {
 				if ds.Status.State == breakglassv1alpha1.DebugSessionStateActive && ds.Status.ExpiresAt != nil && !ds.Status.ExpiresAt.IsZero() {
 					delay := time.Until(ds.Status.ExpiresAt.Time)
+					if idle, ok := debugSessionIdleDeadline(ds); ok && time.Until(idle) < delay {
+						delay = time.Until(idle)
+					}
 					if delay > 0 {
 						return ctrl.Result{RequeueAfter: delay}, nil
 					}
@@ -295,9 +326,6 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		log.Errorw("Failed to get DebugSessionTemplate", "template", ds.Spec.TemplateRef, "error", err)
 		return c.failSession(ctx, ds, fmt.Sprintf("template not found: %s", ds.Spec.TemplateRef))
 	}
-	if err := rejectUnsupportedTerminalRecording(template); err != nil {
-		return c.failSession(ctx, ds, err.Error())
-	}
 
 	// Find binding early so we can check its approvers for the approval decision
 	// This ensures bindings with approvers properly trigger approval workflow.
@@ -330,6 +358,14 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	// Cache the resolved template in status after applying binding-level duration overrides.
 	resolvedTemplate := template.Spec.DeepCopy()
 	resolvedTemplate.Constraints = effectiveDebugSessionConstraints(template, binding)
+	// Failure retention uses an existing approved snapshot, or the effective
+	// constraints just resolved for a request that has no snapshot yet.
+	if err := c.ensureTerminalRecordingConfigured(template); err != nil {
+		if ds.Status.ResolvedTemplate == nil {
+			ds.Status.ResolvedTemplate = resolvedTemplate
+		}
+		return c.failSession(ctx, ds, err.Error())
+	}
 	ds.Status.ResolvedTemplate = resolvedTemplate
 	ds.Status.ResolvedBindingSnapshotCaptured = true
 	if binding != nil {
@@ -461,6 +497,50 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		log.Warnw("Failed to recover prepared kubectl-debug operations", "error", err)
 	}
 
+	// Check expiration
+	if isDebugSessionExpired(ds, time.Now().UTC()) {
+		expired := false
+		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+			// Decide from the freshly read status and one post-read timestamp.
+			now := time.Now().UTC()
+			current := &breakglassv1alpha1.DebugSession{Status: *status}
+			if !isDebugSessionExpired(current, now) {
+				return
+			}
+			idleOnly := breakglass.DebugSessionIdleExpired(current, now) && status.ExpiresAt != nil && now.Before(status.ExpiresAt.Time)
+			status.State = breakglassv1alpha1.DebugSessionStateExpired
+			status.Message = "Session expired"
+			if idleOnly {
+				status.Message = "Session expired due to inactivity"
+			}
+			expired = true
+		}); err != nil {
+			if apierrors.IsConflict(err) {
+				log.Debugw("skipping expiration status update after concurrent debug session change", "error", err)
+				return ctrl.Result{}, nil
+			}
+			return ctrl.Result{}, err
+		}
+		if !expired {
+			return ctrl.Result{RequeueAfter: time.Millisecond}, nil
+		}
+		notificationSession := ds.DeepCopy()
+		if notificationSession.Status.ResolvedTemplate != nil && notificationSession.Status.ResolvedTemplate.ExpirationBehavior == "notify-only" {
+			log.Warn("deprecated notify-only expiration still enforces hard expiry")
+			if notificationSession.Status.ResolvedTemplate.Notification == nil {
+				notificationSession.Status.ResolvedTemplate.Notification = &breakglassv1alpha1.DebugSessionNotificationConfig{}
+			}
+			notificationSession.Status.ResolvedTemplate.Notification.Enabled = true
+			notificationSession.Status.ResolvedTemplate.Notification.NotifyOnExpiry = true
+		}
+		c.sendDebugSessionExpiredEmail(*notificationSession)
+		log.Info("Debug session expired")
+		if err := c.reconcileActiveAccounting(ctx, ds, false); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	}
+
 	// Emit expiring-soon status message when within grace period
 	if ds.Status.ExpiresAt != nil && ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry != "" {
 		grace, err := breakglassv1alpha1.ParseDuration(ds.Status.ResolvedTemplate.GracePeriodBeforeExpiry)
@@ -480,33 +560,11 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		}
 	}
 
-	// Check expiration
-	if ds.Status.ExpiresAt != nil && time.Now().After(ds.Status.ExpiresAt.Time) {
-		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
-			status.State = breakglassv1alpha1.DebugSessionStateExpired
-			status.Message = "Session expired"
-		}); err != nil {
-			if apierrors.IsConflict(err) {
-				log.Debugw("skipping expiration status update after concurrent debug session change", "error", err)
-				return ctrl.Result{}, nil
-			}
-			return ctrl.Result{}, err
+	if c.connectionLeases != nil && ds.Status.ConnectionLease != nil {
+		if err := c.connectionLeases.RenewSession(ctx, ds, ds.Status.ExpiresAt.Time); err != nil {
+			log.Warnw("Failed to converge debug session connection lease; will retry", "error", err)
+			return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 		}
-		notificationSession := ds.DeepCopy()
-		if notificationSession.Status.ResolvedTemplate != nil && notificationSession.Status.ResolvedTemplate.ExpirationBehavior == "notify-only" {
-			log.Warn("deprecated notify-only expiration still enforces hard expiry")
-			if notificationSession.Status.ResolvedTemplate.Notification == nil {
-				notificationSession.Status.ResolvedTemplate.Notification = &breakglassv1alpha1.DebugSessionNotificationConfig{}
-			}
-			notificationSession.Status.ResolvedTemplate.Notification.Enabled = true
-			notificationSession.Status.ResolvedTemplate.Notification.NotifyOnExpiry = true
-		}
-		c.sendDebugSessionExpiredEmail(*notificationSession)
-		log.Info("Debug session expired")
-		if err := c.reconcileActiveAccounting(ctx, ds, false); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
 
 	if err := c.reconcilePeriodicActiveAccounting(ctx, ds); err != nil {
@@ -527,13 +585,24 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 
 	// Calculate next requeue based on expiration
 	if ds.Status.ExpiresAt != nil {
-		until := time.Until(ds.Status.ExpiresAt.Time)
+		now := time.Now()
+		until := ds.Status.ExpiresAt.Sub(now)
+		if idle, ok := debugSessionIdleDeadline(ds); ok && idle.Sub(now) < until {
+			until = idle.Sub(now)
+		}
+		if until <= 0 {
+			return ctrl.Result{RequeueAfter: time.Millisecond}, nil
+		}
 		if until > 0 && until < DefaultDebugSessionRequeue {
 			return ctrl.Result{RequeueAfter: until + time.Second}, nil
 		}
 	}
 
 	return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
+}
+
+func debugSessionIdleDeadline(ds *breakglassv1alpha1.DebugSession) (time.Time, bool) {
+	return breakglass.DebugSessionIdleDeadline(ds)
 }
 
 func (c *DebugSessionController) terminalizeActiveSessionWithoutExpiry(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
@@ -573,22 +642,28 @@ func (c *DebugSessionController) sendDebugSessionExpiredEmail(ds breakglassv1alp
 // but reconciliation keeps retrying the delete until the status lists are empty.
 func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	if !hasTrackedSpokeResources(ds) {
+		if c.connectionLeases != nil {
+			if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
+				return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+			}
+		}
 		if err := c.reconcileActiveAccounting(ctx, ds, false); err != nil {
 			return ctrl.Result{}, err
 		}
 		releaseSessionMetricSeries(ds.Name)
 		return ctrl.Result{}, nil // Nothing left on the spoke: genuinely terminal.
 	}
-
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
 
-	if err := c.cleanupResources(ctx, ds); err != nil {
-		log.Warnw("Retrying cleanup of spoke resources for a failed debug session",
-			"error", err)
-		// Requeue rather than returning the error: the reason for the failure is
-		// already recorded in status and a hard error would only add log noise on a
-		// path that is expected to retry.
-		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	if hasTrackedSpokeResources(ds) {
+		if err := c.cleanupResources(ctx, ds); err != nil {
+			log.Warnw("Retrying cleanup of spoke resources for a failed debug session",
+				"error", err)
+			// Requeue rather than returning the error: the reason for the failure is
+			// already recorded in status and a hard error would only add log noise on a
+			// path that is expected to retry.
+			return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+		}
 	}
 
 	// cleanupResources clears the status lists as it succeeds. If anything is still
@@ -597,6 +672,12 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 	if hasTrackedSpokeResources(ds) {
 		log.Warnw("Cleanup reported success but spoke resources are still tracked; will retry")
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	}
+	if c.connectionLeases != nil {
+		if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
+			log.Errorw("Failed to revoke debug session connection lease", "error", err)
+			return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+		}
 	}
 
 	log.Infow("Cleanup of spoke resources completed for failed debug session")
@@ -610,11 +691,15 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 // hasTrackedSpokeResources reports whether the session status still references
 // anything that was deployed to the spoke cluster.
 func hasTrackedSpokeResources(ds *breakglassv1alpha1.DebugSession) bool {
-	if len(ds.Status.DeployedResources) > 0 ||
+	if utils.DebugSessionHasActionableDeployedResources(ds) ||
 		hasOutstandingAuxiliaryResources(ds) ||
-		len(ds.Status.PodTemplateResourceStatuses) > 0 ||
 		len(ds.Status.AllowedPods) > 0 {
 		return true
+	}
+	for _, status := range ds.Status.PodTemplateResourceStatuses {
+		if utils.DebugSessionPodTemplateStatusHasCleanupResidual(status) {
+			return true
+		}
 	}
 	if status := ds.Status.KubectlDebugStatus; status != nil {
 		if len(status.CopiedPods) > 0 {
@@ -643,11 +728,11 @@ func hasPreparedKubectlDebugOperation(ds *breakglassv1alpha1.DebugSession) bool 
 
 func hasOutstandingAuxiliaryResources(ds *breakglassv1alpha1.DebugSession) bool {
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
-		if status.Created && !status.Deleted {
+		if utils.DebugSessionAuxiliaryStatusHasCleanupResidual(ds, status) {
 			return true
 		}
 		for _, child := range status.AdditionalResources {
-			if !child.Deleted {
+			if utils.DebugSessionAuxiliaryChildHasCleanupResidual(ds, status.Name, child) {
 				return true
 			}
 		}
@@ -658,11 +743,21 @@ func hasOutstandingAuxiliaryResources(ds *breakglassv1alpha1.DebugSession) bool 
 // handleCleanup removes deployed resources for expired/terminated sessions
 func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
+	if err := c.revokeTerminalRecordingLease(ctx, ds); err != nil {
+		log.Warnw("Failed to revoke terminal recording lease", "error", err)
+		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	}
 
 	if err := c.cleanupResources(ctx, ds); err != nil {
 		log.Errorw("Failed to cleanup debug session resources", "error", err)
 		// Requeue to retry cleanup
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+	}
+	if c.connectionLeases != nil {
+		if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
+			log.Errorw("Failed to revoke debug session connection lease", "error", err)
+			return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+		}
 	}
 	if hasPreparedKubectlDebugOperation(ds) {
 		log.Debugw("Prepared kubectl-debug operation remains after cleanup; retrying recovery")
@@ -687,6 +782,17 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 
 	log.Info("Debug session cleanup complete")
 	return ctrl.Result{}, nil
+}
+
+func (c *DebugSessionController) revokeTerminalRecordingLease(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	if c.connectionLeases == nil || ds == nil || ds.Status.ConnectionLease == nil {
+		return nil
+	}
+	if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
+		return fmt.Errorf("revoke terminal recording lease: %w", err)
+	}
+	ds.Status.ConnectionLease = nil
+	return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
 }
 
 // releaseSessionMetricSeries drops every metric series labelled with a specific
@@ -762,8 +868,38 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := rejectUnsupportedTerminalRecording(template); err != nil {
+	if c.connectionLeases != nil && c.ccProvider != nil {
+		_, configured, err := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("read target before acquiring connection lease: %w", err)
+		}
+		lease, err := c.connectionLeases.AcquireForSession(ctx, ds, configured.UID)
+		c.ccProvider.ReleasePrivilegedOperationClusterConfig(configured)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("acquire connection lease: %w", err)
+		}
+		ds.Status.ConnectionLease = &lease
+		if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	if err := c.ensureTerminalRecordingConfigured(template); err != nil {
 		return c.failSession(ctx, ds, err.Error())
+	}
+	if template.Spec.Audit != nil && template.Spec.Audit.EnableTerminalRecording && c.connectionLeases != nil && c.ccProvider != nil {
+		_, configured, err := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("read target before acquiring terminal recording lease: %w", err)
+		}
+		lease, leaseErr := c.connectionLeases.AcquireForSession(ctx, ds, configured.UID)
+		c.ccProvider.ReleasePrivilegedOperationClusterConfig(configured)
+		if leaseErr != nil {
+			return ctrl.Result{}, fmt.Errorf("acquire terminal recording lease: %w", leaseErr)
+		}
+		ds.Status.ConnectionLease = &lease
+		if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	// Only deploy workloads for workload or hybrid mode
 	mode := template.Spec.Mode
@@ -828,6 +964,11 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 }
 
 func (c *DebugSessionController) validateActivationBeforePublish(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	if c.connectionLeases != nil && c.ccProvider != nil {
+		if err := c.connectionLeases.ValidateSession(ctx, ds); err != nil {
+			return fmt.Errorf("connection lease is no longer valid: %w", err)
+		}
+	}
 	if c.ccProvider != nil {
 		_, configuredCluster, err := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)
 		if err != nil {
@@ -1155,55 +1296,7 @@ func (c *DebugSessionController) deferOnUnresolvedBinding(
 // This enables binding configuration to be applied even when BindingRef is not explicitly set.
 // Returns nil if no matching binding is found.
 func (c *DebugSessionController) findBindingForSession(ctx context.Context, template *breakglassv1alpha1.DebugSessionTemplate, clusterName string) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
-	bindingList := &breakglassv1alpha1.DebugSessionClusterBindingList{}
-	if err := c.approvalReader().List(ctx, bindingList); err != nil {
-		return nil, fmt.Errorf("failed to list cluster bindings: %w", err)
-	}
-
-	// Get cluster config for label-based matching
-	var clusterConfig *breakglassv1alpha1.ClusterConfig
-	clusterConfigList := &breakglassv1alpha1.ClusterConfigList{}
-	if err := c.approvalReader().List(ctx, clusterConfigList); err != nil {
-		return nil, fmt.Errorf("list cluster configs for binding quota resolution: %w", err)
-	}
-	for i := range clusterConfigList.Items {
-		if clusterConfigList.Items[i].Name == clusterName {
-			if clusterConfig != nil {
-				return nil, fmt.Errorf("ambiguous cluster config for binding quota resolution")
-			}
-			clusterConfig = &clusterConfigList.Items[i]
-		}
-	}
-
-	sort.Slice(bindingList.Items, func(i, j int) bool {
-		a, b := bindingList.Items[i], bindingList.Items[j]
-		return a.Namespace+"/"+a.Name < b.Namespace+"/"+b.Name
-	})
-	for i := range bindingList.Items {
-		binding := &bindingList.Items[i]
-		if !breakglass.IsBindingActive(binding) {
-			continue
-		}
-
-		// Check if binding references this template
-		if !c.bindingMatchesTemplate(binding, template) {
-			continue
-		}
-
-		if binding.Spec.ClusterSelector != nil && clusterConfig == nil && !slices.Contains(binding.Spec.Clusters, clusterName) {
-			return nil, fmt.Errorf("cluster config required to resolve binding selector")
-		}
-
-		// Check if binding matches this cluster
-		if !c.bindingMatchesCluster(binding, clusterName, clusterConfig) {
-			continue
-		}
-
-		// Found a matching binding
-		return binding, nil
-	}
-
-	return nil, nil // No matching binding found (not an error)
+	return utils.FindDebugSessionBinding(ctx, c.approvalReader(), template, clusterName)
 }
 
 func (c *DebugSessionController) approvalReader() ctrlclient.Reader {
@@ -1226,44 +1319,10 @@ func (c *DebugSessionController) newKubectlDebugHandler() *KubectlDebugHandler {
 
 // bindingMatchesTemplate checks if a binding references the given template
 func (c *DebugSessionController) bindingMatchesTemplate(binding *breakglassv1alpha1.DebugSessionClusterBinding, template *breakglassv1alpha1.DebugSessionTemplate) bool {
-	// Check templateRef
-	if binding.Spec.TemplateRef != nil && binding.Spec.TemplateRef.Name == template.Name {
-		return true
-	}
-	// Check templateSelector
-	if binding.Spec.TemplateSelector != nil {
-		selector, err := metav1.LabelSelectorAsSelector(binding.Spec.TemplateSelector)
-		if err == nil {
-			templateLabels := labels.Set(template.Labels)
-			if selector.Matches(templateLabels) {
-				return true
-			}
-		}
-	}
-	return false
+	return utils.DebugBindingMatchesTemplate(binding, template)
 }
-
-// bindingMatchesCluster checks if a binding applies to the given cluster
 func (c *DebugSessionController) bindingMatchesCluster(binding *breakglassv1alpha1.DebugSessionClusterBinding, clusterName string, clusterConfig *breakglassv1alpha1.ClusterConfig) bool {
-	// Check explicit cluster list
-	for _, cluster := range binding.Spec.Clusters {
-		if cluster == clusterName {
-			return true
-		}
-	}
-
-	// Check clusterSelector
-	if binding.Spec.ClusterSelector != nil && clusterConfig != nil {
-		selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
-		if err == nil {
-			clusterLabels := labels.Set(clusterConfig.Labels)
-			if selector.Matches(clusterLabels) {
-				return true
-			}
-		}
-	}
-
-	return false
+	return utils.DebugBindingMatchesCluster(binding, clusterName, clusterConfig)
 }
 
 // resolveImpersonationConfig determines the impersonation configuration for a session.

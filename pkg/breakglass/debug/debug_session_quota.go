@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
@@ -29,11 +30,17 @@ func (c *DebugSessionController) quotaReader() ctrlclient.Reader {
 func (c *DebugSessionController) WithQuotaNamespace(namespace string) *DebugSessionController {
 	c.quotaNamespace = namespace
 	c.quotaEnabled = true
+	if c.connectionLeases != nil {
+		c.connectionLeases.WithNamespace(namespace)
+	}
 	return c
 }
 func (c *DebugSessionAPIController) WithQuotaNamespace(namespace string) *DebugSessionAPIController {
 	c.quotaNamespace = namespace
 	c.quotaEnabled = true
+	if c.connectionLeases != nil {
+		c.connectionLeases.WithNamespace(namespace)
+	}
 	return c
 }
 
@@ -42,14 +49,14 @@ func debugSessionTerminal(s *breakglassv1alpha1.DebugSession) bool {
 }
 
 // debugQuotaPolicy resolves live policy and legacy auto-discovered binding scope.
-func (c *DebugSessionController) debugQuotaPolicy(ctx context.Context, s *breakglassv1alpha1.DebugSession) (quotas.Entry, map[string]int32, error) {
+func (c *DebugSessionController) debugQuotaPolicy(ctx context.Context, s *breakglassv1alpha1.DebugSession) (quotas.Entry, map[string]int32, string, error) {
 	entry := quotas.Entry{Kind: "DebugSession", Namespace: s.Namespace, Name: s.Name, UID: string(s.UID)}
 	template, err := c.getTemplate(ctx, s.Spec.TemplateRef)
 	if err != nil {
-		return entry, nil, fmt.Errorf("read quota template: %w", err)
+		return entry, nil, "", fmt.Errorf("read quota template: %w", err)
 	}
 	if template.UID == "" {
-		return entry, nil, fmt.Errorf("quota template has no UID")
+		return entry, nil, "", fmt.Errorf("quota template has no UID")
 	}
 	templateScope := debugQuotaScope("debug-template", string(template.UID))
 	entry.Scopes = []string{templateScope}
@@ -66,11 +73,11 @@ func (c *DebugSessionController) debugQuotaPolicy(ctx context.Context, s *breakg
 		binding, err = c.findBindingForSession(ctx, template, s.Spec.Cluster)
 	}
 	if err != nil {
-		return entry, nil, fmt.Errorf("read quota binding: %w", err)
+		return entry, nil, "", fmt.Errorf("read quota binding: %w", err)
 	}
 	if binding != nil {
 		if binding.UID == "" {
-			return entry, nil, fmt.Errorf("quota binding has no UID")
+			return entry, nil, "", fmt.Errorf("quota binding has no UID")
 		}
 		total := debugQuotaScope("debug-binding", string(binding.UID))
 		entry.Scopes = append(entry.Scopes, total)
@@ -97,7 +104,11 @@ func (c *DebugSessionController) debugQuotaPolicy(ctx context.Context, s *breakg
 			}
 		}
 	}
-	return entry, limits, nil
+	retainFor := ""
+	if constraints := effectiveDebugSessionConstraints(template, binding); constraints != nil {
+		retainFor = constraints.RetainFor
+	}
+	return entry, limits, retainFor, nil
 }
 
 func (c *DebugSessionController) admitDebugSession(ctx context.Context, s *breakglassv1alpha1.DebugSession) error {
@@ -131,7 +142,7 @@ func (c *DebugSessionController) admitDebugSession(ctx context.Context, s *break
 		s.ResourceVersion = current.ResourceVersion
 		s.Annotations = current.Annotations
 	}
-	entry, limits, err := c.debugQuotaPolicy(ctx, current)
+	entry, limits, retainFor, err := c.debugQuotaPolicy(ctx, current)
 	if err != nil {
 		return err
 	}
@@ -150,7 +161,7 @@ func (c *DebugSessionController) admitDebugSession(ctx context.Context, s *break
 				if debugSessionTerminal(item) || item.Annotations[quotas.AdmissionAnnotation] == quotas.Pending {
 					continue
 				}
-				entry, _, err := c.debugQuotaPolicy(ctx, item)
+				entry, _, _, err := c.debugQuotaPolicy(ctx, item)
 				if err != nil {
 					return nil, err
 				}
@@ -187,6 +198,12 @@ func (c *DebugSessionController) admitDebugSession(ctx context.Context, s *break
 			if statusErr := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, current, func(status *breakglassv1alpha1.DebugSessionStatus) {
 				status.State = breakglassv1alpha1.DebugSessionStateFailed
 				status.Message = "Session quota reached"
+				if status.ResolvedTemplate == nil && status.RetainedUntil == nil && retainFor != "" {
+					// Retention is terminal bookkeeping, not an approved activation snapshot.
+					retention := breakglassv1alpha1.DebugSessionStatus{State: status.State, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: retainFor}}}
+					breakglass.StampDebugSessionRetention(&retention, time.Now().UTC())
+					status.RetainedUntil = retention.RetainedUntil
+				}
 			}); statusErr != nil {
 				return fmt.Errorf("record debug quota rejection: %w", statusErr)
 			}

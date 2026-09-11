@@ -335,6 +335,15 @@ func (wc *WebhookController) checkEarlyDebugSession(c *gin.Context, s *authorize
 		ra := s.sar.Spec.ResourceAttributes
 		if ra.Resource == "pods" && isDebugSessionSubresource(ra.Subresource) && ra.Name != "" {
 			if debugSession, debugReason := wc.findDebugSessionAccessForAuthorizeState(s, ra); debugSession != nil {
+				if terminalRecordingRequired(debugSession, ra.Subresource) {
+					s.allowed = false
+					s.reason = debugReason
+					s.debugSessionNamespace = debugSession.Namespace
+					s.debugSessionName = debugSession.Name
+					s.debugSessionUID = string(debugSession.UID)
+					s.phases.EndPhase(PhaseDebugSession)
+					return true
+				}
 				s.allowed = true
 				s.allowSource = "debug-session"
 				s.allowDetail = fmt.Sprintf("session=%s", debugSession.Name)
@@ -730,6 +739,18 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 	if !s.allowed && s.sar.Spec.ResourceAttributes != nil {
 		ra := s.sar.Spec.ResourceAttributes
 		if debugSession, debugReason := wc.findDebugSessionAccessForAuthorizeState(s, ra); debugSession != nil {
+			if terminalRecordingRequired(debugSession, ra.Subresource) {
+				s.allowed = false
+				s.reason = debugReason
+				s.debugSessionNamespace = debugSession.Namespace
+				s.debugSessionName = debugSession.Name
+				s.debugSessionUID = string(debugSession.UID)
+				s.phases.EndPhase(PhaseSessionSARs)
+				s.phases.LogSummary()
+				wc.buildFinalReason(s)
+				wc.sendAuthorizationResponse(c, s)
+				return true
+			}
 			s.allowed = true
 			s.allowSource = "debug-session"
 			s.allowDetail = fmt.Sprintf("session=%s", debugSession.Name)

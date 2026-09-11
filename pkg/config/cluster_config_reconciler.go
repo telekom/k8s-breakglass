@@ -18,8 +18,10 @@ package config
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ssa "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
@@ -309,6 +311,10 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 			if err := r.Get(ctx, client.ObjectKeyFromObject(session), live); err != nil {
 				return err
 			}
+			if live.UID != session.UID || live.Spec.Cluster != clusterName {
+				return fmt.Errorf("DebugSession %s/%s identity changed during cluster cleanup", session.Namespace, session.Name)
+			}
+
 			if isDebugSessionTerminal(live.Status.State) {
 				if debugSessionHasTrackedSpokeResources(live) {
 					return debugSessionCleanupPendingError(live)
@@ -317,6 +323,9 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 			}
 			base := live.DeepCopy()
 			live.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+			if err := r.stampDebugSessionTerminationRetention(ctx, live); err != nil {
+				return err
+			}
 			live.Status.Message = fmt.Sprintf("Session terminated: ClusterConfig %q was deleted", clusterName)
 			if live.Generation > 0 {
 				live.Status.ObservedGeneration = live.Generation
@@ -346,11 +355,15 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 }
 
 func debugSessionHasTrackedSpokeResources(session *breakglassv1alpha1.DebugSession) bool {
-	if len(session.Status.DeployedResources) > 0 ||
+	if utils.DebugSessionHasActionableDeployedResources(session) ||
 		debugSessionHasOutstandingAuxiliaryResources(session) ||
-		len(session.Status.PodTemplateResourceStatuses) > 0 ||
 		len(session.Status.AllowedPods) > 0 {
 		return true
+	}
+	for _, resource := range session.Status.PodTemplateResourceStatuses {
+		if utils.DebugSessionPodTemplateStatusHasCleanupResidual(resource) {
+			return true
+		}
 	}
 	if status := session.Status.KubectlDebugStatus; status != nil {
 		if len(status.CopiedPods) > 0 {
@@ -367,11 +380,11 @@ func debugSessionHasTrackedSpokeResources(session *breakglassv1alpha1.DebugSessi
 
 func debugSessionHasOutstandingAuxiliaryResources(session *breakglassv1alpha1.DebugSession) bool {
 	for _, status := range session.Status.AuxiliaryResourceStatuses {
-		if status.Created && !status.Deleted {
+		if utils.DebugSessionAuxiliaryStatusHasCleanupResidual(session, status) {
 			return true
 		}
 		for _, child := range status.AdditionalResources {
-			if !child.Deleted {
+			if utils.DebugSessionAuxiliaryChildHasCleanupResidual(session, status.Name, child) {
 				return true
 			}
 		}
@@ -395,4 +408,69 @@ func (r *ClusterConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&breakglassv1alpha1.ClusterConfig{}).
 		Named("clusterconfig").
 		Complete(r)
+}
+
+// Pending sessions may not yet have a resolved template. Preserve explicit
+// retention without manufacturing an approval snapshot during cluster deletion.
+func (r *ClusterConfigReconciler) stampDebugSessionTerminationRetention(ctx context.Context, session *breakglassv1alpha1.DebugSession) error {
+	if session.Status.RetainedUntil != nil {
+		return nil
+	}
+	if session.Status.ResolvedTemplate != nil {
+		breakglassv1alpha1.StampDebugSessionRetention(&session.Status, time.Now().UTC())
+		return nil
+	}
+	var retention time.Duration
+	include := func(constraints *breakglassv1alpha1.DebugSessionConstraints) error {
+		if constraints == nil || constraints.RetainFor == "" {
+			return nil
+		}
+		duration, err := breakglassv1alpha1.ParseDuration(constraints.RetainFor)
+		if err != nil {
+			return fmt.Errorf("parse debug session retention: %w", err)
+		}
+		if duration <= 0 {
+			return fmt.Errorf("debug session retention must be positive")
+		}
+		if duration > retention {
+			retention = duration
+		}
+		return nil
+	}
+	template := &breakglassv1alpha1.DebugSessionTemplate{}
+	if session.Spec.TemplateRef != "" {
+		if err := r.Get(ctx, client.ObjectKey{Name: session.Spec.TemplateRef}, template); err != nil {
+			return fmt.Errorf("resolve debug session retention template: %w", err)
+		}
+		if err := include(template.Spec.Constraints); err != nil {
+			return err
+		}
+	}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
+	if session.Status.ResolvedBindingSpec != nil {
+		if err := json.Unmarshal(session.Status.ResolvedBindingSpec.Raw, &binding.Spec); err != nil {
+			return fmt.Errorf("decode debug session retention binding: %w", err)
+		}
+	} else if session.Spec.BindingRef != nil && !session.Status.ResolvedBindingSnapshotCaptured {
+		if err := r.Get(ctx, client.ObjectKey{Name: session.Spec.BindingRef.Name, Namespace: session.Spec.BindingRef.Namespace}, binding); err != nil {
+			return fmt.Errorf("resolve debug session retention binding: %w", err)
+		}
+	} else if !session.Status.ResolvedBindingSnapshotCaptured && session.Spec.TemplateRef != "" {
+		discovered, err := utils.FindDebugSessionBinding(ctx, r.Client, template, session.Spec.Cluster)
+		if err != nil {
+			return fmt.Errorf("resolve debug session retention binding: %w", err)
+		}
+		if discovered != nil {
+			binding = discovered
+		}
+	}
+
+	if err := include(binding.Spec.Constraints); err != nil {
+		return err
+	}
+	if retention > 0 {
+		until := metav1.NewTime(time.Now().UTC().Add(retention))
+		session.Status.RetainedUntil = &until
+	}
+	return nil
 }
