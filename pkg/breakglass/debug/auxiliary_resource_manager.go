@@ -215,22 +215,14 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 	var cleanupErrors []error
 
 	for i, status := range session.Status.AuxiliaryResourceStatuses {
-		if !status.Created {
-			continue
-		}
 		deleteAfter := shouldDeleteAuxiliaryResource(session, status.Name)
-		if !deleteAfter {
-			log.Debugw("Skipping auxiliary resource cleanup because deleteAfter is false",
-				"resource", status.Name,
-				"resourceName", status.ResourceName,
-				"namespace", status.Namespace)
-			continue
-		}
-
-		// Delete the primary resource when it has not already been retired. A
-		// primary can be Deleted while one of its additional documents remains;
-		// child cleanup must still run on the next retry.
-		if !status.Deleted {
+		if !status.Deleted && status.UID == "" && status.CreateOperationID != "" {
+			err := fmt.Errorf("auxiliary resource %q creation outcome is unresolved", status.Name)
+			cleanupErrors = append(cleanupErrors, err)
+			session.Status.AuxiliaryResourceStatuses[i].Error = err.Error()
+		} else if !status.Deleted && deleteAfter && (status.Created || status.UID != "") {
+			// A recorded UID is sufficient to delete safely even when the create
+			// response was interrupted before Created could be persisted.
 			err := m.deleteResource(ctx, targetClient, status, session)
 			if err != nil {
 				log.Warnw("Failed to delete auxiliary resource",
@@ -248,9 +240,25 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 			}
 		}
 
+		if !deleteAfter {
+			log.Debugw("Skipping auxiliary resource cleanup because deleteAfter is false",
+				"resource", status.Name,
+				"resourceName", status.ResourceName,
+				"namespace", status.Namespace)
+		}
+
 		// Also delete any additional resources from multi-document YAML templates
 		for j, addlRes := range status.AdditionalResources {
 			if addlRes.Deleted {
+				continue
+			}
+			if addlRes.UID == "" && addlRes.CreateOperationID != "" {
+				err := fmt.Errorf("additional auxiliary resource %q creation outcome is unresolved", addlRes.ResourceName)
+				cleanupErrors = append(cleanupErrors, err)
+				session.Status.AuxiliaryResourceStatuses[i].AdditionalResources[j].Error = err.Error()
+				continue
+			}
+			if !deleteAfter {
 				continue
 			}
 
@@ -291,15 +299,7 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 }
 
 func shouldDeleteAuxiliaryResource(session *breakglassv1alpha1.DebugSession, name string) bool {
-	if session.Status.ResolvedTemplate == nil {
-		return true
-	}
-	for _, auxRes := range session.Status.ResolvedTemplate.AuxiliaryResources {
-		if auxRes.Name == name {
-			return auxRes.DeleteAfter
-		}
-	}
-	return true
+	return utils.DebugSessionDeletesAuxiliaryResource(session, name)
 }
 
 // filterEnabledResources determines which auxiliary resources should be deployed.
@@ -816,6 +816,9 @@ func (m *AuxiliaryResourceManager) deleteResource(
 	status breakglassv1alpha1.AuxiliaryResourceStatus,
 	session *breakglassv1alpha1.DebugSession,
 ) error {
+	if status.UID == "" && status.CreateOperationID != "" {
+		return fmt.Errorf("auxiliary resource %q creation outcome is unresolved", status.Name)
+	}
 	// Create unstructured object for deletion
 	obj := &unstructured.Unstructured{}
 	obj.SetAPIVersion(status.APIVersion)

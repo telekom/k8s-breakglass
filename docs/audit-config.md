@@ -233,10 +233,17 @@ These capture access to non-API endpoints:
 
 ### Debug Session Events
 - `debug_session.created` / `debug_session.started`
-- `debug_session.attached` / `debug_session.terminated` / `debug_session.rejected`
+- `debug_session.approved` / `debug_session.rejected`
+- `debug_session.renewed` / `debug_session.validation_failed`
+- `debug_session.cleanup_failed` / `debug_session.cleanup_recovered`
+- `debug_session.attached` / `debug_session.terminated`
 - `debug_session.failed` / `debug_session.expired` / `debug_session.approval_timeout`
 - `debug_session.binding_unresolved`
 - `debug_session.command` / `debug_session.file_access`
+
+New lifecycle and API audit producers include the session namespace. Legacy
+`DebugSessionCreated` and `DebugSessionTerminated` manager helpers omit it;
+consumers of those helpers cannot disambiguate equal names across namespaces.
 
 ### Authentication Events
 - `auth.attempt` / `auth.success` / `auth.failure`
@@ -501,3 +508,11 @@ stringData:
 Kafka TLS CA, client certificate, and SASL credential Secret references must set
 an explicit namespace equal to the controller namespace. Empty namespaces are
 validation errors and are never defaulted or read.
+
+Before a DebugSession template snapshot exists, API and controller lifecycle audit events use the
+live template audit policy through the authorization reader. Once captured, the
+snapshot policy is authoritative. If the pre-snapshot policy cannot be read, the
+event is suppressed with a warning; the committed lifecycle action is not rolled back.
+Legacy sessions without a template reference retain the default enabled audit policy.
+
+Policy lookup failures, including transient failures, do not default auditing to enabled: that could expose events from an explicitly opted-out template. Suppression can lose a lifecycle event and does not enqueue a durable retry; the warning records that limitation. Captured policy avoids this lookup and remains authoritative.

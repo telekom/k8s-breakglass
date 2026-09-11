@@ -281,6 +281,7 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		"extendBy", extendBy,
 		"newExpiry", newExpiry.Time,
 		"renewalCount", session.Status.RenewalCount)
+	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionRenewed, session, identity.username, "Debug session renewed")
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"message":      "session renewed successfully",
@@ -543,7 +544,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	c.sendDebugSessionApprovalEmail(apiCtx, session)
 
 	// Emit audit event for session approval
-	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionStarted, session, currentUser, "Debug session approved")
+	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionApproved, session, currentUser, "Debug session approved")
 
 	reqLog.Infow("Debug session approved", "session", name, "approver", currentUser)
 	metrics.DebugSessionApproved.WithLabelValues(session.Spec.Cluster, "user").Inc()
@@ -722,9 +723,7 @@ func (c *DebugSessionAPIController) failTimedOutDebugSessionApproval(ctx context
 
 	session.Status = latest.Status
 	c.sendDebugSessionFailedEmail(ctx, latest, reason)
-	if c.shouldEmitAudit(latest) {
-		c.emitDebugSessionAuditEvent(ctx, audit.EventDebugSessionApprovalTimeout, latest, actor, reason)
-	}
+	c.emitDebugSessionAuditEvent(ctx, audit.EventDebugSessionApprovalTimeout, latest, actor, reason)
 	metrics.DebugSessionsFailed.WithLabelValues(latest.Spec.Cluster, latest.Spec.TemplateRef).Inc()
 	return nil
 }

@@ -341,7 +341,7 @@ func (c *DebugSessionAPIController) sendDebugSessionCreatedEmail(ctx context.Con
 
 // emitDebugSessionAuditEvent emits an audit event for debug session lifecycle changes
 func (c *DebugSessionAPIController) emitDebugSessionAuditEvent(ctx context.Context, eventType audit.EventType, session *breakglassv1alpha1.DebugSession, user string, message string) {
-	if c.auditService == nil || !c.auditService.IsEnabled() {
+	if c.auditService == nil || !c.auditService.IsEnabled() || !c.shouldEmitAudit(ctx, session) {
 		return
 	}
 
@@ -373,14 +373,8 @@ func (c *DebugSessionAPIController) emitDebugSessionAuditEvent(ctx context.Conte
 	c.auditService.Emit(ctx, event)
 }
 
-func (c *DebugSessionAPIController) shouldEmitAudit(session *breakglassv1alpha1.DebugSession) bool {
-	if session.Status.ResolvedTemplate == nil {
-		return true
-	}
-	if session.Status.ResolvedTemplate.Audit == nil {
-		return true
-	}
-	return session.Status.ResolvedTemplate.Audit.Enabled
+func (c *DebugSessionAPIController) shouldEmitAudit(ctx context.Context, session *breakglassv1alpha1.DebugSession) bool {
+	return shouldEmitDebugSessionAudit(ctx, c.reader(), c.log, session)
 }
 
 // handleInjectEphemeralContainer injects a debug container into an existing pod

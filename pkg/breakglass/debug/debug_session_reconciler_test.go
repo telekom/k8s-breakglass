@@ -2498,7 +2498,7 @@ func TestDebugSessionController_ShouldEmitAudit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ctrl.shouldEmitAudit(tt.session)
+			result := ctrl.shouldEmitAudit(context.Background(), tt.session)
 			assert.Equal(t, tt.expectedEmitAudit, result)
 		})
 	}
@@ -5171,6 +5171,45 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		assert.Error(t, err, "cleanupResources must retry when tracked resources have no provider")
 		// Resources remain in status since we couldn't actually clean them up
 		assert.NotNil(t, session.Status.DeployedResources)
+		condition := session.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+		require.NotNil(t, condition)
+		assert.Equal(t, metav1.ConditionTrue, condition.Status)
+	})
+
+	t.Run("cleanup_failure_condition_clears_after_inventory_is_gone", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-recovery", "test-template", "test-cluster", "user@example.com")
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{Kind: "DaemonSet", Name: "test-ds", Namespace: "breakglass-debug", Source: "debug-pod"},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+		controller := &DebugSessionController{log: zap.NewNop().Sugar(), client: fakeClient}
+
+		require.Error(t, controller.cleanupResources(context.Background(), session))
+		require.True(t, cleanupConditionFailed(session))
+
+		// A later retry has observed that the target inventory is gone. It can
+		// clear the durable failure even when the provider is unavailable.
+		stored := &breakglassv1alpha1.DebugSession{}
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), stored))
+		stored.Status.DeployedResources = nil
+		require.NoError(t, fakeClient.Status().Update(context.Background(), stored))
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), session))
+		require.NoError(t, controller.cleanupResources(context.Background(), session))
+		condition := session.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+		require.NotNil(t, condition)
+		assert.Equal(t, metav1.ConditionFalse, condition.Status)
+		assert.Equal(t, "CleanupRecovered", condition.Reason)
+
+		persisted := &breakglassv1alpha1.DebugSession{}
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), persisted))
+		storedCondition := persisted.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+		require.NotNil(t, storedCondition)
+		assert.Equal(t, metav1.ConditionFalse, storedCondition.Status)
 	})
 
 	t.Run("cleanup_with_nil_ccProvider_and_empty_resources", func(t *testing.T) {
@@ -5318,7 +5357,15 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		var updated breakglassv1alpha1.DebugSession
 		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
 		require.NoError(t, err)
-		assert.Equal(t, *before, updated.Status)
+		assert.Equal(t, before.DeployedResources, updated.Status.DeployedResources)
+		assert.Equal(t, before.AllowedPods, updated.Status.AllowedPods)
+		assert.Equal(t, before.AuxiliaryResourceStatuses, updated.Status.AuxiliaryResourceStatuses)
+		assert.Equal(t, before.PodTemplateResourceStatuses, updated.Status.PodTemplateResourceStatuses)
+		condition := updated.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+		require.NotNil(t, condition)
+		assert.Equal(t, metav1.ConditionTrue, condition.Status)
+		assert.Equal(t, "CleanupFailed", condition.Reason)
+		assert.LessOrEqual(t, len(condition.Message), maxCleanupConditionMessage)
 	})
 
 	t.Run("missing_rest_config_retains_deployed_tracking", func(t *testing.T) {
@@ -5359,7 +5406,10 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		assert.Len(t, updated.Status.AllowedPods, 1)
 		assert.Len(t, updated.Status.AuxiliaryResourceStatuses, 1)
 		assert.Len(t, updated.Status.PodTemplateResourceStatuses, 1)
-		assert.Zero(t, updated.Status.ObservedGeneration)
+		assert.Equal(t, session.Generation, updated.Status.ObservedGeneration)
+		condition := updated.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+		require.NotNil(t, condition)
+		assert.Equal(t, metav1.ConditionTrue, condition.Status)
 	})
 }
 

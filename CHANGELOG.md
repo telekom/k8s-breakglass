@@ -13,11 +13,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   images through the signed utility-image release matrix, with their existing
   runtime behavior gates and multi-architecture build contexts.
 
+- Emit structured debug-session audit events for approval, renewal, activation,
+  expiry, validation failure, rejection, and cleanup recovery/failure.
+
 - The debug-session-catalogue Helm chart provides administrator-authored,
   restricted DebugSession profiles for workload, network, storage, dump-access,
   and cluster-validation diagnostics.
 
 ### Fixed
+
+- Apply captured or live audit opt-out policy consistently to controller validation events and bound cleanup evidence allocation.
+
+- Clear terminal authorization-only cleanup bookkeeping without a cluster provider, and honor live template audit opt-out before snapshot capture.
+
+- Preserve auxiliary retention for legacy source-less references and retain mismatched UID evidence during cleanup.
+
+- Align cleanup retention checks for partial auxiliary and pod-template evidence across debug sessions and ClusterConfig deletion.
 
 - Preserve per-template accounting repair intervals and metric publication order; align the built-in rejected mock session and CLI rejection test with `Rejected`.
 
@@ -29,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reconciliation, cleanup, CLI filters, and the frontend.
 - Make terminal cleanup accounting idempotent and avoid decrementing active
   counts for sessions rejected before activation.
+- Preserve unresolved cleanup create intents, merge matching durable UID outcomes, and honor debug-session audit opt-out without treating ephemeral history as leaked resources.
+
+- Requeue cleanup from merged residual inventory, exclude confirmed retained resources, and emit cleanup audit events only after durable status writes.
+
+- Retry final quota-admission completion after same-UID resource-version
+  conflicts, while refusing terminal or replacement sessions.
 
 - If a debug session expires after an ephemeral-container intent is persisted
   but before the target write, record the operation as Failed without touching
@@ -56,6 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bind ephemeral-container operation evidence to the authenticated provider identity and cap new distinct injection admissions at 256 identities, including prepared reservations, while retaining existing history and recovery evidence.
 
+- Persist bounded `CleanupFailed` status evidence while tracked resources cannot
+  be removed, and clear it after a retry confirms the inventory is gone.
+
 - Recover tracked resources after bounded create timeouts when session and
   operation markers and requested content match the persisted object.
 
@@ -80,6 +100,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reject approval or rejection when the authorized session was replaced under the same name, and clear completed debug-session pod authorization references while retaining concurrent additions.
 
 - Preserve concurrently created cleanup inventory entries when same-coordinate resources have distinct creation-operation provenance.
+
+- Preserve live cleanup condition transition metadata when a stale recovery
+  retry races with newly retained residual inventory.
+
+- Keep interrupted create intents in cleanup inventory until their UID is
+  known or the original resource is proven absent; validation-failure audit
+  events are emitted once per persisted failure.
+
+- Include the DebugSession namespace in activation audit targets and make audit
+  manager helper tests drain asynchronously queued events through `Close`.
+
+- Keep cleanup status-patch errors separate from cleanup-operation failures in
+  audit events, and include the cluster in activation event details.
 
 - Redact structured diagnostic authorization headers and remove obsolete variable-sanitization warnings; template serialization remains mandatory.
 

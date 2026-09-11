@@ -39,6 +39,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 	corev1 "k8s.io/api/core/v1"
@@ -223,14 +224,22 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 	// This catches malformed resources that somehow bypassed the admission webhook.
 	validationResult := breakglassv1alpha1.ValidateDebugSession(ds)
 	if !validationResult.IsValid() {
+		validationMessage := fmt.Sprintf("Validation failed: %s", validationResult.ErrorMessage())
+		validationFailureAlreadyRecorded := ds.Status.State == breakglassv1alpha1.DebugSessionStateFailed && ds.Status.Message == validationMessage
 		log.Warnw("DebugSession failed structural validation, skipping reconciliation",
 			"errors", validationResult.ErrorMessage())
 
 		// Update status condition to reflect validation failure
 		ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
-		ds.Status.Message = fmt.Sprintf("Validation failed: %s", validationResult.ErrorMessage())
+		ds.Status.Message = validationMessage
 		if statusErr := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); statusErr != nil {
 			log.Errorw("Failed to update DebugSession status after validation failure", "error", statusErr)
+			return ctrl.Result{}, statusErr
+		}
+		if !validationFailureAlreadyRecorded && c.shouldEmitAudit(ctx, ds) {
+			if auditManager := c.currentAuditManager(); auditManager != nil {
+				auditManager.DebugSessionValidationFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, breakglass.SanitizeReasonText(validationResult.ErrorMessage()))
+			}
 		}
 
 		// Return nil error to skip requeue - malformed resource won't fix itself
@@ -429,7 +438,7 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 			"debugSession", ds.Name, "namespace", ds.Namespace,
 			"reason", reason)
 
-		if c.shouldEmitAudit(ds) {
+		if c.shouldEmitAudit(ctx, ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
 				auditManager.DebugSessionApprovalTimeout(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
 			}
@@ -502,6 +511,11 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 			notificationSession.Status.ResolvedTemplate.Notification.NotifyOnExpiry = true
 		}
 		c.sendDebugSessionExpiredEmail(*notificationSession)
+		if c.shouldEmitAudit(ctx, ds) {
+			if auditManager := c.currentAuditManager(); auditManager != nil {
+				auditManager.DebugSessionExpired(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+			}
+		}
 		log.Info("Debug session expired")
 		if err := c.reconcileActiveAccounting(ctx, ds, false); err != nil {
 			return ctrl.Result{}, err
@@ -572,7 +586,7 @@ func (c *DebugSessionController) sendDebugSessionExpiredEmail(ds breakglassv1alp
 // remains terminal for state-machine purposes — the state is never changed here —
 // but reconciliation keeps retrying the delete until the status lists are empty.
 func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
-	if !hasTrackedSpokeResources(ds) {
+	if !hasTrackedSpokeResources(ds) && !cleanupConditionFailed(ds) {
 		if err := c.reconcileActiveAccounting(ctx, ds, false); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -610,11 +624,15 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 // hasTrackedSpokeResources reports whether the session status still references
 // anything that was deployed to the spoke cluster.
 func hasTrackedSpokeResources(ds *breakglassv1alpha1.DebugSession) bool {
-	if len(ds.Status.DeployedResources) > 0 ||
+	if utils.DebugSessionHasActionableDeployedResources(ds) ||
 		hasOutstandingAuxiliaryResources(ds) ||
-		len(ds.Status.PodTemplateResourceStatuses) > 0 ||
 		len(ds.Status.AllowedPods) > 0 {
 		return true
+	}
+	for _, resource := range ds.Status.PodTemplateResourceStatuses {
+		if utils.DebugSessionPodTemplateStatusHasCleanupResidual(resource) {
+			return true
+		}
 	}
 	if status := ds.Status.KubectlDebugStatus; status != nil {
 		if len(status.CopiedPods) > 0 {
@@ -643,11 +661,11 @@ func hasPreparedKubectlDebugOperation(ds *breakglassv1alpha1.DebugSession) bool 
 
 func hasOutstandingAuxiliaryResources(ds *breakglassv1alpha1.DebugSession) bool {
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
-		if status.Created && !status.Deleted {
+		if auxiliaryStatusHasCleanupResidual(ds, status) {
 			return true
 		}
 		for _, child := range status.AdditionalResources {
-			if !child.Deleted {
+			if utils.DebugSessionAuxiliaryChildHasCleanupResidual(ds, status.Name, child) {
 				return true
 			}
 		}
@@ -812,6 +830,11 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
 	}
+	if c.shouldEmitAudit(ctx, ds) {
+		if auditManager := c.currentAuditManager(); auditManager != nil {
+			auditManager.DebugSessionStarted(ctx, ds.Name, ds.Namespace, ds.Spec.RequestedBy, ds.Spec.Cluster, ds.Spec.TemplateRef)
+		}
+	}
 
 	metrics.DebugSessionsCreated.WithLabelValues(ds.Spec.Cluster, ds.Spec.TemplateRef).Inc()
 	if err := c.reconcileActiveAccounting(ctx, ds, true); err != nil {
@@ -889,7 +912,7 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglass
 	)
 
 	// Emit audit event if audit is enabled for this session
-	if c.shouldEmitAudit(ds) {
+	if c.shouldEmitAudit(ctx, ds) {
 		if auditManager := c.currentAuditManager(); auditManager != nil {
 			auditManager.DebugSessionFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, reason, map[string]interface{}{
 				"template":       ds.Spec.TemplateRef,
@@ -983,14 +1006,8 @@ func isSafeDebugSessionFailureRecipient(recipient string) bool {
 
 // shouldEmitAudit checks if audit events should be emitted for this session
 // based on the template's audit configuration.
-func (c *DebugSessionController) shouldEmitAudit(ds *breakglassv1alpha1.DebugSession) bool {
-	if ds.Status.ResolvedTemplate == nil {
-		return true // Default to emit audit if no template resolved yet
-	}
-	if ds.Status.ResolvedTemplate.Audit == nil {
-		return true // Default to enabled if not configured
-	}
-	return ds.Status.ResolvedTemplate.Audit.Enabled
+func (c *DebugSessionController) shouldEmitAudit(ctx context.Context, ds *breakglassv1alpha1.DebugSession) bool {
+	return shouldEmitDebugSessionAudit(ctx, c.approvalReader(), c.log, ds)
 }
 
 // sendToWebhookDestinations sends audit events to configured webhook destinations
@@ -1138,7 +1155,7 @@ func (c *DebugSessionController) deferOnUnresolvedBinding(
 
 	metrics.DebugSessionBindingUnresolved.WithLabelValues(ds.Spec.Cluster, reason).Inc()
 
-	if c.shouldEmitAudit(ds) {
+	if c.shouldEmitAudit(ctx, ds) {
 		if auditManager := c.currentAuditManager(); auditManager != nil {
 			auditManager.DebugSessionBindingUnresolved(ctx, ds.Name, ds.Namespace,
 				ds.Spec.Cluster, bindingName, bindingNamespace, reason)
