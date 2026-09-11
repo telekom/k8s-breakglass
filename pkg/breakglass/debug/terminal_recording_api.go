@@ -54,7 +54,7 @@ type TerminalRecordingConnectionBinding struct {
 }
 
 // TerminalRecordingConnection fences stream access and final completion classification.
-// Evidence publication survives revocation; Close revokes the target connection lease.
+// Evidence publication survives revocation; Close releases only this stream's exclusive claim on the target connection lease.
 type TerminalRecordingConnection interface {
 	Binding() TerminalRecordingConnectionBinding
 	Validate(context.Context) error
@@ -113,7 +113,7 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to get debug session")
 		return
 	}
-	if session.Status.State != breakglassv1alpha1.DebugSessionStateActive || isDebugSessionExpired(session, time.Now().UTC()) {
+	if session.Status.ExpiresAt == nil || session.Status.State != breakglassv1alpha1.DebugSessionStateActive || isDebugSessionExpired(session, time.Now().UTC()) {
 		apiresponses.RespondForbidden(ctx, "debug session is not active")
 		return
 	}
@@ -402,7 +402,7 @@ func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingCo
 }
 
 func terminalRecordingBindingMatches(binding TerminalRecordingConnectionBinding, session *breakglassv1alpha1.DebugSession, targetUID string) bool {
-	return binding.Namespace == session.Namespace && binding.SessionUID == string(session.UID) && binding.TargetPodUID == targetUID && binding.LeaseUID != "" && binding.Epoch != "" && binding.Generation != "" && binding.RuntimeBindingDigest != "" && !binding.ExpiresAt.IsZero() && !binding.ExpiresAt.After(session.Status.ExpiresAt.Time) && time.Now().Before(binding.ExpiresAt)
+	return session != nil && session.Status.ExpiresAt != nil && binding.Namespace == session.Namespace && binding.SessionUID == string(session.UID) && binding.TargetPodUID == targetUID && binding.LeaseUID != "" && binding.Epoch != "" && binding.Generation != "" && binding.RuntimeBindingDigest != "" && !binding.ExpiresAt.IsZero() && !binding.ExpiresAt.After(session.Status.ExpiresAt.Time) && time.Now().Before(binding.ExpiresAt)
 }
 
 func (c *DebugSessionAPIController) recordingReplayAuthority(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) func(context.Context) error {

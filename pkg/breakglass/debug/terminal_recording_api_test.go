@@ -280,3 +280,18 @@ func TestTerminalFlushWriterPreservesUntrustedBytesAsBinary(t *testing.T) {
 		require.Equal(t, "nosniff", result.Header.Get("X-Content-Type-Options"))
 	}
 }
+
+func TestTerminalRouteRejectsActiveSessionWithoutExpiry(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: "uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive}}
+	service, cli := terminalArtifactFixture(t, session)
+	controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil).WithAPIReader(cli).WithTerminalRecordingArtifacts(service).WithTerminalRecordingConnections(terminalRecordingRouteProvider{})
+	controller.terminalTargetResolver = func(context.Context, *breakglassv1alpha1.DebugSession, string, string, string) (*rest.Config, *corev1.Pod, string, error) {
+		t.Fatal("target lookup must not occur without session expiry")
+		return nil, nil, "", nil
+	}
+	router := debugSessionAPITestRouter(t, controller, "alice", "", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/session/terminal?namespace=hub&podNamespace=target&podName=pod&operation=exec&command=sh", nil))
+	require.Equal(t, http.StatusForbidden, response.Code)
+	require.False(t, terminalRecordingBindingMatches(TerminalRecordingConnectionBinding{}, session, "pod"))
+}

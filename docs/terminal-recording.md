@@ -96,3 +96,15 @@ write is denied after a failed check. The stream also checks authorization every
 these are detection intervals, not a guaranteed end-to-end delivery bound under
 scheduler or network delays. Hard expiry sets transport deadlines. Buffering or
 a post-write check cannot retract bytes already delivered to the client.
+
+Each ready target Lease admits one recording stream through a resource-version
+protected claim with a unique identity. A second stream cannot borrow that claim.
+Closing a stream removes only its own claim; a delayed close cannot release a
+successor. A crashed stream remains exclusive until its recorded expiry, bounded
+by the session deadline. Lease or generation replacement and session revocation
+invalidate the active stream through the existing live authorization checks.
+
+Active sessions without a hard expiry are rejected before target access. If
+acquisition fails before claiming a stream, only an unchanged Lease newly created
+by that call may be removed, using UID and resource-version preconditions under a
+bounded cleanup context. Existing ready leases are preserved on admission failure.

@@ -42,15 +42,17 @@ type ConnectionLeaseProof struct {
 // ConnectionLeaseRef is safe to pass between controller-owned consumers. It
 // contains no Secret name, credential, endpoint, or provider location.
 type ConnectionLeaseRef struct {
-	Namespace       string
-	Name            string
-	UID             types.UID
-	ResourceVersion string
-	HolderUID       types.UID
-	TargetUID       types.UID
-	ProfileDigest   string
-	Epoch           int64
-	ExpiresAt       time.Time
+	// createdByAcquire is local provenance, never persisted or accepted as authority.
+	createdByAcquire bool
+	Namespace        string
+	Name             string
+	UID              types.UID
+	ResourceVersion  string
+	HolderUID        types.UID
+	TargetUID        types.UID
+	ProfileDigest    string
+	Epoch            int64
+	ExpiresAt        time.Time
 }
 
 // ConnectionGeneration is an opaque generation capability. Secret material is
@@ -267,7 +269,9 @@ func (s *ConnectionLeaseService) acquire(ctx context.Context, proof ConnectionLe
 				}
 				return ConnectionLeaseRef{}, fmt.Errorf("create connection lease: %w", err)
 			}
-			return connectionLeaseRef(obj, proof), nil
+			ref := connectionLeaseRef(obj, proof)
+			ref.createdByAcquire = true
+			return ref, nil
 		}
 		if err != nil {
 			return ConnectionLeaseRef{}, fmt.Errorf("read connection lease: %w", err)
