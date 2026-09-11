@@ -76,3 +76,5 @@ and cannot be retired using another object's deleted status.
 Without a cluster provider, terminal sessions can still durably clear AllowedPods-only
 authorization bookkeeping. Concurrently added entries survive the merge and retry;
 spoke identities and unresolved create intents remain protected.
+
+Cleanup evidence deduplicates the normalized, length-limited identities actually reported. Once the 16-entry report is full, further inventory entries do not grow the evidence identity set. Durable resource inventory remains unchanged.

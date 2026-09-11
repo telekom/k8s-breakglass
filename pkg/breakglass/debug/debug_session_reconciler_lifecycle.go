@@ -327,7 +327,7 @@ func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *break
 			"node", pod.Spec.NodeName,
 		)
 
-		if c.shouldEmitAudit(ds) {
+		if c.shouldEmitAudit(ctx, ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
 				auditManager.DebugSessionPodFailed(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, reason, message)
 				c.sendToWebhookDestinations(ctx, ds, "DebugSessionPodFailed", map[string]interface{}{
@@ -361,7 +361,7 @@ func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *break
 				"lastTerminationReason", lastTerminationReason,
 			)
 
-			if c.shouldEmitAudit(ds) {
+			if c.shouldEmitAudit(ctx, ds) {
 				if auditManager := c.currentAuditManager(); auditManager != nil {
 					auditManager.DebugSessionPodRestarted(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, cs.RestartCount, lastTerminationReason)
 					c.sendToWebhookDestinations(ctx, ds, "DebugSessionPodRestarted", map[string]interface{}{
@@ -395,7 +395,7 @@ func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *break
 					"waitingMessage", waitingMessage,
 				)
 
-				if c.shouldEmitAudit(ds) {
+				if c.shouldEmitAudit(ctx, ds) {
 					if auditManager := c.currentAuditManager(); auditManager != nil {
 						auditManager.DebugSessionPodFailed(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, waitingReason, waitingMessage)
 						c.sendToWebhookDestinations(ctx, ds, "DebugSessionPodFailed", map[string]interface{}{
@@ -481,7 +481,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		setCleanupCondition(ds)
 		liveWasFailed := false
 		patchErr := c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, cleanupBaseline, &liveWasFailed)
-		if patchErr == nil && c.shouldEmitAudit(ds) {
+		if patchErr == nil && c.shouldEmitAudit(ctx, ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
 				if cleanupConditionFailed(ds) {
 					auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, cleanupResidualIdentities(ds))
@@ -614,7 +614,7 @@ func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 	identities := make([]string, 0, maxCleanupResidualIdentities)
 	seen := make(map[string]struct{}, maxCleanupResidualIdentities)
 	add := func(apiVersion, kind, namespace, name, uid string) {
-		if name == "" {
+		if name == "" || len(identities) >= maxCleanupResidualIdentities {
 			return
 		}
 		identity := kind + "/" + name
@@ -627,16 +627,13 @@ func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 		if uid != "" {
 			identity += " (uid=" + uid + ")"
 		}
+		if len(identity) > maxCleanupIdentityLength {
+			identity = identity[:maxCleanupIdentityLength-len("...")] + "..."
+		}
 		if _, exists := seen[identity]; exists {
 			return
 		}
 		seen[identity] = struct{}{}
-		if len(identities) >= maxCleanupResidualIdentities {
-			return
-		}
-		if len(identity) > maxCleanupIdentityLength {
-			identity = identity[:maxCleanupIdentityLength-len("...")] + "..."
-		}
 		identities = append(identities, identity)
 	}
 	for _, ref := range ds.Status.DeployedResources {

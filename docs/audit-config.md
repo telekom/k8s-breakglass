@@ -509,8 +509,10 @@ Kafka TLS CA, client certificate, and SASL credential Secret references must set
 an explicit namespace equal to the controller namespace. Empty namespaces are
 validation errors and are never defaulted or read.
 
-Before a DebugSession template snapshot exists, API lifecycle audit events use the
+Before a DebugSession template snapshot exists, API and controller lifecycle audit events use the
 live template audit policy through the authorization reader. Once captured, the
 snapshot policy is authoritative. If the pre-snapshot policy cannot be read, the
 event is suppressed with a warning; the committed lifecycle action is not rolled back.
 Legacy sessions without a template reference retain the default enabled audit policy.
+
+Policy lookup failures, including transient failures, do not default auditing to enabled: that could expose events from an explicitly opted-out template. Suppression can lose a lifecycle event and does not enqueue a durable retry; the warning records that limitation. Captured policy avoids this lookup and remains authoritative.

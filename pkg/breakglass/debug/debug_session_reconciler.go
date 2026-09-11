@@ -236,7 +236,7 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 			log.Errorw("Failed to update DebugSession status after validation failure", "error", statusErr)
 			return ctrl.Result{}, statusErr
 		}
-		if !validationFailureAlreadyRecorded && c.shouldEmitAudit(ds) {
+		if !validationFailureAlreadyRecorded && c.shouldEmitAudit(ctx, ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
 				auditManager.DebugSessionValidationFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, breakglass.SanitizeReasonText(validationResult.ErrorMessage()))
 			}
@@ -438,7 +438,7 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 			"debugSession", ds.Name, "namespace", ds.Namespace,
 			"reason", reason)
 
-		if c.shouldEmitAudit(ds) {
+		if c.shouldEmitAudit(ctx, ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
 				auditManager.DebugSessionApprovalTimeout(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
 			}
@@ -511,7 +511,7 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 			notificationSession.Status.ResolvedTemplate.Notification.NotifyOnExpiry = true
 		}
 		c.sendDebugSessionExpiredEmail(*notificationSession)
-		if c.shouldEmitAudit(ds) {
+		if c.shouldEmitAudit(ctx, ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
 				auditManager.DebugSessionExpired(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
 			}
@@ -830,7 +830,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
 	}
-	if c.shouldEmitAudit(ds) {
+	if c.shouldEmitAudit(ctx, ds) {
 		if auditManager := c.currentAuditManager(); auditManager != nil {
 			auditManager.DebugSessionStarted(ctx, ds.Name, ds.Namespace, ds.Spec.RequestedBy, ds.Spec.Cluster, ds.Spec.TemplateRef)
 		}
@@ -912,7 +912,7 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglass
 	)
 
 	// Emit audit event if audit is enabled for this session
-	if c.shouldEmitAudit(ds) {
+	if c.shouldEmitAudit(ctx, ds) {
 		if auditManager := c.currentAuditManager(); auditManager != nil {
 			auditManager.DebugSessionFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, reason, map[string]interface{}{
 				"template":       ds.Spec.TemplateRef,
@@ -1006,14 +1006,8 @@ func isSafeDebugSessionFailureRecipient(recipient string) bool {
 
 // shouldEmitAudit checks if audit events should be emitted for this session
 // based on the template's audit configuration.
-func (c *DebugSessionController) shouldEmitAudit(ds *breakglassv1alpha1.DebugSession) bool {
-	if ds.Status.ResolvedTemplate == nil {
-		return true // Default to emit audit if no template resolved yet
-	}
-	if ds.Status.ResolvedTemplate.Audit == nil {
-		return true // Default to enabled if not configured
-	}
-	return ds.Status.ResolvedTemplate.Audit.Enabled
+func (c *DebugSessionController) shouldEmitAudit(ctx context.Context, ds *breakglassv1alpha1.DebugSession) bool {
+	return shouldEmitDebugSessionAudit(ctx, c.approvalReader(), c.log, ds)
 }
 
 // sendToWebhookDestinations sends audit events to configured webhook destinations
@@ -1161,7 +1155,7 @@ func (c *DebugSessionController) deferOnUnresolvedBinding(
 
 	metrics.DebugSessionBindingUnresolved.WithLabelValues(ds.Spec.Cluster, reason).Inc()
 
-	if c.shouldEmitAudit(ds) {
+	if c.shouldEmitAudit(ctx, ds) {
 		if auditManager := c.currentAuditManager(); auditManager != nil {
 			auditManager.DebugSessionBindingUnresolved(ctx, ds.Name, ds.Namespace,
 				ds.Spec.Cluster, bindingName, bindingNamespace, reason)
