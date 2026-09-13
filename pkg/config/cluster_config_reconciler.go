@@ -18,6 +18,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -175,6 +176,7 @@ func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx cont
 
 	now := metav1.Now()
 	terminatedCount := 0
+	var cleanupErr error
 	for i := range sessionList.Items {
 		session := &sessionList.Items[i]
 
@@ -198,6 +200,7 @@ func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx cont
 		if err := ssa.ApplyBreakglassSessionStatus(ctx, r.Client, session); err != nil {
 			log.Warnw("Failed to terminate BreakglassSession", "session", session.Name, "error", err)
 			// Continue with other sessions even if one fails
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("terminate BreakglassSession %s: %w", session.Name, err))
 			continue
 		}
 		terminatedCount++
@@ -209,7 +212,7 @@ func (r *ClusterConfigReconciler) terminateBreakglassSessionsForCluster(ctx cont
 			"cluster", clusterName, "count", terminatedCount)
 	}
 
-	return nil
+	return cleanupErr
 }
 
 // terminateDebugSessionsForCluster finds all DebugSessions targeting the given cluster
@@ -222,6 +225,7 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 	}
 
 	terminatedCount := 0
+	var cleanupErr error
 	for i := range sessionList.Items {
 		session := &sessionList.Items[i]
 
@@ -243,6 +247,7 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 		if err := ssa.ApplyDebugSessionStatus(ctx, r.Client, session); err != nil {
 			log.Warnw("Failed to terminate DebugSession", "session", session.Name, "error", err)
 			// Continue with other sessions even if one fails
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("terminate DebugSession %s: %w", session.Name, err))
 			continue
 		}
 		terminatedCount++
@@ -254,7 +259,7 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 			"cluster", clusterName, "count", terminatedCount)
 	}
 
-	return nil
+	return cleanupErr
 }
 
 // SetupWithManager sets up the controller with the Manager.
