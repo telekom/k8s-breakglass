@@ -47,7 +47,11 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const debugSessionNamePrefix = "debug"
+const (
+	debugSessionNamePrefix                 = "debug"
+	debugSessionIdentityProviderAnnotation = "breakglass.telekom.com/identity-provider"
+	debugSessionIdentityIssuerAnnotation   = "breakglass.telekom.com/identity-issuer"
+)
 
 // DebugSessionAPIController provides REST API endpoints for debug sessions
 type DebugSessionAPIController struct {
@@ -1009,10 +1013,18 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	namespace := requestedClusterConfig.Namespace
 
 	// Create the debug session
+	annotations := map[string]string{}
+	if providerName := ctx.GetString("identity_provider_name"); providerName != "" {
+		annotations[debugSessionIdentityProviderAnnotation] = providerName
+	}
+	if issuer := strings.TrimRight(ctx.GetString("issuer"), "/"); issuer != "" {
+		annotations[debugSessionIdentityIssuerAnnotation] = issuer
+	}
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sessionName,
 			Namespace: namespace,
+			Annotations: annotations,
 			Labels: map[string]string{
 				DebugSessionLabelKey:  sessionName,
 				DebugTemplateLabelKey: req.TemplateRef,

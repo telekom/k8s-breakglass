@@ -454,7 +454,8 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 		apiresponses.RespondForbidden(ctx, "self-approval is not allowed for this debug session")
 		return
 	}
-	authorized := c.isUserIdentityAuthorizedToApprove(apiCtx, session, currentUser.(string), currentUserEmail, userGroups)
+	authorized := (ctx.GetString("identity_provider_name") == "" || debugSessionProviderMatchesRequest(session, ctx)) &&
+		c.isUserIdentityAuthorizedToApprove(apiCtx, session, currentUser.(string), currentUserEmail, userGroups)
 	if !authorized {
 		var err error
 		authorized, err = c.isProviderAwareBreakglassApprover(apiCtx, ctx, session, currentUser.(string), currentUserEmail)
@@ -555,7 +556,8 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	if email, exists := ctx.Get("email"); exists && email != nil {
 		currentUserEmail, _ = email.(string)
 	}
-	if !c.isUserIdentityAuthorizedToApprove(apiCtx, session, currentUser.(string), currentUserEmail, userGroups) {
+	if (ctx.GetString("identity_provider_name") != "" && !debugSessionProviderMatchesRequest(session, ctx)) ||
+		!c.isUserIdentityAuthorizedToApprove(apiCtx, session, currentUser.(string), currentUserEmail, userGroups) {
 		apiresponses.RespondForbidden(ctx, "user is not authorized to reject this session")
 		return
 	}

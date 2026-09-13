@@ -629,6 +629,9 @@ func (c *DebugSessionAPIController) isProviderAwareBreakglassApprover(
 	if providerName == "" {
 		return false, nil
 	}
+	if !debugSessionProviderMatchesRequest(session, authCtx) {
+		return false, nil
+	}
 
 	var binding *breakglassv1alpha1.DebugSessionClusterBinding
 	if session.Spec.BindingRef != nil {
@@ -638,6 +641,7 @@ func (c *DebugSessionAPIController) isProviderAwareBreakglassApprover(
 		}, binding); err != nil {
 			return false, fmt.Errorf("fetch debug session binding: %w", err)
 		}
+
 		if !breakglass.IsBindingActive(binding) {
 			return false, nil
 		}
@@ -723,6 +727,20 @@ func (c *DebugSessionAPIController) isProviderAwareBreakglassApprover(
 		}
 	}
 	return false, nil
+}
+
+func debugSessionProviderMatchesRequest(session *breakglassv1alpha1.DebugSession, authCtx *gin.Context) bool {
+	if session == nil || authCtx == nil || session.Annotations == nil {
+		return false
+	}
+	providerName := strings.TrimSpace(authCtx.GetString("identity_provider_name"))
+	requestProvider := strings.TrimSpace(session.Annotations[debugSessionIdentityProviderAnnotation])
+	if providerName == "" || requestProvider == "" || providerName != requestProvider {
+		return false
+	}
+	requestIssuer := strings.TrimRight(strings.TrimSpace(session.Annotations[debugSessionIdentityIssuerAnnotation]), "/")
+	issuer := strings.TrimRight(strings.TrimSpace(authCtx.GetString("issuer")), "/")
+	return requestIssuer == "" || issuer == requestIssuer
 }
 
 func escalationAllowsCluster(escalation *breakglassv1alpha1.BreakglassEscalation, cluster string) bool {

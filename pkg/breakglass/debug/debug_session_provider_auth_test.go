@@ -91,6 +91,10 @@ func TestDebugSessionApproverUsesProviderBoundEscalationMembership(t *testing.T)
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(binding, escalation).Build()
 	controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), client, nil, nil)
 	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+			debugSessionIdentityProviderAnnotation: "tdi",
+			debugSessionIdentityIssuerAnnotation:   "https://issuer/tdi",
+		}},
 		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster: "cluster-a",
 			BindingRef: &breakglassv1alpha1.BindingReference{
@@ -214,6 +218,10 @@ func TestDebugSessionProviderAwareApproverRejectsInactiveBinding(t *testing.T) {
 			context.Background(),
 			providerAuthContext("tdi", "https://issuer/tdi"),
 			&breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+					debugSessionIdentityProviderAnnotation: "tdi",
+					debugSessionIdentityIssuerAnnotation:   "https://issuer/tdi",
+				}},
 				Spec: breakglassv1alpha1.DebugSessionSpec{
 					Cluster: "cluster-a",
 					BindingRef: &breakglassv1alpha1.BindingReference{
@@ -265,6 +273,10 @@ func TestDebugSessionProviderAwareApproverHonorsExplicitBindingOverride(t *testi
 		context.Background(),
 		providerAuthContext("tdi", "https://issuer/tdi"),
 		&breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+				debugSessionIdentityProviderAnnotation: "tdi",
+				debugSessionIdentityIssuerAnnotation:   "https://issuer/tdi",
+			}},
 			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster: "cluster-a",
 				BindingRef: &breakglassv1alpha1.BindingReference{
@@ -312,6 +324,10 @@ func TestDebugSessionProviderAwareApproverInheritsResolvedTemplatePolicy(t *test
 		context.Background(),
 		providerAuthContext("tdi", "https://issuer/tdi"),
 		&breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+				debugSessionIdentityProviderAnnotation: "tdi",
+				debugSessionIdentityIssuerAnnotation:   "https://issuer/tdi",
+			}},
 			Spec: breakglassv1alpha1.DebugSessionSpec{
 				Cluster: "cluster-a",
 				BindingRef: &breakglassv1alpha1.BindingReference{
