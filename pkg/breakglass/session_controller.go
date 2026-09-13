@@ -287,7 +287,13 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	}
 
 	// Phase 6: Collect approvers and find matched escalation in a single pass
-	resolution := wc.collectApproversFromEscalations(ctx, escalations, request.GroupName, reqLog)
+	resolution := wc.collectApproversFromEscalations(
+		ctx,
+		escalations,
+		request.GroupName,
+		c.GetString("identity_provider_name"),
+		reqLog,
+	)
 
 	if !slices.Contains(resolution.possibleGroups, request.GroupName) {
 		reqLog.Warnw("User not authorized for group", "user", request.Username, "group", system.RedactGroupName(request.GroupName))

@@ -450,7 +450,22 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	if email, exists := ctx.Get("email"); exists && email != nil {
 		currentUserEmail, _ = email.(string)
 	}
-	if !c.isUserIdentityAuthorizedToApprove(apiCtx, session, currentUser.(string), currentUserEmail, userGroups) {
+	if debugSessionRequesterMatches(session, currentUser.(string), currentUserEmail) {
+		apiresponses.RespondForbidden(ctx, "self-approval is not allowed for this debug session")
+		return
+	}
+	authorized := c.isUserIdentityAuthorizedToApprove(apiCtx, session, currentUser.(string), currentUserEmail, userGroups)
+	if !authorized {
+		var err error
+		authorized, err = c.isProviderAwareBreakglassApprover(apiCtx, ctx, session, currentUser.(string), currentUserEmail)
+		if err != nil {
+			reqLog.Warnw("Failed to resolve provider-aware Breakglass approver authorization",
+				"session", name, "error", err)
+			apiresponses.RespondInternalErrorSimple(ctx, "failed to resolve approver authorization")
+			return
+		}
+	}
+	if !authorized {
 		apiresponses.RespondForbidden(ctx, "user is not authorized to approve this session")
 		return
 	}

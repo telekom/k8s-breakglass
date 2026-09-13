@@ -678,6 +678,39 @@ func TestValidateSessionIdentityProviderAuthorization_WithMatchingEscalation(t *
 	assert.NotNil(t, errs, "should reject non-matching IDP")
 }
 
+func TestValidateSessionIdentityProviderAuthorization_SharedGroupUsesMatchingProvider(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+	escTDI := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "debug-tdi", Namespace: "default"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup:                    "debug-session",
+			Allowed:                           BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}},
+			AllowedIdentityProvidersForRequests: []string{"tdi"},
+		},
+	}
+	escTDG := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "debug-tdg", Namespace: "default"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup:                    "debug-session",
+			Allowed:                           BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}},
+			AllowedIdentityProvidersForRequests: []string{"tdg"},
+		},
+	}
+	oldClient := webhookClient
+	defer func() { webhookClient = oldClient }()
+	webhookClient = fake.NewClientBuilder().WithScheme(scheme).WithObjects(escTDI, escTDG).Build()
+
+	assert.Empty(t, validateSessionIdentityProviderAuthorization(
+		context.Background(), "test-cluster", "debug-session", "tdi",
+		field.NewPath("spec").Child("identityProviderName"),
+	))
+	assert.NotEmpty(t, validateSessionIdentityProviderAuthorization(
+		context.Background(), "test-cluster", "debug-session", "unknown",
+		field.NewPath("spec").Child("identityProviderName"),
+	))
+}
+
 func TestValidateSessionIdentityProviderAuthorization_DifferentGroup(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = AddToScheme(scheme)

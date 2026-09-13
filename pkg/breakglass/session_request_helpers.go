@@ -263,7 +263,7 @@ func (wc *BreakglassSessionController) isRequestedClusterConfigReady(ctx context
 // and gather deduplicated approvers from explicit users and resolved group members.
 func (wc *BreakglassSessionController) collectApproversFromEscalations(
 	ctx context.Context, possibleEscals []breakglassv1alpha1.BreakglassEscalation,
-	requestedGroup string, reqLog *zap.SugaredLogger,
+	requestedGroup, authenticatedProvider string, reqLog *zap.SugaredLogger,
 ) *escalationResolutionResult {
 	result := &escalationResolutionResult{
 		possibleGroups:   make([]string, 0, len(possibleEscals)),
@@ -279,6 +279,17 @@ func (wc *BreakglassSessionController) collectApproversFromEscalations(
 		p := &possibleEscals[i]
 		if !p.IsReady() {
 			reqLog.Debugw("Skipping unready escalation during approver resolution", "escalationName", p.Name)
+			continue
+		}
+		allowedProviders := p.Spec.AllowedIdentityProvidersForRequests
+		if len(allowedProviders) == 0 {
+			allowedProviders = p.Spec.AllowedIdentityProviders
+		}
+		if len(allowedProviders) > 0 && !slices.Contains(allowedProviders, authenticatedProvider) {
+			reqLog.Debugw("Skipping escalation for a different authenticated identity provider",
+				"escalationName", p.Name,
+				"authenticatedProvider", authenticatedProvider,
+				"allowedProviders", allowedProviders)
 			continue
 		}
 

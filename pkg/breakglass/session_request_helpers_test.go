@@ -38,7 +38,7 @@ func TestCollectApproversFromEscalations_EmptyList(t *testing.T) {
 	wc := newTestSessionController(t)
 	log := zaptest.NewLogger(t).Sugar()
 
-	result := wc.collectApproversFromEscalations(context.Background(), nil, "admin", log)
+	result := wc.collectApproversFromEscalations(context.Background(), nil, "admin", "", log)
 
 	assert.NotNil(t, result)
 	assert.Empty(t, result.possibleGroups)
@@ -71,7 +71,7 @@ func TestCollectApproversFromEscalations_FindsMatch(t *testing.T) {
 		},
 	}
 
-	result := wc.collectApproversFromEscalations(context.Background(), escals, "admin", log)
+	result := wc.collectApproversFromEscalations(context.Background(), escals, "admin", "", log)
 
 	assert.Contains(t, result.possibleGroups, "viewer")
 	assert.Contains(t, result.possibleGroups, "admin")
@@ -95,7 +95,7 @@ func TestCollectApproversFromEscalations_NoMatch(t *testing.T) {
 		},
 	}
 
-	result := wc.collectApproversFromEscalations(context.Background(), escals, "admin", log)
+	result := wc.collectApproversFromEscalations(context.Background(), escals, "admin", "", log)
 
 	assert.Contains(t, result.possibleGroups, "viewer")
 	assert.Nil(t, result.matchedEscalation)
@@ -124,7 +124,7 @@ func TestCollectApproversFromEscalations_DeduplicatesApprovers(t *testing.T) {
 		},
 	}
 
-	result := wc.collectApproversFromEscalations(context.Background(), escals, "admin", log)
+	result := wc.collectApproversFromEscalations(context.Background(), escals, "admin", "", log)
 
 	// alice appears in both escalations but should only appear once in allApprovers
 	count := 0

@@ -2,6 +2,7 @@ package debug
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -611,10 +612,85 @@ func (c *DebugSessionAPIController) checkApproverIdentityAuthorization(approvers
 	if c.checkApproverAuthorization(approvers, username, userGroupsInterface) {
 		return true
 	}
+
 	if email == "" || strings.TrimSpace(username) == strings.TrimSpace(email) {
 		return false
 	}
 	return c.checkApproverAuthorization(approvers, email, userGroupsInterface)
+}
+
+func (c *DebugSessionAPIController) isProviderAwareBreakglassApprover(
+	ctx context.Context,
+	authCtx *gin.Context,
+	session *breakglassv1alpha1.DebugSession,
+	username, email string,
+) (bool, error) {
+	providerName := authCtx.GetString("identity_provider_name")
+	if providerName == "" || session.Spec.BindingRef == nil {
+		return false, nil
+	}
+
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
+	if err := c.reader().Get(ctx, ctrlclient.ObjectKey{
+		Name: session.Spec.BindingRef.Name, Namespace: session.Spec.BindingRef.Namespace,
+	}, binding); err != nil {
+		return false, fmt.Errorf("fetch debug session binding: %w", err)
+	}
+
+	allowedGroups := map[string]struct{}{}
+	if binding.Spec.Allowed != nil {
+		for _, group := range binding.Spec.Allowed.Groups {
+			allowedGroups[group] = struct{}{}
+		}
+	}
+	if len(allowedGroups) == 0 {
+		return false, nil
+	}
+
+	escalations := &breakglassv1alpha1.BreakglassEscalationList{}
+	if err := c.reader().List(ctx, escalations); err != nil {
+		return false, fmt.Errorf("list Breakglass escalations: %w", err)
+	}
+	for i := range escalations.Items {
+		escalation := &escalations.Items[i]
+		if _, ok := allowedGroups[escalation.Spec.EscalatedGroup]; !ok ||
+			!escalationAllowsCluster(escalation, session.Spec.Cluster) {
+			continue
+		}
+		providers := escalation.Spec.AllowedIdentityProvidersForApprovers
+		if len(providers) == 0 {
+			providers = escalation.Spec.AllowedIdentityProviders
+		}
+		if len(providers) == 0 || !stringSliceContains(providers, providerName) {
+			continue
+		}
+		for _, members := range escalation.Status.ApproverGroupMembers {
+			for _, member := range members {
+				if member == username || (email != "" && member == email) {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
+}
+
+func escalationAllowsCluster(escalation *breakglassv1alpha1.BreakglassEscalation, cluster string) bool {
+	for _, allowed := range escalation.Spec.Allowed.Clusters {
+		if allowed == cluster {
+			return true
+		}
+	}
+	return false
+}
+
+func stringSliceContains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 // checkApproverAuthorization checks if user is in the approved users/groups

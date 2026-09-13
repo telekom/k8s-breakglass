@@ -798,7 +798,23 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		apiresponses.RespondForbidden(ctx, errDetails)
 		return
 	}
-	if !isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, allowedResult.MatchingBinding), currentUserStr, userEmail, userGroups) {
+	requesterAllowed, requesterErr := c.isDebugSessionRequesterAllowed(
+		ctx,
+		effectiveDebugSessionAllowed(template, allowedResult.MatchingBinding),
+		currentUserStr,
+		userEmail,
+		userGroups,
+		req.Cluster,
+	)
+	if requesterErr != nil {
+		reqLog.Warnw("Failed to resolve active Breakglass authorization for debug session",
+			"error", requesterErr,
+			"cluster", req.Cluster,
+		)
+		apiresponses.RespondInternalError(ctx, "resolve debug session authorization", requesterErr, reqLog)
+		return
+	}
+	if !requesterAllowed {
 		reqLog.Warnw("User is not allowed to request debug session",
 			"templateRef", req.TemplateRef,
 			"bindingRef", req.BindingRef,
@@ -1244,6 +1260,51 @@ func isDebugSessionRequesterAllowed(allowed *breakglassv1alpha1.DebugSessionAllo
 		}
 	}
 	return false
+}
+
+func (c *DebugSessionAPIController) isDebugSessionRequesterAllowed(
+	ctx *gin.Context,
+	allowed *breakglassv1alpha1.DebugSessionAllowed,
+	username, email string,
+	userGroups []string,
+	cluster string,
+) (bool, error) {
+	if isDebugSessionRequesterAllowed(allowed, username, email, userGroups) {
+		return true, nil
+	}
+	if allowed == nil || len(allowed.Groups) == 0 {
+		return false, nil
+	}
+
+	providerName := ctx.GetString("identity_provider_name")
+	issuer := strings.TrimRight(ctx.GetString("issuer"), "/")
+	if providerName == "" || issuer == "" {
+		return false, nil
+	}
+
+	sessions := &breakglassv1alpha1.BreakglassSessionList{}
+	if err := c.reader().List(ctx, sessions); err != nil {
+		return false, fmt.Errorf("list Breakglass sessions: %w", err)
+	}
+	for i := range sessions.Items {
+		session := &sessions.Items[i]
+		if session.Status.State != breakglassv1alpha1.SessionStateApproved ||
+			session.Spec.Cluster != cluster ||
+			session.Spec.IdentityProviderName != providerName ||
+			strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") != issuer ||
+			!debugSessionIdentityMatches(
+				debugSessionReadIdentity{username: username, email: email},
+				session.Spec.User,
+			) {
+			continue
+		}
+		for _, allowedGroup := range allowed.Groups {
+			if matchPattern(allowedGroup, session.Spec.GrantedGroup) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 type debugSessionReadAuthorizer struct {

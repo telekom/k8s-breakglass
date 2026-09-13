@@ -567,8 +567,10 @@ func validateSessionIdentityProviderAuthorization(
 		return nil
 	}
 
-	// Check if ANY matching escalation disallows this IDP
-	var errs field.ErrorList
+	// Multiple provider-specific escalations may intentionally share one
+	// escalated group. A session is valid when at least one matching
+	// escalation authorizes its authenticated provider; a sibling escalation
+	// for another provider must not veto it.
 	for _, esc := range relevantEscalations {
 		// Resolve the effective allowed IDPs list:
 		// - Prefer AllowedIdentityProviders (legacy unified field)
@@ -581,8 +583,6 @@ func validateSessionIdentityProviderAuthorization(
 
 		// If escalation has no allowed IDPs in either field, all enabled IDPs are allowed
 		if len(allowedIDPs) == 0 {
-			// At least one escalation allows all IDPs (unrestricted), so authorization passes
-			// This is a short-circuit: if any escalation is unrestricted for this user, they're authorized
 			return nil
 		}
 
@@ -596,16 +596,21 @@ func validateSessionIdentityProviderAuthorization(
 		}
 
 		if !found {
-			// This matching escalation doesn't allow this IDP
-			errs = append(errs, field.Forbidden(
-				path,
-				fmt.Sprintf("IdentityProvider %q is not allowed by escalation %q (allowed IDPs: %v)",
-					sessionIDPName, esc.Name, allowedIDPs),
-			))
+			continue
 		}
+		return nil
 	}
 
-	return errs
+	esc := relevantEscalations[0]
+	allowedIDPs := esc.Spec.AllowedIdentityProviders
+	if len(allowedIDPs) == 0 {
+		allowedIDPs = esc.Spec.AllowedIdentityProvidersForRequests
+	}
+	return field.ErrorList{field.Forbidden(
+		path,
+		fmt.Sprintf("IdentityProvider %q is not allowed by any matching escalation for group %q (example %q allows: %v)",
+			sessionIDPName, sessionGrantedGroup, esc.Name, allowedIDPs),
+	)}
 }
 
 // validateIdentifierFormat validates that an identifier (like group name, user email, cluster name) follows reasonable patterns
