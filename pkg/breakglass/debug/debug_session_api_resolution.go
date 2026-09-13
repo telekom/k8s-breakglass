@@ -743,6 +743,14 @@ func debugSessionProviderMatchesRequest(session *breakglassv1alpha1.DebugSession
 	return requestIssuer != "" && issuer != "" && issuer == requestIssuer
 }
 
+func debugSessionProviderProvenanceMissing(session *breakglassv1alpha1.DebugSession, authCtx *gin.Context) bool {
+	return authCtx != nil &&
+		strings.TrimSpace(authCtx.GetString("identity_provider_name")) != "" &&
+		(session == nil || session.Annotations == nil ||
+			strings.TrimSpace(session.Annotations[debugSessionIdentityProviderAnnotation]) == "" ||
+			strings.TrimRight(strings.TrimSpace(session.Annotations[debugSessionIdentityIssuerAnnotation]), "/") == "")
+}
+
 func escalationAllowsCluster(escalation *breakglassv1alpha1.BreakglassEscalation, cluster string) bool {
 	for _, allowed := range escalation.Spec.Allowed.Clusters {
 		if allowed == cluster {

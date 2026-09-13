@@ -2,6 +2,8 @@ package debug
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -18,6 +20,107 @@ func providerAuthContext(provider, issuer string) *gin.Context {
 	ctx.Set("identity_provider_name", provider)
 	ctx.Set("issuer", issuer)
 	return ctx
+}
+
+func TestDebugSessionProviderProvenanceFailsClosedAcrossProviderUpgrade(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		provider    string
+		issuer      string
+		matches     bool
+		missing     bool
+	}{
+		{
+			name:     "legacy single provider session",
+			provider: "tdi",
+			issuer:   "https://issuer/tdi",
+			missing:  true,
+		},
+		{
+			name:        "legacy session remains ambiguous with multiple providers",
+			annotations: map[string]string{},
+			provider:    "tdg",
+			issuer:      "https://issuer/tdg",
+			missing:     true,
+		},
+		{
+			name: "recorded provider and issuer match",
+			annotations: map[string]string{
+				debugSessionIdentityProviderAnnotation: "tdi",
+				debugSessionIdentityIssuerAnnotation:   "https://issuer/tdi",
+			},
+			provider: "tdi",
+			issuer:   "https://issuer/tdi",
+			matches:  true,
+		},
+		{
+			name: "new provider cannot use another provider session",
+			annotations: map[string]string{
+				debugSessionIdentityProviderAnnotation: "tdi",
+				debugSessionIdentityIssuerAnnotation:   "https://issuer/tdi",
+			},
+			provider: "tdg",
+			issuer:   "https://issuer/tdg",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Annotations: tt.annotations},
+			}
+			auth := providerAuthContext(tt.provider, tt.issuer)
+			require.Equal(t, tt.missing, debugSessionProviderProvenanceMissing(session, auth))
+			require.Equal(t, tt.matches, debugSessionProviderMatchesRequest(session, auth))
+		})
+	}
+}
+
+func TestLegacyDebugSessionCannotBeApprovedOrRejectedByProviderAwareAuth(t *testing.T) {
+	for _, operation := range []string{"approve", "reject"} {
+		t.Run(operation, func(t *testing.T) {
+			scheme := testScheme()
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "legacy", Namespace: "default"},
+				Spec: breakglassv1alpha1.DebugSessionSpec{
+					Cluster:     "cluster-a",
+					TemplateRef: "template",
+					RequestedBy: "requester",
+				},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+							Users: []string{"approver"},
+						},
+					},
+				},
+			}
+			client := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(session).
+				WithStatusSubresource(session).
+				Build()
+			controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), client, nil, nil)
+
+			router := gin.New()
+			router.Use(func(ctx *gin.Context) {
+				ctx.Set("username", "approver")
+				ctx.Set("identity_provider_name", "tdi")
+				ctx.Set("issuer", "https://issuer/tdi")
+				ctx.Next()
+			})
+			require.NoError(t, controller.Register(router.Group("/debugSessions")))
+
+			request := httptest.NewRequest(http.MethodPost, "/debugSessions/legacy/"+operation+"?namespace=default", nil)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+
+			require.Equal(t, http.StatusConflict, response.Code)
+			require.Contains(t, response.Body.String(), "predates provider provenance")
+		})
+	}
 }
 
 func TestDebugSessionRequesterUsesApprovedProviderBoundBreakglassSession(t *testing.T) {

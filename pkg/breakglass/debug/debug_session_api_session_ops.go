@@ -344,6 +344,12 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
+	currentUserStr, ok := currentUser.(string)
+	if !ok || strings.TrimSpace(currentUserStr) == "" {
+		apiresponses.RespondUnauthorized(ctx)
+		return
+	}
+	currentUserEmail := ctx.GetString("email")
 
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
@@ -361,7 +367,7 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 
 	// Check if user is allowed to terminate (owner or admin)
 	// For now, only the owner can terminate
-	if session.Spec.RequestedBy != currentUser.(string) {
+	if !debugSessionRequesterMatches(session, currentUserStr, currentUserEmail) {
 		apiresponses.RespondForbidden(ctx, "only the session owner can terminate")
 		return
 	}
@@ -373,11 +379,13 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is already in terminal state '%s'", session.Status.State))
 		return
 	}
-	if session.Status.State != breakglassv1alpha1.DebugSessionStateActive {
+	if session.Status.State != breakglassv1alpha1.DebugSessionStatePending &&
+		session.Status.State != breakglassv1alpha1.DebugSessionStatePendingApproval &&
+		session.Status.State != breakglassv1alpha1.DebugSessionStateActive {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("cannot terminate session in state '%s'", session.Status.State))
 		return
 	}
-	if isDebugSessionExpired(session, time.Now()) {
+	if session.Status.State == breakglassv1alpha1.DebugSessionStateActive && isDebugSessionExpired(session, time.Now()) {
 		apiresponses.RespondBadRequest(ctx, "cannot terminate expired session")
 		return
 	}
@@ -441,6 +449,10 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	// Check session is pending approval
 	if session.Status.State != breakglassv1alpha1.DebugSessionStatePendingApproval {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not pending approval (state: %s)", session.Status.State))
+		return
+	}
+	if debugSessionProviderProvenanceMissing(session, ctx) {
+		apiresponses.RespondConflict(ctx, "this pending debug session predates provider provenance; the requester must terminate it and create a new session")
 		return
 	}
 
@@ -547,6 +559,10 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	// Check session is pending approval
 	if session.Status.State != breakglassv1alpha1.DebugSessionStatePendingApproval {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not pending approval (state: %s)", session.Status.State))
+		return
+	}
+	if debugSessionProviderProvenanceMissing(session, ctx) {
+		apiresponses.RespondConflict(ctx, "this pending debug session predates provider provenance; the requester must terminate it and create a new session")
 		return
 	}
 

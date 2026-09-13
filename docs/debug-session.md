@@ -1472,6 +1472,16 @@ Approval and rejection handlers block requester self-approval by comparing both 
 
 When a session is created through a `DebugSessionClusterBinding`, approval and rejection use the approvers from the recorded `spec.bindingRef`. Other bindings that match the same template or cluster do not grant approval for that session.
 
+Sessions created by provider-aware authentication persist both the identity-provider
+name and issuer on the session. Approval and rejection require both values to
+match the authenticated request; a provider name alone is not sufficient.
+Sessions created before this provenance was persisted cannot be safely assigned to
+a provider during an upgrade. They are deliberately not approvable or rejectable
+through provider-aware authentication. The requester can use
+`POST /api/v1/debugSessions/{name}/terminate` while the session is still pending,
+then submit a new request. This preserves the provider boundary without guessing
+from the requester, approver, or current token.
+
 ## Participant Roles
 
 Debug sessions support multiple participant roles:
