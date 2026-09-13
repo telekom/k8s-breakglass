@@ -740,7 +740,7 @@ func debugSessionProviderMatchesRequest(session *breakglassv1alpha1.DebugSession
 	}
 	requestIssuer := strings.TrimRight(strings.TrimSpace(session.Annotations[debugSessionIdentityIssuerAnnotation]), "/")
 	issuer := strings.TrimRight(strings.TrimSpace(authCtx.GetString("issuer")), "/")
-	return requestIssuer == "" || issuer == requestIssuer
+	return requestIssuer != "" && issuer != "" && issuer == requestIssuer
 }
 
 func escalationAllowsCluster(escalation *breakglassv1alpha1.BreakglassEscalation, cluster string) bool {
