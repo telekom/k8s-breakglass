@@ -1286,9 +1286,16 @@ func (c *DebugSessionAPIController) isDebugSessionRequesterAllowed(
 	if err := c.reader().List(ctx, sessions); err != nil {
 		return false, fmt.Errorf("list Breakglass sessions: %w", err)
 	}
+	now := time.Now()
 	for i := range sessions.Items {
 		session := &sessions.Items[i]
+		if breakglass.IsSessionRetained(*session) {
+			continue
+		}
 		if session.Status.State != breakglassv1alpha1.SessionStateApproved ||
+			!session.Status.RejectedAt.IsZero() ||
+			session.Status.ExpiresAt.IsZero() ||
+			!session.Status.ExpiresAt.After(now) ||
 			session.Spec.Cluster != cluster ||
 			session.Spec.IdentityProviderName != providerName ||
 			strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") != issuer ||

@@ -626,20 +626,67 @@ func (c *DebugSessionAPIController) isProviderAwareBreakglassApprover(
 	username, email string,
 ) (bool, error) {
 	providerName := authCtx.GetString("identity_provider_name")
-	if providerName == "" || session.Spec.BindingRef == nil {
+	if providerName == "" {
 		return false, nil
 	}
 
-	binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
-	if err := c.reader().Get(ctx, ctrlclient.ObjectKey{
-		Name: session.Spec.BindingRef.Name, Namespace: session.Spec.BindingRef.Namespace,
-	}, binding); err != nil {
-		return false, fmt.Errorf("fetch debug session binding: %w", err)
+	var binding *breakglassv1alpha1.DebugSessionClusterBinding
+	if session.Spec.BindingRef != nil {
+		binding = &breakglassv1alpha1.DebugSessionClusterBinding{}
+		if err := c.reader().Get(ctx, ctrlclient.ObjectKey{
+			Name: session.Spec.BindingRef.Name, Namespace: session.Spec.BindingRef.Namespace,
+		}, binding); err != nil {
+			return false, fmt.Errorf("fetch debug session binding: %w", err)
+		}
+		if !breakglass.IsBindingActive(binding) {
+			return false, nil
+		}
+	}
+
+	var template *breakglassv1alpha1.DebugSessionTemplate
+	approvers := (*breakglassv1alpha1.DebugSessionApprovers)(nil)
+	if binding != nil && debugSessionApproversConfigured(binding.Spec.Approvers) {
+		approvers = binding.Spec.Approvers
+	} else if session.Status.ResolvedTemplate != nil &&
+		debugSessionApproversConfigured(session.Status.ResolvedTemplate.Approvers) {
+		approvers = session.Status.ResolvedTemplate.Approvers
+	} else if session.Spec.TemplateRef != "" {
+		template = &breakglassv1alpha1.DebugSessionTemplate{}
+		if err := c.reader().Get(ctx, ctrlclient.ObjectKey{Name: session.Spec.TemplateRef}, template); err != nil {
+			if apierrors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("fetch debug session template: %w", err)
+		}
+		approvers = template.Spec.Approvers
+	}
+	if !debugSessionApproversConfigured(approvers) {
+		return false, nil
+	}
+
+	allowed := (*breakglassv1alpha1.DebugSessionAllowed)(nil)
+	if binding != nil && binding.Spec.Allowed != nil &&
+		(len(binding.Spec.Allowed.Users) > 0 || len(binding.Spec.Allowed.Groups) > 0) {
+		allowed = binding.Spec.Allowed
+	}
+	if allowed == nil {
+		if template == nil && session.Spec.TemplateRef != "" {
+			template = &breakglassv1alpha1.DebugSessionTemplate{}
+			if err := c.reader().Get(ctx, ctrlclient.ObjectKey{Name: session.Spec.TemplateRef}, template); err != nil {
+				if apierrors.IsNotFound(err) {
+					return false, nil
+				}
+				return false, fmt.Errorf("fetch debug session template: %w", err)
+			}
+		}
+		if template != nil {
+			allowed = template.Spec.Allowed
+		}
 	}
 
 	allowedGroups := map[string]struct{}{}
-	if binding.Spec.Allowed != nil {
-		for _, group := range binding.Spec.Allowed.Groups {
+	if allowed != nil {
+		for _, group := range allowed.Groups {
 			allowedGroups[group] = struct{}{}
 		}
 	}
@@ -664,8 +711,11 @@ func (c *DebugSessionAPIController) isProviderAwareBreakglassApprover(
 		if len(providers) == 0 || !stringSliceContains(providers, providerName) {
 			continue
 		}
-		for _, members := range escalation.Status.ApproverGroupMembers {
-			for _, member := range members {
+		for _, approverGroup := range approvers.Groups {
+			if !stringSliceContains(escalation.Spec.Approvers.Groups, approverGroup) {
+				continue
+			}
+			for _, member := range escalation.Status.ApproverGroupMembers[approverGroup] {
 				if member == username || (email != "" && member == email) {
 					return true, nil
 				}
