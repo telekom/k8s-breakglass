@@ -909,6 +909,25 @@ func TestIsRequestFromAllowedIDP(t *testing.T) {
 			expected: true,
 		},
 		{
+			name:   "legacy allowed IDP restricts requests",
+			issuer: "https://keycloak.example.com/realms/test",
+			esc: &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-esc"},
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					AllowedIdentityProviders: []string{"keycloak-idp"},
+				},
+			},
+			idps: []breakglassv1alpha1.IdentityProvider{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "keycloak-idp"},
+					Spec: breakglassv1alpha1.IdentityProviderSpec{
+						Issuer: "https://keycloak.example.com/realms/test",
+					},
+				},
+			},
+			expected: true,
+		},
+		{
 			name:   "issuer matches IDP but IDP not in allowed list",
 			issuer: "https://keycloak.example.com/realms/test",
 			esc: &breakglassv1alpha1.BreakglassEscalation{

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,10 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+type authenticatedIdentityProviderResolver interface {
+	GetIdentityProviderNameByIssuer(context.Context, string) (string, error)
+}
 
 // authenticatedIdentity holds the authenticated user's identity fields
 // (email, username) resolved from the request JWT context.
@@ -162,6 +167,14 @@ func (wc *BreakglassSessionController) fetchMatchingEscalations(
 	}
 	escalations = readyEscalations
 
+	escalations = wc.filterEscalationsByAuthenticatedProvider(ctx, c, escalations, reqLog)
+	if len(escalations) == 0 {
+		reqLog.Warnw("No escalation is permitted for the authenticated identity provider",
+			"user", cug.Username, "cluster", cug.Clustername)
+		apiresponses.RespondForbidden(c, "user not authorized for requested group")
+		return nil, false
+	}
+
 	if !wc.isRequestedClusterConfigReady(ctx, cug.Clustername, reqLog) {
 		apiresponses.RespondForbidden(c, "requested ClusterConfig is not ready or is ambiguous")
 		return nil, false
@@ -169,6 +182,54 @@ func (wc *BreakglassSessionController) fetchMatchingEscalations(
 
 	reqLog.Debugw("Possible escalations found", "user", cug.Username, "cluster", cug.Clustername, "count", len(escalations))
 	return escalations, true
+}
+
+func (wc *BreakglassSessionController) filterEscalationsByAuthenticatedProvider(
+	ctx context.Context,
+	c *gin.Context,
+	escalations []breakglassv1alpha1.BreakglassEscalation,
+	reqLog *zap.SugaredLogger,
+) []breakglassv1alpha1.BreakglassEscalation {
+	issuer := c.GetString("issuer")
+	providerName := c.GetString("identity_provider_name")
+	resolvedProvider := providerName
+
+	if issuer != "" && providerName != "" {
+		if resolver, ok := wc.escalationManager.(authenticatedIdentityProviderResolver); ok {
+			resolved, err := resolver.GetIdentityProviderNameByIssuer(ctx, issuer)
+			if err != nil {
+				reqLog.Warnw("Failed to resolve authenticated identity provider", "error", err)
+				return nil
+			}
+			if resolved == "" || resolved != providerName {
+				reqLog.Debugw("Authenticated identity provider name does not match issuer",
+					"providerName", providerName, "resolvedProvider", resolved)
+				return nil
+			}
+			resolvedProvider = resolved
+		}
+	}
+
+	filtered := make([]breakglassv1alpha1.BreakglassEscalation, 0, len(escalations))
+	for _, escalation := range escalations {
+		allowedProviders := escalation.Spec.AllowedIdentityProvidersForRequests
+		if len(allowedProviders) == 0 {
+			allowedProviders = escalation.Spec.AllowedIdentityProviders
+		}
+		if len(allowedProviders) == 0 {
+			filtered = append(filtered, escalation)
+			continue
+		}
+		if issuer == "" || resolvedProvider == "" || !slices.Contains(allowedProviders, resolvedProvider) {
+			reqLog.Debugw("Escalation filtered by authenticated identity provider",
+				"escalation", escalation.Name,
+				"providerName", resolvedProvider,
+				"allowedProviders", allowedProviders)
+			continue
+		}
+		filtered = append(filtered, escalation)
+	}
+	return filtered
 }
 
 func (wc *BreakglassSessionController) isRequestedClusterConfigReady(ctx context.Context, clusterName string, reqLog *zap.SugaredLogger) bool {

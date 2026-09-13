@@ -151,6 +151,76 @@ func TestEscalationResolutionResult_Defaults(t *testing.T) {
 	assert.Empty(t, result.selectedDenyPolicies)
 }
 
+func TestFilterEscalationsByAuthenticatedProvider(t *testing.T) {
+	wc := newTestSessionController(t)
+	lookup := wc.escalationManager.(*testEscalationLookup)
+	require.NoError(t, lookup.Client.Create(context.Background(), &breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "tind-tdi"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			Issuer: "https://issuer.example/realms/tdi",
+		},
+	}))
+	require.NoError(t, lookup.Client.Create(context.Background(), &breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "tind-tdg"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			Issuer: "https://issuer.example/realms/tdg",
+		},
+	}))
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("identity_provider_name", "tind-tdi")
+	c.Set("issuer", "https://issuer.example/realms/tdi")
+	escs := []breakglassv1alpha1.BreakglassEscalation{
+		{ObjectMeta: metav1.ObjectMeta{Name: "tdg"}, Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			AllowedIdentityProvidersForRequests: []string{"tind-tdg"},
+		}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "tdi"}, Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			AllowedIdentityProvidersForRequests: []string{"tind-tdi"},
+		}},
+	}
+
+	filtered := wc.filterEscalationsByAuthenticatedProvider(context.Background(), c, escs, zaptest.NewLogger(t).Sugar())
+	require.Len(t, filtered, 1)
+	assert.Equal(t, "tdi", filtered[0].Name)
+}
+
+func TestFilterEscalationsByAuthenticatedProviderRejectsUnknownOrMismatchedIdentity(t *testing.T) {
+	wc := newTestSessionController(t)
+	lookup := wc.escalationManager.(*testEscalationLookup)
+	require.NoError(t, lookup.Client.Create(context.Background(), &breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "tind-tdi"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			Issuer: "https://issuer.example/realms/tdi",
+		},
+	}))
+	escalation := []breakglassv1alpha1.BreakglassEscalation{{
+		ObjectMeta: metav1.ObjectMeta{Name: "tdi"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			AllowedIdentityProvidersForRequests: []string{"tind-tdi"},
+		},
+	}}
+
+	tests := []struct {
+		name     string
+		provider string
+		issuer   string
+	}{
+		{name: "unknown issuer", provider: "tind-tdi", issuer: "https://issuer.example/realms/unknown"},
+		{name: "mismatched provider", provider: "tind-tdg", issuer: "https://issuer.example/realms/tdi"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Set("identity_provider_name", tt.provider)
+			c.Set("issuer", tt.issuer)
+			filtered := wc.filterEscalationsByAuthenticatedProvider(context.Background(), c, escalation, zaptest.NewLogger(t).Sugar())
+			assert.Empty(t, filtered)
+		})
+	}
+}
+
 // ----- sessionCreateParams tests -----
 
 func TestSessionCreateParams_Fields(t *testing.T) {

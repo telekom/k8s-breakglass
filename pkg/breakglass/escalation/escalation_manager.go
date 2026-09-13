@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 
 	"go.uber.org/zap"
@@ -69,6 +70,25 @@ func (em *EscalationManager) GetAllBreakglassEscalations(ctx context.Context) ([
 	}
 	log.Infow("Fetched BreakglassEscalations", "count", len(escal.Items))
 	return escal.Items, nil
+}
+
+// GetIdentityProviderNameByIssuer resolves the authenticated issuer to the
+// configured IdentityProvider name used by escalation restrictions.
+func (em *EscalationManager) GetIdentityProviderNameByIssuer(ctx context.Context, issuer string) (string, error) {
+	idps := &breakglassv1alpha1.IdentityProviderList{}
+	if err := em.List(ctx, idps); err != nil {
+		return "", fmt.Errorf("failed to list IdentityProviders: %w", err)
+	}
+	issuer = strings.TrimRight(issuer, "/")
+	for _, idp := range idps.Items {
+		if idp.Spec.Disabled {
+			continue
+		}
+		if strings.TrimRight(idp.Spec.Issuer, "/") == issuer {
+			return idp.Name, nil
+		}
+	}
+	return "", nil
 }
 
 func (em *EscalationManager) GetBreakglassEscalationsWithFilter(ctx context.Context,
