@@ -37,7 +37,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)}
     -ldflags "-s -w -X github.com/telekom/k8s-breakglass/pkg/version.Version=${VERSION} \
               -X github.com/telekom/k8s-breakglass/pkg/version.GitCommit=${GIT_COMMIT} \
               -X github.com/telekom/k8s-breakglass/pkg/version.BuildDate=${BUILD_DATE}" \
-    -o breakglass cmd/main.go
+    -o breakglass ./cmd
 
 FROM gcr.io/distroless/static:nonroot@sha256:963fa6c544fe5ce420f1f54fb88b6fb01479f054c8056d0f74cc2c6000df5240
 WORKDIR /
