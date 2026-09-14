@@ -43,14 +43,12 @@ docker build -t artifact-collector-e2e:trusted "$work"
 docker save artifact-collector-e2e:trusted -o "$work/image.tar"
 digest=""
 for node in $nodes; do
- docker cp "$work/image.tar" "$node:/tmp/artifact-e2e.tar"
- docker exec "$node" ctr -n k8s.io images import /tmp/artifact-e2e.tar >/dev/null
+ cat "$work/image.tar" | docker exec -i "$node" ctr -n k8s.io images import - >/dev/null
  current=$(docker exec "$node" ctr -n k8s.io images list | awk '$1 == "docker.io/library/artifact-collector-e2e:trusted" {print $3}')
  [[ "$current" =~ ^sha256:[a-f0-9]{64}$ ]]
  if [[ -n "$digest" && "$digest" != "$current" ]]; then echo "node image digest mismatch" >&2; exit 1; fi
  digest=$current
  docker exec "$node" ctr -n k8s.io images tag docker.io/library/artifact-collector-e2e:trusted "docker.io/library/artifact-collector-e2e@$digest" >/dev/null
- docker exec "$node" rm /tmp/artifact-e2e.tar
  # Harmless synthetic source exists only inside this disposable Kind node.
  docker exec "$node" mkdir -p /var/lib/systemd/coredump
  docker exec "$node" sh -c 'printf "artifact-kind-synthetic-dump\n" > /var/lib/systemd/coredump/core.artifact-kind-fixture; chmod 0644 /var/lib/systemd/coredump/core.artifact-kind-fixture'
