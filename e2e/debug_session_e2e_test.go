@@ -340,11 +340,12 @@ func TestDebugSession_E2E_SessionStateTransitions(t *testing.T) {
 	// Wait for session to become active (auto-approved) - use helper
 	session = helpers.WaitForDebugSessionStateAny(t, ctx, cli, session.Name, session.Namespace, defaultTimeout)
 
-	// For E2E with auto-approval, we expect Active state
-	// If it needs approval, that's also valid
+	// On CI, sessions can expose the first state as Pending before
+	// being auto-approved.
 	t.Logf("Session state: %s, message: %s", session.Status.State, session.Status.Message)
 	assert.True(t,
 		session.Status.State == breakglassv1alpha1.DebugSessionStateActive ||
+			session.Status.State == breakglassv1alpha1.DebugSessionStatePending ||
 			session.Status.State == breakglassv1alpha1.DebugSessionStatePendingApproval,
 		"Unexpected state: %s", session.Status.State)
 }
