@@ -65,6 +65,27 @@ config/                        Kustomize overlays
 10. **Fuzz tests**: Exist at `api/v1alpha1/fuzz_test.go`, `pkg/breakglass/fuzz_test.go`, and `pkg/breakglass/debug/fuzz_test.go`.
 11. **Strict Readiness Enforcement**: Unready clusters (`Ready=False`) MUST be hidden from Escalation API by default (`activeOnly=true`) and MUST be blocked from session requests at the controller level.
 
+## DebugSession security contracts
+
+- Native provider-aware requests must carry the temporary Breakglass grant
+  `breakglass:platform:debugsession`. This is an escalation result, not an
+  OIDC group to seed in a token.
+- Provider scope is the pair of identity-provider name and issuer. Approval,
+  rejection, and Breakglass-session lookup must match both values; a provider
+  name alone is not sufficient.
+- Requester self-approval is denied using both authenticated username and
+  email, even when the requester is also in an approver group. Binding-backed
+  sessions use only the approvers from their recorded `spec.bindingRef`.
+- Expiry is authoritative. A missing or elapsed `status.expiresAt`, a
+  rejected/withdrawn/terminal Breakglass session, or a session beyond its
+  retention state cannot authorize DebugSession operations. Do not bypass this
+  with status edits or clock changes.
+- A legacy DebugSession without persisted provider provenance is intentionally
+  not approvable or rejectable through provider-aware authentication. The API
+  returns HTTP 409 so the pending session can be terminated and requested
+  again under the current provider; never infer its provider from the requester,
+  approver, or current token.
+
 ## Build Tags
 
 - `//go:build e2e` — E2E tests (compiled with `-tags=e2e`; at runtime, tests skip unless `E2E_TEST=true`)

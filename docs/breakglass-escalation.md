@@ -455,6 +455,12 @@ allowedIdentityProvidersForApprovers:
 - If `allowedIdentityProvidersForApprovers` is empty, all IDPs can approve (default)
 - Users can only request via their authenticated IDP
 - Approvers can only approve if their IDP is in the allowed list
+- Provider-aware DebugSession approval additionally requires the session's
+  persisted provider name **and issuer** to match the approver's request.
+  Provider name alone is not an authorization boundary.
+- For a temporary DebugSession route, grant the exact
+  `breakglass:platform:debugsession` group through Breakglass; do not add that
+  group to an OIDC provider or static user fixture.
 
 #### Example: Restrict to Corporate OIDC only
 
