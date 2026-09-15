@@ -6379,13 +6379,12 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "cannot terminate session in state 'Pending'")
+		assert.Equal(t, http.StatusOK, w.Code)
 
 		var updatedSession breakglassv1alpha1.DebugSession
 		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
 		require.NoError(t, err)
-		assert.Equal(t, breakglassv1alpha1.DebugSessionStatePending, updatedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, updatedSession.Status.State)
 	})
 
 	t.Run("terminate already terminated session", func(t *testing.T) {

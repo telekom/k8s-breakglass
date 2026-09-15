@@ -208,7 +208,37 @@ func TestClusterConfigReconciler_DeleteWithoutSessions(t *testing.T) {
 		},
 	}
 
-	fakeClient := newTestClusterConfigFakeClient(scheme, clusterConfig)
+	updateCalls := 0
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(clusterConfig).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.DebugSession{}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.Cluster != "" {
+				return []string{s.Spec.Cluster}
+			}
+			return nil
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.clusterConfigRef", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.ClusterConfigRef != "" {
+				return []string{s.Spec.ClusterConfigRef}
+			}
+			return nil
+		}).
+		WithIndex(&breakglassv1alpha1.DebugSession{}, "spec.cluster", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.DebugSession); ok && s.Spec.Cluster != "" {
+				return []string{s.Spec.Cluster}
+			}
+			return nil
+		}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Update: func(ctx context.Context, client client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				updateCalls++
+				require.NotContains(t, obj.GetFinalizers(), ClusterConfigFinalizer)
+				return client.Update(ctx, obj, opts...)
+			},
+		}).
+		Build()
 	logger := zap.NewNop().Sugar()
 
 	r := &ClusterConfigReconciler{
@@ -229,6 +259,7 @@ func TestClusterConfigReconciler_DeleteWithoutSessions(t *testing.T) {
 	var updated breakglassv1alpha1.ClusterConfig
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &updated)
 	assert.True(t, apierrors.IsNotFound(err), "ClusterConfig should be deleted after finalizer removal")
+	assert.Equal(t, 1, updateCalls, "finalizer removal must use a regular update")
 }
 
 func TestClusterConfigReconciler_DeleteTerminatesBreakglassSessions(t *testing.T) {

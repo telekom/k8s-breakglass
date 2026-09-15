@@ -179,12 +179,18 @@ func (wc *WebhookController) getIDPHintFromIssuer(ctx context.Context, sar *auth
 }
 
 // isRequestFromAllowedIDP checks if a requestor from a specific issuer (IDP) is allowed to use a specific escalation.
-// If the escalation has AllowedIdentityProvidersForRequests, the issuer must match one of those.
-// If AllowedIdentityProvidersForRequests is empty, the request is allowed from any IDP (backward compatible).
+// AllowedIdentityProvidersForRequests takes precedence over the legacy
+// AllowedIdentityProviders field. If neither is set, the request is allowed
+// from any IDP (backward compatible).
 // This function maps IDP issuer URLs to IDP names for matching.
 func (wc *WebhookController) isRequestFromAllowedIDP(ctx context.Context, issuer string, esc *breakglassv1alpha1.BreakglassEscalation, reqLog *zap.SugaredLogger) bool {
+	allowedProviders := esc.Spec.AllowedIdentityProvidersForRequests
+	if len(allowedProviders) == 0 {
+		allowedProviders = esc.Spec.AllowedIdentityProviders
+	}
+
 	// If no IDP restrictions, request is allowed from any IDP
-	if len(esc.Spec.AllowedIdentityProvidersForRequests) == 0 {
+	if len(allowedProviders) == 0 {
 		return true
 	}
 
@@ -219,14 +225,14 @@ func (wc *WebhookController) isRequestFromAllowedIDP(ctx context.Context, issuer
 	}
 
 	// Check if the matched IDP is in the escalation's allowed list
-	for _, allowedIDPName := range esc.Spec.AllowedIdentityProvidersForRequests {
+	for _, allowedIDPName := range allowedProviders {
 		if allowedIDPName == matchedIDPName {
 			reqLog.Debugw("Request allowed: IDP in AllowedIdentityProvidersForRequests", "idp", matchedIDPName, "escalation", esc.Name)
 			return true
 		}
 	}
 
-	reqLog.Debugw("Request denied: IDP not in AllowedIdentityProvidersForRequests", "idp", matchedIDPName, "allowedIDPs", esc.Spec.AllowedIdentityProvidersForRequests, "escalation", esc.Name)
+	reqLog.Debugw("Request denied: IDP not in allowed request providers", "idp", matchedIDPName, "allowedIDPs", allowedProviders, "escalation", esc.Name)
 	return false
 }
 

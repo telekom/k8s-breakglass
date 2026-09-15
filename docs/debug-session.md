@@ -1520,6 +1520,37 @@ Approval and rejection handlers block requester self-approval by comparing both 
 
 When a session is created through a `DebugSessionClusterBinding`, approval and rejection use the approvers from the recorded `spec.bindingRef`. Other bindings that match the same template or cluster do not grant approval for that session.
 
+Sessions created by provider-aware authentication persist both the identity-provider
+name and issuer on the session. Approval and rejection require both values to
+match the authenticated request; a provider name alone is not sufficient.
+Sessions created before this provenance was persisted cannot be safely assigned to
+a provider during an upgrade. They are deliberately not approvable or rejectable
+through provider-aware authentication. The requester can use
+`POST /api/v1/debugSessions/{name}/terminate` while the session is still pending,
+then submit a new request. This preserves the provider boundary without guessing
+from the requester, approver, or current token.
+
+### Native Breakglass prerequisite and expiry
+
+For a provider-aware native deployment, the DebugSession authorization path is
+the approved Breakglass session, not a direct OIDC group. The Breakglass
+session must grant exactly `breakglass:platform:debugsession`, must be bound to
+the same provider and issuer as the request, and must still be approved and
+unexpired. The grant is removed or becomes unusable after drop, rejection,
+withdrawal, or expiry.
+
+TDI and TDG are separate provider scopes when both are configured. Each profile
+has its own issuer and approver route; a TDG approver cannot approve a TDI
+session, and vice versa, even if the visible username or group text is the
+same. The generated native deployment must create the exact persona-scoped
+impersonation allowlist; a live RBAC patch or wildcard user rule is not a
+supported substitute.
+
+Expiry is checked at every mutating operation, including approval, join, renew,
+leave, termination, and pod authorization. A missing or elapsed expiry is not
+an invitation to repair status manually. Use the supported lifecycle to drop
+or terminate the session and create a new request when access is needed.
+
 ## Participant Roles
 
 Debug sessions support multiple participant roles:

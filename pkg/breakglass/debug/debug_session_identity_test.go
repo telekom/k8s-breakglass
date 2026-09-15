@@ -16,6 +16,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -28,6 +29,60 @@ func TestDebugSessionIdentityMatchesProvider(t *testing.T) {
 	require.True(t, debugSessionIdentityMatchesProvider(identity, "", "", "same@example.com"))
 }
 
+func TestDebugSessionProviderProvenanceMissing(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			IdentityProviderName:   "idp-a",
+			IdentityProviderIssuer: "https://a.example",
+		},
+	}
+	providerAware := debugSessionReadIdentity{provider: "idp-a", issuer: "https://a.example"}
+
+	require.False(t, debugSessionProviderProvenanceMissing(session, providerAware))
+	require.True(t, debugSessionProviderProvenanceMissing(
+		&breakglassv1alpha1.DebugSession{},
+		providerAware,
+	))
+	require.True(t, debugSessionProviderProvenanceMissing(
+		&breakglassv1alpha1.DebugSession{
+			Spec: breakglassv1alpha1.DebugSessionSpec{IdentityProviderName: "idp-a"},
+		},
+		providerAware,
+	))
+	require.False(t, debugSessionProviderProvenanceMissing(
+		&breakglassv1alpha1.DebugSession{},
+		debugSessionReadIdentity{},
+	))
+}
+
+func TestDebugSessionApprovalIdentityMatches(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{
+		IdentityProviderName: "idp-a", IdentityProviderIssuer: "https://a.example/",
+	}}
+	require.True(t, debugSessionApprovalIdentityMatches(session, debugSessionReadIdentity{
+		provider: "idp-a", issuer: "https://a.example",
+	}))
+	require.False(t, debugSessionApprovalIdentityMatches(session, debugSessionReadIdentity{
+		provider: "idp-b", issuer: "https://a.example",
+	}))
+	require.False(t, debugSessionApprovalIdentityMatches(session, debugSessionReadIdentity{
+		provider: "idp-a", issuer: "https://b.example",
+	}))
+
+	legacy := &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{
+		IdentityProviderIssuer: "https://single.example",
+	}}
+	require.True(t, debugSessionApprovalIdentityMatches(legacy, debugSessionReadIdentity{
+		issuer: "https://single.example", legacyAllowed: true,
+	}))
+	require.False(t, debugSessionApprovalIdentityMatches(legacy, debugSessionReadIdentity{
+		issuer: "https://single.example",
+	}))
+	require.False(t, debugSessionApprovalIdentityMatches(&breakglassv1alpha1.DebugSession{}, debugSessionReadIdentity{
+		provider: "idp-a", issuer: "https://a.example", legacyAllowed: true,
+	}))
+}
+
 func TestDebugSessionHandlersRejectCollidingProvider(t *testing.T) {
 	for _, action := range []string{"get", "terminate", "renew", "join", "inject"} {
 		t.Run(action, func(t *testing.T) {
@@ -37,6 +92,7 @@ func TestDebugSessionHandlersRejectCollidingProvider(t *testing.T) {
 				Spec:       breakglassv1alpha1.DebugSessionSpec{RequestedBy: "same@example.com", IdentityProviderName: "idp-a", IdentityProviderIssuer: "https://a.example", InvitedParticipants: []string{"same@example.com"}},
 				Status:     breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expiry, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Approvers: &breakglassv1alpha1.DebugSessionApprovers{Users: []string{"security@example.com"}}, TerminalSharing: &breakglassv1alpha1.TerminalSharingConfig{Enabled: true}}},
 			}
+
 			cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(session).WithObjects(session).Build()
 			ctrl := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil)
 			rec := httptest.NewRecorder()
@@ -68,6 +124,57 @@ func TestDebugSessionHandlersRejectCollidingProvider(t *testing.T) {
 				ctrl.handleInjectEphemeralContainer(ctx)
 			}
 			require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+		})
+	}
+}
+
+func TestTerminatePendingRetirementHandlerIdentityFence(t *testing.T) {
+	tests := []struct {
+		name       string
+		state      breakglassv1alpha1.DebugSessionState
+		provider   string
+		issuer     string
+		identity   debugSessionReadIdentity
+		wantStatus int
+	}{
+		{"pending partial provider matches", breakglassv1alpha1.DebugSessionStatePending, "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-a"}, http.StatusOK},
+		{"pending approval partial provider matches", breakglassv1alpha1.DebugSessionStatePendingApproval, "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-a"}, http.StatusOK},
+		{"partial provider mismatches", breakglassv1alpha1.DebugSessionStatePending, "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-b"}, http.StatusForbidden},
+		{"issuer matches", breakglassv1alpha1.DebugSessionStatePending, "", "https://issuer", debugSessionReadIdentity{username: "owner", issuer: "https://issuer"}, http.StatusOK},
+		{"issuer mismatches", breakglassv1alpha1.DebugSessionStatePending, "", "https://issuer", debugSessionReadIdentity{username: "owner", issuer: "https://other"}, http.StatusForbidden},
+		{"providerless migrated requester", breakglassv1alpha1.DebugSessionStatePending, "", "", debugSessionReadIdentity{username: "owner"}, http.StatusOK},
+		{"providerless wrong requester", breakglassv1alpha1.DebugSessionStatePendingApproval, "", "", debugSessionReadIdentity{username: "other"}, http.StatusForbidden},
+		{"single jwks issuer-only requester", breakglassv1alpha1.DebugSessionStatePendingApproval, "", "https://single", debugSessionReadIdentity{username: "owner", issuer: "https://single", legacyAllowed: true}, http.StatusOK},
+		{"active provider mismatch remains denied", breakglassv1alpha1.DebugSessionStateActive, "idp-a", "https://issuer", debugSessionReadIdentity{username: "owner", provider: "idp-b", issuer: "https://issuer"}, http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"},
+				Spec: breakglassv1alpha1.DebugSessionSpec{
+					RequestedBy: "owner", IdentityProviderName: tt.provider, IdentityProviderIssuer: tt.issuer,
+				},
+				Status: breakglassv1alpha1.DebugSessionStatus{State: tt.state},
+			}
+			cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(session).WithObjects(session).Build()
+			ctrl := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil)
+			rec := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(rec)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+			ctx.Params = gin.Params{{Key: "name", Value: "session"}}
+			ctx.Set("username", tt.identity.username)
+			ctx.Set("identity_provider_name", tt.identity.provider)
+			ctx.Set("issuer", tt.identity.issuer)
+			ctx.Set("legacy_identity_allowed", tt.identity.legacyAllowed)
+			ctrl.handleTerminateDebugSession(ctx)
+			require.Equal(t, tt.wantStatus, rec.Code, rec.Body.String())
+			var persisted breakglassv1alpha1.DebugSession
+			require.NoError(t, cli.Get(context.Background(), client.ObjectKey{Name: "session", Namespace: "default"}, &persisted))
+			if tt.wantStatus == http.StatusOK {
+				require.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, persisted.Status.State)
+			} else {
+				require.Equal(t, tt.state, persisted.Status.State)
+			}
 		})
 	}
 }

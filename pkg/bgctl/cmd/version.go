@@ -45,6 +45,9 @@ func NewVersionCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "", "Output format: json, yaml")
+	_ = cmd.RegisterFlagCompletionFunc("output", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"json", "yaml"}, cobra.ShellCompDirectiveNoFileComp
+	})
 
 	return cmd
 }
